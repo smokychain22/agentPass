@@ -5,17 +5,44 @@ import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { PageHeader, LockedTab } from "@/components/app/locked-tab";
 import { ScanTab } from "@/components/app/scan-tab";
+import { FindingsTab } from "@/components/app/findings-tab";
+import { AppSessionProvider, useAppSession } from "@/components/app/app-session";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
-function AppContent() {
+function AppTabs() {
   const searchParams = useSearchParams();
   const tab = searchParams.get("tab") || "scan";
+  const { session } = useAppSession();
+
+  const header =
+    tab === "findings"
+      ? {
+          title: "Findings Engine",
+          subtitle:
+            "RepoDiet maps duplicate code, unused files, unused dependencies, orphan patterns, and AI-slop signals before generating a cleanup patch.",
+          badge: (
+            <Badge variant="electric" className="font-mono text-[10px] uppercase tracking-wider">
+              Phase 2
+            </Badge>
+          ),
+        }
+      : {
+          title: "Scan Repository",
+          subtitle:
+            "Paste a public GitHub repository and RepoDiet will inspect the structure, framework, package manager, and file tree.",
+          badge: (
+            <Badge variant="signal" className="font-mono text-[10px] uppercase tracking-wider">
+              Phase 2 live
+            </Badge>
+          ),
+        };
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      <AppSidebar />
+      <AppSidebar scanComplete={session.scanComplete} />
 
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border px-4 py-3 lg:hidden">
@@ -33,23 +60,26 @@ function AppContent() {
         </header>
 
         <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
-          <PageHeader
-            title="Scan Repository"
-            subtitle="Paste a public GitHub repository and RepoDiet will inspect the structure, framework, package manager, and file tree."
-            badge={
-              <Badge variant="signal" className="font-mono text-[10px] uppercase tracking-wider">
-                Phase 2 live
-              </Badge>
-            }
-          />
+          {tab !== "findings" && (
+            <PageHeader
+              title={header.title}
+              subtitle={header.subtitle}
+              badge={header.badge}
+            />
+          )}
 
           <Tabs value={tab} className="w-full">
             <TabsList className="inline-flex w-auto max-w-full justify-start">
               <TabsTrigger value="scan" asChild>
                 <Link href="/app">Scan</Link>
               </TabsTrigger>
-              <TabsTrigger value="findings" asChild>
-                <Link href="/app?tab=findings">Findings</Link>
+              <TabsTrigger value="findings" asChild disabled={!session.scanComplete}>
+                <Link
+                  href={session.scanComplete ? "/app?tab=findings" : "/app"}
+                  className={cn(!session.scanComplete && "pointer-events-none opacity-40")}
+                >
+                  Findings
+                </Link>
               </TabsTrigger>
               <TabsTrigger value="patch" asChild>
                 <Link href="/app?tab=patch">Patch Kit</Link>
@@ -64,18 +94,14 @@ function AppContent() {
             </TabsContent>
 
             <TabsContent value="findings">
-              <LockedTab
-                step="02"
-                title="Findings"
-                description="Available after scan. Duplicate clusters, dead files, and unused dependencies will appear here in Phase 3."
-              />
+              <FindingsTab />
             </TabsContent>
 
             <TabsContent value="patch">
               <LockedTab
                 step="03"
                 title="Patch Kit"
-                description="Available after findings. Cleanup patches, regression contracts, and Cursor prompts generate from confirmed findings."
+                description="Available in Phase 3. Cleanup patches, regression contracts, and Cursor prompts generate from confirmed findings."
               />
             </TabsContent>
 
@@ -95,14 +121,16 @@ function AppContent() {
 
 export default function AppPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
-          Loading…
-        </div>
-      }
-    >
-      <AppContent />
-    </Suspense>
+    <AppSessionProvider>
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+            Loading…
+          </div>
+        }
+      >
+        <AppTabs />
+      </Suspense>
+    </AppSessionProvider>
   );
 }

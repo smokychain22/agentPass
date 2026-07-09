@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   AlertCircle,
   AlertTriangle,
@@ -26,6 +27,7 @@ import {
   runScan,
 } from "@/lib/scan";
 import { cn } from "@/lib/utils";
+import { useAppSession } from "@/components/app/app-session";
 
 const LOADING_PHASES: ScanPhase[] = [
   "validating",
@@ -43,6 +45,7 @@ function phaseIndex(phase: ScanPhase | "idle"): number {
 
 export function ScanTab() {
   const searchParams = useSearchParams();
+  const { setScanComplete } = useAppSession();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [phase, setPhase] = useState<ScanPhase | "idle">("idle");
@@ -81,12 +84,13 @@ export function ScanTab() {
           setPhase
         );
         setResult(data);
+        setScanComplete(target, data.repo.branch || branch.trim(), data);
       } catch (err) {
         setPhase("failed");
         setError(err instanceof Error ? err.message : "Scan failed unexpectedly.");
       }
     },
-    [branch]
+    [branch, setScanComplete]
   );
 
   const currentStep = phaseIndex(phase as ScanPhase);
@@ -424,9 +428,19 @@ export function ScanTab() {
           )}
 
           {phase === "complete" && (
-            <p className="text-center text-sm text-muted-foreground border border-dashed border-border rounded-lg py-4 px-6">
-              Next: duplicate clusters, unused files, unused dependencies, orphan routes — Phase 3.
-            </p>
+            <Card className="border-electric/30 bg-electric/5">
+              <CardContent className="flex flex-col items-center gap-4 py-6 sm:flex-row sm:justify-between">
+                <div className="text-center sm:text-left">
+                  <p className="text-sm font-medium">Structure scan complete</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Run the Findings Engine to detect duplicates, unused code, and AI-slop signals.
+                  </p>
+                </div>
+                <Button asChild>
+                  <Link href="/app?tab=findings">Run Findings Engine</Link>
+                </Button>
+              </CardContent>
+            </Card>
           )}
         </div>
       )}

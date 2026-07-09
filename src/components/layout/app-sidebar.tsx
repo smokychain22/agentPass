@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   ScanSearch,
@@ -10,11 +10,12 @@ import {
   ShieldCheck,
   BookOpen,
   Blocks,
+  Lock,
 } from "lucide-react";
 
 const mainNav = [
   { href: "/app", label: "Scan", icon: ScanSearch, tab: "scan" },
-  { href: "/app?tab=findings", label: "Findings", icon: FileSearch, tab: "findings" },
+  { href: "/app?tab=findings", label: "Findings", icon: FileSearch, tab: "findings", needsScan: true },
   { href: "/app?tab=patch", label: "Patch Kit", icon: Package, tab: "patch" },
   { href: "/app?tab=verify", label: "Verify", icon: ShieldCheck, tab: "verify" },
 ];
@@ -24,8 +25,10 @@ const secondaryNav = [
   { href: "/okx", label: "OKX ASP", icon: Blocks },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ scanComplete = false }: { scanComplete?: boolean }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeTab = searchParams.get("tab") || "scan";
 
   return (
     <aside className="flex w-full flex-col border-b border-border bg-card/30 lg:w-56 lg:shrink-0 lg:border-b-0 lg:border-r">
@@ -45,20 +48,23 @@ export function AppSidebar() {
           </p>
           <ul className="space-y-0.5">
             {mainNav.map((item) => {
-              const active = pathname === "/app";
+              const locked = item.needsScan && !scanComplete;
+              const active = pathname === "/app" && activeTab === item.tab;
               return (
                 <li key={item.tab}>
                   <Link
-                    href={item.href}
+                    href={locked ? "/app" : item.href}
                     className={cn(
                       "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
-                      active && item.tab === "scan"
+                      active
                         ? "bg-accent text-foreground border border-border"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                      locked && "opacity-40 pointer-events-none"
                     )}
                   >
                     <item.icon className="h-4 w-4 shrink-0 opacity-70" />
                     {item.label}
+                    {locked && <Lock className="ml-auto h-3 w-3" />}
                   </Link>
                 </li>
               );
