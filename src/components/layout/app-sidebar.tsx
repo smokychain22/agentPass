@@ -16,7 +16,7 @@ import {
 const mainNav = [
   { href: "/app", label: "Scan", icon: ScanSearch, tab: "scan" },
   { href: "/app?tab=findings", label: "Findings", icon: FileSearch, tab: "findings", needsScan: true },
-  { href: "/app?tab=patch", label: "Patch Kit", icon: Package, tab: "patch" },
+  { href: "/app?tab=patch", label: "Patch Kit", icon: Package, tab: "patch", needsFindings: true },
   { href: "/app?tab=verify", label: "Verify", icon: ShieldCheck, tab: "verify" },
 ];
 
@@ -25,7 +25,13 @@ const secondaryNav = [
   { href: "/okx", label: "OKX ASP", icon: Blocks },
 ];
 
-export function AppSidebar({ scanComplete = false }: { scanComplete?: boolean }) {
+export function AppSidebar({
+  scanComplete = false,
+  findingsReady = false,
+}: {
+  scanComplete?: boolean;
+  findingsReady?: boolean;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "scan";
@@ -48,7 +54,9 @@ export function AppSidebar({ scanComplete = false }: { scanComplete?: boolean })
           </p>
           <ul className="space-y-0.5">
             {mainNav.map((item) => {
-              const locked = item.needsScan && !scanComplete;
+              const locked =
+                (item.needsScan && !scanComplete) ||
+                (item.needsFindings && !findingsReady);
               const active = pathname === "/app" && activeTab === item.tab;
               return (
                 <li key={item.tab}>

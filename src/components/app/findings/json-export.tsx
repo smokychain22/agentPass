@@ -45,7 +45,7 @@ export function JsonExportCard({ payload }: { payload: FindingsPayload }) {
             Download JSON
           </Button>
         </div>
-        <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted/20 p-3 font-mono text-[10px] text-muted-foreground">
+        <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted/20 p-3 font-mono text-[10px] text-muted-foreground scrollbar-thin">
           {json.slice(0, 1200)}
           {json.length > 1200 ? "\n…" : ""}
         </pre>

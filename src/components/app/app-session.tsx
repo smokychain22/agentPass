@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
 import type { FindingsPayload } from "@/lib/findings/types";
+import type { PatchKitPayload } from "@/lib/patch-kit/types";
 
 export interface ScanSession {
   repoUrl: string;
@@ -21,8 +22,10 @@ export interface ScanSession {
 interface AppSessionContextValue {
   session: ScanSession;
   findings: FindingsPayload | null;
+  patchKit: PatchKitPayload | null;
   setScanComplete: (repoUrl: string, branch: string, result: ScanPayload) => void;
   setFindings: (findings: FindingsPayload | null) => void;
+  setPatchKit: (patchKit: PatchKitPayload | null) => void;
   resetSession: () => void;
 }
 
@@ -38,6 +41,12 @@ const AppSessionContext = createContext<AppSessionContextValue | null>(null);
 export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<ScanSession>(emptySession);
   const [findings, setFindings] = useState<FindingsPayload | null>(null);
+  const [patchKit, setPatchKit] = useState<PatchKitPayload | null>(null);
+
+  const setFindingsState = useCallback((next: FindingsPayload | null) => {
+    setFindings(next);
+    setPatchKit(null);
+  }, []);
 
   const setScanComplete = useCallback(
     (repoUrl: string, branch: string, result: ScanPayload) => {
@@ -48,6 +57,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         scanComplete: true,
       });
       setFindings(null);
+      setPatchKit(null);
     },
     []
   );
@@ -55,17 +65,20 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const resetSession = useCallback(() => {
     setSession(emptySession);
     setFindings(null);
+    setPatchKit(null);
   }, []);
 
   const value = useMemo(
     () => ({
       session,
       findings,
+      patchKit,
       setScanComplete,
-      setFindings,
+      setFindings: setFindingsState,
+      setPatchKit,
       resetSession,
     }),
-    [session, findings, setScanComplete, resetSession]
+    [session, findings, patchKit, setScanComplete, setFindingsState, resetSession]
   );
 
   return (

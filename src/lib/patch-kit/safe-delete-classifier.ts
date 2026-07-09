@@ -3,7 +3,7 @@ import {
   isDoNotTouchPath,
   isRouteLikePath,
   isSafeCandidatePath,
-} from "@/lib/findings/confidence";
+} from "@/lib/findings/confidence-path-rules";
 import type { ClassifiedBuckets, ClassifiedItem } from "./types";
 
 const NEVER_PATCH_PATTERNS: RegExp[] = [

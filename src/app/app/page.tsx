@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { PageHeader, LockedTab } from "@/components/app/locked-tab";
 import { ScanTab } from "@/components/app/scan-tab";
 import { FindingsTab } from "@/components/app/findings-tab";
+import { PatchKitTab } from "@/components/app/patch-kit-tab";
 import { AppSessionProvider, useAppSession } from "@/components/app/app-session";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +16,7 @@ import { cn } from "@/lib/utils";
 function AppTabs() {
   const searchParams = useSearchParams();
   const tab = searchParams.get("tab") || "scan";
-  const { session } = useAppSession();
+  const { session, findings } = useAppSession();
 
   const header =
     tab === "findings"
@@ -29,7 +30,18 @@ function AppTabs() {
             </Badge>
           ),
         }
-      : {
+      : tab === "patch"
+        ? {
+            title: "Patch Kit",
+            subtitle:
+              "Generate a conservative cleanup bundle from RepoDiet findings: patch plan, dependency suggestions, regression checklist, and Cursor cleanup prompt.",
+            badge: (
+              <Badge variant="electric" className="font-mono text-[10px] uppercase tracking-wider">
+                Phase 3
+              </Badge>
+            ),
+          }
+        : {
           title: "Scan Repository",
           subtitle:
             "Paste a public GitHub repository and RepoDiet will inspect the structure, framework, package manager, and file tree.",
@@ -42,7 +54,7 @@ function AppTabs() {
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      <AppSidebar scanComplete={session.scanComplete} />
+      <AppSidebar scanComplete={session.scanComplete} findingsReady={Boolean(findings)} />
 
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border px-4 py-3 lg:hidden">
@@ -60,7 +72,7 @@ function AppTabs() {
         </header>
 
         <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
-          {tab !== "findings" && (
+          {tab !== "findings" && tab !== "patch" && (
             <PageHeader
               title={header.title}
               subtitle={header.subtitle}
@@ -81,8 +93,13 @@ function AppTabs() {
                   Findings
                 </Link>
               </TabsTrigger>
-              <TabsTrigger value="patch" asChild>
-                <Link href="/app?tab=patch">Patch Kit</Link>
+              <TabsTrigger value="patch" asChild disabled={!findings}>
+                <Link
+                  href={findings ? "/app?tab=patch" : "/app?tab=findings"}
+                  className={cn(!findings && "pointer-events-none opacity-40")}
+                >
+                  Patch Kit
+                </Link>
               </TabsTrigger>
               <TabsTrigger value="verify" asChild>
                 <Link href="/app?tab=verify">Verify</Link>
@@ -98,11 +115,7 @@ function AppTabs() {
             </TabsContent>
 
             <TabsContent value="patch">
-              <LockedTab
-                step="03"
-                title="Patch Kit"
-                description="Available in Phase 3. Cleanup patches, regression contracts, and Cursor prompts generate from confirmed findings."
-              />
+              <PatchKitTab />
             </TabsContent>
 
             <TabsContent value="verify">

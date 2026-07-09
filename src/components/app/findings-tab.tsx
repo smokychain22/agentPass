@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
@@ -124,13 +125,16 @@ export function FindingsTab() {
             <Copy className="h-4 w-4" />
             {promptCopied ? "Copied" : "Copy Cleanup Prompt"}
           </Button>
-          <Button variant="ghost" disabled className="gap-1.5 opacity-60">
-            <Lock className="h-3.5 w-3.5" />
-            Continue to Patch Kit
-            <Badge variant="muted" className="text-[9px] ml-1">
-              Phase 3
-            </Badge>
-          </Button>
+          {findings ? (
+            <Button variant="ghost" asChild>
+              <Link href="/app?tab=patch">Continue to Patch Kit</Link>
+            </Button>
+          ) : (
+            <Button variant="ghost" disabled className="gap-1.5 opacity-60">
+              <Lock className="h-3.5 w-3.5" />
+              Continue to Patch Kit
+            </Button>
+          )}
         </div>
       </div>
 
