@@ -1,12 +1,6 @@
-export type ScanPhase =
-  | "idle"
-  | "validating"
-  | "fetching"
-  | "unpacking"
-  | "detecting"
-  | "scanning"
-  | "complete"
-  | "failed";
+import type { ScanPhase, ScanResult } from "@/lib/scanner/types";
+
+export type { ScanPhase, ScanResult };
 
 export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
   { phase: "validating", label: "Validating URL" },
@@ -17,60 +11,89 @@ export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
   { phase: "complete", label: "Complete" },
 ];
 
-export interface ScanResultPlaceholder {
-  repoUrl: string;
-  branch: string;
-}
+/** Small public Next.js example repo for demo scans */
+export const DEMO_REPO =
+  "https://github.com/vercel/next.js/tree/canary/examples/hello-world";
 
-export function isValidGitHubUrl(url: string): boolean {
+export function isValidGitHubUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed) return false;
+  const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   try {
-    const parsed = new URL(url.trim());
-    return (
-      parsed.hostname === "github.com" &&
-      parsed.pathname.split("/").filter(Boolean).length >= 2
-    );
+    const parsed = new URL(normalized);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    return parsed.hostname.replace(/^www\./, "") === "github.com" && segments.length >= 2;
   } catch {
     return false;
   }
 }
 
-export function parseRepoLabel(url: string): string {
-  try {
-    const parts = new URL(url.trim()).pathname.split("/").filter(Boolean);
-    if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
-    return url;
-  } catch {
-    return url;
-  }
+interface ApiResponse<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
 }
 
-const STEP_DELAY_MS = 650;
-
-export async function runMockScan(
-  repoUrl: string,
-  onPhase: (phase: ScanPhase) => void,
-  options?: { forceFail?: boolean }
-): Promise<ScanResultPlaceholder | null> {
-  const phases: ScanPhase[] = [
-    "validating",
-    "fetching",
-    "unpacking",
-    "detecting",
-    "scanning",
-  ];
-
-  for (const phase of phases) {
-    onPhase(phase);
-    await new Promise((r) => setTimeout(r, STEP_DELAY_MS));
-    if (options?.forceFail && phase === "fetching") {
-      onPhase("failed");
-      return null;
-    }
+export async function createScan(url: string, branch?: string): Promise<string> {
+  const res = await fetch("/api/scans/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, branch: branch || undefined }),
+  });
+  const json = (await res.json()) as ApiResponse<{ id: string }>;
+  if (!json.ok || !json.data?.id) {
+    throw new Error(json.error ?? "Failed to create scan.");
   }
+  return json.data.id;
+}
 
-  onPhase("complete");
-  return {
-    repoUrl,
-    branch: "main",
-  };
+export async function runScanById(id: string): Promise<ScanResult> {
+  const res = await fetch("/api/scans/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const json = (await res.json()) as ApiResponse<{ result: ScanResult }>;
+  if (!json.ok || !json.data?.result) {
+    throw new Error(json.error ?? "Scan failed.");
+  }
+  return json.data.result;
+}
+
+export async function runFullScan(
+  url: string,
+  branch: string | undefined,
+  onPhase: (phase: ScanPhase) => void
+): Promise<ScanResult> {
+  onPhase("validating");
+  const id = await createScan(url, branch);
+
+  let polling = true;
+  const poller = (async () => {
+    while (polling) {
+      try {
+        const res = await fetch(`/api/scans/${id}`);
+        const json = (await res.json()) as ApiResponse<{ status: ScanPhase }>;
+        if (json.ok && json.data?.status && json.data.status !== "pending") {
+          onPhase(json.data.status);
+          if (json.data.status === "complete" || json.data.status === "failed") break;
+        }
+      } catch {
+        /* retry */
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  })();
+
+  try {
+    const result = await runScanById(id);
+    onPhase("complete");
+    return result;
+  } catch (err) {
+    onPhase("failed");
+    throw err;
+  } finally {
+    polling = false;
+    await poller;
+  }
 }

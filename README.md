@@ -29,9 +29,9 @@ npm run build      # Production build
 npm test           # API smoke tests
 ```
 
-**Phase 1 routes:** `/` landing · `/app` scanner · `/docs` · `/okx`
+**Phase 2 routes:** real GitHub ZIP ingestion + structure scan via `/api/scans/*`
 
-Open `/app` → paste a repo URL or **Try Demo Repo** to preview the scan flow.
+Open `/app` → paste a repo URL or **Try Demo Repo** → view framework, package manager, and file tree metadata.
 
 ## Product concepts
 

@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   FolderTree,
   GitBranch,
@@ -17,54 +18,71 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
   type ScanPhase,
+  type ScanResult,
   SCAN_STEPS,
+  DEMO_REPO,
   isValidGitHubUrl,
-  parseRepoLabel,
-  runMockScan,
-  type ScanResultPlaceholder,
+  runFullScan,
 } from "@/lib/scan";
 import { cn } from "@/lib/utils";
 
-const DEMO_REPO = "https://github.com/smokychain22/agentPass";
+const LOADING_PHASES: ScanPhase[] = [
+  "validating",
+  "fetching",
+  "unpacking",
+  "detecting",
+  "scanning",
+  "pending",
+];
 
-function phaseIndex(phase: ScanPhase): number {
-  if (phase === "idle" || phase === "failed") return -1;
+function phaseIndex(phase: ScanPhase | "idle"): number {
+  if (phase === "idle" || phase === "failed" || phase === "pending") return -1;
   return SCAN_STEPS.findIndex((s) => s.phase === phase);
 }
 
 export function ScanTab() {
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [phase, setPhase] = useState<ScanPhase>("idle");
+  const [phase, setPhase] = useState<ScanPhase | "idle">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ScanResultPlaceholder | null>(null);
+  const [result, setResult] = useState<ScanResult | null>(null);
 
-  const isLoading = ["validating", "fetching", "unpacking", "detecting", "scanning"].includes(
-    phase
+  const isLoading = LOADING_PHASES.includes(phase as ScanPhase);
+
+  const startScan = useCallback(
+    async (url: string, isDemo = false) => {
+      setError(null);
+      setResult(null);
+
+      const target = isDemo ? DEMO_REPO : url.trim();
+
+      if (!isValidGitHubUrl(target)) {
+        setPhase("failed");
+        setError(
+          "Enter a valid public GitHub repository URL (e.g. https://github.com/owner/repo)."
+        );
+        return;
+      }
+
+      if (isDemo) setRepoUrl(target);
+
+      try {
+        const data = await runFullScan(
+          target,
+          isDemo ? undefined : branch.trim() || undefined,
+          setPhase
+        );
+        setResult(data);
+      } catch (err) {
+        setPhase("failed");
+        setError(err instanceof Error ? err.message : "Scan failed unexpectedly.");
+      }
+    },
+    [branch]
   );
 
-  const startScan = useCallback(async (url: string, isDemo = false) => {
-    setError(null);
-    setResult(null);
-
-    const target = isDemo ? DEMO_REPO : url.trim();
-
-    if (!isValidGitHubUrl(target)) {
-      setPhase("failed");
-      setError("Enter a valid public GitHub repository URL (e.g. https://github.com/owner/repo).");
-      return;
-    }
-
-    if (isDemo) setRepoUrl(target);
-
-    const data = await runMockScan(target, setPhase);
-    if (data) {
-      setResult(data);
-      if (branch.trim()) setResult({ ...data, branch: branch.trim() });
-    }
-  }, [branch]);
-
-  const currentStep = phaseIndex(phase);
+  const currentStep = phaseIndex(phase as ScanPhase);
+  const showResults = phase === "complete" || isLoading;
 
   return (
     <div className="space-y-6">
@@ -72,7 +90,8 @@ export function ScanTab() {
         <CardHeader className="pb-4">
           <CardTitle className="text-base">Repository</CardTitle>
           <CardDescription>
-            Public GitHub repositories only. Private repos are not supported in Day 1.
+            Public GitHub repositories only. RepoDiet downloads the archive ZIP and inspects
+            structure — no clone required.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -108,15 +127,12 @@ export function ScanTab() {
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              Deep scan with Knip integration ships in a later phase.
+              Deep scan with Knip integration ships in Phase 3.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3 pt-1">
-            <Button
-              onClick={() => startScan(repoUrl)}
-              disabled={isLoading || !repoUrl.trim()}
-            >
+            <Button onClick={() => startScan(repoUrl)} disabled={isLoading || !repoUrl.trim()}>
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" />
@@ -149,7 +165,7 @@ export function ScanTab() {
                 <div>
                   <p className="text-sm font-medium">Ready to scan</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Paste a repository URL or run the bundled demo repo to preview the scan flow.
+                    Paste a repository URL or try the demo — a public Next.js hello-world example.
                   </p>
                 </div>
               </div>
@@ -200,7 +216,8 @@ export function ScanTab() {
                 <div>
                   <p className="text-sm font-medium text-signal">Scan complete</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Repository structure captured. Findings analysis ships in Phase 2.
+                    {result.repo.owner}/{result.repo.name} on{" "}
+                    <span className="font-mono">{result.repo.branch}</span>
                   </p>
                 </div>
               </div>
@@ -213,104 +230,195 @@ export function ScanTab() {
             <CardTitle className="text-sm font-medium">Supported frameworks</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>Next.js, React, Vite, Express, Node monorepos</p>
+            <p>Next.js, React, Vite, Remix, Astro, Node/Express</p>
             <Separator />
             <p className="text-xs leading-relaxed">
-              Day 1 inspects structure and metadata. Bloat detection, duplicate clusters, and patch
-              generation activate in later phases.
+              Phase 2 inspects real repository structure. Duplicate clusters, dead files, and patch
+              generation ship in Phase 3.
             </p>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card className="border-border/80">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">What Day 1 detects</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>Repository layout and top-level folders</li>
-              <li>Framework and package manager signals</li>
-              <li>Config files (package.json, tsconfig, etc.)</li>
-              <li>File tree summary for downstream analysis</li>
-            </ul>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/80">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Privacy</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              RepoDiet fetches public repository archives for analysis. No source code is stored
-              permanently in Phase 1. Full retention policy will ship with production scanning.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {(phase === "complete" || isLoading) && (
+      {showResults && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Result preview
+              Scan results
             </h2>
             {isLoading && (
               <Badge variant="electric" className="animate-pulse-subtle">
-                Capturing…
+                Analyzing…
               </Badge>
             )}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <ResultCard
-              title="Repository Summary"
-              loading={isLoading}
-              value={result ? parseRepoLabel(result.repoUrl) : undefined}
-              mono
-            />
-            <ResultCard
-              title="Framework Detection"
-              loading={isLoading}
-              placeholder="Awaiting detection"
-            />
-            <ResultCard
-              title="Package Manager"
-              loading={isLoading}
-              placeholder="Awaiting detection"
-            />
-            <ResultCard
-              title="File Tree Summary"
-              loading={isLoading}
-              placeholder="Tree walk in progress"
-            />
-            <ResultCard
-              title="Top-Level Folders"
-              loading={isLoading}
-              placeholder="Indexing directories"
-            />
-            <ResultCard
-              title="Config Files Found"
-              loading={isLoading}
-              placeholder="Scanning manifests"
-            />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ResultCard title="Repository Summary" loading={isLoading && !result}>
+              {result && (
+                <dl className="space-y-2 text-sm">
+                  <Row label="Owner / repo">
+                    <span className="font-mono">
+                      {result.repo.owner}/{result.repo.name}
+                    </span>
+                  </Row>
+                  <Row label="Branch">
+                    <span className="font-mono">{result.repo.branch}</span>
+                  </Row>
+                  <Row label="Total files">{result.summary.totalFiles.toLocaleString()}</Row>
+                  <Row label="Total folders">{result.summary.totalFolders.toLocaleString()}</Row>
+                  <Row label="Total size">
+                    {result.summary.totalSizeKb.toLocaleString()} KB
+                  </Row>
+                </dl>
+              )}
+            </ResultCard>
+
+            <ResultCard title="Framework Detection" loading={isLoading && !result}>
+              {result && (
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Detected: </span>
+                    <span className="font-medium">{result.framework.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Confidence: </span>
+                    <span className="font-mono text-electric">
+                      {Math.round(result.framework.confidence * 100)}%
+                    </span>
+                  </div>
+                  {result.framework.signals.length > 0 && (
+                    <div>
+                      <p className="text-muted-foreground mb-1.5">Signals</p>
+                      <ul className="space-y-1 font-mono text-xs text-muted-foreground">
+                        {result.framework.signals.map((s) => (
+                          <li key={s} className="flex gap-2">
+                            <span className="text-electric">—</span>
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </ResultCard>
+
+            <ResultCard title="Package Manager" loading={isLoading && !result}>
+              {result && (
+                <dl className="space-y-2 text-sm">
+                  <Row label="Manager">
+                    <span className="font-mono uppercase">{result.packageManager}</span>
+                  </Row>
+                  {result.packageManagerLockfile && (
+                    <Row label="Lockfile">
+                      <span className="font-mono text-xs">{result.packageManagerLockfile}</span>
+                    </Row>
+                  )}
+                </dl>
+              )}
+            </ResultCard>
+
+            <ResultCard title="File Tree Summary" loading={isLoading && !result}>
+              {result && (
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <p className="text-muted-foreground mb-1.5">Top extensions</p>
+                    <ul className="space-y-1 font-mono text-xs">
+                      {Object.entries(result.summary.topExtensions).map(([ext, count]) => (
+                        <li key={ext} className="flex justify-between gap-4">
+                          <span className="text-muted-foreground">{ext}</span>
+                          <span>{count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  {result.largestFiles && result.largestFiles.length > 0 && (
+                    <div>
+                      <p className="text-muted-foreground mb-1.5">Largest files</p>
+                      <ul className="space-y-1 font-mono text-xs text-muted-foreground">
+                        {result.largestFiles.map((f) => (
+                          <li key={f.path} className="truncate">
+                            {f.path}{" "}
+                            <span className="text-foreground">({f.sizeKb} KB)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </ResultCard>
+
+            <ResultCard title="Top-Level Folders" loading={isLoading && !result}>
+              {result && (
+                <div className="flex flex-wrap gap-2">
+                  {result.topLevelFolders.map((folder) => (
+                    <Badge key={folder} variant="default" className="font-mono text-xs">
+                      {folder}
+                    </Badge>
+                  ))}
+                  {result.topLevelFolders.length === 0 && (
+                    <span className="text-sm text-muted-foreground">No folders detected</span>
+                  )}
+                </div>
+              )}
+            </ResultCard>
+
+            <ResultCard title="Config Files" loading={isLoading && !result}>
+              {result && (
+                <ul className="space-y-1 font-mono text-xs text-muted-foreground">
+                  {result.configFiles.map((file) => (
+                    <li key={file} className="flex gap-2">
+                      <span className="text-electric">—</span>
+                      {file}
+                    </li>
+                  ))}
+                  {result.configFiles.length === 0 && (
+                    <li className="text-sm">No config files detected</li>
+                  )}
+                </ul>
+              )}
+            </ResultCard>
           </div>
+
+          {result && result.warnings.length > 0 && (
+            <Card className="border-amber-500/30 bg-amber-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm font-medium text-amber-200">
+                  <AlertTriangle className="h-4 w-4" />
+                  Warnings
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-1 text-sm text-muted-foreground">
+                  {result.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {result && (
             <Card className="border-border/80 bg-muted/10">
               <CardContent className="flex flex-wrap items-center gap-4 py-4 text-sm">
                 <span className="flex items-center gap-2 text-muted-foreground">
                   <GitBranch className="h-4 w-4" />
-                  Branch: <span className="font-mono text-foreground">{result.branch}</span>
+                  Branch: <span className="font-mono text-foreground">{result.repo.branch}</span>
                 </span>
                 <Separator orientation="vertical" className="hidden h-4 sm:block" />
                 <span className="font-mono text-xs text-muted-foreground truncate max-w-full">
-                  {result.repoUrl}
+                  {result.repo.url}
                 </span>
               </CardContent>
             </Card>
+          )}
+
+          {phase === "complete" && (
+            <p className="text-center text-sm text-muted-foreground border border-dashed border-border rounded-lg py-4 px-6">
+              Next: duplicate clusters, unused files, unused dependencies, orphan routes.
+            </p>
           )}
         </div>
       )}
@@ -321,33 +429,38 @@ export function ScanTab() {
 function ResultCard({
   title,
   loading,
-  value,
-  placeholder = "—",
-  mono,
+  children,
 }: {
   title: string;
   loading?: boolean;
-  value?: string;
-  placeholder?: string;
-  mono?: boolean;
+  children: React.ReactNode;
 }) {
   return (
     <Card className="border-border/80">
       <CardHeader className="pb-2 pt-4 px-4">
-        <CardTitle className="text-xs font-medium text-muted-foreground">{title}</CardTitle>
+        <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {title}
+        </CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-electric" />
-            <span>{placeholder}</span>
+            <span>Capturing…</span>
           </div>
         ) : (
-          <p className={cn("text-sm", mono && "font-mono", !value && "text-muted-foreground")}>
-            {value ?? placeholder}
-          </p>
+          children
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-right">{children}</dd>
+    </div>
   );
 }
