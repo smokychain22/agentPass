@@ -9,35 +9,30 @@ import { scanFileTree } from "@/lib/scanner/file-tree";
 import { detectFramework } from "@/lib/scanner/detect-framework";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { detectConfigFiles } from "@/lib/scanner/detect-config-files";
-import type { ScanPhase, ScanResult } from "@/lib/scanner/types";
-import { getScan, updateScan } from "@/lib/scanner/store";
+import type { ScanResult } from "@/lib/scanner/types";
 
-export async function executeScan(
-  scanId: string,
-  onPhase?: (phase: ScanPhase) => void
-): Promise<ScanResult> {
-  const record = getScan(scanId);
-  if (!record) throw new Error("Scan not found.");
+export interface ScanPayload extends ScanResult {
+  id: string;
+}
 
-  const setPhase = (phase: ScanPhase) => {
-    updateScan(scanId, { status: phase });
-    onPhase?.(phase);
-  };
-
+export async function runBasicScan(
+  repoUrl: string,
+  branchInput?: string
+): Promise<ScanPayload> {
+  const id = randomUUID();
   let workDir: string | null = null;
 
   try {
-    setPhase("validating");
-    const parsed = parseGitHubUrl(record.url);
+    const parsed = parseGitHubUrl(repoUrl);
     if (!parsed) {
       throw new Error(
         "Invalid GitHub URL. Use https://github.com/owner/repo or github.com/owner/repo."
       );
     }
 
-    const branchOverride = record.branch || parsed.branch;
+    const branchOverride =
+      branchInput?.trim() || parsed.branch || undefined;
 
-    setPhase("fetching");
     const { buffer, branch } = await fetchRepoZip(
       parsed.owner,
       parsed.repo,
@@ -47,18 +42,15 @@ export async function executeScan(
     workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
     await fs.mkdir(workDir, { recursive: true });
 
-    setPhase("unpacking");
     const rootDir = await unzipRepoToDir(buffer, workDir);
 
-    setPhase("detecting");
     const framework = await detectFramework(rootDir);
     const pm = await detectPackageManager(rootDir);
-
-    setPhase("scanning");
     const tree = await scanFileTree(rootDir);
     const configs = await detectConfigFiles(rootDir, tree.allRelativePaths);
 
-    const result: ScanResult = {
+    return {
+      id,
       repo: {
         owner: parsed.owner,
         name: parsed.repo,
@@ -74,10 +66,6 @@ export async function executeScan(
       largestFiles: tree.largestFiles,
       warnings: configs.warnings,
     };
-
-    updateScan(scanId, { status: "complete", result, error: undefined });
-    setPhase("complete");
-    return result;
   } catch (err) {
     const message =
       err instanceof RepoFetchError
@@ -85,9 +73,6 @@ export async function executeScan(
         : err instanceof Error
           ? err.message
           : "Scan failed unexpectedly.";
-
-    updateScan(scanId, { status: "failed", error: message });
-    setPhase("failed");
     throw new Error(message);
   } finally {
     if (workDir) {

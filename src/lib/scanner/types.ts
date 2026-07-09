@@ -86,13 +86,9 @@ export const ScanRecordSchema = z.object({
 
 export type ScanRecord = z.infer<typeof ScanRecordSchema>;
 
-export const CreateScanBodySchema = z.object({
-  url: z.string().min(1),
+export const RunScanDirectBodySchema = z.object({
+  repoUrl: z.string().min(1),
   branch: z.string().optional(),
-});
-
-export const RunScanBodySchema = z.object({
-  id: z.string().min(1),
 });
 
 export const ENV_WARNING =

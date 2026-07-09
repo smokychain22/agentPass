@@ -1,6 +1,9 @@
-import type { ScanPhase, ScanResult } from "@/lib/scanner/types";
+import type { ScanPhase } from "@/lib/scanner/types";
+import type { ScanPayload } from "@/lib/scanner/run-scan";
 
-export type { ScanPhase, ScanResult };
+export type ScanResult = Omit<ScanPayload, "id">;
+
+export type { ScanPhase, ScanPayload };
 
 export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
   { phase: "validating", label: "Validating URL" },
@@ -11,7 +14,6 @@ export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
   { phase: "complete", label: "Complete" },
 ];
 
-/** Small public Next.js example repo for demo scans */
 export const DEMO_REPO =
   "https://github.com/vercel/next.js/tree/canary/examples/hello-world";
 
@@ -28,72 +30,57 @@ export function isValidGitHubUrl(input: string): boolean {
   }
 }
 
-interface ApiResponse<T> {
-  ok: boolean;
-  data?: T;
+const PROGRESS_PHASES: ScanPhase[] = [
+  "validating",
+  "fetching",
+  "unpacking",
+  "detecting",
+  "scanning",
+];
+
+interface RunScanResponse {
+  success: boolean;
+  scan?: ScanPayload;
   error?: string;
 }
 
-export async function createScan(url: string, branch?: string): Promise<string> {
-  const res = await fetch("/api/scans/create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, branch: branch || undefined }),
-  });
-  const json = (await res.json()) as ApiResponse<{ id: string }>;
-  if (!json.ok || !json.data?.id) {
-    throw new Error(json.error ?? "Failed to create scan.");
-  }
-  return json.data.id;
-}
-
-export async function runScanById(id: string): Promise<ScanResult> {
-  const res = await fetch("/api/scans/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
-  });
-  const json = (await res.json()) as ApiResponse<{ result: ScanResult }>;
-  if (!json.ok || !json.data?.result) {
-    throw new Error(json.error ?? "Scan failed.");
-  }
-  return json.data.result;
-}
-
-export async function runFullScan(
-  url: string,
+export async function runScan(
+  repoUrl: string,
   branch: string | undefined,
-  onPhase: (phase: ScanPhase) => void
-): Promise<ScanResult> {
+  onPhase: (phase: ScanPhase | "idle") => void
+): Promise<ScanPayload> {
   onPhase("validating");
-  const id = await createScan(url, branch);
 
-  let polling = true;
-  const poller = (async () => {
-    while (polling) {
-      try {
-        const res = await fetch(`/api/scans/${id}`);
-        const json = (await res.json()) as ApiResponse<{ status: ScanPhase }>;
-        if (json.ok && json.data?.status && json.data.status !== "pending") {
-          onPhase(json.data.status);
-          if (json.data.status === "complete" || json.data.status === "failed") break;
-        }
-      } catch {
-        /* retry */
-      }
-      await new Promise((r) => setTimeout(r, 250));
+  let phaseIdx = 0;
+  const timer = setInterval(() => {
+    if (phaseIdx < PROGRESS_PHASES.length - 1) {
+      phaseIdx += 1;
+      onPhase(PROGRESS_PHASES[phaseIdx]);
     }
-  })();
+  }, 700);
 
   try {
-    const result = await runScanById(id);
+    const res = await fetch("/api/scans/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoUrl: repoUrl.trim(),
+        branch: branch?.trim() || undefined,
+      }),
+    });
+
+    const json = (await res.json()) as RunScanResponse;
+
+    if (!json.success || !json.scan) {
+      throw new Error(json.error ?? "Scan failed.");
+    }
+
     onPhase("complete");
-    return result;
+    return json.scan;
   } catch (err) {
     onPhase("failed");
     throw err;
   } finally {
-    polling = false;
-    await poller;
+    clearInterval(timer);
   }
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   AlertTriangle,
@@ -16,13 +17,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import type { ScanPayload } from "@/lib/scanner/run-scan";
 import {
   type ScanPhase,
-  type ScanResult,
   SCAN_STEPS,
   DEMO_REPO,
   isValidGitHubUrl,
-  runFullScan,
+  runScan,
 } from "@/lib/scan";
 import { cn } from "@/lib/utils";
 
@@ -41,11 +42,18 @@ function phaseIndex(phase: ScanPhase | "idle"): number {
 }
 
 export function ScanTab() {
+  const searchParams = useSearchParams();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [phase, setPhase] = useState<ScanPhase | "idle">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ScanResult | null>(null);
+  const [result, setResult] = useState<ScanPayload | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("demo") === "1") {
+      setRepoUrl(DEMO_REPO);
+    }
+  }, [searchParams]);
 
   const isLoading = LOADING_PHASES.includes(phase as ScanPhase);
 
@@ -67,7 +75,7 @@ export function ScanTab() {
       if (isDemo) setRepoUrl(target);
 
       try {
-        const data = await runFullScan(
+        const data = await runScan(
           target,
           isDemo ? undefined : branch.trim() || undefined,
           setPhase
@@ -417,7 +425,7 @@ export function ScanTab() {
 
           {phase === "complete" && (
             <p className="text-center text-sm text-muted-foreground border border-dashed border-border rounded-lg py-4 px-6">
-              Next: duplicate clusters, unused files, unused dependencies, orphan routes.
+              Next: duplicate clusters, unused files, unused dependencies, orphan routes — Phase 3.
             </p>
           )}
         </div>

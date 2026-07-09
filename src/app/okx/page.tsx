@@ -5,8 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-const mcpTools = [
+const liveTools = [
   "scan_repo_bloat",
+  "detect_framework",
+  "read_file_tree",
+];
+
+const comingTools = [
   "detect_duplicate_code",
   "find_dead_files",
   "find_unused_dependencies",
@@ -15,9 +20,9 @@ const mcpTools = [
 ];
 
 const pricing = [
-  { tool: "Quick scan", price: "$0.05 USDT" },
-  { tool: "Deep scan", price: "$0.15 USDT" },
-  { tool: "Patch bundle", price: "$0.25 USDT" },
+  { tool: "Quick scan", price: "0.05 USDT" },
+  { tool: "Deep scan", price: "0.15 USDT" },
+  { tool: "Patch bundle", price: "0.25 USDT" },
 ];
 
 export default function OkxPage() {
@@ -61,7 +66,7 @@ export default function OkxPage() {
               <CardTitle className="text-sm">A2MCP</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              6 scanner &amp; patch tools
+              3 live · 5 coming next
             </CardContent>
           </Card>
           <Card className="border-border/80">
@@ -76,13 +81,27 @@ export default function OkxPage() {
         </div>
 
         <section className="mt-12">
-          <h2 className="text-lg font-semibold">A2MCP scanner tools</h2>
+          <h2 className="text-lg font-semibold">A2MCP — live now</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Callable by any OKX.AI agent with x402 payment headers.
+            Callable today via the RepoDiet scan API and agent integrations.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            {mcpTools.map((tool) => (
-              <Badge key={tool} variant="default" className="font-mono text-xs">
+            {liveTools.map((tool) => (
+              <Badge key={tool} variant="signal" className="font-mono text-xs">
+                {tool}
+              </Badge>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-10">
+          <h2 className="text-lg font-semibold">A2MCP — coming next</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Deep analysis and patch generation ship in Phase 3.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {comingTools.map((tool) => (
+              <Badge key={tool} variant="default" className="font-mono text-xs opacity-70">
                 {tool}
               </Badge>
             ))}

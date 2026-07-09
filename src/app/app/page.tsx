@@ -37,14 +37,14 @@ function AppContent() {
             title="Scan Repository"
             subtitle="Paste a public GitHub repository and RepoDiet will inspect the structure, framework, package manager, and file tree."
             badge={
-              <Badge variant="muted" className="font-mono text-[10px] uppercase tracking-wider">
-                Phase 1
+              <Badge variant="signal" className="font-mono text-[10px] uppercase tracking-wider">
+                Phase 2 live
               </Badge>
             }
           />
 
           <Tabs value={tab} className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto">
+            <TabsList className="inline-flex w-auto max-w-full justify-start">
               <TabsTrigger value="scan" asChild>
                 <Link href="/app">Scan</Link>
               </TabsTrigger>
@@ -67,7 +67,7 @@ function AppContent() {
               <LockedTab
                 step="02"
                 title="Findings"
-                description="Available after scan. Duplicate clusters, dead files, and unused dependencies will appear here once analysis ships in Phase 2."
+                description="Available after scan. Duplicate clusters, dead files, and unused dependencies will appear here in Phase 3."
               />
             </TabsContent>
 

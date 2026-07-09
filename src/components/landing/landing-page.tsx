@@ -49,6 +49,42 @@ const flowSteps = [
   "Regression Checklist",
 ];
 
+function HeroTerminal() {
+  return (
+    <div className="rounded-lg border border-border bg-card/80 shadow-[0_0_0_1px_hsl(var(--border))]">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+        <span className="h-2.5 w-2.5 rounded-full bg-red-500/70" />
+        <span className="h-2.5 w-2.5 rounded-full bg-amber-500/70" />
+        <span className="h-2.5 w-2.5 rounded-full bg-signal/70" />
+        <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          repodiet — scan preview
+        </span>
+      </div>
+      <pre className="overflow-hidden p-5 font-mono text-xs leading-relaxed sm:text-sm">
+        <code>
+          <span className="text-muted-foreground">$</span>{" "}
+          <span className="text-foreground">repodiet scan github.com/user/app</span>
+          {"\n\n"}
+          <span className="text-electric">Framework:</span>{" "}
+          <span className="text-foreground">Next.js</span>
+          {"\n"}
+          <span className="text-electric">Files indexed:</span>{" "}
+          <span className="text-foreground">482</span>
+          {"\n"}
+          <span className="text-electric">Package manager:</span>{" "}
+          <span className="text-foreground">pnpm</span>
+          {"\n"}
+          <span className="text-electric">Config files:</span>{" "}
+          <span className="text-foreground">7</span>
+          {"\n"}
+          <span className="text-signal">Deep cleanup:</span>{" "}
+          <span className="text-muted-foreground">ready in Phase 3</span>
+        </code>
+      </pre>
+    </div>
+  );
+}
+
 export function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
@@ -57,30 +93,33 @@ export function LandingPage() {
       <main>
         {/* Hero */}
         <section className="mx-auto max-w-6xl px-4 pb-20 pt-16 sm:px-6 sm:pt-24">
-          <div className="max-w-3xl">
-            <Badge variant="electric" className="mb-6">
-              OKX.AI Software Utility · A2MCP
-            </Badge>
-            <h1 className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl lg:text-[3.25rem] lg:leading-[1.1]">
-              AI built your app fast.
-              <br />
-              <span className="text-electric">RepoDiet keeps the codebase alive.</span>
-            </h1>
-            <p className="mt-6 max-w-2xl text-base text-muted-foreground sm:text-lg leading-relaxed">
-              Scan AI-built JavaScript and TypeScript repos for duplicate code, dead files, unused
-              dependencies, orphan routes, and generate a safe cleanup patch.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild size="lg">
-                <Link href="/app">Run Scan</Link>
-              </Button>
-              <Button asChild variant="secondary" size="lg">
-                <Link href="/app">View Demo</Link>
-              </Button>
-              <Button asChild variant="outline" size="lg">
-                <Link href="/okx">OKX ASP</Link>
-              </Button>
+          <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
+            <div>
+              <Badge variant="electric" className="mb-6">
+                OKX.AI Software Utility · A2MCP
+              </Badge>
+              <h1 className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl lg:text-[3.25rem] lg:leading-[1.1]">
+                AI built your app fast.
+                <br />
+                <span className="text-electric">RepoDiet keeps the codebase alive.</span>
+              </h1>
+              <p className="mt-6 max-w-xl text-base text-muted-foreground sm:text-lg leading-relaxed">
+                Scan AI-built JavaScript and TypeScript repos for duplicate code, dead files, unused
+                dependencies, orphan routes, and generate a safe cleanup patch.
+              </p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Button asChild size="lg">
+                  <Link href="/app">Run Scan</Link>
+                </Button>
+                <Button asChild variant="secondary" size="lg">
+                  <Link href="/app?demo=1">View Demo</Link>
+                </Button>
+                <Button asChild variant="outline" size="lg">
+                  <Link href="/okx">OKX ASP</Link>
+                </Button>
+              </div>
             </div>
+            <HeroTerminal />
           </div>
         </section>
 
@@ -166,7 +205,7 @@ export function LandingPage() {
                   </CardHeader>
                   <CardContent>
                     <p className="text-sm text-muted-foreground">
-                      scan_repo_bloat, detect_duplicate_code, find_dead_files, generate_cleanup_patch
+                      scan_repo_bloat, detect_framework, read_file_tree — live now
                     </p>
                   </CardContent>
                 </Card>
