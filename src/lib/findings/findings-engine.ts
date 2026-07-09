@@ -28,11 +28,11 @@ export async function runFindingsEngine(
       repo: workspace.repo,
       rootDir: workspace.rootDir,
       knip: knipResult.report,
-      knipAvailable: knipResult.available,
+      knipStatus: knipResult.status,
       jscpd: jscpdResult.report,
-      jscpdAvailable: jscpdResult.available,
+      jscpdStatus: jscpdResult.status,
       madge: madgeResult.report,
-      madgeAvailable: madgeResult.available,
+      madgeStatus: madgeResult.status,
       slop: slopSignals,
     });
   } finally {

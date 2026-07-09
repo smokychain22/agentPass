@@ -10,7 +10,22 @@ export type FindingSeverity = "low" | "medium" | "high";
 
 export type FindingAction = "safe_candidate" | "review_first" | "do_not_touch";
 
-export type FindingSource = "knip" | "jscpd" | "madge" | "heuristic";
+export type FindingSource =
+  | "knip"
+  | "jscpd"
+  | "madge"
+  | "heuristic"
+  | "knip_fallback"
+  | "jscpd_fallback"
+  | "madge_fallback";
+
+export type ToolStatus = "ok" | "fallback" | "failed";
+
+export interface AnalyzerRunResult<T> {
+  status: ToolStatus;
+  report: T | null;
+  error?: string;
+}
 
 export interface Finding {
   id: string;
@@ -63,9 +78,9 @@ export interface FindingsPayload {
     findingsJson: boolean;
   };
   rawToolReports: {
-    knipAvailable: boolean;
-    jscpdAvailable: boolean;
-    madgeAvailable: boolean;
+    knip: ToolStatus;
+    jscpd: ToolStatus;
+    madge: ToolStatus;
   };
 }
 

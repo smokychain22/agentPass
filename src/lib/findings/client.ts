@@ -106,5 +106,5 @@ Summary:
 - Review required: ${s.reviewRequired}
 - Safe candidates: ${s.safeCandidates}
 
-Tools: knip=${payload.rawToolReports.knipAvailable}, jscpd=${payload.rawToolReports.jscpdAvailable}, madge=${payload.rawToolReports.madgeAvailable}`;
+Tools: knip=${payload.rawToolReports.knip}, jscpd=${payload.rawToolReports.jscpd}, madge=${payload.rawToolReports.madge}`;
 }

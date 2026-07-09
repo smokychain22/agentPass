@@ -58,6 +58,19 @@ export function patchPreview(finding: Finding): string {
   return "Phase 3: included in conservative cleanup patch after confirmation.";
 }
 
+export function sourceLabel(source: Finding["source"]): string {
+  const map: Record<Finding["source"], string> = {
+    knip: "knip",
+    jscpd: "jscpd",
+    madge: "madge",
+    heuristic: "heuristic",
+    knip_fallback: "knip (fallback)",
+    jscpd_fallback: "jscpd (fallback)",
+    madge_fallback: "madge (fallback)",
+  };
+  return map[source] ?? source;
+}
+
 export function findingTarget(finding: Finding): string {
   if (finding.packageName) return finding.packageName;
   if (finding.files.length === 1) return finding.files[0];

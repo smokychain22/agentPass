@@ -12,6 +12,7 @@ import {
   findingTarget,
   patchPreview,
   severityColor,
+  sourceLabel,
   typeLabel,
 } from "./findings-utils";
 import { cn } from "@/lib/utils";
@@ -85,7 +86,7 @@ function FindingRow({ finding }: { finding: Finding }) {
           </Badge>
         </td>
         <td className="px-3 py-2.5 text-sm font-mono text-xs text-muted-foreground">
-          {finding.source}
+          {sourceLabel(finding.source)}
         </td>
       </tr>
       {open && (

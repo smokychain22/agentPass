@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { RunScanDirectBodySchema } from "@/lib/scanner/types";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {

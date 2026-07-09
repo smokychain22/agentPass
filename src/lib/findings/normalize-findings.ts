@@ -1,12 +1,14 @@
 import { nanoid } from "nanoid";
 import type {
   Finding,
+  FindingSource,
   FindingsPayload,
   FindingsSummary,
   JscpdRawReport,
   KnipRawReport,
   MadgeRawReport,
   SlopRawSignal,
+  ToolStatus,
 } from "./types";
 import type { RepoInfo } from "@/lib/scanner/prepare-workspace";
 import {
@@ -23,11 +25,11 @@ interface NormalizeInput {
   repo: RepoInfo;
   rootDir: string;
   knip: KnipRawReport | null;
-  knipAvailable: boolean;
+  knipStatus: ToolStatus;
   jscpd: JscpdRawReport | null;
-  jscpdAvailable: boolean;
+  jscpdStatus: ToolStatus;
   madge: MadgeRawReport | null;
-  madgeAvailable: boolean;
+  madgeStatus: ToolStatus;
   slop: SlopRawSignal[];
 }
 
@@ -49,7 +51,7 @@ function makeFinding(
   };
 }
 
-function fromKnip(report: KnipRawReport | null, rootDir: string) {
+function fromKnip(report: KnipRawReport | null, rootDir: string, source: FindingSource) {
   const files: Finding[] = [];
   const dependencies: Finding[] = [];
   const exports: Finding[] = [];
@@ -74,8 +76,10 @@ function fromKnip(report: KnipRawReport | null, rootDir: string) {
           action,
           reason: isRouteLikePath(rel)
             ? "Framework route file — may be valid without direct imports."
-            : "File is not referenced by import graph or framework entry points.",
-          source: "knip",
+            : source === "knip_fallback"
+              ? "File not reached by internal import-graph fallback (conservative)."
+              : "File is not referenced by import graph or framework entry points.",
+          source,
         })
       );
     }
@@ -91,8 +95,11 @@ function fromKnip(report: KnipRawReport | null, rootDir: string) {
           files: [issue.file === "package.json" ? "package.json" : issue.file],
           packageName: dep.name,
           confidence: 0.84,
-          reason: "Package is listed in package.json but no usage was found.",
-          source: "knip",
+          reason:
+            source === "knip_fallback"
+              ? "Package not found in import statements (import-graph fallback)."
+              : "Package is listed in package.json but no usage was found.",
+          source,
         })
       );
     }
@@ -109,7 +116,7 @@ function fromKnip(report: KnipRawReport | null, rootDir: string) {
           files: [rel],
           confidence: 0.7,
           reason: `Export "${exp.name}" appears unused in the module graph.`,
-          source: "knip",
+          source,
         })
       );
     }
@@ -118,7 +125,7 @@ function fromKnip(report: KnipRawReport | null, rootDir: string) {
   return { files, dependencies, exports };
 }
 
-function fromJscpd(report: JscpdRawReport | null, rootDir: string): Finding[] {
+function fromJscpd(report: JscpdRawReport | null, rootDir: string, source: FindingSource) {
   const findings: Finding[] = [];
   const seen = new Set<string>();
 
@@ -140,8 +147,11 @@ function fromJscpd(report: JscpdRawReport | null, rootDir: string): Finding[] {
           : undefined,
         confidence: clampConfidence(0.75 + Math.min((dup.lines ?? 4) / 100, 0.2)),
         action: "review_first",
-        reason: "Similar logic appears in multiple files.",
-        source: "jscpd",
+        reason:
+          source === "jscpd_fallback"
+            ? "Similar normalized line chunks detected (internal fallback detector)."
+            : "Similar logic appears in multiple files.",
+        source,
       })
     );
   }
@@ -149,7 +159,7 @@ function fromJscpd(report: JscpdRawReport | null, rootDir: string): Finding[] {
   return findings;
 }
 
-function fromMadge(report: MadgeRawReport | null, rootDir: string): Finding[] {
+function fromMadge(report: MadgeRawReport | null, rootDir: string, source: FindingSource) {
   const findings: Finding[] = [];
 
   for (const orphan of report?.orphans ?? []) {
@@ -163,8 +173,11 @@ function fromMadge(report: MadgeRawReport | null, rootDir: string): Finding[] {
         title: "Disconnected module",
         files: [rel],
         confidence: 0.68,
-        reason: "File is not reached from detected app entry points in the dependency graph.",
-        source: "madge",
+        reason:
+          source === "madge_fallback"
+            ? "File not reached from entry points (import-graph fallback)."
+            : "File is not reached from detected app entry points in the dependency graph.",
+        source,
       })
     );
   }
@@ -179,7 +192,7 @@ function fromMadge(report: MadgeRawReport | null, rootDir: string): Finding[] {
         confidence: 0.74,
         action: "review_first",
         reason: "Circular imports detected — refactor before deletion.",
-        source: "madge",
+        source,
       })
     );
   }
@@ -240,9 +253,25 @@ function buildSummary(
 }
 
 export function normalizeFindings(input: NormalizeInput): FindingsPayload {
-  const knipFindings = fromKnip(input.knip, input.rootDir);
-  const duplicates = fromJscpd(input.jscpd, input.rootDir);
-  const orphans = fromMadge(input.madge, input.rootDir);
+  const knipSource: FindingSource =
+    input.knipStatus === "fallback" ? "knip_fallback" : "knip";
+  const jscpdSource: FindingSource =
+    input.jscpdStatus === "fallback" ? "jscpd_fallback" : "jscpd";
+  const madgeSource: FindingSource =
+    input.madgeStatus === "fallback" ? "madge_fallback" : "madge";
+
+  const knipFindings =
+    input.knip && input.knipStatus !== "failed"
+      ? fromKnip(input.knip, input.rootDir, knipSource)
+      : { files: [], dependencies: [], exports: [] };
+  const duplicates =
+    input.jscpd && input.jscpdStatus !== "failed"
+      ? fromJscpd(input.jscpd, input.rootDir, jscpdSource)
+      : [];
+  const orphans =
+    input.madge && input.madgeStatus !== "failed"
+      ? fromMadge(input.madge, input.rootDir, madgeSource)
+      : [];
   const slopSignals = fromSlop(input.slop);
 
   const summary = buildSummary(
@@ -281,9 +310,9 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
     ]),
     artifacts: { findingsJson: true },
     rawToolReports: {
-      knipAvailable: input.knipAvailable,
-      jscpdAvailable: input.jscpdAvailable,
-      madgeAvailable: input.madgeAvailable,
+      knip: input.knipStatus,
+      jscpd: input.jscpdStatus,
+      madge: input.madgeStatus,
     },
   };
 }

@@ -182,17 +182,24 @@ export function FindingsTab() {
 
       {findings && (
         <>
-          {(!findings.rawToolReports.knipAvailable ||
-            !findings.rawToolReports.jscpdAvailable ||
-            !findings.rawToolReports.madgeAvailable) && (
+          {(findings.rawToolReports.knip !== "ok" ||
+            findings.rawToolReports.jscpd !== "ok" ||
+            findings.rawToolReports.madge !== "ok") && (
             <Card className="border-amber-500/30 bg-amber-500/5">
               <CardContent className="py-3 text-sm text-muted-foreground">
-                Partial results — tools:{" "}
+                Analyzer status —{" "}
                 <span className="font-mono text-xs">
-                  knip={findings.rawToolReports.knipAvailable ? "ok" : "unavailable"} · jscpd=
-                  {findings.rawToolReports.jscpdAvailable ? "ok" : "unavailable"} · madge=
-                  {findings.rawToolReports.madgeAvailable ? "ok" : "unavailable"}
+                  knip={findings.rawToolReports.knip} · jscpd=
+                  {findings.rawToolReports.jscpd} · madge={findings.rawToolReports.madge}
                 </span>
+                {(findings.rawToolReports.knip === "fallback" ||
+                  findings.rawToolReports.jscpd === "fallback" ||
+                  findings.rawToolReports.madge === "fallback") && (
+                  <span className="block mt-1 text-xs">
+                    Fallback detectors used where native CLI was unavailable. Results are real but
+                    marked with source (fallback).
+                  </span>
+                )}
               </CardContent>
             </Card>
           )}
