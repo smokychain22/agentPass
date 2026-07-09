@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { parseGitHubUrl, buildRepoUrl } from "@/lib/github/parse-github-url";
 import { fetchRepoZip, RepoFetchError } from "@/lib/github/fetch-repo-zip";
+import { assertZipSize } from "@/lib/a2mcp/limits";
 import { unzipRepoToDir } from "@/lib/scanner/unzip-repo";
 
 export interface RepoInfo {
@@ -41,6 +42,7 @@ export async function prepareRepoWorkspace(
       parsed.repo,
       branchOverride
     );
+    assertZipSize(buffer.byteLength);
 
     workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
     await fs.mkdir(workDir, { recursive: true });
