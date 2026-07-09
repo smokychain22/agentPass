@@ -1,0 +1,12 @@
+{
+  "name": "rogue",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rogue — autonomous adversarial red-team for AI agents and OKX.AI ASPs.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/smoke.js"
+  },
+  "engines": { "node": ">=18" }
+}
