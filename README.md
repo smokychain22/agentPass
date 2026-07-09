@@ -29,7 +29,7 @@ npm run build      # Production build
 npm test           # API smoke tests
 ```
 
-**Phase 2 routes:** real GitHub ZIP ingestion + structure scan via `/api/scans/*`
+**Phase 2:** structure scan via `POST /api/scans/run` · findings via `POST /api/findings/run`
 
 Open `/app` → paste a repo URL or **Try Demo Repo** → view framework, package manager, and file tree metadata.
 
