@@ -2,21 +2,45 @@
   "name": "repodiet",
   "version": "1.0.0",
   "description": "RepoDiet — cut AI code bloat before your app collapses",
-  "type": "module",
-  "main": "server.js",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "test": "node test/smoke.js"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "api": "node server.js",
+    "test": "node test/smoke.js",
+    "test:api": "node test/smoke.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-separator": "^1.1.7",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@radix-ui/react-tabs": "^1.1.12",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "express": "^5.2.1",
+    "geist": "^1.3.1",
     "jszip": "^3.10.1",
+    "lucide-react": "^0.525.0",
+    "next": "^15.4.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "simple-git": "^3.27.0",
+    "tailwind-merge": "^3.3.1",
     "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.13",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.8.3"
   },
   "keywords": [
     "repodiet",

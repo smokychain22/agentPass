@@ -5,3 +5,6 @@ repos/
 *.log
 .DS_Store
 dist/
+.next/
+out/
+data-test/

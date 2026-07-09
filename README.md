@@ -23,11 +23,15 @@ RepoDiet scans AI-built JavaScript/TypeScript apps, finds duplicate and dead cod
 
 ```bash
 npm install
-npm start          # http://localhost:8788
-npm test
+npm run dev        # Next.js UI → http://localhost:3000
+npm run api        # Express API (Phase 2+) → http://localhost:8788
+npm run build      # Production build
+npm test           # API smoke tests
 ```
 
-Open the site → **Run Demo Repo** → Findings → Generate Patch → Verify.
+**Phase 1 routes:** `/` landing · `/app` scanner · `/docs` · `/okx`
+
+Open `/app` → paste a repo URL or **Try Demo Repo** to preview the scan flow.
 
 ## Product concepts
 
