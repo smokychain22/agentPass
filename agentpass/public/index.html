@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentPass — OPC Spend Passport for OKX.AI</title>
+  <meta name="description" content="Policy, authorize, settle, and book every agent payment. The finance control plane for one-person companies on OKX.AI / X Layer." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <header class="top">
+    <a class="brand" href="/">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="brand-name">AgentPass</span>
+    </a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#live">Live demo</a>
+      <a href="#asp">ASP</a>
+    </nav>
+    <a class="cta-top" href="#live">Open console</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">OKX.AI · X Layer · x402</p>
+      <h1 class="logo-hero">AgentPass</h1>
+      <p class="lede">
+        The spend passport for one-person companies. Every agent payment gets a policy check,
+        an authorization, a settlement receipt, and a line in your books — before it signs.
+      </p>
+      <div class="cta-row">
+        <button type="button" class="btn primary" id="btn-seed">Launch demo OPC</button>
+        <a class="btn ghost" href="/api/catalog" target="_blank" rel="noopener">ASP catalog</a>
+      </div>
+      <p class="hero-note">Not another swap bot. The control plane Otto X and 200+ ASPs assume you already have.</p>
+    </section>
+
+    <section class="strip" id="how">
+      <div class="step">
+        <span class="n">01</span>
+        <h2>Set policy</h2>
+        <p>Daily / weekly caps, category allowlists, approval thresholds for your OPC.</p>
+      </div>
+      <div class="step">
+        <span class="n">02</span>
+        <h2>Authorize</h2>
+        <p>Agents call AgentPass before any x402 pay. Allow, deny, or escalate to you.</p>
+      </div>
+      <div class="step">
+        <span class="n">03</span>
+        <h2>Settle &amp; book</h2>
+        <p>Receipts, category ledgers, CSV export — Revenue Rocket–ready audit trail.</p>
+      </div>
+    </section>
+
+    <section class="console" id="live">
+      <div class="console-head">
+        <div>
+          <h2>OPC finance console</h2>
+          <p class="muted" id="company-label">No company loaded — launch the demo to begin.</p>
+        </div>
+        <div class="pill-row" id="status-pills"></div>
+      </div>
+
+      <div class="grid">
+        <article class="panel budget">
+          <h3>Budget</h3>
+          <div id="budget-cards" class="budget-cards">
+            <p class="muted">Seed a demo to see live limits.</p>
+          </div>
+        </article>
+
+        <article class="panel actions">
+          <h3>Authorize a spend</h3>
+          <form id="auth-form">
+            <label>
+              Agent
+              <select id="agent-select" required></select>
+            </label>
+            <label>
+              Amount (USDT)
+              <input id="amount" type="number" step="0.01" min="0.01" value="3.00" required />
+            </label>
+            <label>
+              Category
+              <select id="category">
+                <option>research</option>
+                <option>compute</option>
+                <option>data</option>
+                <option>design</option>
+                <option>devops</option>
+                <option>marketing</option>
+                <option>other</option>
+              </select>
+            </label>
+            <label>
+              ASP id
+              <input id="asp-id" type="text" placeholder="e.g. newsliquid" value="newsliquid" />
+            </label>
+            <label>
+              Memo
+              <input id="memo" type="text" placeholder="What is this for?" value="Quick research pull" />
+            </label>
+            <button type="submit" class="btn primary wide" id="btn-auth">Authorize</button>
+          </form>
+          <pre class="out" id="auth-out" hidden></pre>
+        </article>
+
+        <article class="panel pending">
+          <h3>Pending approvals</h3>
+          <div id="pending-list" class="list">
+            <p class="muted">None yet.</p>
+          </div>
+        </article>
+
+        <article class="panel ledger">
+          <h3>Ledger</h3>
+          <div id="ledger-list" class="list tableish">
+            <p class="muted">Empty.</p>
+          </div>
+        </article>
+
+        <article class="panel agents">
+          <h3>Agents</h3>
+          <div id="agent-list" class="list">
+            <p class="muted">—</p>
+          </div>
+        </article>
+
+        <article class="panel export">
+          <h3>Books</h3>
+          <p class="muted">Export settled receipts as CSV for your accountant or tax ASP.</p>
+          <button type="button" class="btn ghost" id="btn-export">Download CSV</button>
+          <button type="button" class="btn ghost" id="btn-refresh">Refresh snapshot</button>
+        </article>
+      </div>
+    </section>
+
+    <section class="asp" id="asp">
+      <h2>Built as an OKX.AI ASP</h2>
+      <p>
+        AgentPass is a ready-to-use always-on service: MCP tools for Claude / Codex / OpenClaw / Hermes,
+        pay-per-call x402 on X Layer, and a founder console. Prize lanes:
+        <strong>Finance Copilot</strong>, <strong>Software Utility</strong>, <strong>Revenue Rocket</strong>,
+        <strong>Best Product</strong>.
+      </p>
+      <div class="code-block">
+        <code>npx skills add okx/onchainos-skills</code>
+        <code>agentpass_authorize → agent pays ASP → agentpass_settle → books</code>
+      </div>
+      <ul class="why">
+        <li>Horizontal swap/yield agents are saturated (Otto X, Leigent, YieldMax…).</li>
+        <li>Trust/attestation ASPs exist and sit at ~0 sold.</li>
+        <li>OPCs still lack a real spend passport — OKX’s own thesis is “one person, $1M/year.”</li>
+        <li>Every authorized call is a marketplace transaction judges can count.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <span>AgentPass · X Layer (eip155:196)</span>
+    <a href="https://www.okx.ai/" target="_blank" rel="noopener">OKX.AI</a>
+  </footer>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

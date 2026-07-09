@@ -59,3 +59,11 @@ Demo payment: header `X-RepoDiet-Demo-Pay: 1`
 ## License
 
 MIT
+
+## Monorepo
+
+| Path | ASP |
+|------|-----|
+| `/` (this app) | **RepoDiet** — deployed to Vercel |
+| `agentpass/` | AgentPass — OPC spend passport |
+| `rogue/` | Rogue — adversarial red-team for AI agents |

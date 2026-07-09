@@ -369,6 +369,10 @@ app.use((req, res, next) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`RepoDiet → http://localhost:${PORT}`);
-});
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`RepoDiet → http://localhost:${PORT}`);
+  });
+}
