@@ -89,4 +89,4 @@ export function buildSafeDeleteRows(findings: FindingsPayload): SafeDeleteRow[] 
   });
 }
 
-export const BUNDLE_FILE_COUNT = ARTIFACT_DEFINITIONS.length;
+export { BUNDLE_FILE_COUNT } from "@/lib/patch-kit/bundle-manifest";

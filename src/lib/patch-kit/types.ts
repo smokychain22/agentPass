@@ -20,6 +20,7 @@ export interface PatchKitSummary {
   packageSuggestions: number;
   patchLines: number;
   regressionChecks: number;
+  bundleFileCount: number;
 }
 
 export interface PatchKitArtifacts {

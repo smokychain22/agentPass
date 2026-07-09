@@ -2,10 +2,10 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { PatchKitSummary } from "@/lib/patch-kit/types";
-import { BUNDLE_FILE_COUNT } from "./patch-kit-utils";
+import { BUNDLE_FILE_COUNT } from "@/lib/patch-kit/bundle-manifest";
 
 const cards: {
-  key: keyof PatchKitSummary | "bundleFiles";
+  key: keyof PatchKitSummary;
   title: string;
   getValue: (s: PatchKitSummary) => number;
 }[] = [
@@ -14,7 +14,7 @@ const cards: {
   { key: "doNotTouchItems", title: "Do not touch", getValue: (s) => s.doNotTouchItems },
   { key: "packageSuggestions", title: "Package suggestions", getValue: (s) => s.packageSuggestions },
   { key: "regressionChecks", title: "Regression checks", getValue: (s) => s.regressionChecks },
-  { key: "bundleFiles", title: "Bundle files", getValue: () => BUNDLE_FILE_COUNT },
+  { key: "bundleFileCount", title: "Bundle files", getValue: (s) => s.bundleFileCount ?? BUNDLE_FILE_COUNT },
 ];
 
 export function PatchKitSummaryCards({ summary }: { summary: PatchKitSummary }) {

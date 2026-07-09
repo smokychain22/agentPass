@@ -3,9 +3,15 @@
 import { Download, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { BUNDLE_FILE_COUNT } from "./patch-kit-utils";
+import { BUNDLE_FILE_COUNT } from "@/lib/patch-kit/bundle-manifest";
 
-export function DownloadPanel({ onDownload }: { onDownload: () => void }) {
+export function DownloadPanel({
+  fileCount = BUNDLE_FILE_COUNT,
+  onDownload,
+}: {
+  fileCount?: number;
+  onDownload: () => void;
+}) {
   return (
     <Card className="border-electric/30 bg-electric/5">
       <CardContent className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center sm:justify-between">
@@ -16,8 +22,8 @@ export function DownloadPanel({ onDownload }: { onDownload: () => void }) {
           <div>
             <p className="text-sm font-medium">RepoDiet Patch Bundle Ready</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {BUNDLE_FILE_COUNT} files included — report, patch, package cleanup, regression
-              checklist, Cursor prompt, and findings.json.
+              {fileCount} files included — report, patch, package cleanup, regression checklist,
+              Cursor prompt, findings.json, and patchkit-summary.json.
             </p>
           </div>
         </div>

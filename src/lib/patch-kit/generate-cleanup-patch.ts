@@ -1,13 +1,19 @@
 import type { ClassifiedItem } from "./types";
 
-const EMPTY_PATCH = `# RepoDiet cleanup patch
-# No automatic delete operations generated.
-# All current findings require review before patching.
+export const EMPTY_CLEANUP_PATCH = `# RepoDiet cleanup patch
+No automatic delete operations generated.
+Current findings require review before patching.
 `;
+
+const DELETE_MARKERS = [
+  /^git rm /m,
+  /^deleted file mode /m,
+  /^diff --git a\/.+ b\/.+$/m,
+];
 
 export function generateCleanupPatch(safeItems: ClassifiedItem[]): string {
   if (safeItems.length === 0) {
-    return EMPTY_PATCH;
+    return EMPTY_CLEANUP_PATCH;
   }
 
   const lines: string[] = [
@@ -38,6 +44,20 @@ export function generateCleanupPatch(safeItems: ClassifiedItem[]): string {
   }
 
   return lines.join("\n");
+}
+
+/** Hard guard: never emit delete operations when there are zero safe candidates. */
+export function finalizeCleanupPatch(
+  safeDeleteCount: number,
+  patch: string
+): string {
+  if (safeDeleteCount === 0) {
+    return EMPTY_CLEANUP_PATCH;
+  }
+  if (DELETE_MARKERS.some((pattern) => pattern.test(patch)) && safeDeleteCount === 0) {
+    return EMPTY_CLEANUP_PATCH;
+  }
+  return patch;
 }
 
 export function countPatchLines(patch: string): number {

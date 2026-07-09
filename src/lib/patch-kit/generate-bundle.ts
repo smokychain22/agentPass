@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import type { FindingsPayload } from "@/lib/findings/types";
+import { BUNDLE_ARTIFACT_FILES } from "./bundle-manifest";
 import type { PatchKitSummary } from "./types";
 
 export interface BundleFiles {
@@ -63,6 +64,8 @@ export function buildPatchkitSummaryJson(
       generatedAt: new Date().toISOString(),
       repo,
       summary,
+      artifacts: [...BUNDLE_ARTIFACT_FILES],
+      bundleFileCount: BUNDLE_ARTIFACT_FILES.length,
     },
     null,
     2

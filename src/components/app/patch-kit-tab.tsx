@@ -239,7 +239,10 @@ export function PatchKitTab() {
             </CardContent>
           </Card>
 
-          <DownloadPanel onDownload={downloadZip} />
+          <DownloadPanel
+            fileCount={patchKit.summary.bundleFileCount}
+            onDownload={downloadZip}
+          />
         </>
       )}
     </div>

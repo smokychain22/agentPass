@@ -3,7 +3,12 @@ import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { classifyFindingsForPatch } from "./safe-delete-classifier";
-import { generateCleanupPatch, countPatchLines } from "./generate-cleanup-patch";
+import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
+import {
+  generateCleanupPatch,
+  countPatchLines,
+  finalizeCleanupPatch,
+} from "./generate-cleanup-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -66,11 +71,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
   const context = await resolveRepoContext(findings, body.repoUrl, body.branch);
   const buckets = classifyFindingsForPatch(findings);
 
-  const cleanupPatch = generateCleanupPatch(buckets.safeDelete);
-  const packageCleanupMd = generatePackageCleanup(
-    findings.unused.dependencies,
-    context.packageManager
+  const safeDeleteCount = buckets.safeDelete.length;
+  const cleanupPatch = finalizeCleanupPatch(
+    safeDeleteCount,
+    generateCleanupPatch(buckets.safeDelete)
   );
+  const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
   const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
     context,
     context.packageManager
@@ -80,12 +86,13 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
   const id = `patchkit_${nanoid(12)}`;
   const summary = {
-    safeDeleteCandidates: buckets.safeDelete.length,
+    safeDeleteCandidates: safeDeleteCount,
     reviewFirstItems: buckets.reviewFirst.length,
     doNotTouchItems: buckets.doNotTouch.length,
     packageSuggestions: findings.unused.dependencies.length,
     patchLines: countPatchLines(cleanupPatch),
     regressionChecks: checkCount,
+    bundleFileCount: BUNDLE_FILE_COUNT,
   };
 
   const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
@@ -130,10 +137,14 @@ export async function runCleanupPatchOnly(
 ): Promise<{ cleanupPatch: string; safeDeleteCandidates: number }> {
   const findings = await resolveFindings(body);
   const buckets = classifyFindingsForPatch(findings);
-  const cleanupPatch = generateCleanupPatch(buckets.safeDelete);
+  const safeDeleteCount = buckets.safeDelete.length;
+  const cleanupPatch = finalizeCleanupPatch(
+    safeDeleteCount,
+    generateCleanupPatch(buckets.safeDelete)
+  );
   return {
     cleanupPatch,
-    safeDeleteCandidates: buckets.safeDelete.length,
+    safeDeleteCandidates: safeDeleteCount,
   };
 }
 
