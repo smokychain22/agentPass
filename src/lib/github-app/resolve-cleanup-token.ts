@@ -37,29 +37,36 @@ export async function resolveCleanupGitHubToken(opts: {
     return opts.githubToken.trim();
   }
 
-  if (isGitHubAppConfigured()) {
-    const session = await readInstallationSession();
-    if (session) {
-      const hasAccess = await installationHasRepoAccess(
-        session.installationId,
-        opts.owner,
-        opts.repo
-      );
-      if (!hasAccess) {
-        throw new ToolExecutionError(
-          "GITHUB_PERMISSION_DENIED",
-          "The connected GitHub App installation does not have access to this repository. Install RepoDiet on this repo and try again.",
-          403
-        );
-      }
-      const installationToken = await createInstallationAccessToken(session.installationId);
-      return installationToken.token;
-    }
+  if (!isGitHubAppConfigured()) {
+    throw new ToolExecutionError(
+      "GITHUB_APP_NOT_CONFIGURED",
+      "GitHub App is not configured on this deployment.",
+      503
+    );
   }
 
-  throw new ToolExecutionError(
-    "MISSING_GITHUB_TOKEN",
-    "Install the RepoDiet GitHub App on this repository, or use advanced manual token mode.",
-    401
+  const session = await readInstallationSession();
+  if (!session) {
+    throw new ToolExecutionError(
+      "GITHUB_APP_NOT_CONNECTED",
+      "Install the RepoDiet GitHub App on this repo before creating a cleanup PR.",
+      401
+    );
+  }
+
+  const hasAccess = await installationHasRepoAccess(
+    session.installationId,
+    opts.owner,
+    opts.repo
   );
+  if (!hasAccess) {
+    throw new ToolExecutionError(
+      "GITHUB_PERMISSION_DENIED",
+      "The connected GitHub App installation does not have access to this repository. Install RepoDiet on this repo and try again.",
+      403
+    );
+  }
+
+  const installationToken = await createInstallationAccessToken(session.installationId);
+  return installationToken.token;
 }

@@ -240,18 +240,13 @@ export const TOOL_MANIFEST_ENTRIES: ToolManifestEntry[] = [
     endpoint: "/api/tools/create_cleanup_pr",
     method: "POST",
     description:
-      "Create a review-ready GitHub cleanup pull request with safe deletions and RepoDiet artifacts.",
+      "Create a review-ready GitHub cleanup pull request via connected GitHub App installation. Safe deletions and RepoDiet artifacts only.",
     inputSchema: {
       type: "object",
       required: ["repoUrl"],
       properties: {
         repoUrl: JSON_SCHEMAS.repoUrl,
         branch: JSON_SCHEMAS.branch,
-        githubToken: {
-          type: "string",
-          description:
-            "Fine-grained GitHub token with repo contents and pull request access. Used once and never stored.",
-        },
         mode: {
           type: "string",
           enum: ["safe_only", "report_only"],
@@ -268,7 +263,12 @@ export const TOOL_MANIFEST_ENTRIES: ToolManifestEntry[] = [
         demo: {
           type: "boolean",
           default: false,
-          description: "Use server demo token for the configured demo repository only.",
+          description: "Demo repo only — uses server demo token, not for normal users.",
+        },
+        githubToken: {
+          type: "string",
+          description:
+            "Advanced fallback only. Primary auth is GitHub App installation via browser session.",
         },
       },
       additionalProperties: false,
@@ -287,25 +287,24 @@ export const TOOL_MANIFEST_ENTRIES: ToolManifestEntry[] = [
       },
     },
     exampleRequest: {
-      repoUrl: "https://github.com/repodiet/demo-slop-app",
+      repoUrl: "https://github.com/user/repo",
       branch: "main",
       mode: "safe_only",
-      demo: true,
     },
     exampleResponse: {
       ok: true,
       tool: "create_cleanup_pr",
       version: A2MCP_VERSION,
       repo: {
-        owner: "repodiet",
-        name: "demo-slop-app",
+        owner: "user",
+        name: "repo",
         baseBranch: "main",
-        cleanupBranch: "repodiet/cleanup-20260710120000",
+        cleanupBranch: "repodiet/cleanup-20260710-abc123",
       },
       pullRequest: {
-        url: "https://github.com/repodiet/demo-slop-app/pull/1",
+        url: "https://github.com/user/repo/pull/1",
         number: 1,
-        title: "RepoDiet: safe cleanup (5 files)",
+        title: "RepoDiet: review-first cleanup bundle",
       },
       policy: { mainBranchMutated: false, requiresHumanMerge: true },
       warnings: [],

@@ -73,7 +73,7 @@ export function RepoDietOperatorSection({
 }: RepoDietOperatorSectionProps) {
   const searchParams = useSearchParams();
   const isDemoRepo = useMemo(() => isDemoRepoUrl(repoUrl), [repoUrl]);
-  const useDemoAuth = demoMode || isDemoRepo;
+  const useDemoAuth = demoMode && isDemoRepo;
 
   const [loading, setLoading] = useState(false);
   const [loadingMode, setLoadingMode] = useState<CleanupPrMode | null>(null);
@@ -165,9 +165,14 @@ export function RepoDietOperatorSection({
             </Badge>
           </div>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground leading-relaxed">
-            Create a review-ready GitHub cleanup PR. RepoDiet applies safe candidates only, adds
-            cleanup artifacts, and leaves merge control to the user.
+            Install RepoDiet on the repo you want to clean. RepoDiet uses minimum GitHub
+            permissions and creates a review-ready PR. It never pushes to main and never merges.
           </p>
+          {!locked && !useDemoAuth && (
+            <p className="mt-2 text-xs text-amber-400/90">
+              RepoDiet only opens pull requests. You stay in control of review and merge.
+            </p>
+          )}
         </div>
         {locked && (
           <Badge variant="muted" className="gap-1.5 font-mono text-[10px]">
@@ -218,9 +223,9 @@ export function RepoDietOperatorSection({
                 )}
                 {!useDemoAuth && (
                   <p className="text-xs text-muted-foreground leading-relaxed max-w-2xl">
-                    Install RepoDiet on the repo you want to clean. Minimum permissions: Contents
-                    write and Pull Requests write. RepoDiet never pushes to main and never merges
-                    PRs.
+                    Install RepoDiet on the repo you want to clean. RepoDiet uses minimum GitHub
+                    permissions and creates a review-ready PR. It never pushes to main and never
+                    merges.
                   </p>
                 )}
               </div>
@@ -290,6 +295,9 @@ export function RepoDietOperatorSection({
             </InfoCard>
 
             <InfoCard title="PR Safety Policy">
+              <p className="text-xs text-foreground font-medium mb-2">
+                RepoDiet creates a branch and PR. You review and merge.
+              </p>
               <ul className="space-y-1.5 text-xs">
                 <li className="flex gap-2">
                   <Shield className="mt-0.5 h-3 w-3 shrink-0 text-signal" />
@@ -312,6 +320,22 @@ export function RepoDietOperatorSection({
           </div>
 
           {!useDemoAuth && (
+            <Card className="border-signal/20 bg-signal/5">
+              <CardContent className="py-4">
+                <p className="text-sm font-medium text-signal">Minimum permissions</p>
+                <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <li>Contents: write</li>
+                  <li>Pull requests: write</li>
+                  <li>Metadata: read</li>
+                </ul>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  No access to secrets, actions, admin settings, or organization members.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {!useDemoAuth && (
             <details
               className="rounded-md border border-border bg-card/40 p-4"
               open={showAdvancedToken}
@@ -331,8 +355,8 @@ export function RepoDietOperatorSection({
                   onChange={(e) => setGithubToken(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Fallback only. Prefer the GitHub App install flow. If used, token is sent once
-                  server-side and never stored.
+                  Emergency hackathon fallback only. Required: Contents Read/Write and Pull Requests
+                  Read/Write. Prefer the GitHub App install flow.
                 </p>
               </div>
             </details>

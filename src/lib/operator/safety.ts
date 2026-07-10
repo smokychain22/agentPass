@@ -22,6 +22,7 @@ const EXTRA_BLOCKED: RegExp[] = [
   /(^|\/)app\/api\/.*\/route\.(tsx?|jsx?)$/,
   /(^|\/)pages\/.*\.(tsx?|jsx?)$/,
   /(^|\/)\.env(\.|$)/,
+  /(^|\/)\.github\/workflows\//,
 ];
 
 function normalizePath(filePath: string): string {

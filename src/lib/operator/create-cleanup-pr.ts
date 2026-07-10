@@ -5,8 +5,10 @@ import type { FindingsPayload } from "@/lib/findings/types";
 import { GitHubClient } from "@/lib/github/github-client";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { classifyFindingsForPatch } from "@/lib/patch-kit/safe-delete-classifier";
+import type { ClassifiedBuckets } from "@/lib/patch-kit/types";
 import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
+import { nanoid } from "nanoid";
 import { filterOperatorSafeDeletes } from "./safety";
 
 export type CleanupPrMode = "safe_only" | "report_only";
@@ -57,42 +59,50 @@ async function resolvePatchKit(
   });
 }
 
-function buildCleanupBranchName(): string {
-  const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
-  return `repodiet/cleanup-${stamp}`;
-}
+const PR_TITLE = "RepoDiet: review-first cleanup bundle";
 
-function buildPrTitle(mode: CleanupPrMode, safeCount: number): string {
-  if (mode === "report_only") {
-    return "RepoDiet: audit report and regression checklist";
-  }
-  return `RepoDiet: safe cleanup (${safeCount} file${safeCount === 1 ? "" : "s"})`;
+function buildCleanupBranchName(): string {
+  const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `repodiet/cleanup-${ymd}-${nanoid(6)}`;
 }
 
 function buildPrBody(
   mode: CleanupPrMode,
   safePaths: string[],
-  reviewFirstCount: number,
-  doNotTouchCount: number
+  findings: FindingsPayload,
+  buckets: ClassifiedBuckets
 ): string {
+  const s = findings.summary;
   const lines = [
     "## RepoDiet Operator cleanup PR",
     "",
     "This pull request was opened by [RepoDiet Operator](https://github.com/smokychain22/agentPass).",
     "",
+    "> **RepoDiet did not push to main or merge this PR.** You review and merge.",
+    "",
+    "### Findings summary",
+    `- Duplicate clusters: **${s.duplicateClusters ?? 0}**`,
+    `- Unused files: **${s.unusedFiles ?? 0}**`,
+    `- Safe candidates: **${buckets.safeDelete.length}**`,
+    `- Review-first items: **${buckets.reviewFirst.length}**`,
+    `- Do-not-touch protected: **${buckets.doNotTouch.length}**`,
+    "",
     "### Mode",
     `- \`${mode}\``,
     "",
-    "### Safety policy",
-    "- No direct pushes to the default branch",
-    "- Human merge required",
-    "- Review-first and do-not-touch findings were not deleted",
-    "- Routes, configs, env files, lockfiles, and public assets remain protected",
-    "",
     "### Action summary",
     `- Safe candidates applied: **${mode === "safe_only" ? safePaths.length : 0}**`,
-    `- Review-first items skipped: **${reviewFirstCount}**`,
-    `- Do-not-touch items protected: **${doNotTouchCount}**`,
+    `- Review-first items skipped: **${buckets.reviewFirst.length}**`,
+    `- Do-not-touch items protected: **${buckets.doNotTouch.length}**`,
+    "",
+    "### Regression checklist",
+    "Run every check in `repodiet/regression-checklist.md` before merging.",
+    "",
+    "### Safety policy",
+    "- No direct pushes to the default branch",
+    "- Human merge required — RepoDiet never merges PRs",
+    "- Review-first and do-not-touch findings were not deleted",
+    "- Routes, configs, env files, lockfiles, workflows, and public assets remain protected",
     "",
     "### Artifacts added",
     "- `repodiet/repodiet-report.md`",
@@ -166,23 +176,6 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const warnings: string[] = [];
   let filesDeleted = 0;
 
-  if (mode === "safe_only") {
-    for (const path of safePaths) {
-      const deleted = await client.deleteFile(
-        parsed.owner,
-        parsed.repo,
-        path,
-        cleanupBranch,
-        `RepoDiet: remove safe candidate ${path}`
-      );
-      if (deleted) {
-        filesDeleted += 1;
-      } else {
-        warnings.push(`Safe candidate not found on branch and was skipped: ${path}`);
-      }
-    }
-  }
-
   const artifacts = patchKit.artifacts;
   const artifactEntries: Array<{ path: string; content: string; message: string }> = [
     {
@@ -223,13 +216,30 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     );
   }
 
+  if (mode === "safe_only") {
+    for (const path of safePaths) {
+      const deleted = await client.deleteFile(
+        parsed.owner,
+        parsed.repo,
+        path,
+        cleanupBranch,
+        `RepoDiet: remove safe candidate ${path}`
+      );
+      if (deleted) {
+        filesDeleted += 1;
+      } else {
+        warnings.push(`Safe candidate not found on branch and was skipped: ${path}`);
+      }
+    }
+  }
+
   const pr = await client.createPullRequest(
     parsed.owner,
     parsed.repo,
-    buildPrTitle(mode, safePaths.length),
+    PR_TITLE,
     cleanupBranch,
     baseBranch,
-    buildPrBody(mode, safePaths, buckets.reviewFirst.length, buckets.doNotTouch.length)
+    buildPrBody(mode, safePaths, findings, buckets)
   );
 
   return {
@@ -243,7 +253,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       pullRequest: {
         url: pr.url,
         number: pr.number,
-        title: buildPrTitle(mode, safePaths.length),
+        title: PR_TITLE,
       },
       actionSummary: {
         mode,
