@@ -22,6 +22,8 @@ import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
 import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
 import { ChangeManifestTable } from "./patch-kit/change-manifest-table";
+import { CandidateAuditTable } from "./patch-kit/candidate-audit-table";
+import { TransformerResultsTable } from "./patch-kit/transformer-results-table";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
@@ -86,7 +88,10 @@ export function PatchKitTab() {
 
   const supportedCount = useMemo(() => {
     if (!findings) return 0;
-    return flattenFindings(findings).filter(isActionableFinding).length;
+    return (
+      findings.summary.transformerCompatible ??
+      flattenFindings(findings).filter(isActionableFinding).length
+    );
   }, [findings]);
 
   const gates = useMemo(
@@ -137,10 +142,12 @@ export function PatchKitTab() {
         title="Quick Cleanup"
         description={
           supportedCount === 0
-            ? "RepoDiet found review findings, but none are currently supported for deterministic cleanup."
-            : patchKit?.summary.supportedFixesDetected
-              ? `${patchKit.summary.supportedFixesDetected} supported fix(es) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
-              : `${supportedCount} eligible finding(s) for deterministic cleanup.`
+            ? "RepoDiet found review findings, but none have a registered transformer for automatic cleanup."
+            : patchKit?.summary.blockerSummary
+              ? patchKit.summary.blockerSummary
+              : patchKit?.summary.transformerCompatible
+                ? `${patchKit.summary.transformerCompatible} transformer-compatible finding(s). RepoDiet dry-runs up to fifteen candidates and retains up to five verified changes.`
+                : `${supportedCount} transformer-compatible finding(s) for cleanup.`
         }
         actions={
           <>
@@ -232,15 +239,24 @@ export function PatchKitTab() {
               dismissible={false}
             />
           )}
-          {patchKit.summary.validatedChanges === 0 &&
-            patchKit.summary.supportedFixesDetected > 0 && (
+          {patchKit.summary.verifiedChanges === 0 &&
+            (patchKit.summary.transformerCompatible ?? 0) > 0 && (
               <FeedbackBanner
                 variant="warning"
-                message={`${patchKit.summary.supportedFixesDetected} supported fix(es) were detected, but none were validated for this run. Review findings or retry Quick Cleanup.`}
+                message={
+                  patchKit.summary.blockerSummary ??
+                  `${patchKit.summary.transformerCompatible} transformer-compatible finding(s); ${patchKit.summary.dryRunPassed ?? 0} dry-run successful; 0 verified changes retained.`
+                }
                 dismissible={false}
               />
             )}
           <PatchKitSummaryCards summary={patchKit.summary} />
+          {patchKit.candidateAudits && patchKit.candidateAudits.length > 0 && (
+            <CandidateAuditTable audits={patchKit.candidateAudits} />
+          )}
+          {patchKit.transformerResults && patchKit.transformerResults.length > 0 && (
+            <TransformerResultsTable results={patchKit.transformerResults} />
+          )}
           {patchKit.changeManifest && patchKit.changeManifest.length > 0 && (
             <ChangeManifestTable entries={patchKit.changeManifest} />
           )}

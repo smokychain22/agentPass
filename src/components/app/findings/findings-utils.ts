@@ -1,4 +1,7 @@
-import type { Finding, FindingAction, FindingType } from "@/lib/findings/types";
+import type { Finding, FindingAction, FindingType, FindingsPayload } from "@/lib/findings/types";
+import { findingAnalyzerLabel } from "@/lib/findings/analyzer-status";
+import type { EvidenceGrade } from "@/lib/workflow/lifecycle";
+import { evidenceGradeForFinding } from "@/lib/workflow/lifecycle";
 
 export function typeLabel(type: FindingType): string {
   const map: Record<FindingType, string> = {
@@ -36,11 +39,51 @@ export function severityColor(severity: string): string {
   return "text-amber-300";
 }
 
+export function evidenceStrengthLabel(grade: EvidenceGrade): string {
+  const label = grade.charAt(0).toUpperCase() + grade.slice(1);
+  return `Evidence strength: ${label}`;
+}
+
+export function evidenceStrengthForFinding(finding: Finding): EvidenceGrade {
+  return finding.evidenceGrade ?? evidenceGradeForFinding(finding);
+}
+
+export function measurableEvidenceLines(finding: Finding): string[] {
+  const lines: string[] = [];
+  const grade = evidenceStrengthForFinding(finding);
+  lines.push(evidenceStrengthLabel(grade));
+
+  const { name, mode } = findingAnalyzerLabel(finding);
+  lines.push(
+    `Analyzer: ${name} · ${mode === "native" ? "Native" : mode === "fallback" ? "Fallback" : "Failed"}`
+  );
+
+  if (finding.type === "duplicate_code") {
+    const dupLines = finding.evidence.signals.find((s) => s.startsWith("lines="));
+    const similarity = finding.evidence.signals.find((s) => s.startsWith("similarity="));
+    if (dupLines) lines.push(`Duplicated lines: ${dupLines.slice("lines=".length)}`);
+    if (similarity) lines.push(`Similarity: ${similarity.slice("similarity=".length)}`);
+    if (finding.files.length >= 2) {
+      lines.push(`File pair: ${finding.files[0]} ↔ ${finding.files[1]}`);
+    }
+    const ranges = finding.evidence.signals.filter((s) => s.startsWith("range="));
+    for (const range of ranges.slice(0, 4)) {
+      lines.push(`Matching range: ${range.slice("range=".length)}`);
+    }
+  }
+
+  if (finding.evidence.summary) {
+    lines.push(finding.evidence.summary);
+  }
+
+  return lines;
+}
+
+/** @deprecated Use evidenceStrengthForFinding + measurableEvidenceLines */
 export function confidenceExplanation(confidence: number): string {
-  const pct = Math.round(confidence * 100);
-  if (pct >= 80) return `High confidence (${pct}%) — strong signals from analysis tools.`;
-  if (pct >= 65) return `Moderate confidence (${pct}%) — review recommended before action.`;
-  return `Lower confidence (${pct}%) — verify manually before any cleanup.`;
+  if (confidence >= 0.85) return "Evidence strength: Strong";
+  if (confidence >= 0.65) return "Evidence strength: Moderate";
+  return "Evidence strength: Weak";
 }
 
 export function patchPreview(finding: Finding): string {
@@ -59,15 +102,26 @@ export function patchPreview(finding: Finding): string {
   return "Included in conservative cleanup recommendations after confirmation.";
 }
 
+export function formatFindingAnalyzerLabel(
+  finding: Finding,
+  reports?: FindingsPayload["rawToolReports"]
+): string {
+  const { name, mode } = findingAnalyzerLabel(finding, reports);
+  const modeLabel =
+    mode === "native" ? "Native" : mode === "fallback" ? "Fallback" : "Failed";
+  return `${name} · ${modeLabel}`;
+}
+
+/** @deprecated Use formatFindingAnalyzerLabel with rawToolReports */
 export function sourceLabel(source: Finding["source"]): string {
   const map: Record<Finding["source"], string> = {
-    knip: "knip",
-    jscpd: "jscpd",
-    madge: "madge",
-    heuristic: "heuristic",
-    knip_fallback: "knip (fallback)",
-    jscpd_fallback: "jscpd (fallback)",
-    madge_fallback: "madge (fallback)",
+    knip: "Knip · Native",
+    jscpd: "jscpd · Native",
+    madge: "Madge · Native",
+    heuristic: "RepoDiet heuristic · Native",
+    knip_fallback: "Internal import graph · Fallback",
+    jscpd_fallback: "Internal duplicate detector · Fallback",
+    madge_fallback: "Internal dependency graph · Fallback",
   };
   return map[source] ?? source;
 }

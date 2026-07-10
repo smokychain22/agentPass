@@ -2,12 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ["knip", "jscpd", "madge", "execa", "typescript", "commander", "formatly", "commondir"],
+  serverExternalPackages: ["knip", "jscpd", "madge", "execa", "typescript", "commander", "formatly", "commondir", "formdata-node"],
   outputFileTracingIncludes: {
     "/api/**": [
       "./demo-repos/**/*",
       "./node_modules/knip/**/*",
       "./node_modules/formatly/**/*",
+      "./node_modules/formdata-node/**/*",
       "./node_modules/jscpd/**/*",
       "./node_modules/jscpd-linux-x64-gnu/**/*",
       "./node_modules/jscpd-sarif-reporter/**/*",

@@ -1,7 +1,7 @@
 import type { Finding, FindingsPayload } from "./types";
 import { flattenFindings } from "./client";
 import { enrichFindingLifecycle } from "@/lib/workflow/lifecycle";
-import { isActionableFinding } from "./actionability-signals";
+import { isActionableFinding, countActionableFindings, countTransformerCompatible, countDryRunPassed } from "./actionability-signals";
 
 export function enrichPayloadLifecycle(
   payload: FindingsPayload,
@@ -31,7 +31,10 @@ export function enrichPayloadLifecycle(
   const flat = flattenFindings(enriched);
   enriched.summary = {
     ...enriched.summary,
-    supportedFixes: flat.filter((f) => f.lifecycleState === "supported" || isActionableFinding(f)).length,
+    transformerCompatible: countTransformerCompatible(flat),
+    dryRunPassed: countDryRunPassed(flat),
+    supportedFixes: countDryRunPassed(flat),
+    actionableFixes: countActionableFindings(flat),
     reviewRequiredFindings: flat.filter((f) => f.action === "review_first").length,
     protectedFindings: flat.filter((f) => f.action === "do_not_touch" || f.protected).length,
   };

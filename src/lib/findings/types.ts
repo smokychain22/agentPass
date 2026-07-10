@@ -107,6 +107,8 @@ export interface FindingsSummary {
   detectedFindings?: number;
   doNotTouch: number;
   supportedFixes?: number;
+  transformerCompatible?: number;
+  dryRunPassed?: number;
   reviewRequiredFindings?: number;
   protectedFindings?: number;
 }
@@ -143,6 +145,7 @@ export interface FindingsPayload {
     workspaces: string[];
     monorepoTool?: string | null;
     primaryProjectRoot?: string;
+    excludedProjectRoots?: string[];
   };
   rawToolReports: {
     knip: ToolRunReport;

@@ -8,6 +8,7 @@ import {
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
 import { resolvePhase1Plugin, resolvePhase1TransformPlugin, type Phase1PluginId } from "./fix-plugins/phase1-plugins";
 import { listStrategiesForFinding } from "./fix-strategies";
+import { blockerCodeFromPreflight } from "./candidate-lifecycle";
 import { hashSource, countDiffStats } from "./transform-audit";
 
 export type CandidateClassification =
@@ -32,6 +33,7 @@ export interface FixPreflightResult {
   proposedDiff?: string;
   protectedPath?: boolean;
   blocker?: string;
+  blockerCode?: import("./candidate-lifecycle").BlockerCode;
 }
 
 export interface GeneratedChangePayload {
@@ -201,24 +203,30 @@ export async function runFixPreflight(
   };
 
   if (protectedPath) {
+    const blocker = "Protected path — automatic fix forbidden.";
     return {
       ...base,
-      blocker: "Protected path — automatic fix forbidden.",
+      blocker,
+      blockerCode: blockerCodeFromPreflight({ ...base, blocker, classification: "detected_candidate" }),
     };
   }
 
   if (plugin.id === "review_only") {
+    const blocker = "No supported automatic transformation.";
     return {
       ...base,
-      blocker: "No supported automatic transformation.",
+      blocker,
+      blockerCode: "plugin_not_implemented",
     };
   }
 
   const strategies = listStrategiesForFinding(finding, plugin.id);
   if (strategies.length === 0) {
+    const blocker = "No supported strategies for this finding.";
     return {
       ...base,
-      blocker: "No supported strategies for this finding.",
+      blocker,
+      blockerCode: "plugin_strategy_missing",
     };
   }
 
@@ -237,12 +245,14 @@ export async function runFixPreflight(
         const currentHash = hashSource(source);
         base.sourceHashMatches = currentHash === options.expectedSourceHash;
         if (!base.sourceHashMatches) {
+          const blocker = "Source hash mismatch — finding is stale for this workspace snapshot.";
           return {
             ...base,
             strategyAvailable: true,
             strategyId: strategy.id,
             sourceHash: currentHash,
-            blocker: "Source hash mismatch — finding is stale for this workspace snapshot.",
+            blocker,
+            blockerCode: "source_hash_mismatch",
           };
         }
       }
@@ -277,10 +287,17 @@ export async function runFixPreflight(
     }
   }
 
+  const blocker = "Dry-run could not produce a valid source modification.";
   return {
     ...base,
     strategyAvailable: strategies.length > 0,
-    blocker: "Dry-run could not produce a valid source modification.",
+    blocker,
+    blockerCode: blockerCodeFromPreflight({
+      ...base,
+      strategyAvailable: strategies.length > 0,
+      blocker,
+      classification: "detected_candidate",
+    }),
   };
 }
 

@@ -20,6 +20,8 @@ function minimalFindings(overrides?: Partial<FindingsPayload>): FindingsPayload 
       reviewRequired: 0,
       safeCandidates: 0,
       actionableFixes: 1,
+      transformerCompatible: 1,
+      dryRunPassed: 1,
       doNotTouch: 0,
     },
     duplicates: [],
@@ -42,7 +44,14 @@ function minimalPatchKit(overrides?: Partial<PatchKitPayload>): PatchKitPayload 
     repo: { owner: "o", name: "r", branch: "main" },
     summary: {
       safeDeleteCandidates: 0,
+      transformerCompatible: 1,
+      dryRunPassed: 1,
+      generatedChanges: 1,
       validatedChanges: 1,
+      verifiedChanges: 1,
+      filesEdited: 1,
+      filesDeleted: 0,
+      filesAdded: 0,
       supportedFixesDetected: 1,
       rawReviewFindings: 0,
       reviewFirstItems: 0,
@@ -55,7 +64,7 @@ function minimalPatchKit(overrides?: Partial<PatchKitPayload>): PatchKitPayload 
     patchValidation: { status: "passed" },
     artifacts: {
       reportMd: "# report",
-      cleanupPatch: "diff",
+      cleanupPatch: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
       packageCleanupMd: "",
       regressionChecklistMd: "",
       cursorPromptMd: "",
@@ -67,7 +76,7 @@ function minimalPatchKit(overrides?: Partial<PatchKitPayload>): PatchKitPayload 
   };
 }
 
-test("computeWorkflowGates locks quick cleanup without supported fixes", () => {
+test("computeWorkflowGates locks quick cleanup without transformer-compatible findings", () => {
   const gates = computeWorkflowGates({
     scanComplete: true,
     projectRootConfirmed: true,
@@ -83,6 +92,8 @@ test("computeWorkflowGates locks quick cleanup without supported fixes", () => {
         reviewRequired: 2,
         safeCandidates: 0,
         actionableFixes: 0,
+        transformerCompatible: 0,
+        dryRunPassed: 0,
         doNotTouch: 0,
       },
     }),
@@ -113,7 +124,10 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
             source: "knip",
             sourceMode: "native",
             reason: "test",
-            evidence: { summary: "x", signals: ["symbol=unusedFoo", "importLine=1"] },
+            evidence: {
+              summary: "x",
+              signals: ["symbol=unusedFoo", "importLine=1", "classification=actionable_candidate"],
+            },
           },
         ],
       },
@@ -123,6 +137,7 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
   assert.equal(gates.quickCleanupAvailable, true);
   assert.equal(gates.verifyUnlocked, true);
   assert.equal(gates.cleanupPrAvailable, true);
+  assert.equal(gates.quickCleanupState, "complete");
 });
 
 test("computeWorkflowGates blocks verify when patch validation failed", () => {
@@ -135,8 +150,11 @@ test("computeWorkflowGates blocks verify when patch validation failed", () => {
       summary: {
         ...minimalPatchKit().summary,
         validatedChanges: 0,
+        verifiedChanges: 0,
+        generatedChanges: 0,
       },
     }),
   });
   assert.equal(gates.verifyUnlocked, false);
+  assert.equal(gates.cleanupPrAvailable, false);
 });

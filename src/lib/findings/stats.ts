@@ -1,6 +1,7 @@
 import type { Finding, FindingsPayload, FindingsSummary, ToolRunReport } from "./types";
 import { countActionableFindings } from "./actionability-signals";
 import { flattenFindings } from "./client";
+import { metricSubtitleForReport } from "./analyzer-status";
 
 export interface CanonicalFindingsStats {
   totalFindings: number;
@@ -108,41 +109,13 @@ export function metricLabel(
     | "slop",
   report?: ToolRunReport
 ): { title: string; subtitle: string } {
-  const fallback = report?.sourceMode === "fallback" || report?.status === "fallback";
-
-  switch (metric) {
-    case "duplicates":
-      return {
-        title: fallback ? "Potential Duplicates" : "Duplicate Clusters",
-        subtitle: fallback
-          ? "Internal duplicate detector (estimated)"
-          : "jscpd native analysis",
-      };
-    case "unusedFiles":
-      return {
-        title: fallback ? "Potentially Unreferenced" : "Unused Files",
-        subtitle: fallback
-          ? "Fallback import-graph estimate"
-          : "Knip unused-file analysis",
-      };
-    case "orphans":
-      return {
-        title: fallback ? "Potential Orphan Modules" : "Orphan Patterns",
-        subtitle: fallback
-          ? "Internal dependency-graph estimate"
-          : "Madge graph analysis",
-      };
-    case "dependencies":
-      return {
-        title: "Unused Dependencies",
-        subtitle: fallback ? "Fallback package import scan" : "Knip dependency audit",
-      };
-    case "slop":
-      return {
-        title: "AI-Slop Signals",
-        subtitle: "Native internal heuristic engine",
-      };
+  if (metric === "slop") {
+    return {
+      title: "AI-Slop Signals",
+      subtitle: "RepoDiet heuristic · Native",
+    };
   }
+  return metricSubtitleForReport(metric, report);
 }
 
 export function analyzerSourceLabel(report: ToolRunReport): {

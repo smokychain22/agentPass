@@ -1,5 +1,6 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { FrameworkName, PackageManager } from "@/lib/scanner/types";
+import type { CandidateAuditRecord, BlockerCode } from "@/lib/execution/candidate-lifecycle";
 
 export interface PatchKitGenerateBody {
   repoUrl: string;
@@ -14,10 +15,28 @@ export interface PatchKitRepo {
   branch: string;
 }
 
+export interface TransformerResult {
+  findingId: string;
+  transformer: string;
+  status: "generated" | "skipped" | "failed";
+  reason: string;
+  filePath?: string;
+  originalHash?: string;
+  resultingDiff?: string;
+}
+
 export interface PatchKitSummary {
   safeDeleteCandidates: number;
+  /** @deprecated Use transformerCompatible */
+  supportedFixesDetected?: number;
+  transformerCompatible: number;
+  dryRunPassed: number;
+  generatedChanges: number;
   validatedChanges: number;
-  supportedFixesDetected: number;
+  verifiedChanges: number;
+  filesEdited: number;
+  filesDeleted: number;
+  filesAdded: number;
   rawReviewFindings: number;
   reviewFirstItems: number;
   doNotTouchItems: number;
@@ -25,9 +44,11 @@ export interface PatchKitSummary {
   patchLines: number;
   regressionChecks: number;
   bundleFileCount: number;
-  patchValidationStatus?: "passed" | "failed" | "skipped";
+  patchValidationStatus?: "passed" | "failed" | "skipped" | "not_generated";
   deletedPaths?: string[];
   changedPaths?: string[];
+  blockerBreakdown?: Partial<Record<BlockerCode, number>>;
+  blockerSummary?: string;
 }
 
 export interface PatchKitArtifacts {
@@ -55,9 +76,11 @@ export interface PatchKitPayload {
   repo: PatchKitRepo;
   summary: PatchKitSummary;
   patchValidation?: {
-    status: "passed" | "failed" | "skipped";
+    status: "passed" | "failed" | "skipped" | "not_generated";
     error?: string;
   };
+  transformerResults?: TransformerResult[];
+  candidateAudits?: CandidateAuditRecord[];
   artifacts: PatchKitArtifacts;
   downloadUrl: string;
   zipBase64?: string;

@@ -1,11 +1,18 @@
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import { runBasicScan } from "@/lib/scanner/run-scan";
-import type { FindingsPayload } from "@/lib/findings/types";
-import { isAutoFixEligible } from "@/lib/cleanup/eligibility";
+import type { Finding, FindingsPayload } from "@/lib/findings/types";
+import { isTransformerCompatible } from "@/lib/findings/actionability-signals";
 import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
 import { QUICK_CLEANUP_RETAINED_FIX_LIMIT } from "@/lib/execution/constants";
+import {
+  auditTransformerCompatibleFindings,
+  formatBlockerBreakdown,
+  summarizeBlockers,
+  type CandidateAuditRecord,
+} from "@/lib/execution/candidate-lifecycle";
 import { classifyFindingsForPatch } from "./safe-delete-classifier";
 import { filterFindingsBySelection } from "./filter-findings";
 import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
@@ -26,11 +33,13 @@ import { generateCursorPrompt } from "./generate-cursor-prompt";
 import { generateReport } from "./generate-report";
 import { buildPatchkitSummaryJson, generateBundle } from "./generate-bundle";
 import { storePatchKit } from "./patch-kit-store";
+import { supportedTransformerFor } from "@/lib/workflow/lifecycle";
 import type {
   ChangeManifestEntry,
   PatchKitGenerateBody,
   PatchKitPayload,
   PatchKitRepoContext,
+  TransformerResult,
 } from "./types";
 
 async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayload> {
@@ -68,6 +77,106 @@ function mergeUnique(a: string[], b: string[]): string[] {
   return [...new Set([...a, ...b])].sort();
 }
 
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 12);
+}
+
+function flattenFindings(findings: FindingsPayload): Finding[] {
+  return [
+    ...findings.duplicates,
+    ...findings.unused.files,
+    ...findings.unused.dependencies,
+    ...findings.unused.exports,
+    ...findings.orphans,
+    ...findings.slopSignals,
+  ];
+}
+
+function mergeExecutionAudits(
+  preflightAudits: CandidateAuditRecord[],
+  executionAudits?: CandidateAuditRecord[]
+): CandidateAuditRecord[] {
+  if (!executionAudits?.length) return preflightAudits;
+  const byId = new Map(preflightAudits.map((a) => [a.findingId, a]));
+  for (const exec of executionAudits) {
+    const existing = byId.get(exec.findingId);
+    if (existing) {
+      byId.set(exec.findingId, {
+        ...existing,
+        ...exec,
+        strategyIds: exec.strategyIds.length ? exec.strategyIds : existing.strategyIds,
+      });
+    } else {
+      byId.set(exec.findingId, exec);
+    }
+  }
+  return [...byId.values()];
+}
+
+function buildTransformerResults(
+  compatibleFindings: Finding[],
+  audits: CandidateAuditRecord[],
+  attempts: Array<{
+    findingId: string;
+    status: string;
+    displayReason: string;
+    pluginId: string;
+    changedPaths: string[];
+    originalSources: Record<string, string>;
+    modifiedSources: Record<string, string>;
+  }>
+): TransformerResult[] {
+  const auditById = new Map(audits.map((a) => [a.findingId, a]));
+  const attemptById = new Map(attempts.map((a) => [a.findingId, a]));
+
+  return compatibleFindings.map((finding) => {
+    const transformer = supportedTransformerFor(finding) ?? finding.supportedTransformer ?? "unknown";
+    const audit = auditById.get(finding.id);
+    const attempt = attemptById.get(finding.id);
+    const filePath = finding.files[0];
+
+    if (attempt?.status === "retained") {
+      const original = filePath ? attempt.originalSources?.[filePath] : undefined;
+      const modified = filePath ? attempt.modifiedSources?.[filePath] : undefined;
+      return {
+        findingId: finding.id,
+        transformer: attempt.pluginId || transformer,
+        status: "generated",
+        reason: attempt.displayReason || "Change generated and retained.",
+        filePath,
+        originalHash: original ? hashContent(original) : undefined,
+        resultingDiff:
+          original && modified
+            ? `--- ${filePath}\n+++ ${filePath}\n(${original.length} → ${modified.length} bytes)`
+            : undefined,
+      };
+    }
+
+    if (attempt && Object.keys(attempt.modifiedSources ?? {}).length > 0) {
+      const original = filePath ? attempt.originalSources?.[filePath] : undefined;
+      return {
+        findingId: finding.id,
+        transformer: attempt.pluginId || transformer,
+        status: "failed",
+        reason: attempt.displayReason || "Change generated but not retained after validation.",
+        filePath,
+        originalHash: original ? hashContent(original) : undefined,
+      };
+    }
+
+    return {
+      findingId: finding.id,
+      transformer: audit?.pluginId ?? transformer,
+      status: "skipped",
+      reason:
+        audit?.blockerMessage ??
+        attempt?.displayReason ??
+        "Transformer did not produce a patch for this finding.",
+      filePath,
+    };
+  });
+}
+
 function pageRoutesFromScan(topLevelFolders: string[]): string[] {
   const routes = ["/"];
   if (topLevelFolders.includes("app")) {
@@ -100,24 +209,41 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
 
     const safeDeleteCount = deletedPaths.length;
-    const flatFindings = [
-      ...findings.duplicates,
-      ...findings.unused.files,
-      ...findings.unused.dependencies,
-      ...findings.unused.exports,
-      ...findings.orphans,
-      ...findings.slopSignals,
-    ];
-    const supportedFixesDetected = flatFindings.filter(isAutoFixEligible).length;
+    const flatFindings = flattenFindings(findings);
+    const compatibleFindings = flatFindings.filter(isTransformerCompatible);
+
+    const { audits: preflightAudits } = await auditTransformerCompatibleFindings(
+      workspace.rootDir,
+      flatFindings
+    );
+
+    const transformerCompatible = compatibleFindings.length;
+    const dryRunPassed = preflightAudits.filter((a) => a.dryRunSucceeded).length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
       maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
       workspaceRootDir: workspace.rootDir,
       quickPatchMode: true,
     });
+
+    const candidateAudits = mergeExecutionAudits(
+      preflightAudits,
+      cleanupResult.candidateAudits
+    );
+
     const fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
+    const generatedChanges = cleanupResult.fixLoop.attempts.filter(
+      (a) => Object.keys(a.modifiedSources ?? {}).length > 0
+    ).length;
     const validatedChanges = cleanupResult.metrics.issuesChanged;
+    const verifiedChanges = validatedChanges;
     const changedPaths = cleanupResult.proof.changedFiles;
+
+    const transformerResults = buildTransformerResults(
+      compatibleFindings,
+      candidateAudits,
+      cleanupResult.fixLoop.attempts
+    );
 
     const validatedEdits: Array<{ path: string; content: string }> = [];
     for (const attempt of cleanupResult.fixLoop.attempts) {
@@ -136,18 +262,27 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const mergedPatch =
       deletePatch && fixDiff ? mergeCleanupPatches(deletePatch, fixDiff) : cleanupPatch;
 
-    let patchValidation: { status: "passed" | "failed" | "skipped"; error?: string };
-    if (
-      validatedChanges > 0 &&
-      patchHasApplyableOperations(mergedPatch) &&
-      mergedPatch !== EMPTY_CLEANUP_PATCH
-    ) {
-      patchValidation = { status: "passed" };
-    } else if (!patchHasApplyableOperations(mergedPatch)) {
-      patchValidation = { status: "skipped", error: "No applyable patch operations." };
+    let patchValidation: {
+      status: "passed" | "failed" | "skipped" | "not_generated";
+      error?: string;
+    };
+    if (!patchHasApplyableOperations(mergedPatch) || mergedPatch === EMPTY_CLEANUP_PATCH) {
+      patchValidation = {
+        status: "not_generated",
+        error:
+          cleanupResult.blockerBreakdown ??
+          "No patch diff was generated — no source modifications passed dry-run and validation.",
+      };
     } else {
       patchValidation = await validateCleanupPatchInWorkspace(workspace.rootDir, mergedPatch);
     }
+
+    const filesEdited = changedPaths.length;
+    const filesDeleted = deletedPaths.length;
+    const filesAdded = 0;
+    const blockerBreakdown = summarizeBlockers(candidateAudits);
+    const blockerSummary =
+      cleanupResult.blockerBreakdown ?? formatBlockerBreakdown(candidateAudits);
 
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
@@ -160,8 +295,15 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const id = `patchkit_${nanoid(12)}`;
     const summary = {
       safeDeleteCandidates: safeDeleteCount,
+      supportedFixesDetected: transformerCompatible,
+      transformerCompatible,
+      dryRunPassed,
+      generatedChanges,
       validatedChanges,
-      supportedFixesDetected,
+      verifiedChanges,
+      filesEdited,
+      filesDeleted,
+      filesAdded,
       rawReviewFindings: findings.summary.reviewRequired,
       reviewFirstItems: buckets.reviewFirst.length,
       doNotTouchItems: buckets.doNotTouch.length,
@@ -172,6 +314,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       patchValidationStatus: patchValidation.status,
       deletedPaths,
       changedPaths,
+      blockerBreakdown,
+      blockerSummary,
     };
 
     const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
@@ -215,6 +359,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       },
       summary,
       patchValidation,
+      transformerResults,
+      candidateAudits,
       artifacts: {
         reportMd,
         cleanupPatch: mergedPatch,

@@ -13,10 +13,16 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
       hint: "Signals from analyzers and heuristics — not yet transformed",
     },
     {
-      label: "Supported fixes",
-      value: summary.supportedFixes ?? summary.actionableFixes ?? 0,
+      label: "Transformer-compatible",
+      value: summary.transformerCompatible ?? summary.supportedFixes ?? 0,
+      level: "neutral" as const,
+      hint: "A fix plugin claims it understands this finding type",
+    },
+    {
+      label: "Dry-run successful",
+      value: summary.dryRunPassed ?? 0,
       level: "safe" as const,
-      hint: "Deterministic transformer available (detected → supported)",
+      hint: "Plugin produced a real source modification at the scanned commit",
     },
     {
       label: "Review required",
@@ -35,7 +41,7 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
   return (
     <Panel variant="elevated" padding="md">
       <p className="ds-label mb-3">Risk classification</p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {rows.map((row) => (
           <div key={row.label} className="rounded border border-border/40 bg-card/40 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -47,8 +53,9 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
         ))}
       </div>
       <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-        Lifecycle: detected ({summary.detectedFindings ?? summary.totalFindings}) → supported (
-        {summary.supportedFixes ?? summary.actionableFixes ?? 0}) · review (
+        Lifecycle: detected ({summary.detectedFindings ?? summary.totalFindings}) →
+        transformer-compatible ({summary.transformerCompatible ?? summary.supportedFixes ?? 0}) →
+        dry-run ({summary.dryRunPassed ?? 0}) · review (
         {summary.reviewRequiredFindings ?? summary.reviewRequired}) · protected (
         {summary.protectedFindings ?? summary.doNotTouch})
       </p>

@@ -1,31 +1,34 @@
 "use client";
 
 import { X } from "lucide-react";
-import type { Finding } from "@/lib/findings/types";
+import type { Finding, FindingsPayload } from "@/lib/findings/types";
 import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
 import {
   actionLabel,
-  confidenceExplanation,
+  formatFindingAnalyzerLabel,
+  measurableEvidenceLines,
   patchPreview,
   severityColor,
-  sourceLabel,
   typeLabel,
 } from "./findings-utils";
 import { cn } from "@/lib/utils";
 
 interface FindingDetailProps {
   finding: Finding;
+  rawToolReports?: FindingsPayload["rawToolReports"];
   onClose?: () => void;
 }
 
-export function FindingDetail({ finding, onClose }: FindingDetailProps) {
+export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetailProps) {
   const bucketLevel =
     finding.action === "safe_candidate"
       ? "safe"
       : finding.action === "do_not_touch"
         ? "protected"
         : "review";
+
+  const evidenceLines = measurableEvidenceLines(finding);
 
   return (
     <Panel variant="elevated" padding="md" className="h-full">
@@ -48,7 +51,9 @@ export function FindingDetail({ finding, onClose }: FindingDetailProps) {
 
       <div className="mb-4 flex flex-wrap gap-2">
         <RiskBadge level={bucketLevel}>{actionLabel(finding.action)}</RiskBadge>
-        <RiskBadge level="neutral">{sourceLabel(finding.source)}</RiskBadge>
+        <RiskBadge level="neutral">
+          {formatFindingAnalyzerLabel(finding, rawToolReports)}
+        </RiskBadge>
         <span className={cn("rounded border border-border/40 px-2 py-0.5 font-mono text-[10px]", severityColor(finding.severity))}>
           {finding.severity} severity
         </span>
@@ -56,7 +61,16 @@ export function FindingDetail({ finding, onClose }: FindingDetailProps) {
 
       <dl className="space-y-4 text-sm">
         <DetailRow label="Reason" value={finding.reason} />
-        <DetailRow label="Evidence" value={confidenceExplanation(finding.confidence)} />
+        <DetailRow
+          label="Evidence"
+          value={
+            <ul className="space-y-1 text-muted-foreground">
+              {evidenceLines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          }
+        />
         <DetailRow
           label="Affected files"
           value={

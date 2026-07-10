@@ -5,7 +5,7 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 
 export interface PatchValidationResult {
-  status: "passed" | "failed" | "skipped";
+  status: "passed" | "failed" | "skipped" | "not_generated";
   error?: string;
 }
 

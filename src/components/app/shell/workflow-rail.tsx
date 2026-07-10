@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Lock, AlertCircle } from "lucide-react";
+import { Check, Lock, AlertCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { QuickCleanupWorkflowState } from "@/lib/workflow/gates";
 
 export type WorkflowStepId = "scan" | "findings" | "patch" | "verify" | "cleanup";
 
-export type StepState = "inactive" | "active" | "completed" | "locked" | "failed";
+export type StepState = "inactive" | "active" | "completed" | "locked" | "failed" | "blocked";
 
 interface WorkflowStep {
   id: WorkflowStepId;
@@ -22,6 +23,7 @@ interface WorkflowRailProps {
   findingsUnlocked: boolean;
   findingsReady: boolean;
   quickCleanupAvailable: boolean;
+  quickCleanupState: QuickCleanupWorkflowState;
   patchKitReady: boolean;
   verifyUnlocked: boolean;
   failedStep?: WorkflowStepId;
@@ -35,6 +37,7 @@ function resolveState(
   findingsUnlocked: boolean,
   findingsReady: boolean,
   quickCleanupAvailable: boolean,
+  quickCleanupState: QuickCleanupWorkflowState,
   patchKitReady: boolean,
   verifyUnlocked: boolean,
   failedStep?: WorkflowStepId
@@ -69,8 +72,24 @@ function resolveState(
         lockReason: "No supported deterministic fixes — review findings or create report-only PR",
       };
     }
-    if (activeStep === "patch") return { state: patchKitReady ? "completed" : "active" };
-    return { state: patchKitReady ? "completed" : "inactive" };
+    if (quickCleanupState === "running") {
+      return { state: "active", lockReason: "Generating changes…" };
+    }
+    if (quickCleanupState === "blocked") {
+      return {
+        state: "blocked",
+        lockReason:
+          patchKitReady
+            ? "Supported findings detected, but no changes were generated or validated"
+            : "Generate cleanup changes to continue",
+      };
+    }
+    if (quickCleanupState === "complete") {
+      if (activeStep === "patch") return { state: "completed" };
+      return { state: "completed" };
+    }
+    if (activeStep === "patch") return { state: "active" };
+    return { state: "inactive" };
   }
   if (stepId === "verify") {
     if (!patchKitReady) {
@@ -79,7 +98,10 @@ function resolveState(
     if (!verifyUnlocked) {
       return {
         state: "locked",
-        lockReason: "Verify unlocks after validated changes are generated",
+        lockReason:
+          quickCleanupState === "blocked"
+            ? "Supported findings were detected, but change generation failed or produced no patch. Review transformer errors or retry generation."
+            : "Verify unlocks after validated changes are generated",
       };
     }
     if (activeStep === "verify") return { state: "active" };
@@ -94,6 +116,7 @@ export function WorkflowRail({
   findingsUnlocked,
   findingsReady,
   quickCleanupAvailable,
+  quickCleanupState,
   patchKitReady,
   verifyUnlocked,
   failedStep,
@@ -111,6 +134,7 @@ export function WorkflowRail({
         findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
+        quickCleanupState,
         patchKitReady,
         verifyUnlocked,
         failedStep
@@ -127,6 +151,7 @@ export function WorkflowRail({
         findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
+        quickCleanupState,
         patchKitReady,
         verifyUnlocked,
         failedStep
@@ -143,6 +168,7 @@ export function WorkflowRail({
         findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
+        quickCleanupState,
         patchKitReady,
         verifyUnlocked,
         failedStep
@@ -159,6 +185,7 @@ export function WorkflowRail({
         findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
+        quickCleanupState,
         patchKitReady,
         verifyUnlocked,
         failedStep
@@ -190,6 +217,7 @@ export function WorkflowRail({
 
 function WorkflowStepLink({ step }: { step: WorkflowStep }) {
   const isLocked = step.state === "locked";
+  const isBlocked = step.state === "blocked";
   const content = (
   <>
       <StepIcon state={step.state} />
@@ -204,11 +232,12 @@ function WorkflowStepLink({ step }: { step: WorkflowStep }) {
     step.state === "active" && "border-electric/40 bg-electric/10 text-electric",
     step.state === "completed" && "border-signal/30 bg-signal/5 text-signal",
     step.state === "locked" && "border-border/40 bg-card/40 text-muted-foreground cursor-not-allowed",
+    step.state === "blocked" && "border-amber-500/30 bg-amber-500/5 text-amber-200 cursor-not-allowed",
     step.state === "failed" && "border-danger/40 bg-danger/5 text-danger",
     step.state === "inactive" && "border-border/40 text-muted-foreground hover:border-border hover:bg-card-elevated"
   );
 
-  if (isLocked) {
+  if (isLocked || isBlocked) {
     return (
       <span className={className} title={step.lockReason}>
         {content}
@@ -226,6 +255,7 @@ function WorkflowStepLink({ step }: { step: WorkflowStep }) {
 function StepIcon({ state }: { state: StepState }) {
   if (state === "completed") return <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />;
   if (state === "locked") return <Lock className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />;
+  if (state === "blocked") return <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />;
   if (state === "failed") return <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />;
   return (
     <span

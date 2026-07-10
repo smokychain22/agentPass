@@ -67,6 +67,7 @@ function AppWorkspace() {
               findingsUnlocked={gates.findingsUnlocked}
               findingsReady={gates.findingsReady}
               quickCleanupAvailable={gates.quickCleanupAvailable}
+              quickCleanupState={gates.quickCleanupState}
               patchKitReady={gates.patchKitReady}
               verifyUnlocked={gates.verifyUnlocked}
               className="mb-6"
