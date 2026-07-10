@@ -12,7 +12,7 @@ if (!BASE) {
 }
 
 const DEMO_REPO = "https://github.com/repodiet/demo-slop-app";
-const SMALL_REPO = process.env.REPODIET_SMOKE_REPO || DEMO_REPO;
+const SMALL_REPO = process.env.REPODIET_SMOKE_REPO || "https://github.com/octocat/Hello-World";
 
 interface Check {
   name: string;

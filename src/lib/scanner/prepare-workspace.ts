@@ -29,13 +29,51 @@ export interface RepoWorkspace {
   cleanup: () => Promise<void>;
 }
 
+async function prepareFromGithubZip(
+  owner: string,
+  name: string,
+  branchInput: string | undefined,
+  url: string
+): Promise<RepoWorkspace> {
+  let workDir: string | null = null;
+  try {
+    const { buffer, branch } = await fetchRepoZip(owner, name, branchInput);
+    assertZipSize(buffer.byteLength);
+
+    workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
+    await fs.mkdir(workDir, { recursive: true });
+    const rootDir = await unzipRepoToDir(buffer, workDir);
+
+    const repo: RepoInfo = { owner, name, branch, url };
+    const capturedWorkDir = workDir;
+    return {
+      rootDir,
+      workDir: capturedWorkDir,
+      repo,
+      cleanup: async () => {
+        await fs.rm(capturedWorkDir, { recursive: true, force: true }).catch(() => {});
+      },
+    };
+  } catch (err) {
+    if (workDir) {
+      await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+    if (err instanceof RepoFetchError) throw err;
+    throw err instanceof Error ? err : new Error("Failed to prepare repository workspace.");
+  }
+}
+
 async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
   const sourceDir = getDemoRepoLocalPath();
   try {
     await fs.access(sourceDir);
   } catch {
-    throw new Error(
-      `Demo repo workspace not found at ${sourceDir}. Ensure demo-repos/repodiet-demo-slop-app is present.`
+    // On Vercel the seeded demo folder may be absent — fetch public demo repo from GitHub.
+    return prepareFromGithubZip(
+      DEMO_REPO_OWNER,
+      DEMO_REPO_NAME,
+      DEMO_REPO_BRANCH,
+      DEMO_REPO_URL
     );
   }
 
@@ -79,43 +117,10 @@ export async function prepareRepoWorkspace(
 
   const branchOverride = branchInput?.trim() || parsed.branch || undefined;
 
-  let workDir: string | null = null;
-
-  try {
-    const { buffer, branch } = await fetchRepoZip(
-      parsed.owner,
-      parsed.repo,
-      branchOverride
-    );
-    assertZipSize(buffer.byteLength);
-
-    workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
-    await fs.mkdir(workDir, { recursive: true });
-    const rootDir = await unzipRepoToDir(buffer, workDir);
-
-    const repo: RepoInfo = {
-      owner: parsed.owner,
-      name: parsed.repo,
-      branch,
-      url: buildRepoUrl(parsed.owner, parsed.repo),
-    };
-
-    const capturedWorkDir = workDir;
-    return {
-      rootDir,
-      workDir: capturedWorkDir,
-      repo,
-      cleanup: async () => {
-        if (capturedWorkDir) {
-          await fs.rm(capturedWorkDir, { recursive: true, force: true }).catch(() => {});
-        }
-      },
-    };
-  } catch (err) {
-    if (workDir) {
-      await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
-    }
-    if (err instanceof RepoFetchError) throw err;
-    throw err instanceof Error ? err : new Error("Failed to prepare repository workspace.");
-  }
+  return prepareFromGithubZip(
+    parsed.owner,
+    parsed.repo,
+    branchOverride,
+    buildRepoUrl(parsed.owner, parsed.repo)
+  );
 }
