@@ -42,7 +42,8 @@ function phaseIndex(phase: FindingsPhase): number {
 
 export function FindingsTab() {
   const searchParams = useSearchParams();
-  const { session, findings, setFindings } = useAppSession();
+  const { session, findings, setFindings, selectedFindingIds, toggleFindingSelection } =
+    useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<FindingsPhase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +209,11 @@ export function FindingsTab() {
 
           <SummaryCards summary={findings.summary} />
           <RepositoryMap findings={allFindings} />
-          <FindingsWorkspace findings={allFindings} />
+          <FindingsWorkspace
+            findings={allFindings}
+            selectedForPatch={selectedFindingIds}
+            onTogglePatchSelection={toggleFindingSelection}
+          />
           <JsonExportCard payload={findings} />
         </>
       )}

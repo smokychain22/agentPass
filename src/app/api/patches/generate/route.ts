@@ -3,6 +3,9 @@ import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { createPatchJob, runPatchJob } from "@/lib/jobs/run-patch-job";
+import { filterFindingsBySelection } from "@/lib/patch-kit/filter-findings";
+import { isDemoRepoUrl } from "@/lib/demo/constants";
+import { enforcePayment } from "@/lib/payment/x402";
 import type { FindingsPayload } from "@/lib/findings/types";
 
 export const runtime = "nodejs";
@@ -34,29 +37,16 @@ export async function POST(request: Request) {
       );
     }
 
-    if (body.selectedFindingIds?.length) {
-      const selected = new Set(body.selectedFindingIds);
-      const filterList = <T extends { id: string }>(items: T[]) =>
-        items.filter((item) => selected.has(item.id));
-      findings = {
-        ...findings,
-        duplicates: filterList(findings.duplicates),
-        unused: {
-          files: filterList(findings.unused.files),
-          dependencies: filterList(findings.unused.dependencies),
-          exports: filterList(findings.unused.exports),
-        },
-        orphans: filterList(findings.orphans),
-        slopSignals: filterList(findings.slopSignals),
-      };
-    }
-
     const repoUrl =
       body.repoUrl?.trim() ||
       `https://github.com/${findings.repo.owner}/${findings.repo.name}`;
 
-    const job = createPatchJob(repoUrl, body.branch ?? findings.repo.branch, ownerKey, findings);
-    const completed = await runPatchJob(job.id, findings);
+    enforcePayment(request, "patch_bundle", { free: isDemoRepoUrl(repoUrl) });
+
+    const filtered = filterFindingsBySelection(findings, body.selectedFindingIds);
+
+    const job = createPatchJob(repoUrl, body.branch ?? filtered.repo.branch, ownerKey, filtered);
+    const completed = await runPatchJob(job.id, filtered, body.selectedFindingIds);
 
     if (completed.status === "failed") {
       return NextResponse.json(
@@ -77,6 +67,10 @@ export async function POST(request: Request) {
         { success: false, error: err.message },
         { status: 429, headers: { "Retry-After": String(err.retryAfterSeconds) } }
       );
+    }
+    const paymentErr = err as Error & { status?: number; body?: unknown };
+    if (paymentErr.status === 402) {
+      return NextResponse.json(paymentErr.body, { status: 402 });
     }
     const message = err instanceof Error ? err.message : "Patch generation failed.";
     return NextResponse.json({ success: false, error: message }, { status: 422 });

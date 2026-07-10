@@ -141,7 +141,8 @@ export async function runPatchKitGeneration(
   repoUrl: string,
   branch: string | undefined,
   findings: FindingsPayload,
-  onPhase: (phase: PatchKitPhase) => void
+  onPhase: (phase: PatchKitPhase) => void,
+  selectedFindingIds?: string[]
 ): Promise<PatchKitPayload> {
   onPhase("classifying");
 
@@ -151,6 +152,7 @@ export async function runPatchKitGeneration(
       branch: branch?.trim() || undefined,
       findings,
       scanId: findings.scanId,
+      selectedFindingIds,
     });
 
     const patchKit = await pollJob<PatchKitPayload>("/api/jobs/patch", jobId, (stage) => {

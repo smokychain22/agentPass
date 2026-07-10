@@ -62,9 +62,15 @@ function matchesBucket(finding: Finding, bucket: BucketKey): boolean {
 
 interface FindingsWorkspaceProps {
   findings: Finding[];
+  selectedForPatch?: string[];
+  onTogglePatchSelection?: (findingId: string) => void;
 }
 
-export function FindingsWorkspace({ findings }: FindingsWorkspaceProps) {
+export function FindingsWorkspace({
+  findings,
+  selectedForPatch = [],
+  onTogglePatchSelection,
+}: FindingsWorkspaceProps) {
   const [category, setCategory] = useState<CategoryKey>("all");
   const [bucket, setBucket] = useState<BucketKey>("all");
   const [search, setSearch] = useState("");
@@ -163,16 +169,30 @@ export function FindingsWorkspace({ findings }: FindingsWorkspaceProps) {
               const active = selected?.id === finding.id;
               return (
                 <li key={finding.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onClick={() => selectFinding(finding.id)}
+                  <div
                     className={cn(
-                      "w-full border-b border-border/40 px-3 py-3 text-left transition-colors",
-                      active ? "bg-electric/5 border-l-2 border-l-electric" : "hover:bg-card"
+                      "flex w-full border-b border-border/40 transition-colors",
+                      selected?.id === finding.id ? "bg-electric/5 border-l-2 border-l-electric" : "hover:bg-card"
                     )}
                   >
+                    {onTogglePatchSelection && finding.action === "safe_candidate" && (
+                      <label className="flex items-start px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedForPatch.includes(finding.id)}
+                          onChange={() => onTogglePatchSelection(finding.id)}
+                          className="mt-1 h-3.5 w-3.5 accent-electric"
+                          aria-label={`Include ${finding.title} in patch bundle`}
+                        />
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected?.id === finding.id}
+                      onClick={() => selectFinding(finding.id)}
+                      className="min-w-0 flex-1 px-3 py-3 text-left"
+                    >
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium text-foreground">{finding.title}</p>
                       <RiskBadge
@@ -193,7 +213,8 @@ export function FindingsWorkspace({ findings }: FindingsWorkspaceProps) {
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       {typeLabel(finding.type)} · {sourceLabel(finding.source)}
                     </p>
-                  </button>
+                    </button>
+                  </div>
                 </li>
               );
             })

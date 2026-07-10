@@ -5,6 +5,7 @@ export interface PatchKitGenerateBody {
   repoUrl: string;
   branch?: string;
   findings?: FindingsPayload;
+  selectedFindingIds?: string[];
 }
 
 export interface PatchKitRepo {
@@ -22,6 +23,8 @@ export interface PatchKitSummary {
   patchLines: number;
   regressionChecks: number;
   bundleFileCount: number;
+  patchValidationStatus?: "passed" | "failed" | "skipped";
+  deletedPaths?: string[];
 }
 
 export interface PatchKitArtifacts {
@@ -38,6 +41,10 @@ export interface PatchKitPayload {
   id: string;
   repo: PatchKitRepo;
   summary: PatchKitSummary;
+  patchValidation?: {
+    status: "passed" | "failed" | "skipped";
+    error?: string;
+  };
   artifacts: PatchKitArtifacts;
   downloadUrl: string;
   zipBase64?: string;
@@ -82,6 +89,9 @@ export const PatchKitGenerateBodySchema = {
         body.findings && typeof body.findings === "object"
           ? (body.findings as FindingsPayload)
           : undefined,
+      selectedFindingIds: Array.isArray(body.selectedFindingIds)
+        ? body.selectedFindingIds.filter((id): id is string => typeof id === "string")
+        : undefined,
     };
   },
 };

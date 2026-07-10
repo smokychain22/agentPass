@@ -141,15 +141,20 @@ This document classifies every user-visible capability as **REAL**, **PARTIAL**,
 
 | Step | Status | Evidence |
 |------|--------|----------|
-| Real repo URL | REAL | `fetch-repo-zip.ts` |
-| Real repository fetch | REAL | `prepare-workspace.ts` |
-| Real findings | REAL | `findings-engine.ts` |
-| Persisted result | PARTIAL | File store — verify on Vercel |
-| Generated patch | REAL | `patch-kit-engine.ts` |
-| git apply --check | REAL | `validate-patch.ts` |
-| Artifact bundle download | REAL | `patches/[patchId]/download` |
-| Verification result | PARTIAL | `verify/run-verification.ts` |
-| OKX/A2MCP execution | REAL | `api/tools/*` |
+| Real repo URL | **REAL** | `fetch-repo-zip.ts` |
+| Safe download/extract | **REAL** | `unzip-repo.ts` + limits |
+| Real/honest analyzers | **REAL** | `findings-engine.ts` + `rawToolReports` |
+| Findings with evidence | **REAL** | `normalize-findings.ts` |
+| Findings persist after refresh | **REAL** | `durable-store.ts` + `GET /api/findings/[scanId]` + `sessionStorage` restore |
+| User selects cleanup candidates | **REAL** | Findings workspace checkboxes + `selectedFindingIds` |
+| Real unified diff patch | **REAL** | `generate-unified-diff.ts` via `git diff HEAD` |
+| `git apply --check` validation | **REAL** | `validate-patch.ts` + `test/unified-diff.test.js` |
+| Downloadable artifact bundle | **REAL** | `GET /api/patches/[patchId]/download` |
+| Isolated verification workspace | **REAL** | `run-verification.ts` |
+| Build/lint/typecheck execution | **PARTIAL** | Runs after `npm install --ignore-scripts`; may fail on complex repos or timeout |
+| GitHub PR after approval | **PARTIAL** | `create_cleanup_pr` when GitHub App configured |
+| OKX/A2MCP same engine | **REAL** | `api/tools/*` executors |
+| Payment enforcement (patch/verify) | **PARTIAL** | x402 gate on patch/verify; demo repo free; `X-RepoDiet-Demo-Pay` header for hackathon |
 
 **Verdict:** RepoDiet is a **real analysis + patch-bundle product** with **honest fallback labeling** and **durable local persistence**. It is **not yet a fully production-hardened multi-tenant SaaS** until cross-instance persistence, payment gating, and full verification are completed and `npm run test:production` passes on the deployed domain.
 

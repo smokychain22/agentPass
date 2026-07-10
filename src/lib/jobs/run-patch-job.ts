@@ -1,7 +1,6 @@
 import { createJobId, saveJob, updateJob } from "./job-store";
 import { durableNow } from "@/lib/store/durable-store";
 import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
-import { validateCleanupPatch } from "@/lib/patch-kit/validate-patch";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchJob, PatchJobStage } from "./types";
@@ -31,7 +30,8 @@ export function createPatchJob(
 
 export async function runPatchJob(
   jobId: string,
-  findings?: FindingsPayload
+  findings?: FindingsPayload,
+  selectedFindingIds?: string[]
 ): Promise<PatchJob> {
   const job = updateJob(jobId, { status: "running", stage: "loading_findings" }) as PatchJob;
 
@@ -47,27 +47,17 @@ export async function runPatchJob(
       repoUrl: job.repoUrl,
       branch: job.branch,
       findings,
+      selectedFindingIds,
     });
 
     setStage("validating_patch");
-    const validation = await validateCleanupPatch(
-      job.repoUrl,
-      job.branch,
-      patchKit.artifacts.cleanupPatch
-    );
-
     setStage("building_bundle");
 
     return updateJob(jobId, {
       status: "complete",
       stage: "complete",
-      result: {
-        ...patchKit,
-        summary: {
-          ...patchKit.summary,
-        },
-      },
-      patchValidation: validation,
+      result: patchKit,
+      patchValidation: patchKit.patchValidation,
     }) as PatchJob;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Patch generation failed.";

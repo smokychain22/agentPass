@@ -22,7 +22,7 @@ import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
-import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
+import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 
 const LOADING: PatchKitPhase[] = [
   "classifying",
@@ -42,7 +42,7 @@ export function PatchKitTab() {
   const searchParams = useSearchParams();
   const demoMode =
     searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
-  const { session, findings, patchKit, setPatchKit } = useAppSession();
+  const { session, findings, patchKit, setPatchKit, selectedFindingIds } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<PatchKitPhase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +60,8 @@ export function PatchKitTab() {
         session.repoUrl,
         session.branch || undefined,
         findings,
-        setPhase
+        setPhase,
+        selectedFindingIds
       );
       setPatchKit(result);
       show("success", "Patch bundle generated");
@@ -69,7 +70,7 @@ export function PatchKitTab() {
       setError(msg);
       show("error", "Patch kit generation failed");
     }
-  }, [findings, session, setPatchKit, show]);
+  }, [findings, session, setPatchKit, show, selectedFindingIds]);
 
   const safeDeleteRows = useMemo(
     () => (findings ? buildSafeDeleteRows(findings) : []),
@@ -104,7 +105,7 @@ export function PatchKitTab() {
       <WorkspaceSection
         label="Review workspace"
         title="Patch Kit"
-        description="Generate conservative cleanup artifacts for review — RepoDiet does not apply changes automatically."
+        description="Select safe-candidate findings, then generate a review-ready patch bundle with a validated unified diff."
         actions={
           <>
             <Button onClick={generate} disabled={isLoading}>
@@ -157,13 +158,24 @@ export function PatchKitTab() {
         <EmptyState
           icon={Package}
           title="Findings ready — generate your patch bundle"
-          description="RepoDiet will classify safe deletes, build a conservative cleanup patch, and package deliverables into a downloadable ZIP."
+          description="RepoDiet classifies safe deletes, builds a git-validated unified diff, and packages deliverables into a downloadable ZIP."
           action={{ label: "Generate Patch Bundle", onClick: generate }}
         />
       )}
 
       {patchKit && (
         <>
+          {patchKit.patchValidation && (
+            <FeedbackBanner
+              variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
+              message={
+                patchKit.patchValidation.status === "passed"
+                  ? `Patch validated with git apply --check (${patchKit.summary.safeDeleteCandidates} file deletions).`
+                  : `Patch validation: ${patchKit.patchValidation.status}${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}`
+              }
+              dismissible={false}
+            />
+          )}
           <PatchKitSummaryCards summary={patchKit.summary} />
           <SafetyPolicyCard />
           <PatchKitWorkspace

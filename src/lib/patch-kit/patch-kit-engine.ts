@@ -1,14 +1,18 @@
 import { nanoid } from "nanoid";
+import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { classifyFindingsForPatch } from "./safe-delete-classifier";
+import { filterFindingsBySelection } from "./filter-findings";
 import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
 import {
-  generateCleanupPatch,
   countPatchLines,
   finalizeCleanupPatch,
+  EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
+import { generateUnifiedDeletePatch } from "./generate-unified-diff";
+import { validateCleanupPatch } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -26,9 +30,10 @@ import type {
 
 async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayload> {
   if (body.findings?.scanId && body.findings?.repo?.owner) {
-    return body.findings;
+    return filterFindingsBySelection(body.findings, body.selectedFindingIds);
   }
-  return runFindingsEngine(body.repoUrl, body.branch);
+  const full = await runFindingsEngine(body.repoUrl, body.branch);
+  return filterFindingsBySelection(full, body.selectedFindingIds);
 }
 
 async function resolveRepoContext(
@@ -45,7 +50,7 @@ async function resolveRepoContext(
       packageManager: scan.packageManager,
       routes: mergeUnique(fromFindings.routes, pageRoutesFromScan(scan.topLevelFolders)),
       apiRoutes: fromFindings.apiRoutes,
-      hasTypecheck: true,
+      hasTypecheck: Boolean(scan.configFiles.some((c) => c.includes("tsconfig"))),
       hasLint: true,
       hasBuild: true,
     };
@@ -67,56 +72,58 @@ function pageRoutesFromScan(topLevelFolders: string[]): string[] {
 }
 
 export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<PatchKitPayload> {
-  const findings = await resolveFindings(body);
-  const context = await resolveRepoContext(findings, body.repoUrl, body.branch);
-  const buckets = classifyFindingsForPatch(findings);
+  const repoUrl =
+    body.repoUrl ||
+    (body.findings
+      ? `https://github.com/${body.findings.repo.owner}/${body.findings.repo.name}`
+      : "");
+  const branch = body.branch ?? body.findings?.repo.branch;
 
-  const safeDeleteCount = buckets.safeDelete.length;
-  const cleanupPatch = finalizeCleanupPatch(
-    safeDeleteCount,
-    generateCleanupPatch(buckets.safeDelete)
-  );
-  const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
-  const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
-    context,
-    context.packageManager
-  );
-  const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
-  const reportMd = generateReport(findings, buckets, context);
+  const workspace = await prepareRepoWorkspace(repoUrl, branch);
 
-  const id = `patchkit_${nanoid(12)}`;
-  const summary = {
-    safeDeleteCandidates: safeDeleteCount,
-    rawReviewFindings: findings.summary.reviewRequired,
-    reviewFirstItems: buckets.reviewFirst.length,
-    doNotTouchItems: buckets.doNotTouch.length,
-    packageSuggestions: findings.unused.dependencies.length,
-    patchLines: countPatchLines(cleanupPatch),
-    regressionChecks: checkCount,
-    bundleFileCount: BUNDLE_FILE_COUNT,
-  };
+  try {
+    const findings = body.findings
+      ? filterFindingsBySelection(body.findings, body.selectedFindingIds)
+      : await runFindingsEngine(repoUrl, branch);
 
-  const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
+    const context = await resolveRepoContext(findings, repoUrl, branch);
+    const buckets = classifyFindingsForPatch(findings);
 
-  const bundle = await generateBundle(findings.repo.name, findings.repo.branch, {
-    reportMd,
-    cleanupPatch,
-    packageCleanupMd,
-    regressionChecklistMd,
-    cursorPromptMd,
-    findingsJson: findings,
-    patchkitSummaryJson,
-  });
+    const { patch: rawPatch, deletedPaths } = await generateUnifiedDeletePatch(
+      workspace.rootDir,
+      buckets.safeDelete
+    );
 
-  const payload: PatchKitPayload = {
-    id,
-    repo: {
-      owner: findings.repo.owner,
-      name: findings.repo.name,
-      branch: findings.repo.branch,
-    },
-    summary,
-    artifacts: {
+    const safeDeleteCount = deletedPaths.length;
+    const cleanupPatch = finalizeCleanupPatch(safeDeleteCount, rawPatch);
+
+    const patchValidation = await validateCleanupPatch(repoUrl, branch, cleanupPatch);
+
+    const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
+    const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
+      context,
+      context.packageManager
+    );
+    const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
+    const reportMd = generateReport(findings, buckets, context);
+
+    const id = `patchkit_${nanoid(12)}`;
+    const summary = {
+      safeDeleteCandidates: safeDeleteCount,
+      rawReviewFindings: findings.summary.reviewRequired,
+      reviewFirstItems: buckets.reviewFirst.length,
+      doNotTouchItems: buckets.doNotTouch.length,
+      packageSuggestions: findings.unused.dependencies.length,
+      patchLines: countPatchLines(cleanupPatch),
+      regressionChecks: checkCount,
+      bundleFileCount: BUNDLE_FILE_COUNT,
+      patchValidationStatus: patchValidation.status,
+      deletedPaths,
+    };
+
+    const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
+
+    const bundle = await generateBundle(findings.repo.name, findings.repo.branch, {
       reportMd,
       cleanupPatch,
       packageCleanupMd,
@@ -124,28 +131,44 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cursorPromptMd,
       findingsJson: findings,
       patchkitSummaryJson,
-    },
-    downloadUrl: `/api/patches/${id}/download`,
-    zipBase64: bundle.zipBase64,
-  };
+    });
 
-  storePatchKit(payload, bundle.zipBuffer, bundle.filename);
-  return payload;
+    const payload: PatchKitPayload = {
+      id,
+      repo: {
+        owner: findings.repo.owner,
+        name: findings.repo.name,
+        branch: findings.repo.branch,
+      },
+      summary,
+      patchValidation,
+      artifacts: {
+        reportMd,
+        cleanupPatch,
+        packageCleanupMd,
+        regressionChecklistMd,
+        cursorPromptMd,
+        findingsJson: findings,
+        patchkitSummaryJson,
+      },
+      downloadUrl: `/api/patches/${id}/download`,
+      zipBase64: bundle.zipBase64,
+    };
+
+    storePatchKit(payload, bundle.zipBuffer, bundle.filename);
+    return payload;
+  } finally {
+    await workspace.cleanup();
+  }
 }
 
 export async function runCleanupPatchOnly(
   body: PatchKitGenerateBody
 ): Promise<{ cleanupPatch: string; safeDeleteCandidates: number }> {
-  const findings = await resolveFindings(body);
-  const buckets = classifyFindingsForPatch(findings);
-  const safeDeleteCount = buckets.safeDelete.length;
-  const cleanupPatch = finalizeCleanupPatch(
-    safeDeleteCount,
-    generateCleanupPatch(buckets.safeDelete)
-  );
+  const result = await runPatchKitEngine(body);
   return {
-    cleanupPatch,
-    safeDeleteCandidates: safeDeleteCount,
+    cleanupPatch: result.artifacts.cleanupPatch,
+    safeDeleteCandidates: result.summary.safeDeleteCandidates,
   };
 }
 

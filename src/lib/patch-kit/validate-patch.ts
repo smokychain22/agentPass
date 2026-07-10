@@ -10,43 +10,58 @@ export interface PatchValidationResult {
   error?: string;
 }
 
-const DELETE_MARKERS = [/^git rm /m, /^deleted file mode /m, /^diff --git a\/.+ b\/.+$/m];
+const DELETE_MARKERS = [/^deleted file mode /m, /^diff --git a\/.+ b\/.+$/m];
 
 export function patchHasDeleteOperations(patch: string): boolean {
   return DELETE_MARKERS.some((pattern) => pattern.test(patch));
 }
 
-export async function validateCleanupPatch(
-  repoUrl: string,
-  branch: string | undefined,
+/** Strip comment header lines before applying patch. */
+export function extractApplyablePatch(patch: string): string {
+  const lines = patch.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("diff --git "));
+  if (start === -1) return patch;
+  return lines.slice(start).join("\n");
+}
+
+async function gitBaseline(rootDir: string): Promise<void> {
+  await execa("git", ["init"], { cwd: rootDir, reject: false });
+  await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });
+  await execa(
+    "git",
+    [
+      "-c",
+      "user.email=repodiet@local",
+      "-c",
+      "user.name=RepoDiet",
+      "commit",
+      "-m",
+      "baseline",
+      "--allow-empty",
+    ],
+    { cwd: rootDir, reject: false }
+  );
+}
+
+export async function validateCleanupPatchInWorkspace(
+  rootDir: string,
   patch: string
 ): Promise<PatchValidationResult> {
   if (!patchHasDeleteOperations(patch)) {
     return { status: "skipped", error: "No delete operations in patch." };
   }
 
-  const workspace = await prepareRepoWorkspace(repoUrl, branch);
+  const applyable = extractApplyablePatch(patch);
   const tempDir = path.join(os.tmpdir(), `repodiet-validate-${randomUUID()}`);
   const patchFile = path.join(tempDir, "repodiet-cleanup.patch");
 
   try {
     await fs.mkdir(tempDir, { recursive: true });
-    await fs.writeFile(patchFile, patch, "utf8");
-
-    const gitInit = await execa("git", ["init"], { cwd: workspace.rootDir, reject: false });
-    if (gitInit.exitCode !== 0) {
-      return { status: "failed", error: gitInit.stderr || "git init failed." };
-    }
-
-    await execa("git", ["add", "-A"], { cwd: workspace.rootDir, reject: false });
-    await execa(
-      "git",
-      ["-c", "user.email=repodiet@local", "-c", "user.name=RepoDiet", "commit", "-m", "baseline", "--allow-empty"],
-      { cwd: workspace.rootDir, reject: false }
-    );
+    await fs.writeFile(patchFile, applyable, "utf8");
+    await gitBaseline(rootDir);
 
     const check = await execa("git", ["apply", "--check", patchFile], {
-      cwd: workspace.rootDir,
+      cwd: rootDir,
       reject: false,
       timeout: 60_000,
     });
@@ -65,7 +80,19 @@ export async function validateCleanupPatch(
       error: err instanceof Error ? err.message : "Patch validation failed.",
     };
   } finally {
-    await workspace.cleanup();
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function validateCleanupPatch(
+  repoUrl: string,
+  branch: string | undefined,
+  patch: string
+): Promise<PatchValidationResult> {
+  const workspace = await prepareRepoWorkspace(repoUrl, branch);
+  try {
+    return await validateCleanupPatchInWorkspace(workspace.rootDir, patch);
+  } finally {
+    await workspace.cleanup();
   }
 }
