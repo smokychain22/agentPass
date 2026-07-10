@@ -7,34 +7,34 @@ import { SiteHeader, SiteFooter } from "@/components/layout/site-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TOOL_MANIFEST_ENTRIES } from "@/lib/a2mcp/tool-manifest";
 import { A2MCP_VERSION } from "@/lib/a2mcp/constants";
 import { buildToolCurl, getServerBaseUrl } from "@/lib/docs/base-url";
 import { MarketingCta } from "@/components/landing/marketing-cta";
 import {
   A2MCP_READINESS_COPY,
+  A2MCP_TOOLS_HIGHLIGHT,
+  OKX_A2A_SERVICE,
   OKX_DEMO_FLOW,
   PRICING_TIERS,
 } from "@/lib/marketing/content";
 import { CopyButton } from "./copy-button";
 
-const LIVE_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
+const LIVE_TOOLS = A2MCP_TOOLS_HIGHLIGHT;
 
 const PROPOSED_PRICING = [
   { tool: "scan_repo_bloat", price: "0.05 USDT", note: "Quick structure + findings summary" },
-  { tool: "detect_duplicate_code", price: "0.05 USDT", note: "Duplicate cluster report" },
-  { tool: "find_dead_files", price: "0.05 USDT", note: "Unused + orphan file analysis" },
-  { tool: "find_unused_dependencies", price: "0.05 USDT", note: "Package cleanup suggestions" },
-  { tool: "generate_cleanup_patch", price: "0.15 USDT", note: "Full Patch Kit bundle" },
+  { tool: "generate_cleanup_patch", price: "0.25 USDT", note: "Full Patch Kit bundle" },
   { tool: "generate_regression_checklist", price: "0.05 USDT", note: "Regression checklist" },
+  { tool: "create_cleanup_pr", price: "1–5 USDT", note: "Review-ready cleanup PR for safe candidates" },
 ];
 
 const SAFETY_POLICY = [
-  "Public GitHub repositories only — no private tokens required",
-  "No repository mutation or auto-delete",
-  ".env files detected but never read or displayed",
-  "cleanup.patch includes safe candidates only",
-  "Review First findings are documented, not patched",
+  "Never pushes directly to main — cleanup PRs use a separate branch",
+  "Never merges pull requests automatically — human review required",
+  "Only safe-candidate files are deleted on cleanup branches",
+  "Review First findings are documented, not changed",
+  "Routes, configs, env files, lockfiles, and public assets are protected",
+  "User GitHub tokens are used once and never stored",
 ];
 
 const SUBMISSION_CHECKLIST = [
@@ -42,9 +42,10 @@ const SUBMISSION_CHECKLIST = [
   "GET /api/tools/health returns ok: true",
   "GET /api/tools/manifest returns tool schemas",
   "POST /api/tools/scan_repo_bloat works on a public repo",
-  "PATCH bundle generates conservative artifacts (no unsafe deletes)",
-  "Docs page documents all endpoints with curl examples",
-  "OKX listing describes A2MCP-ready APIs honestly (payment gateway optional)",
+  "Generate Patch Kit — conservative bundle with 7 artifacts",
+  "Create Cleanup PR via RepoDiet Operator",
+  "Open GitHub PR and run regression checklist before merging",
+  "POST /api/tools/create_cleanup_pr returns PR URL and safety summary",
 ];
 
 export function OkxPageContent() {
@@ -81,10 +82,10 @@ export function OkxPageContent() {
         </Badge>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">RepoDiet on OKX.AI</h1>
         <p className="mt-4 max-w-2xl text-muted-foreground leading-relaxed">
-          RepoDiet is a Software Utility Agent Service Provider for the OKX.AI Genesis Hackathon.
-          Agents call A2MCP-ready JSON tools for scanning and patch generation. Full cleanup
-          workflows can be delivered as A2A agent tasks with optional x402 settlement at the gateway
-          layer.
+          RepoDiet Operator is a Software Utility Agent Service Provider for the OKX.AI Genesis
+          Hackathon. Agents call A2MCP-ready JSON tools for scanning, patch generation, and cleanup
+          PR creation. Full cleanup workflows can be delivered as A2A agent tasks with optional
+          x402 settlement at the gateway layer — not live on the public demo deployment.
         </p>
 
         <div className="mt-6 flex flex-wrap gap-2">
@@ -152,19 +153,17 @@ export function OkxPageContent() {
         <section className="mt-12">
           <h2 className="text-lg font-semibold">A2A cleanup service</h2>
           <Card className="mt-4 border-border/80">
-            <CardContent className="py-4 text-sm text-muted-foreground leading-relaxed space-y-3">
-              <p>
-                RepoDiet delivers agent-to-agent cleanup workflows: scan a JavaScript/TypeScript
-                repository, classify findings into safe / review-first / do-not-touch buckets, and
-                return a Patch Kit bundle with report, conservative cleanup patch, package
-                suggestions, regression checklist, Cursor prompt, and findings.json.
-              </p>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{OKX_A2A_SERVICE.name}</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground leading-relaxed space-y-3">
+              <p>{OKX_A2A_SERVICE.description}</p>
               <p>
                 Agents can chain tools — for example{" "}
                 <code className="font-mono text-xs">scan_repo_bloat</code> →{" "}
                 <code className="font-mono text-xs">generate_cleanup_patch</code> →{" "}
-                <code className="font-mono text-xs">generate_regression_checklist</code> — without
-                human UI interaction.
+                <code className="font-mono text-xs">create_cleanup_pr</code> — without human UI
+                interaction.
               </p>
             </CardContent>
           </Card>
@@ -173,8 +172,8 @@ export function OkxPageContent() {
         <section className="mt-12">
           <h2 className="text-lg font-semibold">Pricing</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            ASP tiers for OKX listing. Public demo endpoints are open — x402 payment enforcement is
-            not live on the demo deployment.
+            ASP tiers for OKX listing. Public demo endpoints are open — A2MCP-ready APIs are live;
+            x402 payment enforcement is not live on the demo deployment.
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {PRICING_TIERS.map((tier) => (

@@ -5,6 +5,7 @@ export const MAX_REPO_ZIP_BYTES = 25 * 1024 * 1024;
 export const MAX_FILES_ANALYZED = 5000;
 export const MAX_SINGLE_FILE_BYTES = 500 * 1024;
 export const TOOL_TIMEOUT_MS = 60_000;
+export const OPERATOR_TOOL_TIMEOUT_MS = 300_000;
 
 export const DEFAULT_PROTECTED_FILES = [
   "env files",

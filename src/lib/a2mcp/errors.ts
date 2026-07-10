@@ -69,6 +69,27 @@ export function mapErrorToToolError(err: unknown, tool: string): ToolExecutionEr
   if (lower.includes("patch kit") || lower.includes("patch generation")) {
     return new ToolExecutionError("PATCH_GENERATION_FAILED", message, 422);
   }
+  if (lower.includes("github token") && lower.includes("required")) {
+    return new ToolExecutionError("MISSING_GITHUB_TOKEN", message, 401);
+  }
+  if (lower.includes("install the repodiet github app") || lower.includes("not connected")) {
+    return new ToolExecutionError("GITHUB_APP_NOT_CONNECTED", message, 401);
+  }
+  if (lower.includes("github app is not configured")) {
+    return new ToolExecutionError("GITHUB_APP_NOT_CONFIGURED", message, 503);
+  }
+  if (lower.includes("demo mode only") || lower.includes("demo repository")) {
+    return new ToolExecutionError("DEMO_REPO_ONLY", message, 403);
+  }
+  if (lower.includes("no safe cleanup pr") || lower.includes("no safe candidates")) {
+    return new ToolExecutionError("NO_SAFE_CANDIDATES", message, 422);
+  }
+  if (lower.includes("permission") || lower.includes("forbidden") && lower.includes("github")) {
+    return new ToolExecutionError("GITHUB_PERMISSION_DENIED", message, 403);
+  }
+  if (lower.includes("pull request") || lower.includes("failed to open github")) {
+    return new ToolExecutionError("PR_CREATION_FAILED", message, 502);
+  }
   if (lower.includes("analyzer") || lower.includes("knip") || lower.includes("jscpd") || lower.includes("madge")) {
     return new ToolExecutionError("ANALYZER_FAILED", message, 422);
   }

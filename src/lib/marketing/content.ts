@@ -4,8 +4,8 @@ import { buildDemoTerminalLines, getDemoScanStats } from "@/lib/demo/terminal-li
 
 export const TRUST_POINTS = [
   "Public repositories only",
-  "No repository mutation",
-  "Review-first cleanup",
+  "No main-branch pushes",
+  "Review-first cleanup PRs",
 ] as const;
 
 export const TRUST_LINE = TRUST_POINTS.join(" · ");
@@ -23,14 +23,14 @@ export const HERO = {
   badge: "REPOSITORY INTELLIGENCE",
   headline: "Your AI-built repo is getting heavier every commit.",
   subheadline:
-    "RepoDiet scans JavaScript and TypeScript repositories for duplicate logic, dead files, dependency drift, orphan modules, and AI-generated code debt—then creates a conservative cleanup bundle your team can review before merging.",
+    "RepoDiet scans JavaScript and TypeScript repositories for duplicate logic, dead files, dependency drift, orphan modules, and AI-generated code debt—then creates a conservative cleanup bundle and opens a review-ready GitHub PR for safe candidates.",
 };
 
 export const SITE_TAGLINES = {
-  debt: "AI code creates cleanup debt. RepoDiet turns it into a review-ready patch bundle.",
+  debt: "AI code creates cleanup debt. RepoDiet Operator turns it into a review-ready cleanup PR.",
   positioning:
-    "Not auto-clean. Not a linter. A conservative cleanup workflow for AI-built repos.",
-  workflow: "Scan the repo. Map the risk. Generate the bundle. Verify before merging.",
+    "Not auto-clean. Not a linter. A conservative cleanup operator for AI-built repos.",
+  workflow: "Scan the repo. Map the risk. Generate the bundle. Open the cleanup PR. Verify before merging.",
   safety:
     "RepoDiet protects routes, configs, env files, lockfiles, and public assets by default.",
   audience: "Built for teams and solo builders using AI coding tools every day.",
@@ -140,6 +140,52 @@ export const PIPELINE_STEPS = WORKFLOW_STEPS.map((s) => ({
   accent: s.accent,
 }));
 
+export const SCAN_TO_PR_SECTION = {
+  eyebrow: "From scan to pull request",
+  title: "From scan to pull request",
+  description:
+    "AI agents should not only diagnose code debt. They should create review-safe changes. RepoDiet Operator opens cleanup PRs for safe candidates.",
+};
+
+export const SCAN_TO_PR_STEPS = [
+  "Messy AI Repo",
+  "Findings",
+  "Risk Buckets",
+  "Patch Kit",
+  "Cleanup PR",
+  "Human Merge",
+] as const;
+
+export const TOP3_STORY = {
+  before: "Scanner + report bundle",
+  after: "Safe cleanup operator + GitHub PR action",
+  asp:
+    "A2MCP: agent calls create_cleanup_pr. A2A: user hires RepoDiet Operator to clean their repo and deliver a PR.",
+};
+
+export const USE_CASES = [
+  {
+    title: "Before hackathon submission",
+    description:
+      "Create a cleanup PR that removes obvious archive/tmp/backup files and adds a regression checklist.",
+  },
+  {
+    title: "Before client handoff",
+    description:
+      "Show a professional cleanup report and PR instead of handing over messy AI-generated code.",
+  },
+  {
+    title: "After heavy Cursor/Claude sessions",
+    description:
+      "Find AI-created leftovers and open a review-safe cleanup branch.",
+  },
+  {
+    title: "Before production deploy",
+    description:
+      "Separate safe cleanup from risky files so the team does not guess what to delete.",
+  },
+] as const;
+
 export const TRANSFORMATION_SECTION = {
   eyebrow: "Transformation",
   title: "Watch repository debt become a safe cleanup plan.",
@@ -208,19 +254,21 @@ export const AFTER_ITEMS = [
   "Safe candidates separated from review items",
   "Protected files clearly marked",
   "Patch bundle generated",
-  "Regression checklist ready before edits",
+  "Cleanup PR opened for human review",
+  "Regression checklist ready before merging",
 ];
 
 export const FLOW_METRICS = [
   "Raw repo",
   "Risk map",
   "Patch bundle",
-  "Verification plan",
+  "Cleanup PR",
+  "Human merge",
 ];
 
 export const OUTPUTS_SECTION = {
   eyebrow: "Deliverables",
-  title: "RepoDiet does not just report problems. It ships cleanup artifacts.",
+  title: "RepoDiet Operator does not just report problems. It opens review-ready cleanup PRs.",
   subtitle: "Sample bundle generated from the messy demo repo — real Patch Kit output.",
 };
 
@@ -243,6 +291,7 @@ export const ARTIFACT_PREVIEWS = [
 # Safe delete commands — review before applying.
 # No automatic delete unless Safe Candidates exist.
 git rm archive/OldDashboard.tsx
+git rm archive/OldScreen.tsx
 git rm backup/GeneratedCardCopy.tsx
 git rm tmp/temp-widget.tsx
 git rm old/UnusedLandingOld.tsx`,
@@ -310,11 +359,27 @@ export const SAFETY_PROTECTED_CATEGORIES = [
 ] as const;
 
 export const SAFETY_PRINCIPLES = [
-  { title: "No repository mutation", description: "RepoDiet never writes to your GitHub repo." },
-  { title: "No automatic deletion", description: "Cleanup artifacts are review-first — you decide what merges." },
-  { title: "Human-controlled merge", description: "Patches are generated for review, not applied silently." },
-  { title: "Regression-first verification", description: "Every bundle includes build, lint, and route checks." },
-  { title: "Fallback transparency", description: "Analyzer sources are marked: native or fallback." },
+  {
+    title: "No main-branch pushes",
+    description: "RepoDiet Operator opens a cleanup branch and PR — it never commits directly to main.",
+  },
+  {
+    title: "Safe candidates only",
+    description: "Only conservative safe-delete files are removed. Review-first items stay untouched.",
+  },
+  {
+    title: "Protected files",
+    description:
+      "Routes, env files, configs, lockfiles, API handlers, and public assets are protected.",
+  },
+  {
+    title: "Token hygiene",
+    description: "Installation tokens are short-lived and generated server-side — never stored or logged.",
+  },
+  {
+    title: "Regression-first",
+    description: "Every cleanup PR includes checklist artifacts before merging.",
+  },
 ] as const;
 
 /** @deprecated Use SAFETY_PRINCIPLES */
@@ -339,12 +404,19 @@ export const API_SECTION = {
 
 export const PRICING_SECTION = {
   eyebrow: "Plans",
-  title: "Start free. Scale when you need full bundles.",
+  title: "Start free. Scale to cleanup PRs when you need action.",
   description:
-    "Scan and preview on the public demo. Full patch bundles when you need deliverable cleanup artifacts.",
+    "Scan and preview on the public demo. Patch bundles and cleanup PRs when you need deliverable cleanup artifacts and GitHub actions.",
   note:
-    "Public demo endpoints are open for review. Paid gating can be added at the OKX listing layer.",
+    "Public demo endpoints are open for review. A2MCP-ready APIs — paid x402 gating is not live on the demo deployment.",
 };
+
+export const A2MCP_TOOLS_HIGHLIGHT = [
+  "scan_repo_bloat",
+  "generate_cleanup_patch",
+  "generate_regression_checklist",
+  "create_cleanup_pr",
+] as const;
 
 export const A2MCP_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
 
@@ -359,7 +431,7 @@ export const A2MCP_TOOL_GROUPS = [
   },
   {
     category: "Generation",
-    tools: ["generate_cleanup_patch"],
+    tools: ["generate_cleanup_patch", "create_cleanup_pr"],
   },
   {
     category: "Verification",
@@ -377,31 +449,17 @@ export const DEMO_PROGRESS_STEPS = [
 
 export const PRICING_TIERS = [
   {
-    name: "Demo",
+    name: "Free",
     price: "Free",
-    description: "Explore RepoDiet on the messy demo repo.",
+    description: "Scan and findings preview on public repos.",
     features: [
-      "Demo repo scan",
+      "Repo structure scan",
       "Findings preview",
-      "Patch bundle preview",
-      "Sample ZIP download",
-    ],
-    cta: "Try Messy Demo",
-    href: "/app?demo=true",
-    highlighted: false,
-  },
-  {
-    name: "Quick Scan",
-    price: "0.05 USDT",
-    description: "Structure scan and bloat summary for a public repository.",
-    features: [
-      "Repo structure",
-      "Bloat summary",
       "Risk buckets",
-      "findings.json",
+      "Demo repo workflow",
     ],
-    cta: "Scan a Repo",
-    href: "/app",
+    cta: "Try Demo Repo",
+    href: "/app?demo=true",
     highlighted: false,
   },
   {
@@ -418,17 +476,33 @@ export const PRICING_TIERS = [
     ],
     cta: "Generate Bundle",
     href: "/app?tab=patch",
+    highlighted: false,
+  },
+  {
+    name: "Cleanup PR",
+    price: "1–5 USDT",
+    description: "Creates a review-ready cleanup PR for safe candidates.",
+    features: [
+      "Safe candidate deletions",
+      "Cleanup branch",
+      "RepoDiet artifacts",
+      "GitHub PR opened",
+      "Human merge required",
+    ],
+    cta: "Create Cleanup PR",
+    href: "/app?tab=patch&demo=true",
     highlighted: true,
   },
   {
-    name: "A2A Cleanup",
-    price: "Custom",
-    description: "Guided cleanup delivery with human review gates.",
+    name: "A2A Cleanup Review",
+    price: "5–25 USDT",
+    description: "Manual review and cleanup plan for larger repos.",
     features: [
       "Manual review",
       "Cleanup plan",
-      "Patch delivery",
+      "PR delivery",
       "Verification checklist",
+      "Agent-to-agent delivery",
     ],
     cta: "Contact us",
     href: "/okx",
@@ -437,20 +511,28 @@ export const PRICING_TIERS = [
 ];
 
 export const OKX_DEMO_FLOW = [
-  "Open RepoDiet app and scan a public GitHub repository",
+  "Open RepoDiet app and scan the messy demo repo",
   "Run Findings Engine to map duplicates, unused code, and risk buckets",
   "Generate Patch Kit — conservative bundle with 7 artifacts",
-  "Download ZIP and run regression checklist before any cleanup",
-  "Call A2MCP JSON endpoints directly for agent integration",
+  "Create Cleanup PR — safe deletes + RepoDiet artifacts on a review branch",
+  "Open GitHub PR and run regression checklist before merging",
+  "Call A2MCP create_cleanup_pr for agent automation",
 ];
 
+export const OKX_A2A_SERVICE = {
+  name: "RepoDiet Operator — Create a safe cleanup PR for my AI-built repo",
+  description:
+    "RepoDiet Operator scans an AI-built JavaScript/TypeScript repo, classifies cleanup risk, creates a safe cleanup branch, applies only safe candidate removals, adds cleanup artifacts, and opens a GitHub PR for review. It never pushes to main, never merges PRs, and protects routes, configs, env files, lockfiles, API handlers, and public assets.",
+};
+
 export const SAFETY_POLICY_PUBLIC = [
-  "RepoDiet never mutates repositories.",
-  "RepoDiet never asks for private GitHub tokens.",
-  "RepoDiet only scans public repos.",
-  "RepoDiet never reads or displays .env values.",
-  "RepoDiet never auto-deletes files.",
-  "Patch bundles are review-first artifacts.",
+  "Public scan mode needs no GitHub auth — scan, findings, and ZIP download only.",
+  "Cleanup PR mode uses the RepoDiet GitHub App with minimum Contents + Pull Requests permissions.",
+  "RepoDiet Operator never pushes directly to main.",
+  "RepoDiet Operator never merges pull requests automatically.",
+  "Installation tokens are short-lived and generated server-side — never exposed to the browser.",
+  "Only safe-candidate files are deleted on cleanup branches.",
+  "Every cleanup PR includes regression checklist artifacts.",
 ];
 
 export const RUNTIME_LIMITS = [

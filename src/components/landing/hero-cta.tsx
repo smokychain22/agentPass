@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SAMPLE_BUNDLE_LABEL } from "@/lib/demo/constants";
 import { cn } from "@/lib/utils";
 
 interface HeroCtaProps {
@@ -17,7 +18,15 @@ export function HeroCta({ className }: HeroCtaProps) {
         </Link>
       </Button>
       <Button asChild variant="secondary" size="lg">
+        <Link href="/app?tab=patch&demo=true">Create Cleanup PR</Link>
+      </Button>
+      <Button asChild variant="outline" size="lg">
         <Link href="/app?demo=true">Watch Live Demo</Link>
+      </Button>
+      <Button asChild variant="ghost" size="lg">
+        <a href="/api/demo/sample-bundle" download title={SAMPLE_BUNDLE_LABEL}>
+          See Sample Bundle
+        </a>
       </Button>
     </div>
   );

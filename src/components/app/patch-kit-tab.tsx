@@ -2,7 +2,8 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Loader2, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppSession } from "@/components/app/app-session";
 import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
@@ -16,12 +17,12 @@ import { PatchKitSummaryCards } from "./patch-kit/summary-cards";
 import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
+import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
 import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
-import { Package } from "lucide-react";
 
 const LOADING: PatchKitPhase[] = [
   "classifying",
@@ -38,6 +39,9 @@ function phaseIndex(phase: PatchKitPhase): number {
 }
 
 export function PatchKitTab() {
+  const searchParams = useSearchParams();
+  const demoMode =
+    searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
   const { session, findings, patchKit, setPatchKit } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<PatchKitPhase>("idle");
@@ -171,6 +175,14 @@ export function PatchKitTab() {
           <SafeDeleteTable rows={safeDeleteRows} />
         </>
       )}
+
+      <RepoDietOperatorSection
+        repoUrl={session.repoUrl}
+        branch={session.branch || undefined}
+        findings={findings}
+        patchKit={patchKit}
+        demoMode={demoMode}
+      />
     </div>
   );
 }

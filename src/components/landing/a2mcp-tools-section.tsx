@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { A2MCP_TOOL_GROUPS } from "@/lib/marketing/content";
+import { A2MCP_TOOL_GROUPS, A2MCP_TOOLS_HIGHLIGHT } from "@/lib/marketing/content";
 import { Panel } from "@/components/design-system/panel";
+import { RiskBadge } from "@/components/design-system/risk-badge";
 import { getServerBaseUrl } from "@/lib/docs/base-url";
 
 export function A2mcpToolsSection() {
@@ -17,6 +18,14 @@ export function A2mcpToolsSection() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        {A2MCP_TOOLS_HIGHLIGHT.map((tool) => (
+          <RiskBadge key={tool} level="cyan">
+            {tool}
+          </RiskBadge>
+        ))}
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         {A2MCP_TOOL_GROUPS.map((group) => (
           <Panel key={group.category} variant="elevated" padding="md">

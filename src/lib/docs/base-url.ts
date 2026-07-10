@@ -1,8 +1,10 @@
 const FALLBACK_BASE_URL = "https://skillswap-skillswap7.vercel.app";
 
 export function getServerBaseUrl(): string {
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  const explicit =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.GITHUB_APP_PUBLIC_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/$/, "");
   }
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL}`;

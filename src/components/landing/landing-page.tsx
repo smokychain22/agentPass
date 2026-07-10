@@ -5,6 +5,7 @@ import { HeroCleanupEngine } from "@/components/landing/hero-cleanup-engine";
 import { HeroCta } from "@/components/landing/hero-cta";
 import { RepositoryDebtBento } from "@/components/landing/repository-debt-bento";
 import { WorkflowPipeline } from "@/components/landing/workflow-pipeline";
+import { ScanToPrSection } from "@/components/landing/scan-to-pr-section";
 import { TransformationSection } from "@/components/landing/transformation-section";
 import { PatchBundleWorkspace } from "@/components/landing/patch-bundle-workspace";
 import { SafetyBoundary } from "@/components/landing/safety-boundary";
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Container } from "@/components/design-system/container";
 import { SectionHeader } from "@/components/design-system/section-header";
 import { GridBackground } from "@/components/design-system/grid-background";
+import { Panel } from "@/components/design-system/panel";
 import { PricingCard } from "@/components/design-system/pricing-card";
 import {
   API_SECTION,
@@ -24,9 +26,12 @@ import {
   PRICING_TIERS,
   PROBLEM_SECTION,
   SAFETY_SECTION,
+  SCAN_TO_PR_SECTION,
   SITE_TAGLINES,
+  TOP3_STORY,
   TRANSFORMATION_SECTION,
   TRUST_POINTS,
+  USE_CASES,
 } from "@/lib/marketing/content";
 
 export function LandingPage() {
@@ -78,12 +83,37 @@ export function LandingPage() {
           </Container>
         </section>
 
-        {/* Workflow */}
+        {/* Scan to PR */}
         <section id="product" className="relative py-16 sm:py-20">
           <Container as="section">
             <SectionHeader
+              label={SCAN_TO_PR_SECTION.eyebrow}
+              title={SCAN_TO_PR_SECTION.title}
+              description={SCAN_TO_PR_SECTION.description}
+            />
+            <div className="mt-10">
+              <ScanToPrSection />
+            </div>
+            <div className="mt-10 grid gap-4 sm:grid-cols-2">
+              <Panel variant="elevated" padding="md">
+                <p className="ds-label mb-2">Before</p>
+                <p className="text-sm text-muted-foreground">{TOP3_STORY.before}</p>
+              </Panel>
+              <Panel variant="cyan" padding="md">
+                <p className="ds-label mb-2 text-signal">After</p>
+                <p className="text-sm text-foreground">{TOP3_STORY.after}</p>
+                <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{TOP3_STORY.asp}</p>
+              </Panel>
+            </div>
+          </Container>
+        </section>
+
+        {/* Workflow */}
+        <section className="section-alt relative">
+          <Container as="section" className="py-16 sm:py-20">
+            <SectionHeader
               label="How it works"
-              title="Scan the repo. Classify risk. Package for review."
+              title="Scan the repo. Classify risk. Open the cleanup PR."
               description={SITE_TAGLINES.positioning}
             />
             <div className="mt-10">
@@ -93,14 +123,33 @@ export function LandingPage() {
         </section>
 
         {/* Transformation */}
-        <section className="section-alt relative">
-          <Container as="section" className="py-16 sm:py-20">
+        <section className="relative py-16 sm:py-20">
+          <Container as="section">
             <SectionHeader
               label={TRANSFORMATION_SECTION.eyebrow}
               title={TRANSFORMATION_SECTION.title}
             />
             <div className="mt-10">
               <TransformationSection />
+            </div>
+          </Container>
+        </section>
+
+        {/* Use cases */}
+        <section className="section-alt relative">
+          <Container as="section" className="py-16 sm:py-20">
+            <SectionHeader
+              label="Operator"
+              title="Real automation for real cleanup debt"
+              description="RepoDiet Operator creates review-ready cleanup PRs — not reckless auto-delete."
+            />
+            <div className="mt-10 grid gap-4 sm:grid-cols-2">
+              {USE_CASES.map((item) => (
+                <Panel key={item.title} variant="elevated" padding="md">
+                  <h3 className="text-sm font-semibold text-foreground">{item.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+                </Panel>
+              ))}
             </div>
           </Container>
         </section>
