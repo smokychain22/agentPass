@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -20,16 +20,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
+import { accessCopyForState } from "@/lib/github-app/access-states";
 import {
   buildPrSummaryText,
   copyText,
   disconnectGitHubApp,
   fetchGitHubConnectionStatus,
+  fetchGitHubPreflight,
   runCreateCleanupPr,
-  startGitHubAppInstall,
+  startGitHubGrantAccess,
+  repositoryFullNameFromRepoUrl,
   type CleanupPrMode,
   type CreateCleanupPrResponse,
   type GitHubConnectionStatus,
+  type GitHubPreflightResult,
 } from "@/lib/patch-kit/client";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
@@ -64,6 +68,23 @@ function InfoCard({
   );
 }
 
+function githubErrorMessage(code: string | null, repoName: string): string | null {
+  if (!code) return null;
+  switch (code) {
+    case "repo_not_granted":
+      return accessCopyForState("repo_not_granted", repoName).body;
+    case "state_expired":
+      return accessCopyForState("state_expired", repoName).body;
+    case "state_reused":
+    case "invalid_state":
+      return "Your GitHub connection request was invalid. Try again.";
+    case "setup_failed":
+      return "GitHub could not finish connecting RepoDiet. Try again.";
+    default:
+      return "GitHub connection did not complete. Try again.";
+  }
+}
+
 export function RepoDietOperatorSection({
   repoUrl,
   branch,
@@ -72,24 +93,47 @@ export function RepoDietOperatorSection({
   demoMode,
 }: RepoDietOperatorSectionProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const isDemoRepo = useMemo(() => isDemoRepoUrl(repoUrl), [repoUrl]);
   const useDemoAuth = demoMode && isDemoRepo;
+  const repositoryFullName = useMemo(
+    () => repositoryFullNameFromRepoUrl(repoUrl) ?? "",
+    [repoUrl]
+  );
+  const repoShortName = repositoryFullName.split("/")[1] ?? repositoryFullName;
 
   const [loading, setLoading] = useState(false);
   const [loadingMode, setLoadingMode] = useState<CleanupPrMode | null>(null);
+  const [grantLoading, setGrantLoading] = useState(false);
   const [githubToken, setGithubToken] = useState("");
   const [showAdvancedToken, setShowAdvancedToken] = useState(false);
   const [githubStatus, setGithubStatus] = useState<GitHubConnectionStatus | null>(null);
+  const [preflight, setPreflight] = useState<GitHubPreflightResult | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [preflightLoading, setPreflightLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateCleanupPrResponse | null>(null);
   const [summaryCopied, setSummaryCopied] = useState(false);
 
   const safeCount = patchKit?.summary.safeDeleteCandidates ?? 0;
   const locked = !findings || !patchKit;
-  const canCreateSafePr = !locked && safeCount > 0;
-  const canCreateReportPr = !locked;
-  const githubConnected = Boolean(githubStatus?.connected);
+  const patchValidated = patchKit?.patchValidation?.status === "passed";
+  const githubAccountConnected = Boolean(githubStatus?.connected);
+  const repositoryReady = Boolean(preflight?.repositoryAuthorized);
+  const canCreateReportPr =
+    !locked &&
+    repositoryReady &&
+    Boolean(preflight?.canCreateBranch) &&
+    Boolean(preflight?.canCreatePullRequest);
+  const canCreateSafePr =
+    canCreateReportPr &&
+    safeCount > 0 &&
+    patchValidated;
+
+  const githubReturnError = githubErrorMessage(
+    searchParams.get("github_error"),
+    repoShortName || repositoryFullName
+  );
 
   const refreshGitHubStatus = useCallback(async () => {
     setStatusLoading(true);
@@ -103,15 +147,62 @@ export function RepoDietOperatorSection({
     }
   }, []);
 
+  const runPreflight = useCallback(async () => {
+    if (!repositoryFullName || useDemoAuth) {
+      setPreflight(null);
+      return;
+    }
+    setPreflightLoading(true);
+    try {
+      const result = await fetchGitHubPreflight({
+        repositoryFullName,
+        branch,
+        scanId: findings?.scanId,
+        commitSha: findings?.repo.commitSha,
+      });
+      setPreflight(result);
+    } catch {
+      setPreflight(null);
+    } finally {
+      setPreflightLoading(false);
+    }
+  }, [repositoryFullName, branch, findings, useDemoAuth]);
+
   useEffect(() => {
     void refreshGitHubStatus();
   }, [refreshGitHubStatus]);
 
   useEffect(() => {
-    if (searchParams.get("github_connected") === "true") {
-      void refreshGitHubStatus();
+    void runPreflight();
+  }, [runPreflight]);
+
+  useEffect(() => {
+    if (
+      searchParams.get("github") === "connected" ||
+      searchParams.get("github_connected") === "true"
+    ) {
+      void refreshGitHubStatus().then(() => runPreflight());
     }
-  }, [searchParams, refreshGitHubStatus]);
+  }, [searchParams, refreshGitHubStatus, runPreflight]);
+
+  const grantAccess = async () => {
+    if (!repositoryFullName) return;
+    setGrantLoading(true);
+    setError(null);
+    try {
+      const returnPath = `/app?tab=patch${
+        findings?.scanId ? `&scanId=${encodeURIComponent(findings.scanId)}` : ""
+      }`;
+      await startGitHubGrantAccess({
+        repositoryFullName,
+        scanId: findings?.scanId,
+        returnPath,
+      });
+    } catch (err) {
+      setGrantLoading(false);
+      setError(err instanceof Error ? err.message : "Could not start GitHub access flow.");
+    }
+  };
 
   const submit = async (mode: CleanupPrMode) => {
     if (!findings || !patchKit) return;
@@ -133,6 +224,7 @@ export function RepoDietOperatorSection({
       setResult(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Cleanup PR creation failed.");
+      void runPreflight();
     } finally {
       setLoading(false);
       setLoadingMode(null);
@@ -149,10 +241,19 @@ export function RepoDietOperatorSection({
   const disconnect = async () => {
     await disconnectGitHubApp();
     await refreshGitHubStatus();
+    await runPreflight();
   };
 
-  const needsAuth =
-    !useDemoAuth && !githubConnected && !(showAdvancedToken && githubToken.trim());
+  const needsManualToken =
+    !useDemoAuth && !repositoryReady && showAdvancedToken && githubToken.trim();
+
+  const accessMessages =
+    preflight?.messages ??
+    accessCopyForState(
+      preflight?.accessState ?? (githubAccountConnected ? "installed_repo_missing" : "not_installed"),
+      repoShortName || repositoryFullName,
+      repositoryFullName.split("/")[0]
+    );
 
   return (
     <section className="space-y-6 rounded-lg border border-electric/20 bg-electric/5 p-6">
@@ -165,14 +266,9 @@ export function RepoDietOperatorSection({
             </Badge>
           </div>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground leading-relaxed">
-            Install RepoDiet on the repo you want to clean. RepoDiet uses minimum GitHub
-            permissions and creates a review-ready PR. It never pushes to main and never merges.
+            RepoDiet opens review-ready pull requests on your repository. You review and merge —
+            RepoDiet never pushes to main.
           </p>
-          {!locked && !useDemoAuth && (
-            <p className="mt-2 text-xs text-amber-400/90">
-              RepoDiet only opens pull requests. You stay in control of review and merge.
-            </p>
-          )}
         </div>
         {locked && (
           <Badge variant="muted" className="gap-1.5 font-mono text-[10px]">
@@ -187,10 +283,10 @@ export function RepoDietOperatorSection({
           <CardContent className="flex items-start gap-3 py-6">
             <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <div>
-              <p className="text-sm font-medium">Run Findings + Patch Kit first</p>
+              <p className="text-sm font-medium">Run Findings + Quick Cleanup first</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Generate your patch bundle above. RepoDiet Operator unlocks after findings and Patch
-                Kit artifacts are ready.
+                Generate your cleanup bundle above. RepoDiet Operator unlocks after findings and
+                artifacts are ready.
               </p>
             </div>
           </CardContent>
@@ -198,58 +294,84 @@ export function RepoDietOperatorSection({
       ) : (
         <>
           <Card className="border-border/80 bg-card/50">
-            <CardContent className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
+            <CardContent className="flex flex-col gap-4 py-4">
+              <div className="space-y-2">
                 <p className="text-sm font-medium flex items-center gap-2">
                   <Github className="h-4 w-4" />
-                  GitHub connection
+                  GitHub access
                 </p>
-                {statusLoading ? (
-                  <p className="text-sm text-muted-foreground">Checking connection…</p>
+                {statusLoading || preflightLoading ? (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking repository access…
+                  </p>
                 ) : useDemoAuth ? (
                   <p className="text-sm text-muted-foreground">
                     Demo mode — server token for{" "}
                     <span className="font-mono text-xs">repodiet/demo-slop-app</span>
                   </p>
-                ) : githubConnected ? (
-                  <p className="text-sm text-signal">
-                    GitHub App connected
-                    {githubStatus?.account?.login
-                      ? ` · ${githubStatus.account.login}`
-                      : ""}
-                  </p>
+                ) : repositoryReady ? (
+                  <div className="space-y-1 text-sm text-signal">
+                    <p>GitHub connected</p>
+                    <p>{repositoryFullName} authorized</p>
+                    <p>Permissions verified</p>
+                  </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground">Not connected</p>
-                )}
-                {!useDemoAuth && (
-                  <p className="text-xs text-muted-foreground leading-relaxed max-w-2xl">
-                    Install RepoDiet on the repo you want to clean. RepoDiet uses minimum GitHub
-                    permissions and creates a review-ready PR. It never pushes to main and never
-                    merges.
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">{accessMessages.title}</p>
+                    <p className="text-sm text-muted-foreground">{accessMessages.body}</p>
+                    {githubAccountConnected && (
+                      <p className="text-xs text-muted-foreground">
+                        GitHub account connected
+                        {githubStatus?.account?.login ? ` · ${githubStatus.account.login}` : ""}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="flex flex-wrap gap-2 shrink-0">
-                {!useDemoAuth && !githubConnected && githubStatus?.configured !== false && (
-                  <Button onClick={startGitHubAppInstall}>
-                    <Github className="h-4 w-4" />
-                    Connect GitHub
+
+              <div className="flex flex-wrap gap-2">
+                {!useDemoAuth && !repositoryReady && githubStatus?.configured !== false && (
+                  <Button onClick={grantAccess} disabled={grantLoading || !repositoryFullName}>
+                    {grantLoading ? (
+                      <>
+                        <Loader2 className="animate-spin" />
+                        Opening GitHub…
+                      </>
+                    ) : (
+                      <>
+                        <Github className="h-4 w-4" />
+                        {accessMessages.primaryAction ??
+                          `Grant Access to ${repoShortName || "Repository"}`}
+                      </>
+                    )}
                   </Button>
                 )}
-                {!useDemoAuth && githubConnected && (
+                {!useDemoAuth && repositoryReady && (
                   <Button variant="outline" size="sm" onClick={disconnect}>
                     <Unplug className="h-4 w-4" />
                     Disconnect
                   </Button>
                 )}
-                {!useDemoAuth && githubStatus?.configured === false && (
-                  <Badge variant="muted" className="text-xs">
-                    GitHub App not configured on server
-                  </Badge>
+                {!useDemoAuth && accessMessages.secondaryAction && !repositoryReady && (
+                  <Button variant="ghost" size="sm" onClick={() => router.push("/app?tab=scan")}>
+                    {accessMessages.secondaryAction}
+                  </Button>
+                )}
+                {githubReturnError && !repositoryReady && (
+                  <Button variant="secondary" size="sm" onClick={grantAccess}>
+                    Try Again
+                  </Button>
                 )}
               </div>
             </CardContent>
           </Card>
+
+          {githubReturnError && !repositoryReady && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
+              {githubReturnError}
+            </div>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <InfoCard title="Cleanup Mode">
@@ -263,41 +385,27 @@ export function RepoDietOperatorSection({
               </p>
             </InfoCard>
 
-            <InfoCard title="GitHub Access">
-              {useDemoAuth ? (
-                <>
-                  <p>Demo mode uses the configured demo repo token.</p>
-                  <p className="font-mono text-xs">repodiet/demo-slop-app</p>
-                </>
-              ) : githubConnected ? (
-                <>
-                  <p>GitHub App installation connected.</p>
-                  <p>Short-lived installation tokens are generated server-side on demand.</p>
-                </>
+            <InfoCard title="Repository">
+              <p className="font-mono text-xs">{repositoryFullName || repoUrl}</p>
+              {repositoryReady ? (
+                <p className="text-signal">Ready for pull requests</p>
               ) : (
-                <>
-                  <p>Install the RepoDiet GitHub App on your repository.</p>
-                  <p>No personal token required for the primary flow.</p>
-                </>
+                <p>Grant repository access to enable PR actions.</p>
               )}
             </InfoCard>
 
             <InfoCard title="Safe Candidates">
               <p className="font-mono text-2xl font-semibold text-signal">{safeCount}</p>
-              {safeCount > 0 ? (
+              {safeCount > 0 && patchValidated ? (
                 <p className="text-signal">Ready to create cleanup PR.</p>
+              ) : safeCount > 0 ? (
+                <p>Patch bundle must pass validation before cleanup PR.</p>
               ) : (
                 <p>Safe cleanup PR unavailable. Create a report-only PR instead.</p>
-              )}
-              {safeCount > 0 && (
-                <p className="font-mono text-[11px]">archive/** · backup/** · tmp/** · old/**</p>
               )}
             </InfoCard>
 
             <InfoCard title="PR Safety Policy">
-              <p className="text-xs text-foreground font-medium mb-2">
-                RepoDiet creates a branch and PR. You review and merge.
-              </p>
               <ul className="space-y-1.5 text-xs">
                 <li className="flex gap-2">
                   <Shield className="mt-0.5 h-3 w-3 shrink-0 text-signal" />
@@ -309,31 +417,11 @@ export function RepoDietOperatorSection({
                 </li>
                 <li className="flex gap-2">
                   <Shield className="mt-0.5 h-3 w-3 shrink-0 text-signal" />
-                  Never deletes protected files
-                </li>
-                <li className="flex gap-2">
-                  <Shield className="mt-0.5 h-3 w-3 shrink-0 text-signal" />
-                  Review First findings documented, not changed
+                  Protected files are never deleted
                 </li>
               </ul>
             </InfoCard>
           </div>
-
-          {!useDemoAuth && (
-            <Card className="border-signal/20 bg-signal/5">
-              <CardContent className="py-4">
-                <p className="text-sm font-medium text-signal">Minimum permissions</p>
-                <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                  <li>Contents: write</li>
-                  <li>Pull requests: write</li>
-                  <li>Metadata: read</li>
-                </ul>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  No access to secrets, actions, admin settings, or organization members.
-                </p>
-              </CardContent>
-            </Card>
-          )}
 
           {!useDemoAuth && (
             <details
@@ -355,8 +443,7 @@ export function RepoDietOperatorSection({
                   onChange={(e) => setGithubToken(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Emergency hackathon fallback only. Required: Contents Read/Write and Pull Requests
-                  Read/Write. Prefer the GitHub App install flow.
+                  Emergency fallback only. Prefer the one-click Grant Access flow.
                 </p>
               </div>
             </details>
@@ -372,7 +459,7 @@ export function RepoDietOperatorSection({
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => submit("safe_only")}
-              disabled={loading || !canCreateSafePr || needsAuth}
+              disabled={loading || (!canCreateSafePr && !needsManualToken)}
             >
               {loading && loadingMode === "safe_only" ? (
                 <>
@@ -389,7 +476,7 @@ export function RepoDietOperatorSection({
             <Button
               variant="secondary"
               onClick={() => submit("report_only")}
-              disabled={loading || !canCreateReportPr || needsAuth}
+              disabled={loading || (!canCreateReportPr && !needsManualToken)}
             >
               {loading && loadingMode === "report_only" ? (
                 <>
@@ -431,10 +518,11 @@ export function RepoDietOperatorSection({
           <div>
             <p className="text-sm font-medium text-red-300">Cleanup PR failed</p>
             <p className="mt-1 text-sm text-muted-foreground">{error}</p>
-            {!useDemoAuth && !githubConnected && error.toLowerCase().includes("install") && (
-              <Button className="mt-3" size="sm" onClick={startGitHubAppInstall}>
+            {!useDemoAuth && !repositoryReady && (
+              <Button className="mt-3" size="sm" onClick={grantAccess}>
                 <Github className="h-4 w-4" />
-                Install GitHub App
+                {accessMessages.primaryAction ??
+                  `Grant Access to ${repoShortName || "Repository"}`}
               </Button>
             )}
           </div>
@@ -478,22 +566,6 @@ export function RepoDietOperatorSection({
                     Artifacts added
                   </p>
                   <p className="mt-1 font-mono text-xs">{result.actionSummary.artifactsAdded}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Review first skipped
-                  </p>
-                  <p className="mt-1 font-mono text-xs">
-                    {result.actionSummary.reviewFirstSkipped}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Do not touch protected
-                  </p>
-                  <p className="mt-1 font-mono text-xs">
-                    {result.actionSummary.doNotTouchSkipped}
-                  </p>
                 </div>
               </div>
             </InfoCard>

@@ -49,7 +49,7 @@ export async function resolveCleanupGitHubToken(opts: {
   if (!session) {
     throw new ToolExecutionError(
       "GITHUB_APP_NOT_CONNECTED",
-      "Install the RepoDiet GitHub App on this repo before creating a cleanup PR.",
+      "Grant repository access from the Patch tab before creating a cleanup PR.",
       401
     );
   }
@@ -62,7 +62,7 @@ export async function resolveCleanupGitHubToken(opts: {
   if (!hasAccess) {
     throw new ToolExecutionError(
       "GITHUB_PERMISSION_DENIED",
-      "The connected GitHub App installation does not have access to this repository. Install RepoDiet on this repo and try again.",
+      "RepoDiet needs access to this repository. Grant access from the Patch tab and try again.",
       403
     );
   }

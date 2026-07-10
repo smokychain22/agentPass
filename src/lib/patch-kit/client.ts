@@ -57,14 +57,68 @@ export interface GitHubConnectionStatus {
   };
 }
 
+export type GitHubPreflightResult = import("@/lib/github-app/types").GitHubPreflightResult;
+
 export async function fetchGitHubConnectionStatus(): Promise<GitHubConnectionStatus> {
   const res = await fetch("/api/github/status", { credentials: "include" });
   const json = (await res.json()) as GitHubConnectionStatus;
   return json;
 }
 
-export function startGitHubAppInstall(): void {
-  window.location.href = "/api/github/install";
+export async function fetchGitHubPreflight(input: {
+  repositoryFullName: string;
+  branch?: string;
+  scanId?: string;
+  commitSha?: string;
+}): Promise<GitHubPreflightResult> {
+  const res = await fetch("/api/github/preflight", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json()) as GitHubPreflightResult & { ok: boolean; error?: string };
+  if (!json.ok) {
+    throw new Error(json.error ?? "GitHub preflight failed.");
+  }
+  return json;
+}
+
+export async function startGitHubGrantAccess(input: {
+  repositoryFullName: string;
+  scanId?: string;
+  returnPath?: string;
+}): Promise<void> {
+  const res = await fetch("/api/github/install/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json()) as { ok: boolean; installUrl?: string; error?: string };
+  if (!json.ok || !json.installUrl) {
+    throw new Error(json.error ?? "Could not start GitHub installation.");
+  }
+  window.location.href = json.installUrl;
+}
+
+export function startGitHubAppInstall(repoUrl?: string, scanId?: string): void {
+  const params = new URLSearchParams();
+  if (repoUrl) params.set("repoUrl", repoUrl);
+  if (scanId) params.set("scanId", scanId);
+  const qs = params.toString();
+  window.location.href = qs ? `/api/github/install?${qs}` : "/api/github/install";
+}
+
+export function repositoryFullNameFromRepoUrl(repoUrl: string): string | null {
+  try {
+    const parsed = new URL(repoUrl.startsWith("http") ? repoUrl : `https://${repoUrl}`);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    return `${parts[0]}/${parts[1].replace(/\.git$/, "")}`;
+  } catch {
+    return null;
+  }
 }
 
 export async function disconnectGitHubApp(): Promise<void> {
