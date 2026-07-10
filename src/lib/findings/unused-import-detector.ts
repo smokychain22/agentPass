@@ -123,6 +123,37 @@ export function removeUnusedImportLine(source: string, importLine: string): stri
   return removeUnusedSymbolFromImport(source, importLine, "");
 }
 
+function parseNamedImportBlock(block: string): {
+  isTypeOnly: boolean;
+  specifiers: string;
+  fromClause: string;
+} | null {
+  const namedMatch = block.match(/import\s+(type\s+)?\{([^}]+)\}\s+from\s+(['"][^'"]+['"])/);
+  if (!namedMatch) return null;
+  return {
+    isTypeOnly: Boolean(namedMatch[1]),
+    specifiers: namedMatch[2],
+    fromClause: namedMatch[3],
+  };
+}
+
+function specifierMatchesSymbol(specifier: string, symbol: string): boolean {
+  const withoutType = specifier.replace(/^type\s+/, "");
+  const aliasParts = withoutType.split(/\s+as\s+/);
+  const importName = aliasParts[0]?.trim() ?? "";
+  const localName = (aliasParts[1] ?? aliasParts[0])?.trim() ?? "";
+  return localName === symbol || importName === symbol;
+}
+
+function rebuildNamedImport(
+  indent: string,
+  parsed: { isTypeOnly: boolean; specifiers: string; fromClause: string },
+  remaining: string[]
+): string {
+  const prefix = parsed.isTypeOnly ? "import type" : "import";
+  return `${indent}${prefix} { ${remaining.join(", ")} } from ${parsed.fromClause};`;
+}
+
 export function removeUnusedSymbolFromImport(
   source: string,
   importLine: string,
@@ -153,31 +184,24 @@ export function removeUnusedSymbolFromImport(
       continue;
     }
 
-    const namedMatch = block.match(/import\s+\{([^}]+)\}\s+from\s+(['"][^'"]+['"])/);
-    if (!namedMatch) {
+    const parsed = parseNamedImportBlock(block);
+    if (!parsed) {
+      out.push(lines[i]);
       continue;
     }
 
-    const parts = namedMatch[1]
+    const parts = parsed.specifiers
       .split(",")
       .map((p) => p.trim())
       .filter(Boolean);
-    const remaining = parts.filter((p) => {
-      const withoutType = p.replace(/^type\s+/, "");
-      const aliasParts = withoutType.split(/\s+as\s+/);
-      const importName = aliasParts[0]?.trim() ?? "";
-      const localName = (aliasParts[1] ?? aliasParts[0])?.trim() ?? "";
-      return localName !== symbol && importName !== symbol;
-    });
+    const remaining = parts.filter((p) => !specifierMatchesSymbol(p, symbol));
 
     if (remaining.length === 0) {
       continue;
     }
 
     const indent = lines[i].match(/^\s*/)?.[0] ?? "";
-    const fromClause = namedMatch[2];
-    const rebuilt = `${indent}import { ${remaining.join(", ")} } from ${fromClause};`;
-    out.push(rebuilt);
+    out.push(rebuildNamedImport(indent, parsed, remaining));
   }
 
   return out.join("\n").replace(/\n{3,}/g, "\n\n");

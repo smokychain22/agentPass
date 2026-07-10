@@ -1,4 +1,5 @@
 import type { Finding, FindingsPayload, FindingsSummary, ToolRunReport } from "./types";
+import { countActionableFindings } from "./actionability-signals";
 import { flattenFindings } from "./client";
 
 export interface CanonicalFindingsStats {
@@ -42,6 +43,9 @@ export function computeCanonicalStats(findings: Finding[]): CanonicalFindingsSta
 
 export function buildSummaryFromFindings(findings: Finding[]): FindingsSummary {
   const stats = computeCanonicalStats(findings);
+  const actionableFixes = findings.filter((f) =>
+    f.evidence.signals.some((s) => s === "classification=actionable_candidate")
+  ).length;
   return {
     totalFindings: stats.totalFindings,
     duplicateClusters: stats.duplicateCount,
@@ -52,6 +56,8 @@ export function buildSummaryFromFindings(findings: Finding[]): FindingsSummary {
     slopSignals: stats.slopSignalCount,
     reviewRequired: stats.reviewFirstCount,
     safeCandidates: stats.safeCandidateCount,
+    actionableFixes,
+    detectedFindings: stats.totalFindings,
     doNotTouch: stats.doNotTouchCount,
   };
 }

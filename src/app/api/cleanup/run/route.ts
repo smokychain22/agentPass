@@ -12,13 +12,15 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const ownerKey = jobOwnerKey(request);
-    await enforceRateLimit(ownerKey, "patch");
-
     const body = (await request.json()) as {
       scanId?: string;
       findings?: FindingsPayload;
       findingIds?: string[];
+      idempotencyKey?: string;
     };
+
+    const rateScope = body.scanId ?? body.idempotencyKey;
+    await enforceRateLimit(ownerKey, "patch:free", { scopeKey: rateScope });
 
     let findings = body.findings;
     if (!findings && body.scanId) {
@@ -72,7 +74,11 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(
-        { success: false, error: err.message },
+        {
+          success: false,
+          error: err.message,
+          rateLimit: err.toJSON(),
+        },
         { status: 429, headers: { "Retry-After": String(err.retryAfterSeconds) } }
       );
     }

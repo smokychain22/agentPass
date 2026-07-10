@@ -292,18 +292,35 @@ export function CleanupTab() {
           )}
 
           {primaryAttempt &&
-            Object.entries(primaryAttempt.originalSources).map(([path, source]) => (
+            Object.entries(primaryAttempt.originalSources).map(([path, source]) => {
+              const modified = primaryAttempt.modifiedSources[path];
+              const hasVerifiedChange =
+                Boolean(result.unifiedDiff) &&
+                Boolean(modified) &&
+                modified !== source;
+              return (
               <Panel key={path} variant="elevated" padding="md">
                 <p className="ds-label mb-2">Original source — {path}</p>
                 <pre className="max-h-48 overflow-auto rounded border border-border/40 bg-[#05080D]/60 p-3 font-mono text-[10px] text-muted-foreground scrollbar-thin">
                   {source || "(file deleted)"}
                 </pre>
-                <p className="ds-label mb-2 mt-4">Modified source</p>
-                <pre className="max-h-48 overflow-auto rounded border border-border/40 bg-[#05080D]/60 p-3 font-mono text-[10px] text-muted-foreground scrollbar-thin">
-                  {primaryAttempt.modifiedSources[path] ?? ""}
-                </pre>
+                {hasVerifiedChange ? (
+                  <>
+                    <p className="ds-label mb-2 mt-4">Modified source</p>
+                    <pre className="max-h-48 overflow-auto rounded border border-border/40 bg-[#05080D]/60 p-3 font-mono text-[10px] text-muted-foreground scrollbar-thin">
+                      {modified}
+                    </pre>
+                  </>
+                ) : (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    {primaryAttempt.exactReason ||
+                      primaryAttempt.displayReason ||
+                      "No verified source modification was retained for this attempt."}
+                  </p>
+                )}
               </Panel>
-            ))}
+              );
+            })}
 
           {result.unifiedDiff && (
             <Panel variant="elevated" padding="md">

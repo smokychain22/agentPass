@@ -7,13 +7,19 @@ import type { FindingsSummary } from "@/lib/findings/types";
 export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
   const rows = [
     {
-      label: "Safe candidates",
-      value: summary.safeCandidates,
-      level: "safe" as const,
-      hint: "High-confidence conservative cleanup targets",
+      label: "Detected findings",
+      value: summary.detectedFindings ?? summary.totalFindings,
+      level: "review" as const,
+      hint: "Analyzer evidence before fix preflight",
     },
     {
-      label: "Review first",
+      label: "Actionable fixes",
+      value: summary.actionableFixes ?? 0,
+      level: "safe" as const,
+      hint: "Dry-run proved a valid deterministic transformation",
+    },
+    {
+      label: "Review required",
       value: summary.reviewRequired,
       level: "review" as const,
       hint: "Needs human review before any deletion",
@@ -29,7 +35,7 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
   return (
     <Panel variant="elevated" padding="md">
       <p className="ds-label mb-3">Risk classification</p>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {rows.map((row) => (
           <div key={row.label} className="rounded border border-border/40 bg-card/40 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -41,8 +47,9 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
         ))}
       </div>
       <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-        Total findings: {summary.totalFindings} = review ({summary.reviewRequired}) + safe (
-        {summary.safeCandidates}) + protected ({summary.doNotTouch})
+        Total findings: {summary.totalFindings} · actionable fixes:{" "}
+        {summary.actionableFixes ?? 0} · review ({summary.reviewRequired}) · protected (
+        {summary.doNotTouch})
       </p>
     </Panel>
   );

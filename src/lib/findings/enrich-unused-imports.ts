@@ -43,7 +43,7 @@ function unusedImportFinding(c: UnusedImportCandidate): Finding {
     action,
     reason: `Import for "${c.symbol}" is not used in ${c.file}.`,
     source: "heuristic",
-    sourceMode: "native",
+    sourceMode: "heuristic",
     evidence: {
       summary: "Deterministic unused import detection",
       signals: [`symbol=${c.symbol}`, `importLine=${c.line}`, `line=${c.lineNumber}`],

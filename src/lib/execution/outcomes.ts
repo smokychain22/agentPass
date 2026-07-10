@@ -2,13 +2,21 @@
 
 export type ProductOutcome =
   | "verified_fix"
+  | "verified_and_retained"
   | "review_ready_change"
   | "rolled_back_regression"
+  | "rolled_back_new_regression"
   | "blocked_source_changed"
+  | "blocked_stale_snapshot"
   | "blocked_dynamic_usage"
   | "blocked_protected_path"
   | "intentional_duplication"
   | "unsupported_transformation"
+  | "transform_noop"
+  | "plugin_unsupported"
+  | "finding_invalidated"
+  | "infrastructure_failed"
+  | "no_actionable_fix"
   | "no_safe_action"
   | "execution_failed";
 
@@ -20,13 +28,21 @@ export type RunFinalStatus =
 
 export const PRODUCT_OUTCOME_LABELS: Record<ProductOutcome, string> = {
   verified_fix: "Verified and retained",
+  verified_and_retained: "Verified fix retained",
   review_ready_change: "Needs review",
   rolled_back_regression: "Rolled back: introduced regression",
+  rolled_back_new_regression: "Change rolled back: introduced regression",
   blocked_source_changed: "Blocked: source changed after scan",
+  blocked_stale_snapshot: "Blocked: stale snapshot",
   blocked_dynamic_usage: "Needs review: dynamic usage cannot be ruled out",
   blocked_protected_path: "Blocked: protected path",
   intentional_duplication: "Intentional duplication",
   unsupported_transformation: "Unsupported transformation",
+  transform_noop: "Transform produced no source change",
+  plugin_unsupported: "Plugin unsupported for this finding",
+  finding_invalidated: "Finding invalidated",
+  infrastructure_failed: "Infrastructure failure — attempt not consumed",
+  no_actionable_fix: "No actionable fix passed preflight",
   no_safe_action: "No eligible fix found",
   execution_failed: "Execution failed",
 };
@@ -80,8 +96,14 @@ export function deriveAttemptProductOutcome(input: {
   ) {
     return "rolled_back_regression";
   }
-  if (reason.includes("no diff") || reason.includes("could not produce")) {
-    return "unsupported_transformation";
+  if (reason.includes("no diff") || reason.includes("could not produce") || reason.includes("transform_noop")) {
+    return reason.includes("transform_noop") ? "transform_noop" : "unsupported_transformation";
+  }
+  if (reason.includes("stale") || reason.includes("hash mismatch")) {
+    return "blocked_stale_snapshot";
+  }
+  if (reason.includes("infrastructure") || reason.includes("workspace")) {
+    return "infrastructure_failed";
   }
   if (reason.includes("patch validation")) return "unsupported_transformation";
 
@@ -140,6 +162,15 @@ export function buildNoSafeActionSummary(input: {
   }
   parts.push("No unsafe change was applied.");
   return parts.join(" ");
+}
+
+export function attemptConsumesCandidateLimit(outcome: ProductOutcome): boolean {
+  return ![
+    "transform_noop",
+    "infrastructure_failed",
+    "blocked_stale_snapshot",
+    "finding_invalidated",
+  ].includes(outcome);
 }
 
 /** User-facing labels must never be the generic word "Skipped". */

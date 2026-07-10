@@ -85,6 +85,8 @@ export interface FindingsSummary {
   slopSignals: number;
   reviewRequired: number;
   safeCandidates: number;
+  actionableFixes?: number;
+  detectedFindings?: number;
   doNotTouch: number;
 }
 

@@ -59,10 +59,10 @@ function test(name: string, fn: () => void) {
 
 console.log("Action-first cleanup tests");
 
-test("limits: 1 retained, 5 candidates, 2 strategies per finding", () => {
+test("limits: 1 retained, 5 candidates, 3 strategies per finding", () => {
   assert.equal(FREE_RETAINED_FIX_LIMIT, 1);
   assert.equal(FREE_CANDIDATE_ATTEMPT_LIMIT, 5);
-  assert.equal(MAX_STRATEGIES_PER_FINDING, 2);
+  assert.equal(MAX_STRATEGIES_PER_FINDING, 3);
   assert.equal(QUICK_CLEANUP_RETAINED_FIX_LIMIT, 5);
 });
 

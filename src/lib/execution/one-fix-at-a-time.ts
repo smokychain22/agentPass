@@ -4,6 +4,7 @@ import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { classifyFindingActionability } from "@/lib/cleanup/actionability";
 import {
   isPhase1AutoFix,
+  isPhase1StructuralCandidate,
   phase1EligibilityReason,
   resolvePhase1Plugin,
   type Phase1PluginId,
@@ -32,6 +33,7 @@ import { listStrategiesForFinding } from "./fix-strategies";
 import {
   deriveAttemptProductOutcome,
   formatProductOutcomeLabel,
+  attemptConsumesCandidateLimit,
   type ProductOutcome,
 } from "./outcomes";
 import { CleanupRunStateMachine } from "./cleanup-run-state";
@@ -100,6 +102,9 @@ const PLUGIN_PRIORITY: Record<Phase1PluginId, number> = {
 
 function sortPhase1Candidates(findings: Finding[]): Finding[] {
   return [...findings].sort((a, b) => {
+    const actionableA = a.evidence.signals.includes("classification=actionable_candidate") ? 0 : 1;
+    const actionableB = b.evidence.signals.includes("classification=actionable_candidate") ? 0 : 1;
+    if (actionableA !== actionableB) return actionableA - actionableB;
     const pa = PLUGIN_PRIORITY[resolvePhase1Plugin(a).id];
     const pb = PLUGIN_PRIORITY[resolvePhase1Plugin(b).id];
     if (pa !== pb) return pa - pb;
@@ -145,6 +150,10 @@ function recordAttempt(
       ? formatProductOutcomeLabel("verified_fix")
       : exactReason;
   const { added, removed } = countDiffLines(input.unifiedDiff);
+  const hasRealChange =
+    Boolean(input.unifiedDiff) &&
+    input.unifiedDiff.includes("diff --git") &&
+    added + removed > 0;
   const decision: CandidateDecisionRecord = {
     candidateId: `cand_${candidateIndex + 1}`,
     findingId: input.finding.id,
@@ -180,6 +189,8 @@ function recordAttempt(
   decisions.push(decision);
   attempts.push({
     ...input,
+    originalSources: hasRealChange ? input.originalSources : {},
+    modifiedSources: hasRealChange ? input.modifiedSources : {},
     productOutcome,
     exactReason,
     displayReason,
@@ -200,7 +211,9 @@ export async function runOneFixAtATimeLoop(
   sm.emit("ranking_candidates");
   sm.emit("selecting_finding");
 
-  const candidates = sortPhase1Candidates(findings.filter(isPhase1AutoFix));
+  const candidates = sortPhase1Candidates(
+    findings.filter((f) => isPhase1AutoFix(f) || isPhase1StructuralCandidate(f))
+  );
 
   const attempts: FixAttemptResult[] = [];
   const decisions: CandidateDecisionRecord[] = [];
@@ -288,23 +301,28 @@ export async function runOneFixAtATimeLoop(
         if (!applied.unifiedDiff) {
           sm.emit("rolling_back", "No diff generated");
           const rollbackStatus = await rollbackWorkspace(rootDir);
+          const productOutcome = deriveAttemptProductOutcome({
+            internalStatus: "skipped",
+            reason: "transform_noop: No diff was generated for this fix.",
+            pluginId: plugin.id,
+          });
           recordAttempt(decisions, attempts, attemptCount, {
             finding,
             status: "skipped",
-            reason: "No diff was generated for this fix.",
+            reason: "transform_noop: No diff was generated for this fix.",
             pluginId: plugin.id,
             strategyId: strategy.id,
             expectedFix: applied.expectedFix,
             eligibilityReason,
             unifiedDiff: "",
             changedPaths: [],
-            originalSources: applied.originalSources,
-            modifiedSources: applied.modifiedSources,
+            originalSources: {},
+            modifiedSources: {},
             checks: [],
             comparison: [],
             rollbackStatus,
           });
-          attemptCount += 1;
+          if (attemptConsumesCandidateLimit(productOutcome)) attemptCount += 1;
           sm.emit("trying_next_candidate", strategy.id);
           continue;
         }
@@ -338,6 +356,11 @@ export async function runOneFixAtATimeLoop(
         if (patchValidation.status !== "passed") {
           sm.emit("rolling_back", patchValidation.error ?? "patch validation failed");
           const rollbackStatus = await rollbackWorkspace(rootDir);
+          const productOutcome = deriveAttemptProductOutcome({
+            internalStatus: "skipped",
+            reason: patchValidation.error ?? "Patch validation failed.",
+            pluginId: plugin.id,
+          });
           recordAttempt(decisions, attempts, attemptCount, {
             finding,
             status: "skipped",
@@ -346,16 +369,16 @@ export async function runOneFixAtATimeLoop(
             strategyId: strategy.id,
             expectedFix: applied.expectedFix,
             eligibilityReason,
-            unifiedDiff: applied.unifiedDiff,
-            changedPaths: applied.changedPaths,
-            originalSources: applied.originalSources,
-            modifiedSources: applied.modifiedSources,
+            unifiedDiff: "",
+            changedPaths: [],
+            originalSources: {},
+            modifiedSources: {},
             patchValidation,
             checks,
             comparison: [],
             rollbackStatus,
           });
-          attemptCount += 1;
+          if (attemptConsumesCandidateLimit(productOutcome)) attemptCount += 1;
           sm.emit("trying_next_candidate", strategy.id);
           continue;
         }
@@ -450,6 +473,11 @@ export async function runOneFixAtATimeLoop(
         sm.emit("rolling_back", err instanceof Error ? err.message : "fix failed");
         const rollbackStatus = await rollbackWorkspace(rootDir);
         const msg = err instanceof Error ? err.message : "Fix attempt failed.";
+        const productOutcome = deriveAttemptProductOutcome({
+          internalStatus: "skipped",
+          reason: msg,
+          pluginId: plugin.id,
+        });
         recordAttempt(decisions, attempts, attemptCount, {
           finding,
           status: "skipped",
@@ -466,7 +494,7 @@ export async function runOneFixAtATimeLoop(
           comparison: [],
           rollbackStatus,
         });
-        attemptCount += 1;
+        if (attemptConsumesCandidateLimit(productOutcome)) attemptCount += 1;
         sm.emit("trying_next_candidate", strategy.id);
       }
     }

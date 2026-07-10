@@ -8,6 +8,8 @@ import { runAiSlopHeuristics } from "./ai-slop-heuristics";
 import { normalizeFindings } from "./normalize-findings";
 import { buildSummaryFromFindings } from "./stats";
 import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
+import { enrichFindingsWithPreflight } from "./enrich-preflight";
+import { countActionableFindings } from "./actionability-signals";
 import type { FindingsPayload, Finding } from "./types";
 import type { FindingsJobStage } from "@/lib/jobs/types";
 
@@ -79,8 +81,31 @@ export async function runFindingsEngine(
           exports: [...payload.unused.exports, ...importFindings],
         },
       };
-      payload.summary = buildSummaryFromFindings(flattenPayloadFindings(payload));
     }
+
+    const flatBeforePreflight = flattenPayloadFindings(payload);
+    const { findings: preflighted } = await enrichFindingsWithPreflight(
+      workspace.rootDir,
+      flatBeforePreflight
+    );
+    const byId = new Map(preflighted.map((f) => [f.id, f]));
+    const remap = (items: Finding[]) => items.map((f) => byId.get(f.id) ?? f);
+    payload = {
+      ...payload,
+      duplicates: remap(payload.duplicates),
+      unused: {
+        files: remap(payload.unused.files),
+        dependencies: remap(payload.unused.dependencies),
+        exports: remap(payload.unused.exports),
+      },
+      orphans: remap(payload.orphans),
+      slopSignals: remap(payload.slopSignals),
+    };
+    payload.summary = {
+      ...buildSummaryFromFindings(flattenPayloadFindings(payload)),
+      actionableFixes: countActionableFindings(flattenPayloadFindings(payload)),
+      detectedFindings: flattenPayloadFindings(payload).length,
+    };
 
     payload.repositoryModel = {
       projects: projectSummary(repositoryModel),

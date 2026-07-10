@@ -47,9 +47,33 @@ function isProtectedPath(filePath: string): boolean {
 function baseEligible(finding: Finding): boolean {
   if (finding.action !== "safe_candidate") return false;
   if (finding.confidence < MIN_CONFIDENCE) return false;
-  if (UNTRUSTED_SOURCE_MODES.has(finding.sourceMode)) return false;
   if (finding.files.some(isProtectedPath)) return false;
   return true;
+}
+
+function hasActionablePreflight(finding: Finding): boolean {
+  return finding.evidence.signals.some((s) => s === "classification=actionable_candidate");
+}
+
+/** Structural eligibility before dry-run preflight. */
+export function isPhase1StructuralCandidate(finding: Finding): boolean {
+  if (finding.action !== "safe_candidate") return false;
+  if (finding.confidence < MIN_CONFIDENCE) return false;
+  if (finding.files.some(isProtectedPath)) return false;
+  if (finding.type === "unused_import") {
+    const hasEvidence = finding.evidence.signals.some(
+      (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
+    );
+    return hasEvidence && finding.files.length === 1;
+  }
+  if (finding.type === "unused_dependency") {
+    return Boolean(finding.packageName);
+  }
+  if (finding.type === "unused_file" || finding.type === "ai_slop_signal") {
+    const file = finding.files[0];
+    return Boolean(file && isTempFilePath(file) && finding.files.length === 1);
+  }
+  return false;
 }
 
 function isTempFilePath(filePath: string): boolean {
@@ -63,10 +87,10 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
     description: "Remove an import statement with deterministic evidence that symbols are unused.",
     supports(finding) {
       if (finding.type !== "unused_import") return false;
-      if (finding.action !== "safe_candidate") return false;
-      if (finding.confidence < MIN_CONFIDENCE) return false;
-      if (UNTRUSTED_SOURCE_MODES.has(finding.sourceMode)) return false;
-      if (finding.files.some(isProtectedPath)) return false;
+      if (!baseEligible(finding)) return false;
+      if (UNTRUSTED_SOURCE_MODES.has(finding.sourceMode) && !hasActionablePreflight(finding)) {
+        return false;
+      }
       const hasEvidence = finding.evidence.signals.some(
         (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
       );
@@ -151,6 +175,26 @@ export function resolvePhase1Plugin(finding: Finding): Phase1FixPlugin {
     if (id !== "review_only" && plugin.supports(finding)) return plugin;
   }
   return PHASE1_PLUGINS.find((p) => p.id === "review_only")!;
+}
+
+/** Resolve plugin for dry-run/apply using structural evidence (preflight not required). */
+export function resolvePhase1TransformPlugin(finding: Finding): Phase1FixPlugin {
+  if (isPhase1StructuralCandidate(finding)) {
+    if (finding.type === "unused_import") {
+      return PHASE1_PLUGINS.find((p) => p.id === "remove_unused_import")!;
+    }
+    if (finding.type === "unused_dependency" && finding.packageName) {
+      return PHASE1_PLUGINS.find((p) => p.id === "remove_unused_dependency")!;
+    }
+    if (
+      (finding.type === "unused_file" || finding.type === "ai_slop_signal") &&
+      finding.files[0] &&
+      isTempFilePath(finding.files[0])
+    ) {
+      return PHASE1_PLUGINS.find((p) => p.id === "remove_temp_file")!;
+    }
+  }
+  return resolvePhase1Plugin(finding);
 }
 
 export function isPhase1AutoFix(finding: Finding): boolean {

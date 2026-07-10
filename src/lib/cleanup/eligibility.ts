@@ -1,5 +1,6 @@
 import type { Finding } from "@/lib/findings/types";
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
+import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import {
   isPhase1AutoFix,
   phase1EligibilityReason,
@@ -16,7 +17,7 @@ export function isProtectedFinding(finding: Finding): boolean {
 }
 
 export function isAutoFixEligible(finding: Finding): boolean {
-  return isPhase1AutoFix(finding);
+  return isPhase1AutoFix(finding) && isActionableFinding(finding);
 }
 
 export function isReviewPlanEligible(finding: Finding): boolean {
@@ -65,7 +66,7 @@ export function freeCleanupCta(findings: Finding[]): {
   if (auto.length > 0) {
     return {
       mode: "auto_fix",
-      count: 1,
+      count: auto.length,
       label: "Fix One Safe Issue Free",
     };
   }
@@ -74,7 +75,10 @@ export function freeCleanupCta(findings: Finding[]): {
   return {
     mode: "review_plan",
     count,
-    label: count > 0 ? "Review Findings (No Safe Auto-Fix)" : "No Eligible Findings",
+    label:
+      count > 0
+        ? "Review Supported Findings"
+        : "No Actionable Fixes — Review Findings",
   };
 }
 

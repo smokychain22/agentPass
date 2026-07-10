@@ -13,6 +13,11 @@ import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-dif
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
 import { resolvePhase1Plugin, type Phase1PluginId } from "./phase1-plugins";
 import { defaultStrategyForPlugin } from "../fix-strategies";
+import {
+  hashSource,
+  validateTransformInvariants,
+  type TransformAuditRecord,
+} from "../transform-audit";
 
 export interface AppliedFix {
   pluginId: Phase1PluginId;
@@ -22,6 +27,14 @@ export interface AppliedFix {
   originalSources: Record<string, string>;
   modifiedSources: Record<string, string>;
   expectedFix: string;
+  generatedChange?: {
+    originalSource: string;
+    modifiedSource: string;
+    originalHash: string;
+    modifiedHash: string;
+    unifiedDiff: string;
+  };
+  transformAudit?: TransformAuditRecord;
 }
 
 async function readSourceMap(
@@ -130,7 +143,10 @@ async function applyRemoveUnusedImport(
       break;
     case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free": {
       const partial = removeUnusedSymbolFromImport(original, importLine, symbol);
-      modified = partial === original ? removeUnusedImportLine(original, importLine) : partial;
+      if (partial === original) {
+        throw new Error("transform_noop: Unused symbol not present in import declaration.");
+      }
+      modified = partial;
       break;
     }
     case "remove_unused_named_specifier":
@@ -140,12 +156,35 @@ async function applyRemoveUnusedImport(
   }
 
   if (modified === original) {
-    throw new Error("Unused import could not be modified safely for this strategy.");
+    throw new Error("transform_noop: Unused import could not be modified safely for this strategy.");
   }
 
   await ensureGitBaseline(rootDir);
   await fs.writeFile(full, modified, "utf8");
+  const persisted = await fs.readFile(full, "utf8");
   const diff = await gitDiff(rootDir, [rel]);
+
+  const invariant = validateTransformInvariants({
+    originalSource: original,
+    transformedSource: modified,
+    persistedSource: persisted,
+    unifiedDiff: diff,
+    changedFiles: [rel],
+    findingPath: rel,
+    workspacePathInsideRoot: full.startsWith(path.resolve(rootDir)),
+  });
+
+  if (!invariant.ok) {
+    throw new Error(`${invariant.engineStatus}: ${invariant.blocker}`);
+  }
+
+  const generatedChange = {
+    originalSource: original,
+    modifiedSource: modified,
+    originalHash: invariant.record.originalHash,
+    modifiedHash: invariant.record.transformedHash,
+    unifiedDiff: diff,
+  };
 
   return {
     pluginId: "remove_unused_import",
@@ -155,6 +194,24 @@ async function applyRemoveUnusedImport(
     originalSources: { [rel]: original },
     modifiedSources: { [rel]: modified },
     expectedFix: `Remove unused import from ${rel} (${strategyId})`,
+    generatedChange,
+    transformAudit: {
+      projectRoot: rootDir,
+      findingId: finding.id,
+      findingPath: rel,
+      absoluteWorkspacePath: full,
+      pluginId: "remove_unused_import",
+      strategyId,
+      originalHash: invariant.record.originalHash,
+      transformedHash: invariant.record.transformedHash,
+      persistedHash: invariant.record.persistedHash,
+      sourceChanged: invariant.record.sourceChanged,
+      changedFiles: [rel],
+      unifiedDiff: diff,
+      additions: invariant.record.additions,
+      deletions: invariant.record.deletions,
+      engineStatus: invariant.record.engineStatus,
+    },
   };
 }
 

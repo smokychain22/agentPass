@@ -34,7 +34,11 @@ import {
   type ExecutionReceipt,
 } from "@/lib/operator/sign-receipt";
 import { summarizeBaselineReport } from "./baseline-verification";
-import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
+import {
+  resolvePhase1Plugin,
+  isPhase1StructuralCandidate,
+} from "@/lib/execution/fix-plugins/phase1-plugins";
+import { enrichFindingsWithPreflight, isActionableFinding } from "@/lib/findings/enrich-preflight";
 import { CleanupRunStateMachine, type CleanupStateTransition } from "./cleanup-run-state";
 
 export interface FileChange {
@@ -292,7 +296,19 @@ export async function runFreeCleanupCore(
   const workspace = await prepareRepoWorkspace(repoUrl, payload.repo.branch);
 
   try {
-    const loop = await runOneFixAtATimeLoop(workspace.rootDir, selected, {
+    const structuralPool = selected.filter(
+      (f) => isPhase1StructuralCandidate(f) || isAutoFixEligible(f)
+    );
+    const preflightPool = structuralPool.length > 0 ? structuralPool : selected;
+    const { findings: repreflighted } = await enrichFindingsWithPreflight(
+      workspace.rootDir,
+      preflightPool
+    );
+    const actionableCandidates = repreflighted.filter(isActionableFinding);
+    const loopCandidates =
+      actionableCandidates.length > 0 ? actionableCandidates : repreflighted;
+
+    const loop = await runOneFixAtATimeLoop(workspace.rootDir, loopCandidates, {
       maxFixes,
       maxAttempts: FREE_CANDIDATE_ATTEMPT_LIMIT,
       stateMachine: sm,

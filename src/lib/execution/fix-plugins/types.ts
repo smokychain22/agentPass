@@ -30,12 +30,31 @@ export interface ValidationResult {
   error?: string;
 }
 
+export interface DryRunResult {
+  supported: boolean;
+  sourceLocated: boolean;
+  sourceHash?: string;
+  proposedModifiedHash?: string;
+  sourceWouldChange: boolean;
+  proposedDiff?: string;
+  protectedPath?: boolean;
+  blocker?: string;
+}
+
+export interface FixStrategy {
+  id: string;
+  label: string;
+}
+
 export interface FixPlugin {
   id: string;
   label: string;
+  supportedFindingTypes: string[];
   supports(finding: Finding, context: RepositoryContext): boolean;
   evaluate(finding: Finding, context: RepositoryContext): Promise<EligibilityResult>;
-  generate(finding: Finding, workspace: string): Promise<GeneratedChange>;
+  dryRun(finding: Finding, context: RepositoryContext, strategyId: string): Promise<DryRunResult>;
+  strategies(finding: Finding, context: RepositoryContext): Promise<FixStrategy[]>;
+  generate(finding: Finding, workspace: string, strategyId: string): Promise<GeneratedChange>;
   validate(change: GeneratedChange, workspace: string): Promise<ValidationResult>;
   rollback(change: GeneratedChange, workspace: string): Promise<void>;
 }
