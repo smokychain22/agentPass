@@ -10,10 +10,8 @@ export async function runScanJob(
   branch: string | undefined,
   ownerKey: string
 ): Promise<ScanJob> {
-  const isDemo = isDemoRepoUrl(repoUrl);
-
   const setStage = (stage: ScanJobStage) => {
-    updateJob(jobId, { status: "running", stage });
+    void updateJob(jobId, { status: "running", stage });
   };
 
   try {
@@ -24,26 +22,26 @@ export async function runScanJob(
 
     const scan = await runBasicScan(repoUrl, branch);
 
-    return updateJob(jobId, {
+    return (await updateJob(jobId, {
       status: "complete",
       stage: "complete",
       result: scan,
-    }) as ScanJob;
+    })) as ScanJob;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scan failed.";
-    return updateJob(jobId, {
+    return (await updateJob(jobId, {
       status: "failed",
       stage: "complete",
       error: message,
-    }) as ScanJob;
+    })) as ScanJob;
   }
 }
 
-export function createScanJob(
+export async function createScanJob(
   repoUrl: string,
   branch: string | undefined,
   ownerKey: string
-): ScanJob {
+): Promise<ScanJob> {
   const job: ScanJob = {
     id: createJobId("scan"),
     type: "scan",
@@ -57,5 +55,5 @@ export function createScanJob(
     createdAt: durableNow(),
     updatedAt: durableNow(),
   };
-  return saveJob(job) as ScanJob;
+  return (await saveJob(job)) as ScanJob;
 }

@@ -11,17 +11,17 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   try {
     const ownerKey = jobOwnerKey(request);
-    enforceRateLimit(ownerKey, "scan");
+    await enforceRateLimit(ownerKey, "scan");
 
     const body = (await request.json()) as { repoUrl?: string; branch?: string };
     if (!body.repoUrl?.trim()) {
       return NextResponse.json({ success: false, error: "repoUrl is required." }, { status: 422 });
     }
 
-    const job = createScanJob(body.repoUrl.trim(), body.branch?.trim(), ownerKey);
+    const job = await createScanJob(body.repoUrl.trim(), body.branch?.trim(), ownerKey);
     await runScanJob(job.id, job.repoUrl, job.branch, ownerKey);
 
-    const completed = getJob(job.id) as ScanJob | undefined;
+    const completed = (await getJob(job.id)) as ScanJob | undefined;
     if (!completed) {
       return NextResponse.json({ success: false, error: "Job completed but not retrievable." }, { status: 500 });
     }

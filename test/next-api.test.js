@@ -29,8 +29,10 @@ async function run() {
     const storePath = path.join(ROOT, "src/lib/store/durable-store.ts");
     assert.ok(fs.existsSync(storePath));
     const source = fs.readFileSync(storePath, "utf8");
-    assert.match(source, /loadDurableDb/);
+    assert.match(source, /getDurableRecord/);
     assert.match(source, /writeArtifact/);
+    const persistentPath = path.join(ROOT, "src/lib/store/persistent-store.ts");
+    assert.ok(fs.existsSync(persistentPath));
   });
 
   await test("demo constants isolate demo repo URL", async () => {

@@ -5,12 +5,12 @@ import { isDemoRepoUrl } from "@/lib/demo/constants";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchJob, PatchJobStage } from "./types";
 
-export function createPatchJob(
+export async function createPatchJob(
   repoUrl: string,
   branch: string | undefined,
   ownerKey: string,
   findings?: FindingsPayload
-): PatchJob {
+): Promise<PatchJob> {
   const job: PatchJob = {
     id: createJobId("patch"),
     type: "patch",
@@ -25,7 +25,7 @@ export function createPatchJob(
     createdAt: durableNow(),
     updatedAt: durableNow(),
   };
-  return saveJob(job) as PatchJob;
+  return (await saveJob(job)) as PatchJob;
 }
 
 export async function runPatchJob(
@@ -33,10 +33,10 @@ export async function runPatchJob(
   findings?: FindingsPayload,
   selectedFindingIds?: string[]
 ): Promise<PatchJob> {
-  const job = updateJob(jobId, { status: "running", stage: "loading_findings" }) as PatchJob;
+  const job = (await updateJob(jobId, { status: "running", stage: "loading_findings" })) as PatchJob;
 
   const setStage = (stage: PatchJobStage) => {
-    updateJob(jobId, { status: "running", stage });
+    void updateJob(jobId, { status: "running", stage });
   };
 
   try {
@@ -53,18 +53,18 @@ export async function runPatchJob(
     setStage("validating_patch");
     setStage("building_bundle");
 
-    return updateJob(jobId, {
+    return (await updateJob(jobId, {
       status: "complete",
       stage: "complete",
       result: patchKit,
       patchValidation: patchKit.patchValidation,
-    }) as PatchJob;
+    })) as PatchJob;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Patch generation failed.";
-    return updateJob(jobId, {
+    return (await updateJob(jobId, {
       status: "failed",
       stage: "complete",
       error: message,
-    }) as PatchJob;
+    })) as PatchJob;
   }
 }

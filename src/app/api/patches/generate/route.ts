@@ -15,7 +15,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const ownerKey = jobOwnerKey(request);
-    enforceRateLimit(ownerKey, "patch");
+    await enforceRateLimit(ownerKey, "patch");
 
     const body = (await request.json()) as {
       scanId?: string;
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
 
     let findings = body.findings;
     if (!findings && body.scanId) {
-      findings = getStoredFindings(body.scanId);
+      findings = await getStoredFindings(body.scanId);
     }
 
     if (!findings) {
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
 
     const filtered = filterFindingsBySelection(findings, body.selectedFindingIds);
 
-    const job = createPatchJob(repoUrl, body.branch ?? filtered.repo.branch, ownerKey, filtered);
+    const job = await createPatchJob(repoUrl, body.branch ?? filtered.repo.branch, ownerKey, filtered);
     const completed = await runPatchJob(job.id, filtered, body.selectedFindingIds);
 
     if (completed.status === "failed") {

@@ -11,10 +11,10 @@ export async function GET(
 ) {
   try {
     const ownerKey = jobOwnerKey(request);
-    enforceRateLimit(ownerKey, "download");
+    await enforceRateLimit(ownerKey, "download");
 
     const { patchId } = await context.params;
-    const stored = getStoredPatchKit(patchId);
+    const stored = await getStoredPatchKit(patchId);
 
     if (!stored) {
       return NextResponse.json({ success: false, error: "Patch bundle not found." }, { status: 404 });

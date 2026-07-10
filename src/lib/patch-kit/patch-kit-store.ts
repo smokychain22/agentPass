@@ -1,11 +1,11 @@
 import type { PatchKitPayload } from "./types";
 import {
-  getDurableRecord,
-  setDurableRecord,
-  deleteDurableRecord,
-  writeArtifact,
-  readArtifact,
   deleteArtifact,
+  deleteDurableRecord,
+  getDurableRecord,
+  readArtifact,
+  setDurableRecord,
+  writeArtifact,
 } from "@/lib/store/durable-store";
 
 interface StoredPatchKit {
@@ -26,11 +26,11 @@ function cache(): Map<string, StoredPatchKit> {
   return globalCache.__repodietPatchKits;
 }
 
-export function storePatchKit(
+export async function storePatchKit(
   payload: PatchKitPayload,
   zipBuffer: Buffer,
   filename: string
-): void {
+): Promise<void> {
   const record: StoredPatchKit = {
     payload,
     zipBuffer,
@@ -38,19 +38,19 @@ export function storePatchKit(
     createdAt: new Date().toISOString(),
   };
   cache().set(payload.id, record);
-  setDurableRecord("patchKits", payload.id, {
+  await setDurableRecord("patchKits", payload.id, {
     payload,
     filename,
     createdAt: record.createdAt,
   });
-  writeArtifact(payload.id, zipBuffer, "zip");
+  await writeArtifact(payload.id, zipBuffer, "zip");
 }
 
-export function getStoredPatchKit(id: string): StoredPatchKit | undefined {
+export async function getStoredPatchKit(id: string): Promise<StoredPatchKit | undefined> {
   const fromMemory = cache().get(id);
   if (fromMemory) return fromMemory;
 
-  const meta = getDurableRecord<{
+  const meta = await getDurableRecord<{
     payload: PatchKitPayload;
     filename: string;
     createdAt: string;
@@ -58,7 +58,7 @@ export function getStoredPatchKit(id: string): StoredPatchKit | undefined {
 
   if (!meta) return undefined;
 
-  const zipBuffer = readArtifact(id, "zip");
+  const zipBuffer = await readArtifact(id, "zip");
   if (!zipBuffer) return undefined;
 
   const record: StoredPatchKit = {
@@ -71,8 +71,8 @@ export function getStoredPatchKit(id: string): StoredPatchKit | undefined {
   return record;
 }
 
-export function deleteStoredPatchKit(id: string): void {
+export async function deleteStoredPatchKit(id: string): Promise<void> {
   cache().delete(id);
-  deleteDurableRecord("patchKits", id);
-  deleteArtifact(id, "zip");
+  await deleteDurableRecord("patchKits", id);
+  await deleteArtifact(id, "zip");
 }

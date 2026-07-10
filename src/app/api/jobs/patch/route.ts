@@ -15,7 +15,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const ownerKey = jobOwnerKey(request);
-    enforceRateLimit(ownerKey, "patch");
+    await enforceRateLimit(ownerKey, "patch");
 
     const body = (await request.json()) as {
       repoUrl?: string;
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
     let findings = body.findings;
     if (!findings && body.scanId) {
-      findings = getStoredFindings(body.scanId);
+      findings = await getStoredFindings(body.scanId);
       if (!findings) {
         return NextResponse.json(
           { success: false, error: "Findings not found for scanId." },
@@ -50,10 +50,10 @@ export async function POST(request: Request) {
 
     enforcePayment(request, "patch_bundle", { free: isDemoRepoUrl(repoUrl) });
 
-    const job = createPatchJob(repoUrl, branch, ownerKey, findings);
+    const job = await createPatchJob(repoUrl, branch, ownerKey, findings);
     await runPatchJob(job.id, findings, body.selectedFindingIds);
 
-    const completed = getJob(job.id) as PatchJob | undefined;
+    const completed = (await getJob(job.id)) as PatchJob | undefined;
     if (!completed) {
       return NextResponse.json({ success: false, error: "Job completed but not retrievable." }, { status: 500 });
     }

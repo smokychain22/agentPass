@@ -5,11 +5,11 @@ import { storeFindings } from "@/lib/findings/findings-store";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import type { FindingsJob, FindingsJobStage } from "./types";
 
-export function createFindingsJob(
+export async function createFindingsJob(
   repoUrl: string,
   branch: string | undefined,
   ownerKey: string
-): FindingsJob {
+): Promise<FindingsJob> {
   const job: FindingsJob = {
     id: createJobId("findings"),
     type: "findings",
@@ -23,31 +23,31 @@ export function createFindingsJob(
     createdAt: durableNow(),
     updatedAt: durableNow(),
   };
-  return saveJob(job) as FindingsJob;
+  return (await saveJob(job)) as FindingsJob;
 }
 
 export async function runFindingsJob(jobId: string): Promise<FindingsJob> {
-  const job = updateJob(jobId, { status: "running", stage: "fetching_repo" }) as FindingsJob;
+  const job = (await updateJob(jobId, { status: "running", stage: "fetching_repo" })) as FindingsJob;
 
   try {
     const findings = await runFindingsEngine(job.repoUrl, job.branch, (stage: FindingsJobStage) => {
-      updateJob(jobId, { status: "running", stage });
+      void updateJob(jobId, { status: "running", stage });
     });
 
-    storeFindings(findings);
+    await storeFindings(findings);
 
-    return updateJob(jobId, {
+    return (await updateJob(jobId, {
       status: "complete",
       stage: "complete",
       result: findings,
       scanId: findings.scanId,
-    }) as FindingsJob;
+    })) as FindingsJob;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Findings analysis failed.";
-    return updateJob(jobId, {
+    return (await updateJob(jobId, {
       status: "failed",
       stage: "complete",
       error: message,
-    }) as FindingsJob;
+    })) as FindingsJob;
   }
 }

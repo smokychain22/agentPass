@@ -105,7 +105,7 @@ export async function runVerification(
   checks: VerifyCheckResult[];
   limitations: string[];
 }> {
-  const payload = inlinePayload ?? getStoredPatchKit(patchId)?.payload;
+  const payload = inlinePayload ?? (await getStoredPatchKit(patchId))?.payload;
   if (!payload) {
     throw new Error("Patch bundle not found.");
   }

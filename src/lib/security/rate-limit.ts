@@ -29,12 +29,16 @@ function bucketKey(ownerKey: string, action: string): string {
   return `${ownerKey}:${action}`;
 }
 
-export function enforceRateLimit(ownerKey: string, action: string, limit?: number): void {
+export async function enforceRateLimit(
+  ownerKey: string,
+  action: string,
+  limit?: number
+): Promise<void> {
   const max = limit ?? DEFAULT_LIMITS[action] ?? 30;
   const now = Date.now();
   const key = bucketKey(ownerKey, action);
 
-  withDurableDb((db) => {
+  await withDurableDb((db) => {
     const usage = (db.usage[key] as UsageBucket | undefined) ?? {
       count: 0,
       windowStart: new Date(now).toISOString(),

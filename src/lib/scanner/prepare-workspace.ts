@@ -1,7 +1,5 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import {
   DEMO_REPO_BRANCH,
   DEMO_REPO_NAME,
@@ -14,6 +12,7 @@ import { parseGitHubUrl, buildRepoUrl } from "@/lib/github/parse-github-url";
 import { fetchRepoZip, RepoFetchError } from "@/lib/github/fetch-repo-zip";
 import { assertZipSize } from "@/lib/a2mcp/limits";
 import { unzipRepoToDir } from "@/lib/scanner/unzip-repo";
+import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 
 export interface RepoInfo {
   owner: string;
@@ -35,29 +34,27 @@ async function prepareFromGithubZip(
   branchInput: string | undefined,
   url: string
 ): Promise<RepoWorkspace> {
-  let workDir: string | null = null;
+  const workspace = await createScanWorkspace("repo");
+
   try {
     const { buffer, branch } = await fetchRepoZip(owner, name, branchInput);
     assertZipSize(buffer.byteLength);
 
-    workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
-    await fs.mkdir(workDir, { recursive: true });
-    const rootDir = await unzipRepoToDir(buffer, workDir);
+    await fs.writeFile(workspace.archivePath, Buffer.from(buffer));
+    const rootDir = await unzipRepoToDir(buffer, workspace.extractPath);
 
     const repo: RepoInfo = { owner, name, branch, url };
-    const capturedWorkDir = workDir;
+    const capturedRoot = workspace.root;
     return {
       rootDir,
-      workDir: capturedWorkDir,
+      workDir: capturedRoot,
       repo,
       cleanup: async () => {
-        await fs.rm(capturedWorkDir, { recursive: true, force: true }).catch(() => {});
+        await removeWorkspace(capturedRoot).catch(() => {});
       },
     };
   } catch (err) {
-    if (workDir) {
-      await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
-    }
+    await removeWorkspace(workspace.root).catch(() => {});
     if (err instanceof RepoFetchError) throw err;
     throw err instanceof Error ? err : new Error("Failed to prepare repository workspace.");
   }
@@ -68,7 +65,6 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
   try {
     await fs.access(sourceDir);
   } catch {
-    // On Vercel the seeded demo folder may be absent — fetch public demo repo from GitHub.
     return prepareFromGithubZip(
       DEMO_REPO_OWNER,
       DEMO_REPO_NAME,
@@ -77,8 +73,8 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
     );
   }
 
-  const workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
-  const rootDir = path.join(workDir, "repo");
+  const workspace = await createScanWorkspace("demo");
+  const rootDir = path.join(workspace.extractPath, "repo");
   await fs.mkdir(rootDir, { recursive: true });
   await fs.cp(sourceDir, rootDir, { recursive: true });
 
@@ -89,13 +85,13 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
     url: DEMO_REPO_URL,
   };
 
-  const capturedWorkDir = workDir;
+  const capturedRoot = workspace.root;
   return {
     rootDir,
-    workDir: capturedWorkDir,
+    workDir: capturedRoot,
     repo,
     cleanup: async () => {
-      await fs.rm(capturedWorkDir, { recursive: true, force: true }).catch(() => {});
+      await removeWorkspace(capturedRoot).catch(() => {});
     },
   };
 }

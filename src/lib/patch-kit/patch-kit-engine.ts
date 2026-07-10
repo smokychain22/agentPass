@@ -155,7 +155,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       zipBase64: bundle.zipBase64,
     };
 
-    storePatchKit(payload, bundle.zipBuffer, bundle.filename);
+    await storePatchKit(payload, bundle.zipBuffer, bundle.filename);
     return payload;
   } finally {
     await workspace.cleanup();

@@ -8,7 +8,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
-  const stored = getStoredPatchKit(id);
+  const stored = await getStoredPatchKit(id);
 
   if (!stored) {
     return NextResponse.json(

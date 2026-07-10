@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ scanId: string }> }
 ) {
   const { scanId } = await params;
-  const findings = getStoredFindings(scanId);
+  const findings = await getStoredFindings(scanId);
 
   if (!findings) {
     return NextResponse.json(

@@ -1,8 +1,8 @@
 import type { FindingsPayload } from "./types";
 import {
+  deleteDurableRecord,
   getDurableRecord,
   setDurableRecord,
-  deleteDurableRecord,
 } from "@/lib/store/durable-store";
 
 const globalCache = globalThis as unknown as {
@@ -16,20 +16,20 @@ function cache(): Map<string, FindingsPayload> {
   return globalCache.__repodietFindings;
 }
 
-export function storeFindings(payload: FindingsPayload): void {
+export async function storeFindings(payload: FindingsPayload): Promise<void> {
   cache().set(payload.scanId, payload);
-  setDurableRecord("findings", payload.scanId, payload);
+  await setDurableRecord("findings", payload.scanId, payload);
 }
 
-export function getStoredFindings(scanId: string): FindingsPayload | undefined {
+export async function getStoredFindings(scanId: string): Promise<FindingsPayload | undefined> {
   const fromMemory = cache().get(scanId);
   if (fromMemory) return fromMemory;
-  const fromDisk = getDurableRecord<FindingsPayload>("findings", scanId);
-  if (fromDisk) cache().set(scanId, fromDisk);
-  return fromDisk;
+  const fromStore = await getDurableRecord<FindingsPayload>("findings", scanId);
+  if (fromStore) cache().set(scanId, fromStore);
+  return fromStore;
 }
 
-export function deleteStoredFindings(scanId: string): void {
+export async function deleteStoredFindings(scanId: string): Promise<void> {
   cache().delete(scanId);
-  deleteDurableRecord("findings", scanId);
+  await deleteDurableRecord("findings", scanId);
 }

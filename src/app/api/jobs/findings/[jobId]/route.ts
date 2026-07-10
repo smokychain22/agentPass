@@ -10,7 +10,7 @@ export async function GET(
   context: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await context.params;
-  const job = getJob(jobId);
+  const job = await getJob(jobId);
 
   if (!job || job.type !== "findings") {
     return NextResponse.json({ success: false, error: "Job not found." }, { status: 404 });

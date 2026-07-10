@@ -1,9 +1,8 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { execa } from "execa";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
+import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 
 export interface PatchValidationResult {
   status: "passed" | "failed" | "skipped";
@@ -52,11 +51,10 @@ export async function validateCleanupPatchInWorkspace(
   }
 
   const applyable = extractApplyablePatch(patch);
-  const tempDir = path.join(os.tmpdir(), `repodiet-validate-${randomUUID()}`);
-  const patchFile = path.join(tempDir, "repodiet-cleanup.patch");
+  const workspace = await createScanWorkspace("validate");
+  const patchFile = path.join(workspace.artifactsPath, "repodiet-cleanup.patch");
 
   try {
-    await fs.mkdir(tempDir, { recursive: true });
     await fs.writeFile(patchFile, applyable, "utf8");
     await gitBaseline(rootDir);
 
@@ -80,7 +78,7 @@ export async function validateCleanupPatchInWorkspace(
       error: err instanceof Error ? err.message : "Patch validation failed.",
     };
   } finally {
-    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    await removeWorkspace(workspace.root).catch(() => {});
   }
 }
 

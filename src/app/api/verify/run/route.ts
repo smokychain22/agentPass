@@ -14,7 +14,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const ownerKey = jobOwnerKey(request);
-    enforceRateLimit(ownerKey, "verify");
+    await enforceRateLimit(ownerKey, "verify");
 
     const body = (await request.json()) as { patchId?: string; patchKit?: PatchKitPayload };
     if (!body.patchId?.trim()) {
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     }
 
     const patchId = body.patchId.trim();
-    const stored = getStoredPatchKit(patchId);
+    const stored = await getStoredPatchKit(patchId);
     const payload = body.patchKit ?? stored?.payload;
     if (!payload) {
       return NextResponse.json({ success: false, error: "Patch bundle not found." }, { status: 404 });
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     const result = await runVerification(patchId, body.patchKit);
     const verificationId = durableId("verify");
 
-    setDurableRecord("verifications", verificationId, {
+    await setDurableRecord("verifications", verificationId, {
       id: verificationId,
       patchId: body.patchId,
       ownerKey,

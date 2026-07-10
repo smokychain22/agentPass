@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   try {
     const body = FindingsRunBodySchema.parse(await request.json());
     const findings = await runFindingsEngine(body.repoUrl, body.branch);
-    storeFindings(findings);
+    await storeFindings(findings);
 
     return NextResponse.json({ success: true, findings });
   } catch (err) {
