@@ -16,6 +16,7 @@ import {
 } from "@/lib/cleanup/eligibility";
 import type { FreeCleanupResult } from "@/lib/cleanup/run-free-cleanup";
 import type { Finding } from "@/lib/findings/types";
+import { PRODUCT_OUTCOME_LABELS } from "@/lib/execution/outcomes";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { Panel } from "@/components/design-system/panel";
@@ -98,7 +99,7 @@ export function CleanupTab() {
         title="Free Cleanup Run"
         description={
           cta.mode === "auto_fix"
-            ? "RepoDiet fixes one supported safe issue, runs real baseline verification, and shows the exact diff. Your GitHub repository is not modified."
+            ? "RepoDiet ranks eligible findings, tries up to five candidates with deterministic strategies, verifies each change, and shows exact evidence. Your GitHub repository is not modified."
             : "No findings met Phase 1 automatic-fix eligibility. RepoDiet will explain why — no fake changes."
         }
         actions={
@@ -182,14 +183,18 @@ export function CleanupTab() {
       {result && (
         <>
           <FeedbackBanner
-            variant={result.proof.finalDecision === "retained" ? "success" : "info"}
+            variant={result.proof.finalDecision === "verified_fix" ? "success" : "info"}
             message={result.verifiedLabel}
             dismissible={false}
           />
 
           <Panel variant="elevated" padding="md">
-            <p className="ds-label mb-3">Final decision</p>
-            <p className="text-lg font-semibold capitalize">{result.proof.finalDecision}</p>
+            <p className="ds-label mb-3">Final outcome</p>
+            <p className="text-lg font-semibold">
+              {PRODUCT_OUTCOME_LABELS[
+                result.proof.productOutcome as keyof typeof PRODUCT_OUTCOME_LABELS
+              ] ?? result.proof.finalDecision.replace(/_/g, " ")}
+            </p>
             <p className="mt-2 text-sm text-foreground">{result.verifiedLabel}</p>
             {findings.repo.commitSha && (
               <p className="mt-1 font-mono text-xs text-muted-foreground">
@@ -223,37 +228,45 @@ export function CleanupTab() {
                       </span>
                       <RiskBadge
                         level={
-                          attempt.status === "retained"
+                          attempt.productOutcome === "verified_fix" || attempt.status === "retained"
                             ? "safe"
                             : attempt.status === "rejected"
                               ? "danger"
                               : "review"
                         }
                       >
-                        {attempt.status}
+                        {attempt.productOutcome
+                          ? PRODUCT_OUTCOME_LABELS[
+                              attempt.productOutcome as keyof typeof PRODUCT_OUTCOME_LABELS
+                            ]
+                          : attempt.status}
                       </RiskBadge>
                     </div>
                     <p className="mt-2 text-muted-foreground">
-                      {"displayReason" in attempt && attempt.displayReason
-                        ? attempt.displayReason
-                        : attempt.reason}
+                      {attempt.exactReason || attempt.displayReason || attempt.reason}
                     </p>
                     <p className="mt-1 font-mono text-[10px] text-muted-foreground">
                       {attempt.pluginId}
-                      {"rollbackStatus" in attempt && attempt.rollbackStatus
-                        ? ` · rollback ${attempt.rollbackStatus}`
-                        : ""}
+                      {attempt.strategyId ? ` · ${attempt.strategyId}` : ""}
+                      {attempt.rollbackStatus ? ` · rollback ${attempt.rollbackStatus}` : ""}
                     </p>
                   </li>
                 ))}
               </ul>
-              {result.proof.finalDecision !== "retained" && (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  RepoDiet evaluated {result.fixLoop.evaluated ?? result.fixLoop.attempts.length}{" "}
-                  candidate(s) but refused all modifications because none passed the configured
-                  safety requirements.
-                </p>
+              {result.proof.finalDecision !== "verified_fix" && (
+                <p className="mt-3 text-sm text-muted-foreground">{result.verifiedLabel}</p>
               )}
+            </Panel>
+          )}
+
+          {result.healthImpact && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Verified health impact</p>
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                {result.healthImpact.summaryLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
             </Panel>
           )}
 

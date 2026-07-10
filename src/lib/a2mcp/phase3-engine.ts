@@ -3,6 +3,7 @@ import {
   createCleanupPullRequest,
   createExecutionReceipt,
   executeFreeProof,
+  executeQuickCleanup,
   runQuickCleanup,
   scanRepository,
   selectSafeFixes,
@@ -177,8 +178,11 @@ export async function executeRunFreeSafeFix(
   const cleanup = await executeFreeProof(findings, { findingIds: input.findingIds });
 
   const limitations: string[] = [];
-  if (cleanup.proof.finalDecision !== "retained") {
-    limitations.push("No safe fix was retained after verification.");
+  if (cleanup.proof.finalDecision !== "verified_fix") {
+    limitations.push(
+      cleanup.verifiedLabel ||
+        "RepoDiet evaluated candidates but did not apply an unsafe change."
+    );
   }
   limitations.push("GitHub repository was not modified — isolated workspace only.");
 
@@ -206,20 +210,20 @@ export async function executeRunQuickCleanup(
 ): Promise<AgentTaskRecord> {
   const input = Phase3InputSchemas.runCleanup({ ...(body as object), operation: "quick_cleanup" });
   const findings = await resolveFindingsPayload(input, getAgentTask);
-  const patchKit = await runQuickCleanup(
-    findings.repo.url ?? `https://github.com/${findings.repo.owner}/${findings.repo.name}`,
-    findings.repo.branch,
-    findings,
-    input.findingIds
-  );
+  const cleanup = await executeQuickCleanup(findings, { findingIds: input.findingIds });
 
   const limitations = [
-    "Quick cleanup uses Patch Kit batch generation — not the one-fix verification loop.",
-    "Payment quote validation is recommended before production settlement.",
+    "Quick Cleanup uses the same verified fix engine as free proof (up to five retained fixes).",
+    "GitHub repository was not modified — isolated workspace only.",
   ];
   if (!input.quoteId) {
     limitations.push("No task quote provided — x402 settlement not verified for this run.");
   }
+  if (cleanup.proof.finalDecision !== "verified_fix") {
+    limitations.push(cleanup.verifiedLabel);
+  }
+
+  const signed = createExecutionReceipt(cleanup.receipt);
 
   return completeTask(
     taskId,
@@ -227,24 +231,16 @@ export async function executeRunQuickCleanup(
     findings,
     {
       scanId: findings.scanId,
-      patchId: patchKit.id,
-      summary: patchKit.summary,
-      artifacts: {
-        hasCleanupPatch: Boolean(patchKit.artifacts?.cleanupPatch),
-        zipBase64: Boolean(patchKit.zipBase64),
-      },
+      cleanupRunId: cleanup.id,
+      finalDecision: cleanup.proof.finalDecision,
+      changedFiles: cleanup.proof.changedFiles,
+      unifiedDiff: cleanup.unifiedDiff,
+      fixLoop: cleanup.fixLoop,
+      healthImpact: cleanup.healthImpact,
+      stateTransitions: cleanup.stateTransitions,
     },
     limitations,
-    {
-      taskId: patchKit.id,
-      repository: `${findings.repo.owner}/${findings.repo.name}`,
-      commitSha: findings.repo.commitSha ?? "unknown",
-      findingIds: input.findingIds ?? [],
-      patchHash: "sha256:patchkit",
-      verificationHash: "sha256:pending",
-      status: "partial",
-      timestamp: new Date().toISOString(),
-    }
+    signed
   );
 }
 

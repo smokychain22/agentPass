@@ -4,13 +4,19 @@ import { execa } from "execa";
 import type { Finding } from "@/lib/findings/types";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
-import { removeUnusedSymbolFromImport } from "@/lib/findings/unused-import-detector";
+import {
+  removeUnusedSymbolFromImport,
+  convertSymbolToTypeOnlyImport,
+  removeUnusedImportLine,
+} from "@/lib/findings/unused-import-detector";
 import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
 import { resolvePhase1Plugin, type Phase1PluginId } from "./phase1-plugins";
+import { defaultStrategyForPlugin } from "../fix-strategies";
 
 export interface AppliedFix {
   pluginId: Phase1PluginId;
+  strategyId: string;
   unifiedDiff: string;
   changedPaths: string[];
   originalSources: Record<string, string>;
@@ -33,6 +39,31 @@ async function readSourceMap(
   return out;
 }
 
+async function ensureGitBaseline(rootDir: string): Promise<void> {
+  await execa("git", ["init"], { cwd: rootDir, reject: false });
+  await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });
+  await execa(
+    "git",
+    [
+      "-c",
+      "user.email=repodiet@local",
+      "-c",
+      "user.name=RepoDiet",
+      "commit",
+      "-m",
+      "baseline",
+      "--allow-empty",
+    ],
+    { cwd: rootDir, reject: false }
+  );
+}
+
+async function gitDiff(rootDir: string, paths?: string[]): Promise<string> {
+  const args = ["diff", "--no-color", "HEAD", "--", ...(paths ?? [])];
+  const diff = await execa("git", args, { cwd: rootDir, reject: false });
+  return diff.stdout?.trim() ?? "";
+}
+
 function uninstallCommand(pm: PackageManager, packageName: string): string[] {
   switch (pm) {
     case "pnpm":
@@ -48,8 +79,12 @@ function uninstallCommand(pm: PackageManager, packageName: string): string[] {
 
 async function applyRemoveTempFile(
   rootDir: string,
-  finding: Finding
+  finding: Finding,
+  strategyId: string
 ): Promise<AppliedFix> {
+  if (strategyId === "archive_proposed_change") {
+    throw new Error("Archive strategy requires guided review — not auto-applied.");
+  }
   const safeItems: ClassifiedItem[] = finding.files.map((file) => ({
     path: file,
     reason: finding.reason,
@@ -62,6 +97,7 @@ async function applyRemoveTempFile(
   for (const p of deletedPaths) modifiedSources[p] = "";
   return {
     pluginId: "remove_temp_file",
+    strategyId,
     unifiedDiff: patch,
     changedPaths: deletedPaths,
     originalSources: originals,
@@ -72,7 +108,8 @@ async function applyRemoveTempFile(
 
 async function applyRemoveUnusedImport(
   rootDir: string,
-  finding: Finding
+  finding: Finding,
+  strategyId: string
 ): Promise<AppliedFix> {
   const rel = finding.files[0];
   if (!rel) throw new Error("No file for unused import fix.");
@@ -85,39 +122,46 @@ async function applyRemoveUnusedImport(
 
   const full = path.join(rootDir, rel);
   const original = await fs.readFile(full, "utf8");
-  const modified = removeUnusedSymbolFromImport(original, importLine, symbol);
+  let modified: string;
 
-  if (modified === original) {
-    throw new Error("Unused import line could not be removed safely.");
+  switch (strategyId) {
+    case "convert_to_type_only_import":
+      modified = convertSymbolToTypeOnlyImport(original, importLine, symbol);
+      break;
+    case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free": {
+      const partial = removeUnusedSymbolFromImport(original, importLine, symbol);
+      modified = partial === original ? removeUnusedImportLine(original, importLine) : partial;
+      break;
+    }
+    case "remove_unused_named_specifier":
+    default:
+      modified = removeUnusedSymbolFromImport(original, importLine, symbol);
+      break;
   }
 
-  await execa("git", ["init"], { cwd: rootDir, reject: false });
-  await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });
-  await execa(
-    "git",
-    ["-c", "user.email=repodiet@local", "-c", "user.name=RepoDiet", "commit", "-m", "baseline", "--allow-empty"],
-    { cwd: rootDir, reject: false }
-  );
+  if (modified === original) {
+    throw new Error("Unused import could not be modified safely for this strategy.");
+  }
 
+  await ensureGitBaseline(rootDir);
   await fs.writeFile(full, modified, "utf8");
-  const diff = await execa("git", ["diff", "--no-color", "HEAD", "--", rel], {
-    cwd: rootDir,
-    reject: false,
-  });
+  const diff = await gitDiff(rootDir, [rel]);
 
   return {
     pluginId: "remove_unused_import",
-    unifiedDiff: diff.stdout?.trim() ?? "",
+    strategyId,
+    unifiedDiff: diff,
     changedPaths: [rel],
     originalSources: { [rel]: original },
     modifiedSources: { [rel]: modified },
-    expectedFix: `Remove unused import from ${rel}`,
+    expectedFix: `Remove unused import from ${rel} (${strategyId})`,
   };
 }
 
 async function applyRemoveUnusedDependency(
   rootDir: string,
-  finding: Finding
+  finding: Finding,
+  strategyId: string
 ): Promise<AppliedFix> {
   const pkgName = finding.packageName;
   if (!pkgName) throw new Error("No package name for dependency fix.");
@@ -130,23 +174,22 @@ async function applyRemoveUnusedDependency(
   };
 
   let removed = false;
-  if (pkg.dependencies?.[pkgName]) {
+  if (strategyId === "remove_from_dev_dependencies") {
+    if (pkg.devDependencies?.[pkgName]) {
+      delete pkg.devDependencies[pkgName];
+      removed = true;
+    }
+  } else if (pkg.dependencies?.[pkgName]) {
     delete pkg.dependencies[pkgName];
     removed = true;
-  }
-  if (pkg.devDependencies?.[pkgName]) {
+  } else if (pkg.devDependencies?.[pkgName]) {
     delete pkg.devDependencies[pkgName];
     removed = true;
   }
-  if (!removed) throw new Error(`Package ${pkgName} not found in package.json.`);
 
-  await execa("git", ["init"], { cwd: rootDir, reject: false });
-  await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });
-  await execa(
-    "git",
-    ["-c", "user.email=repodiet@local", "-c", "user.name=RepoDiet", "commit", "-m", "baseline", "--allow-empty"],
-    { cwd: rootDir, reject: false }
-  );
+  if (!removed) throw new Error(`Package ${pkgName} not found in package.json for ${strategyId}.`);
+
+  await ensureGitBaseline(rootDir);
 
   const modified = `${JSON.stringify(pkg, null, 2)}\n`;
   await fs.writeFile(pkgPath, modified, "utf8");
@@ -171,11 +214,7 @@ async function applyRemoveUnusedDependency(
     }
   }
 
-  const diff = await execa("git", ["diff", "--no-color", "HEAD"], {
-    cwd: rootDir,
-    reject: false,
-  });
-
+  const diff = await gitDiff(rootDir);
   const modifiedSources: Record<string, string> = { "package.json": modified };
   for (const lf of changedPaths.slice(1)) {
     try {
@@ -187,26 +226,31 @@ async function applyRemoveUnusedDependency(
 
   return {
     pluginId: "remove_unused_dependency",
-    unifiedDiff: diff.stdout?.trim() ?? "",
+    strategyId,
+    unifiedDiff: diff,
     changedPaths,
     originalSources: { "package.json": original },
     modifiedSources,
-    expectedFix: `Remove unused dependency ${pkgName}`,
+    expectedFix: `Remove unused dependency ${pkgName} (${strategyId})`,
   };
 }
 
 export async function applyPhase1Fix(
   rootDir: string,
-  finding: Finding
+  finding: Finding,
+  strategyId?: string
 ): Promise<AppliedFix> {
   const plugin = resolvePhase1Plugin(finding);
+  const resolvedStrategy =
+    strategyId ?? defaultStrategyForPlugin(plugin.id)?.id ?? "default";
+
   switch (plugin.id) {
     case "remove_temp_file":
-      return applyRemoveTempFile(rootDir, finding);
+      return applyRemoveTempFile(rootDir, finding, resolvedStrategy);
     case "remove_unused_import":
-      return applyRemoveUnusedImport(rootDir, finding);
+      return applyRemoveUnusedImport(rootDir, finding, resolvedStrategy);
     case "remove_unused_dependency":
-      return applyRemoveUnusedDependency(rootDir, finding);
+      return applyRemoveUnusedDependency(rootDir, finding, resolvedStrategy);
     default:
       throw new Error(`Plugin ${plugin.id} cannot apply automatic changes.`);
   }

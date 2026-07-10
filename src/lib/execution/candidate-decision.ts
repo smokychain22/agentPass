@@ -1,6 +1,11 @@
 import type { Finding } from "@/lib/findings/types";
 import type { BaselineVerificationReport } from "./baseline-verification";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
+import {
+  deriveAttemptProductOutcome,
+  formatProductOutcomeLabel,
+  type ProductOutcome,
+} from "./outcomes";
 
 export type CandidateState =
   | "eligible"
@@ -14,7 +19,9 @@ export interface CandidateDecisionRecord {
   candidateId: string;
   findingId: string;
   pluginId: string;
+  strategyId?: string;
   state: CandidateState;
+  actionability?: string;
   eligibilityEvidence: Record<string, unknown>;
   generatedChange?: {
     originalHash?: string;
@@ -28,7 +35,12 @@ export interface CandidateDecisionRecord {
   baseline?: BaselineVerificationReport;
   modified?: BaselineVerificationReport;
   comparison?: Array<{ name: string; outcome: string; exitCode: number | null }>;
+  verificationComparison?: Array<{ name: string; outcome: string; exitCode: number | null }>;
+  /** Internal attempt result — not shown as primary user label */
   finalDecision: "retained" | "skipped" | "rejected";
+  /** Precise user-facing outcome */
+  productOutcome: ProductOutcome;
+  exactReason: string;
   rejectionReason: string;
   rollbackStatus: "completed" | "not_needed" | "failed" | "pending";
   checks: VerifyCheckResult[];
@@ -37,25 +49,52 @@ export interface CandidateDecisionRecord {
 export function formatRejectionReason(input: {
   status: string;
   reason: string;
+  productOutcome?: ProductOutcome;
   comparison?: Array<{ name: string; outcome: string }>;
   patchValidation?: { error?: string };
   rollbackStatus?: string;
 }): string {
   if (input.status === "retained") {
-    return "Fix verified and retained — all required checks passed or showed no new regression.";
+    return "Verified and retained — all required checks passed or showed no new regression.";
   }
 
+  const outcome =
+    input.productOutcome ??
+    deriveAttemptProductOutcome({
+      internalStatus: input.status as "retained" | "skipped" | "rejected",
+      reason: input.reason,
+      pluginId: "",
+      comparison: input.comparison,
+    });
+
   const raw = input.reason.trim();
+
+  if (outcome === "rolled_back_regression") {
+    const checks =
+      raw.replace("Verification introduced new failure in: ", "") ||
+      input.comparison
+        ?.filter((c) => c.outcome.toLowerCase().includes("new regression"))
+        .map((c) => c.name)
+        .join(", ");
+    return formatProductOutcomeLabel("rolled_back_regression", checks || "regression");
+  }
+
+  if (outcome === "blocked_dynamic_usage") {
+    return formatProductOutcomeLabel(
+      "blocked_dynamic_usage",
+      raw.includes("JSX") || raw.includes("jsx") ? "symbol referenced in JSX" : undefined
+    );
+  }
+
   if (raw && raw !== "No safe fix retained — see verification details") {
-    if (raw.startsWith("Verification introduced new failure")) {
-      const checks = raw.replace("Verification introduced new failure in: ", "");
-      return `Change rolled back because ${checks} introduced new failure(s) after the modification.`;
-    }
     if (raw === "No diff was generated for this fix.") {
-      return "Change skipped because the fix plugin could not produce a source modification.";
+      return formatProductOutcomeLabel("unsupported_transformation");
     }
     if (raw.includes("Patch validation failed") || input.patchValidation?.error) {
-      return `Change skipped because patch validation failed: ${input.patchValidation?.error ?? raw}`;
+      return `${formatProductOutcomeLabel("unsupported_transformation")}: ${input.patchValidation?.error ?? raw}`;
+    }
+    if (outcome !== "unsupported_transformation") {
+      return formatProductOutcomeLabel(outcome, raw);
     }
     return raw;
   }
@@ -64,14 +103,17 @@ export function formatRejectionReason(input: {
     c.outcome.toLowerCase().includes("new regression")
   );
   if (introduced?.length) {
-    return `Change rolled back because ${introduced.map((c) => c.name).join(", ")} introduced new failure(s).`;
+    return formatProductOutcomeLabel(
+      "rolled_back_regression",
+      introduced.map((c) => c.name).join(", ")
+    );
   }
 
   if (input.rollbackStatus === "completed") {
-    return "Change rolled back after verification did not pass safety requirements.";
+    return formatProductOutcomeLabel("rolled_back_regression");
   }
 
-  return "RepoDiet refused this modification because it could not prove the change preserved repository behavior.";
+  return formatProductOutcomeLabel("unsupported_transformation");
 }
 
 export function buildEligibilityEvidence(finding: Finding): Record<string, unknown> {

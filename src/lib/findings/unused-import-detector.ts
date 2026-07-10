@@ -182,3 +182,62 @@ export function removeUnusedSymbolFromImport(
 
   return out.join("\n").replace(/\n{3,}/g, "\n\n");
 }
+
+/** Convert a named import specifier to `import type { ... }` when only used in type positions. */
+export function convertSymbolToTypeOnlyImport(
+  source: string,
+  importLine: string,
+  symbol: string
+): string {
+  const lines = source.split("\n");
+  const normalized = importLine.replace(/\s+/g, " ").trim();
+  const out: string[] = [];
+  let skip = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (skip > 0) {
+      skip -= 1;
+      continue;
+    }
+    const chunk = lines.slice(i).join("\n");
+    const multiLineEnd = chunk.indexOf(";");
+    const block = multiLineEnd >= 0 ? chunk.slice(0, multiLineEnd + 1) : chunk.split("\n")[0];
+    if (block.replace(/\s+/g, " ").trim() !== normalized) {
+      out.push(lines[i]);
+      continue;
+    }
+
+    const lineCount = block.split("\n").length;
+    skip = lineCount - 1;
+
+    const namedMatch = block.match(/import\s+(type\s+)?\{([^}]+)\}\s+from\s+(['"][^'"]+['"])/);
+    if (!namedMatch) {
+      out.push(lines[i]);
+      continue;
+    }
+
+    const parts = namedMatch[2]
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const updated = parts.map((p) => {
+      const withoutType = p.replace(/^type\s+/, "");
+      const aliasParts = withoutType.split(/\s+as\s+/);
+      const importName = aliasParts[0]?.trim() ?? "";
+      const localName = (aliasParts[1] ?? aliasParts[0])?.trim() ?? "";
+      if (localName === symbol || importName === symbol) {
+        return p.startsWith("type ") ? p : `type ${withoutType}`;
+      }
+      return p;
+    });
+
+    const indent = lines[i].match(/^\s*/)?.[0] ?? "";
+    const fromClause = namedMatch[3];
+    const allTypeOnly = updated.every((p) => p.startsWith("type "));
+    const prefix = allTypeOnly ? "import type" : "import";
+    const rebuilt = `${indent}${prefix} { ${updated.join(", ")} } from ${fromClause};`;
+    out.push(rebuilt);
+  }
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}

@@ -15,8 +15,19 @@ import {
 import { generateCursorPrompt } from "@/lib/patch-kit/generate-cursor-prompt";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { runOneFixAtATimeLoop, countDiffLines } from "./one-fix-at-a-time";
-import { FREE_CANDIDATE_ATTEMPT_LIMIT } from "./constants";
+import {
+  FREE_CANDIDATE_ATTEMPT_LIMIT,
+  QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+} from "./constants";
 import { formatRejectionReason } from "./candidate-decision";
+import {
+  buildNoSafeActionSummary,
+  deriveRunFinalStatus,
+  formatProductOutcomeLabel,
+  type ProductOutcome,
+  type RunFinalStatus,
+} from "./outcomes";
+import { computeHealthImpact } from "./health-impact";
 import {
   hashPatchContent,
   hashVerification,
@@ -51,13 +62,19 @@ export interface FreeCleanupResult {
     verified: number;
     skipped: number;
     rejected: number;
+    rolledBack: number;
+    unsupported: number;
+    reviewReady: number;
     attempts: Array<{
       findingId: string;
       title: string;
       status: string;
+      productOutcome: ProductOutcome;
+      exactReason: string;
       reason: string;
       displayReason: string;
       pluginId: string;
+      strategyId: string;
       expectedFix: string;
       eligibilityReason: string;
       changedPaths: string[];
@@ -82,8 +99,12 @@ export interface FreeCleanupResult {
       exitCode: number | null;
       status: string;
     }>;
-    finalDecision: "retained" | "skipped" | "rejected" | "review_plan";
+    finalDecision: RunFinalStatus | "review_plan";
+    productOutcome: ProductOutcome | RunFinalStatus | "review_plan";
+    commitSha: string;
+    githubModified: false;
   };
+  healthImpact?: import("./health-impact").HealthImpact;
   metrics: {
     issuesSelected: number;
     issuesChanged: number;
@@ -218,6 +239,9 @@ export async function runFreeCleanupCore(
         verified: 0,
         skipped: 0,
         rejected: 0,
+        rolledBack: 0,
+        unsupported: 0,
+        reviewReady: selected.length,
         evaluated: 0,
         notAttempted: 0,
         attempts: [],
@@ -229,7 +253,10 @@ export async function runFreeCleanupCore(
         linesAdded: 0,
         linesRemoved: 0,
         executedCommands: [],
-        finalDecision: "review_plan",
+        finalDecision: "review_ready_change",
+        productOutcome: "review_ready_change",
+        commitSha,
+        githubModified: false,
       },
       metrics: {
         issuesSelected: selected.length,
@@ -285,15 +312,27 @@ export async function runFreeCleanupCore(
     const primaryRejected =
       loop.attempts.find((a) => a.status === "skipped" || a.status === "rejected") ??
       loop.attempts[0];
+    const runStatus = deriveRunFinalStatus({
+      retainedCount: loop.metrics.retained,
+      attemptCount: loop.attempts.length,
+      mode: "auto_fix",
+    });
+    const attemptOutcomes = loop.attempts.map((a) => a.productOutcome);
     const headlineReason = retained
-      ? "One safe fix verified and retained"
-      : primaryRejected
-        ? primaryRejected.displayReason
-        : formatRejectionReason({
-            status: "skipped",
-            reason: "No eligible candidates were evaluated.",
-            rollbackStatus: "not_needed",
-          });
+      ? formatProductOutcomeLabel("verified_fix")
+      : buildNoSafeActionSummary({
+          evaluated: loop.attempts.length,
+          retained: loop.metrics.retained,
+          outcomes: attemptOutcomes,
+        }) ||
+        (primaryRejected
+          ? primaryRejected.displayReason
+          : formatRejectionReason({
+              status: "skipped",
+              reason: "No eligible candidates were evaluated.",
+              productOutcome: "no_safe_action",
+              rollbackStatus: "not_needed",
+            }));
 
     if (!retained && loop.attempts.length > 0) {
       limitations.push(
@@ -312,11 +351,8 @@ export async function runFreeCleanupCore(
         ? "partial"
         : "not_run";
 
-    const finalDecision =
-      loop.retained[0]?.status ??
-      loop.attempts.find((a) => a.status === "rejected")?.status ??
-      loop.attempts[0]?.status ??
-      "skipped";
+    const finalDecision = runStatus;
+    const healthImpact = computeHealthImpact(loop.retained);
 
     const receipt: ExecutionReceipt = {
       taskId: id,
@@ -350,15 +386,21 @@ export async function runFreeCleanupCore(
         verified: loop.metrics.retained,
         skipped: loop.metrics.skipped,
         rejected: loop.metrics.rejected,
+        rolledBack: loop.metrics.rolledBack,
+        unsupported: loop.metrics.unsupported,
+        reviewReady: 0,
         evaluated: loop.metrics.evaluated,
         notAttempted: loop.metrics.notAttempted,
         attempts: loop.attempts.map((a) => ({
           findingId: a.finding.id,
           title: a.finding.title,
           status: a.status,
+          productOutcome: a.productOutcome,
+          exactReason: a.exactReason,
           reason: a.reason,
           displayReason: a.displayReason,
           pluginId: a.pluginId,
+          strategyId: a.strategyId,
           expectedFix: a.expectedFix,
           eligibilityReason: a.eligibilityReason,
           changedPaths: a.changedPaths,
@@ -381,8 +423,12 @@ export async function runFreeCleanupCore(
           exitCode: c.exitCode,
           status: c.status,
         })),
-        finalDecision: finalDecision as FreeCleanupResult["proof"]["finalDecision"],
+        finalDecision,
+        productOutcome: retained ? "verified_fix" : finalDecision,
+        commitSha,
+        githubModified: false,
       },
+      healthImpact,
       metrics: {
         issuesSelected: selected.length,
         issuesChanged: loop.metrics.retained,

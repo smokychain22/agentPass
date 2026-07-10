@@ -8,6 +8,7 @@ export {
   createTaskQuote,
   createExecutionReceipt,
   executeFreeProof,
+  executeQuickCleanup,
   executeTaskQuote,
   runQuickCleanup,
   activateRepoGuard,

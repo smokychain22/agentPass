@@ -4,7 +4,6 @@
  */
 import type { FindingsPayload } from "@/lib/findings/types";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
-import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { createCleanupPullRequest as createCleanupPr } from "@/lib/operator/create-cleanup-pr";
 import {
@@ -13,6 +12,7 @@ import {
   QUICK_CLEANUP_LIMIT,
 } from "@/lib/cleanup/eligibility";
 import { runFreeCleanupCore, type FreeCleanupResult } from "./run-cleanup-core";
+import { QUICK_CLEANUP_RETAINED_FIX_LIMIT } from "./constants";
 import { createTaskQuote as buildTaskQuote, type TaskOperation, type TaskQuote } from "./task-quote";
 import {
   signExecutionReceipt,
@@ -141,17 +141,40 @@ export async function executeTaskQuote(input: {
   return quote;
 }
 
+export async function executeQuickCleanup(
+  findings: FindingsPayload,
+  options?: { findingIds?: string[] }
+) {
+  const result = await generateChanges(findings, {
+    findingIds: options?.findingIds,
+    maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+  });
+
+  const repository = `${findings.repo.owner}/${findings.repo.name}`;
+  const commitSha = findings.repo.commitSha ?? "unknown";
+
+  await saveCleanupRun(result, {
+    repository,
+    branch: findings.repo.branch,
+    commitSha,
+    scanId: findings.scanId,
+  });
+
+  const signed = createExecutionReceipt(result.receipt);
+  await saveExecutionReceiptRecord(signed);
+
+  return { ...result, signedReceipt: signed };
+}
+
 export async function runQuickCleanup(
   repoUrl: string,
   branch: string | undefined,
   findings: FindingsPayload,
   selectedFindingIds?: string[]
 ) {
-  return runPatchKitEngine({
-    repoUrl,
-    branch: branch ?? findings.repo.branch,
-    findings,
-    selectedFindingIds,
+  return runFreeCleanupCore(findings, {
+    findingIds: selectedFindingIds,
+    maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
   });
 }
 

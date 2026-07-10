@@ -7,7 +7,6 @@ import {
   scanRepository,
   selectSafeFixes,
 } from "@/lib/execution";
-import { runVerification } from "@/lib/verify/run-verification";
 import {
   createQuoteForOperation,
   requireEntitlement,
@@ -253,12 +252,14 @@ async function executeChanges(
       sm.emit("verifying", "verification_worker");
       task = await syncTask(task, sm);
 
-      if (cleanup.proof.finalDecision !== "retained") {
+      if (cleanup.proof.finalDecision !== "verified_fix") {
         return failTask(
           task,
           sm,
           "verification_failed",
-          cleanup.fixLoop.attempts[0]?.reason ?? "Safe fix not retained after verification.",
+          cleanup.fixLoop.attempts[0]?.exactReason ??
+            cleanup.fixLoop.attempts[0]?.displayReason ??
+            "No verified fix retained after evaluation.",
           "verification_worker"
         );
       }
@@ -297,7 +298,7 @@ async function executeChanges(
     sm.emit("generating_changes", "fix_executor");
     task = await syncTask(task, sm);
     try {
-      const patchKit = await runQuickCleanup(
+      const cleanup = await runQuickCleanup(
         input.repoUrl,
         input.branch,
         analyzed,
@@ -308,18 +309,24 @@ async function executeChanges(
       sm.emit("verifying", "verification_worker");
       task = await syncTask(task, sm);
 
-      const verification = await runVerification(patchKit.id, patchKit);
-      if (verification.status === "failed") {
-        return failTask(task, sm, "verification_failed", "Patch verification failed.", "verification_worker");
+      if (cleanup.proof.finalDecision !== "verified_fix") {
+        return failTask(
+          task,
+          sm,
+          "verification_failed",
+          cleanup.verifiedLabel ?? "No verified fixes retained.",
+          "verification_worker"
+        );
       }
 
+      const verification = cleanup.verification;
       const receipt = createExecutionReceipt({
         taskId: task.id,
         repository: `${analyzed.repo.owner}/${analyzed.repo.name}`,
         commitSha: analyzed.repo.commitSha ?? "unknown",
         findingIds: input.findingIds ?? [],
-        patchHash: "sha256:patchkit",
-        verificationHash: "sha256:verified",
+        patchHash: cleanup.receipt.patchHash,
+        verificationHash: cleanup.receipt.verificationHash,
         status: verification.status === "passed" ? "verified" : "partial",
         quoteId: task.input.quoteId,
         paymentReference: task.input.paymentReference,
@@ -329,9 +336,10 @@ async function executeChanges(
       return completeTask(task, sm, {
         findings: task.result.findings,
         changes: {
-          changedFiles: patchKit.summary.deletedPaths ?? [],
-          unifiedDiff: patchKit.artifacts.cleanupPatch,
-          patchId: patchKit.id,
+          changedFiles: cleanup.proof.changedFiles,
+          unifiedDiff: cleanup.unifiedDiff,
+          patchId: cleanup.id,
+          finalDecision: cleanup.proof.finalDecision,
         },
         verification,
         receipt: receipt as Record<string, unknown>,
@@ -355,7 +363,7 @@ async function executeChanges(
       sm.emit("validating_patch", "safety_classifier", `${safe.length} safe fixes evaluated`);
       task = await syncTask(task, sm);
 
-      const patchKit = await runQuickCleanup(
+      const cleanup = await runQuickCleanup(
         input.repoUrl,
         input.branch,
         analyzed,
@@ -364,28 +372,28 @@ async function executeChanges(
 
       sm.emit("verifying", "verification_worker");
       task = await syncTask(task, sm);
-      const verification = await runVerification(patchKit.id, patchKit);
-      if (verification.status === "failed") {
+      const verification = cleanup.verification;
+      if (verification.status === "failed" && cleanup.proof.finalDecision !== "verified_fix") {
         return failTask(
           task,
           sm,
           "verification_failed",
-          "Cleanup verification failed before PR approval.",
+          cleanup.verifiedLabel ?? "Cleanup verification failed before PR approval.",
           "verification_worker"
         );
       }
 
-      const changedFiles = patchKit.summary.deletedPaths ?? [];
+      const changedFiles = cleanup.proof.changedFiles;
       const approval = {
         summary: `${changedFiles.length} file(s) will change on branch repodiet/cleanup-${task.id}`,
         repository: `${analyzed.repo.owner}/${analyzed.repo.name}`,
         branch: `repodiet/cleanup-${task.id}`,
-        changes: changedFiles.map((path) => ({
-          path,
+        changes: changedFiles.map((filePath: string) => ({
+          path: filePath,
           action: "delete" as const,
-          summary: "Safe candidate removal",
+          summary: "Verified cleanup change",
         })),
-        unifiedDiff: patchKit.artifacts.cleanupPatch,
+        unifiedDiff: cleanup.unifiedDiff,
         expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(),
       };
 
@@ -396,8 +404,9 @@ async function executeChanges(
           findings: task.result.findings,
           changes: {
             changedFiles,
-            unifiedDiff: patchKit.artifacts.cleanupPatch,
-            patchId: patchKit.id,
+            unifiedDiff: cleanup.unifiedDiff,
+            patchId: cleanup.id,
+            finalDecision: cleanup.proof.finalDecision,
           },
           verification,
         },
