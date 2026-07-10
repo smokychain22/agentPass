@@ -3,20 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Copy,
-  Info,
-  Loader2,
-  Lock,
-} from "lucide-react";
+import { Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { DEMO_NOTICE } from "@/lib/demo/constants";
 import { useAppSession } from "@/components/app/app-session";
-import { LockedTab } from "@/components/app/locked-tab";
+import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
 import {
   FINDINGS_STEPS,
   buildCleanupPrompt,
@@ -25,11 +15,16 @@ import {
   type FindingsPhase,
 } from "@/lib/findings/client";
 import { SummaryCards } from "./findings/summary-cards";
-import { RiskBuckets } from "./findings/risk-buckets";
-import { FindingsTable } from "./findings/findings-table";
-import { CategoryPanels } from "./findings/category-panels";
+import { FindingsWorkspace } from "./findings/findings-workspace";
+import { RepositoryMap } from "./findings/repository-map";
 import { JsonExportCard } from "./findings/json-export";
-import { cn } from "@/lib/utils";
+import { LoadingProgress } from "@/components/app/ui/loading-progress";
+import { ErrorState } from "@/components/app/ui/error-state";
+import { EmptyState } from "@/components/app/ui/empty-state";
+import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
+import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
+import { DEMO_NOTICE } from "@/lib/demo/constants";
+import { FileSearch } from "lucide-react";
 
 const LOADING: FindingsPhase[] = [
   "preparing",
@@ -48,6 +43,7 @@ function phaseIndex(phase: FindingsPhase): number {
 export function FindingsTab() {
   const searchParams = useSearchParams();
   const { session, findings, setFindings } = useAppSession();
+  const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<FindingsPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [promptCopied, setPromptCopied] = useState(false);
@@ -60,6 +56,7 @@ export function FindingsTab() {
   const runFindings = useCallback(async () => {
     if (!session.scanComplete || !session.repoUrl) return;
     setError(null);
+    show("info", "Findings analysis started");
 
     try {
       const result = await runFindingsAnalysis(
@@ -68,10 +65,13 @@ export function FindingsTab() {
         setPhase
       );
       setFindings(result);
+      show("success", "Findings ready — review classification");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Findings analysis failed.");
+      const msg = err instanceof Error ? err.message : "Findings analysis failed.";
+      setError(msg);
+      show("error", "Findings analysis failed");
     }
-  }, [session, setFindings]);
+  }, [session, setFindings, show]);
 
   useEffect(() => {
     if (
@@ -90,7 +90,21 @@ export function FindingsTab() {
     if (!findings) return;
     await navigator.clipboard.writeText(buildCleanupPrompt(findings));
     setPromptCopied(true);
+    show("success", "Cleanup prompt copied");
     setTimeout(() => setPromptCopied(false), 2000);
+  };
+
+  const downloadFindings = () => {
+    if (!findings) return;
+    const json = JSON.stringify(findings, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `repodiet-findings-${findings.scanId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    show("success", "findings.json downloaded");
   };
 
   if (!session.scanComplete) {
@@ -98,7 +112,7 @@ export function FindingsTab() {
       <LockedTab
         step="02"
         title="Findings Engine"
-        description="Complete a repository scan first. The Findings tab unlocks after RepoDiet captures structure metadata from the Scan tab."
+        description="Available after repository scan. Complete a scan first to unlock findings analysis."
       />
     );
   }
@@ -106,110 +120,70 @@ export function FindingsTab() {
   const allFindings = findings ? flattenFindings(findings) : [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      {Toast}
+
       {isDemoMode && (
-        <Card className="border-electric/30 bg-electric/5">
-          <CardContent className="flex items-start gap-3 py-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-electric" />
-            <p className="text-sm text-muted-foreground leading-relaxed">{DEMO_NOTICE}</p>
-          </CardContent>
-        </Card>
+        <FeedbackBanner variant="info" message={DEMO_NOTICE} dismissible={false} />
       )}
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight">Findings Engine</h2>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground leading-relaxed">
-            RepoDiet maps duplicate code, unused files, unused dependencies, orphan patterns, and
-            AI-slop signals before generating a cleanup patch.
-          </p>
-          <p className="mt-2 font-mono text-xs text-muted-foreground">
-            {session.repoUrl}
-            {session.branch ? ` · branch: ${session.branch}` : ""}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 shrink-0">
-          <Button onClick={runFindings} disabled={isLoading}>
-            {isLoading ? (
-              <>
-                <Loader2 className="animate-spin" />
-                Analyzing…
-              </>
-            ) : findings ? (
-              "Re-run Findings"
-            ) : (
-              "Run Findings"
+      <WorkspaceSection
+        label="Analysis workspace"
+        title="Findings Engine"
+        description="RepoDiet maps duplicate code, unused files, dependencies, orphan patterns, and AI-slop signals."
+        actions={
+          <>
+            <Button onClick={runFindings} disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  Analyzing…
+                </>
+              ) : findings ? (
+                "Re-run Findings"
+              ) : (
+                "Run Findings"
+              )}
+            </Button>
+            <Button variant="secondary" disabled={!findings} onClick={downloadFindings}>
+              Download findings.json
+            </Button>
+            <Button variant="outline" disabled={!findings} onClick={copyPrompt}>
+              <Copy className="h-4 w-4" aria-hidden />
+              {promptCopied ? "Copied" : "Copy Cleanup Prompt"}
+            </Button>
+            {findings && (
+              <Button variant="ghost" asChild>
+                <Link href="/app?tab=patch">Continue to Patch Kit</Link>
+              </Button>
             )}
-          </Button>
-          <Button
-            variant="secondary"
-            size="default"
-            disabled={!findings}
-            onClick={() => findings && downloadFindingsJson(findings)}
-          >
-            Export findings.json
-          </Button>
-          <Button variant="outline" disabled={!findings} onClick={copyPrompt}>
-            <Copy className="h-4 w-4" />
-            {promptCopied ? "Copied" : "Copy Cleanup Prompt"}
-          </Button>
-          {findings ? (
-            <Button variant="ghost" asChild>
-              <Link href="/app?tab=patch">Continue to Patch Kit</Link>
-            </Button>
-          ) : (
-            <Button variant="ghost" disabled className="gap-1.5 opacity-60">
-              <Lock className="h-3.5 w-3.5" />
-              Continue to Patch Kit
-            </Button>
-          )}
-        </div>
-      </div>
+          </>
+        }
+      />
+
+      <p className="font-mono text-xs text-muted-foreground">
+        {session.repoUrl}
+        {session.branch ? ` · branch: ${session.branch}` : ""}
+      </p>
 
       {isLoading && (
-        <Card className="border-border/80">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Analysis pipeline</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-3">
-              {FINDINGS_STEPS.filter((s) => s.phase !== "complete").map((step, i) => {
-                const done = currentStep > i;
-                const active = currentStep === i;
-                return (
-                  <li key={step.phase} className="flex items-center gap-3 text-sm">
-                    {done ? (
-                      <CheckCircle2 className="h-4 w-4 text-signal" />
-                    ) : active ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-electric" />
-                    ) : (
-                      <span className="h-4 w-4 rounded-full border border-border" />
-                    )}
-                    <span
-                      className={cn(
-                        done && "text-muted-foreground",
-                        active && "font-medium text-foreground",
-                        !done && !active && "text-muted-foreground/60"
-                      )}
-                    >
-                      {step.label}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </CardContent>
-        </Card>
+        <LoadingProgress
+          title="Analysis pipeline"
+          steps={FINDINGS_STEPS.filter((s) => s.phase !== "complete").map((s) => ({
+            id: s.phase,
+            label: s.label,
+          }))}
+          currentIndex={currentStep}
+        />
       )}
 
       {error && (
-        <div className="flex items-start gap-3 rounded-md border border-red-500/30 bg-red-500/5 px-4 py-4">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-          <div>
-            <p className="text-sm font-medium text-red-300">Findings failed</p>
-            <p className="mt-1 text-sm text-muted-foreground">{error}</p>
-          </div>
-        </div>
+        <ErrorState
+          title="Findings analysis failed"
+          message="Review the repository and retry. The scan structure may be incomplete."
+          technicalDetail={error}
+          actions={[{ label: "Retry", onClick: runFindings }]}
+        />
       )}
 
       {findings && (
@@ -217,53 +191,28 @@ export function FindingsTab() {
           {(findings.rawToolReports.knip !== "ok" ||
             findings.rawToolReports.jscpd !== "ok" ||
             findings.rawToolReports.madge !== "ok") && (
-            <Card className="border-amber-500/30 bg-amber-500/5">
-              <CardContent className="py-3 text-sm text-muted-foreground">
-                <p>
-                  Analyzer status — native CLI tools unavailable on this runtime; RepoDiet used
-                  internal fallback detectors. Findings are real and marked by source.
-                </p>
-                <span className="mt-2 block font-mono text-xs">
-                  knip={findings.rawToolReports.knip} · jscpd=
-                  {findings.rawToolReports.jscpd} · madge={findings.rawToolReports.madge}
-                </span>
-              </CardContent>
-            </Card>
+            <FeedbackBanner
+              variant="warning"
+              message="Some analyzers used fallback detectors on this runtime. Findings are real and marked by source."
+              dismissible={false}
+            />
           )}
 
           <SummaryCards summary={findings.summary} />
-          <RiskBuckets findings={findings} />
-          <FindingsTable findings={allFindings} />
-          <CategoryPanels payload={findings} />
+          <RepositoryMap findings={allFindings} />
+          <FindingsWorkspace findings={allFindings} />
           <JsonExportCard payload={findings} />
         </>
       )}
 
       {!findings && !isLoading && !error && (
-        <Card className="border-dashed border-border bg-card/30">
-          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-sm font-medium">Scan complete — ready for deep analysis</p>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Run the Findings Engine to detect duplicates, unused code, orphan patterns, and
-              AI-slop signals.
-            </p>
-            <Button className="mt-6" onClick={runFindings}>
-              Run Findings Engine
-            </Button>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={FileSearch}
+          title="Scan complete — ready for analysis"
+          description="Run the Findings Engine to detect duplicates, unused code, orphan patterns, and AI-slop signals."
+          action={{ label: "Run Findings Engine", onClick: runFindings }}
+        />
       )}
     </div>
   );
-}
-
-function downloadFindingsJson(findings: import("@/lib/findings/types").FindingsPayload) {
-  const json = JSON.stringify(findings, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `repodiet-findings-${findings.scanId}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
 }

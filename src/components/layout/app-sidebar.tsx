@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { cn } from "@/lib/utils";
 import {
   ScanSearch,
   FileSearch,
@@ -11,69 +10,139 @@ import {
   BookOpen,
   Blocks,
   Lock,
+  X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { StatusIndicator } from "@/components/design-system/status-indicator";
 
 const mainNav = [
-  { href: "/app", label: "Scan", icon: ScanSearch, tab: "scan" },
-  { href: "/app?tab=findings", label: "Findings", icon: FileSearch, tab: "findings", needsScan: true },
-  { href: "/app?tab=patch", label: "Patch Kit", icon: Package, tab: "patch", needsFindings: true },
-  { href: "/app?tab=verify", label: "Verify", icon: ShieldCheck, tab: "verify" },
+  {
+    href: "/app",
+    label: "Scan",
+    icon: ScanSearch,
+    tab: "scan",
+    lockReason: undefined as string | undefined,
+    needsScan: false,
+    needsFindings: false,
+  },
+  {
+    href: "/app?tab=findings",
+    label: "Findings",
+    icon: FileSearch,
+    tab: "findings",
+    lockReason: "Available after repository scan",
+    needsScan: true,
+    needsFindings: false,
+  },
+  {
+    href: "/app?tab=patch",
+    label: "Patch Kit",
+    icon: Package,
+    tab: "patch",
+    lockReason: "Available after findings are ready",
+    needsScan: true,
+    needsFindings: true,
+  },
+  {
+    href: "/app?tab=verify",
+    label: "Verify",
+    icon: ShieldCheck,
+    tab: "verify",
+    lockReason: "Available after patch bundle is generated",
+    needsScan: true,
+    needsFindings: true,
+    needsPatchKit: true,
+  },
 ];
 
 const secondaryNav = [
   { href: "/docs", label: "Docs", icon: BookOpen },
-  { href: "/okx", label: "OKX ASP", icon: Blocks },
+  { href: "/okx", label: "OKX Integration", icon: Blocks },
 ];
+
+interface AppSidebarProps {
+  scanComplete?: boolean;
+  findingsReady?: boolean;
+  patchKitReady?: boolean;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
 
 export function AppSidebar({
   scanComplete = false,
   findingsReady = false,
-}: {
-  scanComplete?: boolean;
-  findingsReady?: boolean;
-}) {
+  patchKitReady = false,
+  mobileOpen = false,
+  onMobileClose,
+}: AppSidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "scan";
 
-  return (
-    <aside className="flex w-full flex-col border-b border-border bg-card/30 lg:w-56 lg:shrink-0 lg:border-b-0 lg:border-r">
-      <div className="flex items-center gap-2.5 border-b border-border px-4 py-4 lg:px-5">
-        <Link href="/" className="flex items-center gap-2.5">
+  const content = (
+    <>
+      <div className="flex items-center justify-between border-b border-border/60 px-4 py-4 lg:px-5">
+        <Link href="/" className="flex items-center gap-2.5" onClick={onMobileClose}>
           <span className="flex h-7 w-7 items-center justify-center rounded border border-electric/30 bg-electric/10 text-xs font-mono font-semibold text-electric">
             RD
           </span>
           <span className="text-sm font-semibold tracking-tight">RepoDiet</span>
         </Link>
+        {onMobileClose && (
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 lg:hidden"
+            onClick={onMobileClose}
+            aria-label="Close navigation"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      <nav className="flex flex-1 flex-col gap-6 p-4 lg:p-5">
+      <nav className="flex flex-1 flex-col gap-6 overflow-y-auto p-4 lg:p-5">
         <div>
-          <p className="mb-2 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Workflow
-          </p>
+          <p className="mb-2 px-2 ds-label">Workflow</p>
           <ul className="space-y-0.5">
             {mainNav.map((item) => {
               const locked =
                 (item.needsScan && !scanComplete) ||
-                (item.needsFindings && !findingsReady);
+                (item.needsFindings && !findingsReady) ||
+                ("needsPatchKit" in item && item.needsPatchKit && !patchKitReady);
               const active = pathname === "/app" && activeTab === item.tab;
+
               return (
                 <li key={item.tab}>
-                  <Link
-                    href={locked ? "/app" : item.href}
-                    className={cn(
-                      "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
-                      active
-                        ? "bg-accent text-foreground border border-border"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                      locked && "opacity-40 pointer-events-none"
-                    )}
-                  >
-                    <item.icon className="h-4 w-4 shrink-0 opacity-70" />
-                    {item.label}
-                    {locked && <Lock className="ml-auto h-3 w-3" />}
-                  </Link>
+                  {locked ? (
+                    <span
+                      className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground/50"
+                      title={item.lockReason}
+                    >
+                      <item.icon className="h-4 w-4 shrink-0 opacity-50" aria-hidden />
+                      <span className="flex-1">{item.label}</span>
+                      <Lock className="h-3 w-3 shrink-0" aria-hidden />
+                    </span>
+                  ) : (
+                    <Link
+                      href={item.href}
+                      onClick={onMobileClose}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+                        active
+                          ? "border border-electric/30 bg-electric/10 text-electric"
+                          : "text-muted-foreground hover:bg-card-elevated hover:text-foreground"
+                      )}
+                      aria-current={active ? "page" : undefined}
+                    >
+                      <item.icon className="h-4 w-4 shrink-0" aria-hidden />
+                      {item.label}
+                    </Link>
+                  )}
+                  {locked && item.lockReason && (
+                    <p className="px-2.5 pb-1 pt-0.5 text-[10px] leading-snug text-muted-foreground/60">
+                      {item.lockReason}
+                    </p>
+                  )}
                 </li>
               );
             })}
@@ -81,22 +150,21 @@ export function AppSidebar({
         </div>
 
         <div>
-          <p className="mb-2 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Resources
-          </p>
+          <p className="mb-2 px-2 ds-label">Resources</p>
           <ul className="space-y-0.5">
             {secondaryNav.map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  onClick={onMobileClose}
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
                     pathname === item.href
-                      ? "bg-accent text-foreground border border-border"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      ? "border border-border/60 bg-card-elevated text-foreground"
+                      : "text-muted-foreground hover:bg-card-elevated hover:text-foreground"
                   )}
                 >
-                  <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                  <item.icon className="h-4 w-4 shrink-0" aria-hidden />
                   {item.label}
                 </Link>
               </li>
@@ -104,6 +172,41 @@ export function AppSidebar({
           </ul>
         </div>
       </nav>
-    </aside>
+
+      <div className="border-t border-border/60 p-4 lg:p-5">
+        <p className="ds-label mb-2">Session</p>
+        <StatusIndicator
+          label={scanComplete ? "Repository connected" : "Awaiting scan"}
+          status={scanComplete ? "complete" : "pending"}
+        />
+        <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+          Current session only — scans reset on refresh.
+        </p>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      {/* Desktop sidebar */}
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/30 lg:flex">
+        {content}
+      </aside>
+
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/60"
+            onClick={onMobileClose}
+            aria-label="Close navigation overlay"
+          />
+          <aside className="relative flex h-full w-[min(280px,85vw)] flex-col border-r border-border/60 bg-[#05080D] shadow-xl">
+            {content}
+          </aside>
+        </div>
+      )}
+    </>
   );
 }
