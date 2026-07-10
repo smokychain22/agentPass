@@ -6,6 +6,7 @@ export function typeLabel(type: FindingType): string {
     unused_file: "Unused File",
     unused_dependency: "Dependency",
     unused_export: "Unused Export",
+    unused_import: "Unused Import",
     orphan_pattern: "Orphan",
     ai_slop_signal: "AI Slop",
   };

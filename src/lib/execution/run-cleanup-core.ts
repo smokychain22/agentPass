@@ -21,7 +21,8 @@ import {
   type ExecutionReceipt,
 } from "@/lib/operator/sign-receipt";
 import { summarizeBaselineReport } from "./baseline-verification";
-import { resolveFixPlugin } from "./fix-plugins";
+import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
+import { CleanupRunStateMachine, type CleanupStateTransition } from "./cleanup-run-state";
 
 export interface FileChange {
   path: string;
@@ -54,7 +55,27 @@ export interface FreeCleanupResult {
       status: string;
       reason: string;
       pluginId: string;
+      expectedFix: string;
+      eligibilityReason: string;
+      changedPaths: string[];
+      originalSources: Record<string, string>;
+      modifiedSources: Record<string, string>;
+      comparison: Array<{ name: string; outcome: string; exitCode: number | null }>;
     }>;
+  };
+  stateTransitions: CleanupStateTransition[];
+  proof: {
+    selectedFindingId?: string;
+    changedFiles: string[];
+    linesAdded: number;
+    linesRemoved: number;
+    executedCommands: Array<{
+      name: string;
+      command: string;
+      exitCode: number | null;
+      status: string;
+    }>;
+    finalDecision: "retained" | "skipped" | "rejected" | "review_plan";
   };
   metrics: {
     issuesSelected: number;
@@ -98,7 +119,7 @@ function buildReviewReport(findings: Finding[], payload: FindingsPayload, note: 
   for (const f of findings) {
     lines.push(`- **${f.title}** (${f.type}) — ${f.files.join(", ") || f.packageName}`);
     lines.push(`  - ${f.reason}`);
-    lines.push(`  - Plugin: ${resolveFixPlugin(f).label}`);
+    lines.push(`  - Plugin: ${resolvePhase1Plugin(f).label}`);
   }
   lines.push("", "## Note", "", note);
   return lines.join("\n");
@@ -139,9 +160,9 @@ export async function runFreeCleanupCore(
     selected = auto.length > 0 ? auto.slice(0, maxFixes) : picked.slice(0, maxFixes);
     mode = auto.length > 0 ? "auto_fix" : "review_plan";
   } else {
-    const auto = listAutoFixEligible(all).slice(0, maxFixes);
-    if (auto.length > 0) {
-      selected = auto;
+    const autoPool = all.filter(isAutoFixEligible);
+    if (autoPool.length > 0) {
+      selected = autoPool;
       mode = "auto_fix";
     } else {
       selected = listReviewPlanEligible(all).slice(0, maxFixes);
@@ -186,6 +207,14 @@ export async function runFreeCleanupCore(
         limitations: ["No automatic changes generated."],
       },
       fixLoop: { selected: 0, verified: 0, skipped: 0, rejected: 0, attempts: [] },
+      stateTransitions: [{ state: "completed", at: new Date().toISOString(), detail: "review_plan" }],
+      proof: {
+        changedFiles: [],
+        linesAdded: 0,
+        linesRemoved: 0,
+        executedCommands: [],
+        finalDecision: "review_plan",
+      },
       metrics: {
         issuesSelected: selected.length,
         issuesChanged: 0,
@@ -212,39 +241,53 @@ export async function runFreeCleanupCore(
     };
   }
 
+  const sm = new CleanupRunStateMachine();
+  sm.emit("preparing_workspace");
+
   const repoUrl =
     payload.repo.url ?? `https://github.com/${payload.repo.owner}/${payload.repo.name}`;
   const workspace = await prepareRepoWorkspace(repoUrl, payload.repo.branch);
 
   try {
-    const loop = await runOneFixAtATimeLoop(workspace.rootDir, selected, { maxFixes });
+    const loop = await runOneFixAtATimeLoop(workspace.rootDir, selected, {
+      maxFixes,
+      stateMachine: sm,
+    });
     const { added, removed } = countDiffLines(loop.unifiedDiff);
 
     const allChecks = loop.attempts.flatMap((a) => a.checks);
-    const verified = loop.metrics.verified > 0;
-    const patchStatus = verified ? "validated" : "failed";
+    const retained = loop.metrics.retained > 0;
+    const patchStatus = retained ? "validated" : "failed";
 
-    const baselineSummary = loop.retained[0]?.baselineReport
-      ? summarizeBaselineReport(loop.retained[0].baselineReport)
+    const primaryAttempt =
+      loop.retained[0] ?? loop.attempts.find((a) => a.status === "retained") ?? loop.attempts[0];
+    const baselineSummary = primaryAttempt?.baselineReport
+      ? summarizeBaselineReport(primaryAttempt.baselineReport)
       : undefined;
 
-    if (loop.metrics.verified === 0 && loop.metrics.rejected > 0) {
+    if (loop.metrics.retained === 0 && loop.metrics.rejected > 0) {
       limitations.push("RepoDiet refused unsupported or protected findings.");
     }
     if (loop.metrics.skipped > 0) {
       limitations.push(`${loop.metrics.skipped} finding(s) skipped after verification.`);
     }
 
-    const fileChanges: FileChange[] = loop.deletedPaths.map((rel) => ({
+    const fileChanges: FileChange[] = loop.changedPaths.map((rel) => ({
       path: rel,
       findingIds: selected.filter((f) => f.files.includes(rel)).map((f) => f.id),
     }));
 
-    const verificationStatus: FreeCleanupResult["verification"]["status"] = verified
+    const verificationStatus: FreeCleanupResult["verification"]["status"] = retained
       ? "passed"
       : loop.attempts.length > 0
         ? "partial"
         : "not_run";
+
+    const finalDecision =
+      loop.retained[0]?.status ??
+      loop.attempts.find((a) => a.status === "rejected")?.status ??
+      loop.attempts[0]?.status ??
+      "skipped";
 
     const receipt: ExecutionReceipt = {
       taskId: id,
@@ -253,14 +296,15 @@ export async function runFreeCleanupCore(
       findingIds: loop.retained.map((r) => r.finding.id),
       patchHash: hashPatchContent(loop.unifiedDiff),
       verificationHash: hashVerification(allChecks),
-      status: verified ? "verified" : "partial",
+      status: retained ? "verified" : "partial",
       timestamp: new Date().toISOString(),
     };
 
     return {
       id,
       mode: "auto_fix",
-      selectedFindings: selected,
+      selectedFindings:
+        loop.retained.length > 0 ? loop.retained.map((r) => r.finding) : selected.slice(0, maxFixes),
       skippedCount,
       fileChanges,
       unifiedDiff: loop.unifiedDiff,
@@ -274,7 +318,7 @@ export async function runFreeCleanupCore(
       },
       fixLoop: {
         selected: loop.metrics.selected,
-        verified: loop.metrics.verified,
+        verified: loop.metrics.retained,
         skipped: loop.metrics.skipped,
         rejected: loop.metrics.rejected,
         attempts: loop.attempts.map((a) => ({
@@ -283,12 +327,32 @@ export async function runFreeCleanupCore(
           status: a.status,
           reason: a.reason,
           pluginId: a.pluginId,
+          expectedFix: a.expectedFix,
+          eligibilityReason: a.eligibilityReason,
+          changedPaths: a.changedPaths,
+          originalSources: a.originalSources,
+          modifiedSources: a.modifiedSources,
+          comparison: a.comparison,
         })),
+      },
+      stateTransitions: sm.transitions,
+      proof: {
+        selectedFindingId: primaryAttempt?.finding.id,
+        changedFiles: loop.changedPaths,
+        linesAdded: added,
+        linesRemoved: removed,
+        executedCommands: allChecks.map((c) => ({
+          name: c.name,
+          command: c.command,
+          exitCode: c.exitCode,
+          status: c.status,
+        })),
+        finalDecision: finalDecision as FreeCleanupResult["proof"]["finalDecision"],
       },
       metrics: {
         issuesSelected: selected.length,
-        issuesChanged: loop.metrics.verified,
-        filesChanged: loop.deletedPaths.length,
+        issuesChanged: loop.metrics.retained,
+        filesChanged: loop.changedPaths.length,
         linesAdded: added,
         linesRemoved: removed,
       },
@@ -296,8 +360,8 @@ export async function runFreeCleanupCore(
         reportMd: buildReviewReport(
           selected,
           payload,
-          loop.deletedPaths.length > 0
-            ? `${loop.metrics.verified} verified fix(es), ${loop.deletedPaths.length} file(s) changed in isolated workspace. Your GitHub repository was not modified.`
+          loop.changedPaths.length > 0
+            ? `${loop.metrics.retained} verified fix(es), ${loop.changedPaths.length} file(s) changed in isolated workspace. Your GitHub repository was not modified.`
             : "No safe file changes were retained after verification."
         ),
         cleanupPromptMd,
@@ -305,9 +369,11 @@ export async function runFreeCleanupCore(
         selectedFindingsJson: JSON.stringify(selected, null, 2),
       },
       limitations,
-      verifiedLabel: verified
-        ? "One safe fix verified"
-        : "No safe fix retained — see fix loop details",
+      verifiedLabel: retained
+        ? "One safe fix verified and retained"
+        : finalDecision === "rejected"
+          ? "Fix rejected — protected or unsupported"
+          : "No safe fix retained — see verification details",
       receipt,
     };
   } finally {

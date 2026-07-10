@@ -16,7 +16,6 @@ import {
 } from "@/lib/cleanup/eligibility";
 import type { FreeCleanupResult } from "@/lib/cleanup/run-free-cleanup";
 import type { Finding } from "@/lib/findings/types";
-import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { Panel } from "@/components/design-system/panel";
@@ -27,7 +26,6 @@ export function CleanupTab() {
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<"idle" | "running" | "complete" | "failed">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [cleanupStep, setCleanupStep] = useState(0);
   const [result, setResult] = useState<FreeCleanupResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -38,6 +36,8 @@ export function CleanupTab() {
     if (cta.mode === "auto_fix") return allFindings.filter(isAutoFixEligible);
     return allFindings.filter(isReviewPlanEligible);
   }, [allFindings, cta.mode]);
+
+  const primaryAttempt = result?.fixLoop.attempts[0];
 
   const toggle = (id: string) => {
     setSelectedIds((prev) => {
@@ -51,11 +51,9 @@ export function CleanupTab() {
     if (!findings) return;
     setError(null);
     setPhase("running");
-    setCleanupStep(0);
     show("info", "Running free proof in isolated workspace…");
 
     try {
-      setCleanupStep(1);
       const res = await fetch("/api/cleanup/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,15 +65,14 @@ export function CleanupTab() {
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error ?? "Free proof failed.");
-      setCleanupStep(2);
       setResult(json.cleanup as FreeCleanupResult);
       setPhase("complete");
-      show("success", json.cleanup.verifiedLabel ?? "Cleanup complete");
+      show("success", json.cleanup.verifiedLabel ?? "Free proof complete");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Cleanup failed.";
       setError(msg);
       setPhase("failed");
-      show("error", "Cleanup failed");
+      show("error", "Free proof failed");
     }
   }, [findings, selectedIds, show]);
 
@@ -83,7 +80,7 @@ export function CleanupTab() {
     return (
       <LockedTab
         step="Free"
-        title="Free Proof"
+        title="Free Cleanup Run"
         description="Available after findings analysis. Run the Findings Engine first."
       />
     );
@@ -98,11 +95,11 @@ export function CleanupTab() {
 
       <WorkspaceSection
         label="In-app proof"
-        title="Free Proof"
+        title="Free Cleanup Run"
         description={
           cta.mode === "auto_fix"
-            ? "RepoDiet fixes one supported safe issue, validates it in an isolated workspace, and shows the real diff. Your GitHub repository is not modified."
-            : "No findings met the automatic-fix safety threshold. RepoDiet will generate a conservative review plan without changing code."
+            ? "RepoDiet fixes one supported safe issue, runs real baseline verification, and shows the exact diff. Your GitHub repository is not modified."
+            : "No findings met Phase 1 automatic-fix eligibility. RepoDiet will explain why — no fake changes."
         }
         actions={
           <>
@@ -110,7 +107,7 @@ export function CleanupTab() {
               {phase === "running" ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
-                  Running…
+                  Running backend pipeline…
                 </>
               ) : (
                 cta.label
@@ -131,23 +128,22 @@ export function CleanupTab() {
       <p className="font-mono text-xs text-muted-foreground">
         {session.repoUrl}
         {session.branch ? ` · branch: ${session.branch}` : ""}
+        {findings.repo.commitSha ? ` · ${findings.repo.commitSha.slice(0, 7)}` : ""}
       </p>
 
       {phase === "running" && (
-        <LoadingProgress
-          title="Cleanup pipeline"
-          steps={[
-            { id: "select", label: "Selecting safe findings" },
-            { id: "patch", label: "Generating changes" },
-            { id: "verify", label: "Validating patch" },
-          ]}
-          currentIndex={cleanupStep}
-        />
+        <Panel variant="elevated" padding="md">
+          <p className="ds-label mb-2">Cleanup pipeline</p>
+          <p className="text-sm text-muted-foreground">
+            Executing on the server: workspace preparation → baseline checks → fix generation →
+            patch validation → verification. Results appear when the backend completes.
+          </p>
+        </Panel>
       )}
 
       {error && (
         <ErrorState
-          title="Cleanup failed"
+          title="Free proof failed"
           message="Retry or return to findings to adjust selection."
           technicalDetail={error}
           actions={[{ label: "Retry", onClick: runCleanup }]}
@@ -176,7 +172,7 @@ export function CleanupTab() {
           {eligibleForSelection.length === 0 && (
             <FeedbackBanner
               variant="warning"
-              message="RepoDiet did not find an issue safe enough to modify automatically on this repository."
+              message="RepoDiet did not find a Phase 1 eligible issue (unused import, unused dependency with native evidence, or obvious temp file)."
               dismissible={false}
             />
           )}
@@ -186,47 +182,55 @@ export function CleanupTab() {
       {result && (
         <>
           <FeedbackBanner
-            variant={result.patchStatus === "validated" ? "success" : "info"}
+            variant={result.proof.finalDecision === "retained" ? "success" : "info"}
             message={result.verifiedLabel}
             dismissible={false}
           />
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label="Findings selected" value={result.fixLoop.selected} />
-            <Metric label="Verified & retained" value={result.fixLoop.verified} />
-            <Metric label="Skipped" value={result.fixLoop.skipped} />
-            <Metric label="Rejected" value={result.fixLoop.rejected} />
-          </div>
+          <Panel variant="elevated" padding="md">
+            <p className="ds-label mb-3">Final decision</p>
+            <p className="text-lg font-semibold capitalize">{result.proof.finalDecision}</p>
+            {result.proof.selectedFindingId && (
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
+                Finding ID: {result.proof.selectedFindingId}
+              </p>
+            )}
+          </Panel>
 
-          {result.fixLoop.attempts.length > 0 && (
+          {primaryAttempt && (
             <Panel variant="elevated" padding="md">
-              <p className="ds-label mb-3">Fix loop</p>
-              <ul className="space-y-2 text-sm">
-                {result.fixLoop.attempts.map((a) => (
-                  <li key={a.findingId} className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="min-w-0 truncate">{a.title}</span>
-                    <RiskBadge
-                      level={
-                        a.status === "verified"
-                          ? "safe"
-                          : a.status === "rejected"
-                            ? "danger"
-                            : "review"
-                      }
-                    >
-                      {a.status}
-                    </RiskBadge>
-                  </li>
-                ))}
-              </ul>
+              <p className="ds-label mb-3">Finding selected</p>
+              <p className="font-medium">{primaryAttempt.title}</p>
+              <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted-foreground">Expected fix</dt>
+                  <dd>{primaryAttempt.expectedFix}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Plugin</dt>
+                  <dd className="font-mono text-xs">{primaryAttempt.pluginId}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-muted-foreground">Why eligible</dt>
+                  <dd>{primaryAttempt.eligibilityReason}</dd>
+                </div>
+              </dl>
             </Panel>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label="Files changed" value={result.metrics.filesChanged} />
-            <Metric label="Lines removed" value={result.metrics.linesRemoved} />
-            <Metric label="Lines added" value={result.metrics.linesAdded} />
-          </div>
+          {primaryAttempt &&
+            Object.entries(primaryAttempt.originalSources).map(([path, source]) => (
+              <Panel key={path} variant="elevated" padding="md">
+                <p className="ds-label mb-2">Original source — {path}</p>
+                <pre className="max-h-48 overflow-auto rounded border border-border/40 bg-[#05080D]/60 p-3 font-mono text-[10px] text-muted-foreground scrollbar-thin">
+                  {source || "(file deleted)"}
+                </pre>
+                <p className="ds-label mb-2 mt-4">Modified source</p>
+                <pre className="max-h-48 overflow-auto rounded border border-border/40 bg-[#05080D]/60 p-3 font-mono text-[10px] text-muted-foreground scrollbar-thin">
+                  {primaryAttempt.modifiedSources[path] ?? ""}
+                </pre>
+              </Panel>
+            ))}
 
           {result.unifiedDiff && (
             <Panel variant="elevated" padding="md">
@@ -237,7 +241,21 @@ export function CleanupTab() {
             </Panel>
           )}
 
-          {result.verification.baselineSummary && result.verification.baselineSummary.length > 0 && (
+          {result.stateTransitions && result.stateTransitions.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Backend state machine</p>
+              <ul className="space-y-1 font-mono text-[10px] text-muted-foreground">
+                {result.stateTransitions.map((t, i) => (
+                  <li key={`${t.state}-${i}`}>
+                    {t.state}
+                    {t.detail ? ` — ${t.detail}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
+          {result.verification.baselineSummary && (
             <Panel variant="elevated" padding="md">
               <p className="ds-label mb-3">Baseline verification</p>
               <pre className="whitespace-pre-wrap text-sm text-muted-foreground">
@@ -245,16 +263,33 @@ export function CleanupTab() {
               </pre>
             </Panel>
           )}
-          {result.verification.checks.length > 0 && (
+
+          {primaryAttempt && primaryAttempt.comparison.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Comparison</p>
+              <ul className="space-y-2 text-sm">
+                {primaryAttempt.comparison.map((c) => (
+                  <li key={c.name} className="flex flex-wrap justify-between gap-2">
+                    <span>{c.name}</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      exit {c.exitCode ?? "n/a"} — {c.outcome}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
+          {result.proof.executedCommands.length > 0 && (
             <Panel variant="elevated" padding="md">
               <p className="ds-label mb-3 flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4" aria-hidden />
-                Verification
+                Executed commands
               </p>
               <ul className="space-y-2">
-                {result.verification.checks.map((check) => (
+                {result.proof.executedCommands.map((check) => (
                   <li key={check.name} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <span>{check.name}</span>
+                    <span className="font-mono text-xs">{check.command || check.name}</span>
                     <RiskBadge
                       level={
                         check.status === "passed"
@@ -264,35 +299,15 @@ export function CleanupTab() {
                             : "review"
                       }
                     >
-                      {check.status.replace("_", " ")}
+                      exit {check.exitCode ?? "n/a"} — {check.status}
                     </RiskBadge>
                   </li>
                 ))}
               </ul>
             </Panel>
           )}
-
-          {result.limitations.length > 0 && (
-            <Panel variant="elevated" padding="md">
-              <p className="ds-label mb-2">Limitations</p>
-              <ul className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-                {result.limitations.map((l) => (
-                  <li key={l}>{l}</li>
-                ))}
-              </ul>
-            </Panel>
-          )}
         </>
       )}
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded border border-border/40 bg-card/40 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

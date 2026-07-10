@@ -7,10 +7,22 @@ import { runMadge } from "./run-madge";
 import { runAiSlopHeuristics } from "./ai-slop-heuristics";
 import { normalizeFindings } from "./normalize-findings";
 import { buildSummaryFromFindings } from "./stats";
+import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
 import type { FindingsPayload, Finding } from "./types";
 import type { FindingsJobStage } from "@/lib/jobs/types";
 
 export type FindingsStageCallback = (stage: FindingsJobStage) => void;
+
+function flattenPayloadFindings(payload: FindingsPayload): Finding[] {
+  return [
+    ...payload.duplicates,
+    ...payload.unused.files,
+    ...payload.unused.dependencies,
+    ...payload.unused.exports,
+    ...payload.orphans,
+    ...payload.slopSignals,
+  ];
+}
 
 export async function runFindingsEngine(
   repoUrl: string,
@@ -39,7 +51,7 @@ export async function runFindingsEngine(
     const slopSignals = await runAiSlopHeuristics(workspace.rootDir);
 
     onStage?.("normalizing");
-    const payload = normalizeFindings({
+    let payload = normalizeFindings({
       scanId,
       repo: workspace.repo,
       rootDir: workspace.rootDir,
@@ -52,6 +64,21 @@ export async function runFindingsEngine(
       slop: slopSignals,
       mode: isDemoRepoUrl(repoUrl) ? "demo" : "live",
     });
+
+    const importFindings = await enrichFindingsWithUnusedImports(
+      workspace.rootDir,
+      flattenPayloadFindings(payload)
+    );
+    if (importFindings.length > 0) {
+      payload = {
+        ...payload,
+        unused: {
+          ...payload.unused,
+          exports: [...payload.unused.exports, ...importFindings],
+        },
+      };
+      payload.summary = buildSummaryFromFindings(flattenPayloadFindings(payload));
+    }
 
     onStage?.("complete");
     return payload;

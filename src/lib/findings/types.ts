@@ -3,6 +3,7 @@ export type FindingType =
   | "unused_file"
   | "unused_dependency"
   | "unused_export"
+  | "unused_import"
   | "orphan_pattern"
   | "ai_slop_signal";
 

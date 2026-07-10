@@ -2,7 +2,7 @@
 
 **Branch audited:** `cursor/product-vision-pricing-39ce`  
 **Audit date:** 2026-07-10  
-**Phase:** 0 — Foundation Audit and Branch Integration
+**Phase:** 1 — Free Proof (one real safe fix in-product)
 
 This document classifies every product capability as **REAL**, **PARTIAL**, **DEMO**, **COSMETIC**, **BROKEN**, or **NOT IMPLEMENTED**.
 
@@ -107,28 +107,31 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | API route | `POST /api/cleanup/run` |
 | Execution service | `executeFreeProof` → one-fix loop + baseline verification |
 | Persistence | `cleanup_runs`, `execution_receipts` |
-| Production test | Manual + `/api/cleanup/run` after deploy |
-| Limitations | Zero safe candidates → review plan only (honest) |
+| Production test | `scripts/phase1-integration-test.mjs` + `/api/cleanup/run` |
+| State machine | Backend `CleanupRunStateMachine` — created → preparing_workspace → running_baseline → selecting_finding → generating_change → validating_patch → running_verification → retained/skipped/rejected → completed/failed |
+| Limitations | Zero safe candidates → review plan only (honest); no GitHub mutation in free proof |
 
-### 6. Deterministic fix-plugin system
+### 6. Deterministic fix-plugin system (Phase 1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | **PARTIAL** |
-| Execution service | `execution/fix-plugins.ts` |
-| Supported | File delete (unused/temp), dependency remove (typed only) |
-| Not supported | Import cleanup, config merge, hook refactor |
-| Limitations | Plugins classify; actual changes are delete-patch only today |
+| **Status** | **REAL** (Phase 1 narrow set) |
+| Execution service | `execution/fix-plugins/phase1-plugins.ts`, `apply-phase1-fix.ts` |
+| Supported | Remove unused import, remove unused dependency (native knip), remove obvious temp/backup file |
+| Eligibility | `safe_candidate` + confidence threshold + `sourceMode !== untrusted` + `supports(finding)` + non-protected path |
+| Not supported | Duplicates, business logic, APIs, routes, auth, DB, middleware, shared hooks |
+| Limitations | Dependency remove requires supported package manager + lockfile update |
 
 ### 7. Baseline verification
 
 | Field | Value |
 |-------|-------|
-| **Status** | **PARTIAL** |
+| **Status** | **REAL** |
 | Execution service | `execution/baseline-verification.ts` |
-| Frontend | Cleanup tab baseline summary |
-| Checks | typecheck, build, lint when package.json scripts exist |
-| Limitations | No full `npm install` in free proof loop; timeout 45s per check |
+| Frontend | Cleanup tab — baseline, post-change, comparison table |
+| Checks | typecheck, lint, test, build, import validation, package integrity |
+| Comparison | PASSED_BEFORE_AND_AFTER, FAILED_BEFORE_AND_AFTER, NEW_FAILURE_INTRODUCED, PRE_EXISTING_FAILURE_RESOLVED, NOT_AVAILABLE, SKIPPED, TIMED_OUT |
+| Limitations | Timeout 45s per check; install validation best-effort on serverless |
 
 ### 8. One-fix-at-a-time loop
 
