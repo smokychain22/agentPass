@@ -3,6 +3,7 @@ import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { durableId, durableNow, setDurableRecord } from "@/lib/store/durable-store";
 import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
+import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { runVerification } from "@/lib/verify/run-verification";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { enforcePayment } from "@/lib/payment/x402";
@@ -15,20 +16,22 @@ export async function POST(request: Request) {
     const ownerKey = jobOwnerKey(request);
     enforceRateLimit(ownerKey, "verify");
 
-    const body = (await request.json()) as { patchId?: string };
+    const body = (await request.json()) as { patchId?: string; patchKit?: PatchKitPayload };
     if (!body.patchId?.trim()) {
       return NextResponse.json({ success: false, error: "patchId is required." }, { status: 422 });
     }
 
-    const stored = getStoredPatchKit(body.patchId.trim());
-    if (!stored) {
+    const patchId = body.patchId.trim();
+    const stored = getStoredPatchKit(patchId);
+    const payload = body.patchKit ?? stored?.payload;
+    if (!payload) {
       return NextResponse.json({ success: false, error: "Patch bundle not found." }, { status: 404 });
     }
 
-    const repoUrl = `https://github.com/${stored.payload.repo.owner}/${stored.payload.repo.name}`;
+    const repoUrl = `https://github.com/${payload.repo.owner}/${payload.repo.name}`;
     enforcePayment(request, "verify_run", { free: isDemoRepoUrl(repoUrl) });
 
-    const result = await runVerification(body.patchId.trim());
+    const result = await runVerification(patchId, body.patchKit);
     const verificationId = durableId("verify");
 
     setDurableRecord("verifications", verificationId, {

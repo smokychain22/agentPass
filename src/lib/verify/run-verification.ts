@@ -4,6 +4,7 @@ import { execa } from "execa";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
+import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { extractApplyablePatch, patchHasDeleteOperations } from "@/lib/patch-kit/validate-patch";
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
@@ -96,17 +97,18 @@ async function runCheck(
   };
 }
 
-export async function runVerification(patchId: string): Promise<{
+export async function runVerification(
+  patchId: string,
+  inlinePayload?: PatchKitPayload
+): Promise<{
   status: "passed" | "failed" | "partial" | "not_run";
   checks: VerifyCheckResult[];
   limitations: string[];
 }> {
-  const stored = getStoredPatchKit(patchId);
-  if (!stored) {
+  const payload = inlinePayload ?? getStoredPatchKit(patchId)?.payload;
+  if (!payload) {
     throw new Error("Patch bundle not found.");
   }
-
-  const { payload } = stored;
   const limitations: string[] = [];
   const checks: VerifyCheckResult[] = [];
   const started = Date.now();
