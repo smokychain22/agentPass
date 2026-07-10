@@ -90,10 +90,9 @@ export function computeWorkflowGates(input: {
     verifyUnlocked: patchKitReady && patchValidated && validatedChanges > 0,
     cleanupPrAvailable:
       patchKitReady &&
-      verifiedChanges > 0 &&
-      validatedChanges > 0 &&
       patchValidated &&
-      generatedChanges > 0,
+      (verifiedChanges > 0 || (patchKit?.summary.safeDeleteCandidates ?? 0) > 0) &&
+      (generatedChanges > 0 || validatedChanges > 0),
     reportOnlyPrAvailable: findingsReady,
   };
 }

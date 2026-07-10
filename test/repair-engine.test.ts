@@ -52,7 +52,7 @@ function noopPreflight(): FixPreflightResult {
     pluginAvailable: true,
     strategyAvailable: true,
     sourceLocated: true,
-    sourceHashMatched: true,
+    sourceHashMatches: true,
     dryRunChangedSource: false,
     diffGenerated: false,
     protectedPathCheck: true,

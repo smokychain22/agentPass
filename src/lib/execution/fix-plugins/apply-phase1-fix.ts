@@ -11,7 +11,7 @@ import {
 } from "@/lib/findings/unused-import-detector";
 import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
-import { resolvePhase1Plugin, type Phase1PluginId } from "./phase1-plugins";
+import { resolvePhase1TransformPlugin, type Phase1PluginId } from "./phase1-plugins";
 import { defaultStrategyForPlugin } from "../fix-strategies";
 import {
   hashSource,
@@ -74,7 +74,9 @@ async function ensureGitBaseline(rootDir: string): Promise<void> {
 async function gitDiff(rootDir: string, paths?: string[]): Promise<string> {
   const args = ["diff", "--no-color", "HEAD", "--", ...(paths ?? [])];
   const diff = await execa("git", args, { cwd: rootDir, reject: false });
-  return diff.stdout?.trim() ?? "";
+  const out = diff.stdout ?? "";
+  if (!out.trim()) return "";
+  return out.endsWith("\n") ? out : `${out}\n`;
 }
 
 function uninstallCommand(pm: PackageManager, packageName: string): string[] {
@@ -297,7 +299,7 @@ export async function applyPhase1Fix(
   finding: Finding,
   strategyId?: string
 ): Promise<AppliedFix> {
-  const plugin = resolvePhase1Plugin(finding);
+  const plugin = resolvePhase1TransformPlugin(finding);
   const resolvedStrategy =
     strategyId ?? defaultStrategyForPlugin(plugin.id)?.id ?? "default";
 

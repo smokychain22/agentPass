@@ -2,6 +2,12 @@ import { EMPTY_CLEANUP_PATCH } from "./generate-cleanup-patch";
 import { extractApplyablePatch } from "./validate-patch";
 
 /** Concatenate unified diff sections from multiple patch sources. */
+export function ensurePatchTrailingNewline(patch: string): string {
+  if (!patch.trim()) return patch;
+  return patch.endsWith("\n") ? patch : `${patch}\n`;
+}
+
+/** Concatenate unified diff sections from multiple patch sources. */
 export function mergeCleanupPatches(...patches: string[]): string {
   const sections: string[] = [];
 
@@ -13,5 +19,5 @@ export function mergeCleanupPatches(...patches: string[]): string {
   }
 
   if (sections.length === 0) return EMPTY_CLEANUP_PATCH;
-  return sections.join("\n\n");
+  return ensurePatchTrailingNewline(sections.join("\n\n"));
 }

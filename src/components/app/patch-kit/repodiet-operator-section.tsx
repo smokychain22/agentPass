@@ -141,7 +141,7 @@ export function RepoDietOperatorSection({
     Boolean(preflight?.canCreatePullRequest);
   const canCreateSafePr =
     canCreateReportPr &&
-    validatedChanges > 0 &&
+    (validatedChanges > 0 || safeCount > 0) &&
     patchValidated &&
     (!requireVerificationForCleanupPr || verificationStatus === "passed");
 

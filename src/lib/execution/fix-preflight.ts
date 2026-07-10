@@ -144,7 +144,7 @@ export async function dryRunPhase1Fix(
 
   if (plugin.id === "remove_temp_file") {
     if (strategyId === "archive_proposed_change") return null;
-    const { generateUnifiedDeletePatch } = await import("@/lib/patch-kit/generate-unified-diff");
+    const { previewUnifiedDeletePatch } = await import("@/lib/patch-kit/generate-unified-diff");
     const safeItems = finding.files.map((file) => ({
       path: file,
       reason: finding.reason,
@@ -159,7 +159,9 @@ export async function dryRunPhase1Fix(
         originals[rel] = "";
       }
     }
-    const { patch, deletedPaths } = await generateUnifiedDeletePatch(rootDir, safeItems);
+    const scratch = path.join(rootDir, ".repodiet-scratch");
+    await fs.mkdir(scratch, { recursive: true });
+    const { patch, deletedPaths } = await previewUnifiedDeletePatch(rootDir, safeItems, scratch);
     if (!patch.trim() || deletedPaths.length === 0) return null;
     const { additions, deletions } = countDiffStats(patch);
     const rel = deletedPaths[0] ?? finding.files[0];
@@ -170,6 +172,46 @@ export async function dryRunPhase1Fix(
       modifiedHash: hashSource(""),
       unifiedDiff: patch,
       changedFiles: deletedPaths,
+      additions,
+      deletions,
+    };
+  }
+
+  if (plugin.id === "remove_unused_dependency") {
+    const pkgName = finding.packageName;
+    if (!pkgName) return null;
+    const pkgPath = path.join(rootDir, "package.json");
+    const original = await fs.readFile(pkgPath, "utf8");
+    const pkg = JSON.parse(original) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const modifiedPkg = structuredClone(pkg);
+    let removed = false;
+    if (strategyId === "remove_from_dev_dependencies") {
+      if (modifiedPkg.devDependencies?.[pkgName]) {
+        delete modifiedPkg.devDependencies[pkgName];
+        removed = true;
+      }
+    } else if (modifiedPkg.dependencies?.[pkgName]) {
+      delete modifiedPkg.dependencies[pkgName];
+      removed = true;
+    } else if (modifiedPkg.devDependencies?.[pkgName]) {
+      delete modifiedPkg.devDependencies[pkgName];
+      removed = true;
+    }
+    if (!removed) return null;
+    const modified = `${JSON.stringify(modifiedPkg, null, 2)}\n`;
+    const unifiedDiff = buildTextDiff("package.json", original, modified);
+    const { additions, deletions } = countDiffStats(unifiedDiff);
+    if (additions + deletions === 0) return null;
+    return {
+      originalSource: original,
+      modifiedSource: modified,
+      originalHash: hashSource(original),
+      modifiedHash: hashSource(modified),
+      unifiedDiff,
+      changedFiles: ["package.json"],
       additions,
       deletions,
     };

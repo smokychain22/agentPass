@@ -66,7 +66,7 @@ export function selectSafeFixes(findings: FindingsPayload, limit = QUICK_CLEANUP
 
 export async function generateChanges(
   findings: FindingsPayload,
-  options?: { findingIds?: string[]; maxFixes?: number }
+  options?: { findingIds?: string[]; maxFixes?: number; quickPatchMode?: boolean }
 ): Promise<FreeCleanupResult> {
   return runFreeCleanupCore(findings, options);
 }
@@ -148,6 +148,7 @@ export async function executeQuickCleanup(
   const result = await generateChanges(findings, {
     findingIds: options?.findingIds,
     maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+    quickPatchMode: true,
   });
 
   const repository = `${findings.repo.owner}/${findings.repo.name}`;
