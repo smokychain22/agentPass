@@ -13,10 +13,10 @@ export function MarketingCta({ size = "default", className, showOkx = false }: M
   return (
     <div className={`flex flex-wrap gap-3 ${className ?? ""}`}>
       <Button asChild size={btnSize}>
-        <Link href="/app">Scan a Repo</Link>
+        <Link href="/app?tab=patch&demo=true">Create Cleanup PR</Link>
       </Button>
       <Button asChild variant="secondary" size={btnSize}>
-        <Link href="/app?demo=true">Try Messy Demo Repo</Link>
+        <Link href="/app?demo=true">Try Demo Repo</Link>
       </Button>
       <Button asChild variant="outline" size={btnSize}>
         <a href="/api/demo/sample-bundle" download title={SAMPLE_BUNDLE_LABEL}>

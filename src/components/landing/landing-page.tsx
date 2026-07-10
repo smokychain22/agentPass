@@ -19,6 +19,7 @@ import { ArtifactCards } from "@/components/landing/artifact-card";
 import { SafetyCards } from "@/components/landing/safety-card";
 import { DemoRepoSection } from "@/components/landing/demo-repo-section";
 import { A2mcpToolsSection } from "@/components/landing/a2mcp-tools-section";
+import { ScanToPrSection } from "@/components/landing/scan-to-pr-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,9 +31,12 @@ import {
   PROBLEM_CARDS,
   PROBLEM_SECTION,
   SAFETY_SECTION,
+  SCAN_TO_PR_SECTION,
   SITE_TAGLINES,
+  TOP3_STORY,
   TRANSFORMATION_SECTION,
   TRUST_LINE,
+  USE_CASES,
 } from "@/lib/marketing/content";
 
 const PROBLEM_ICONS: Record<string, LucideIcon> = {
@@ -101,34 +105,77 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* 3. Pipeline diagram */}
+        {/* 3. From scan to pull request */}
         <section id="product" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-          <p className="mono-label">How it works</p>
+          <p className="mono-label">{SCAN_TO_PR_SECTION.eyebrow}</p>
           <h2 className="mt-2 max-w-2xl text-2xl font-semibold tracking-tight text-[#F8FAFC] sm:text-3xl">
-            Scan the repo. Map the risk. Generate the bundle.
+            {SCAN_TO_PR_SECTION.title}
           </h2>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-secondary">
-            {SITE_TAGLINES.positioning}
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-secondary">
+            {SCAN_TO_PR_SECTION.description}
           </p>
           <div className="mt-12">
-            <RepoDietPipeline />
+            <ScanToPrSection />
           </div>
-        </section>
-
-        {/* 4. Before / After */}
-        <section className="border-y mcc-border bg-[#070A0F]/80">
-          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-            <p className="mono-label">{TRANSFORMATION_SECTION.eyebrow}</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#F8FAFC] sm:text-3xl">
-              {TRANSFORMATION_SECTION.title}
-            </h2>
-            <div className="mt-12">
-              <BeforeAfterDiff />
+          <div className="mt-10 grid gap-4 sm:grid-cols-2">
+            <div className="bento-glow mcc-panel rounded-lg p-5">
+              <p className="mono-label mb-2">Before</p>
+              <p className="text-sm text-secondary">{TOP3_STORY.before}</p>
+            </div>
+            <div className="cta-gradient-border rounded-lg bg-[#111821] p-5 shadow-mcc-glow">
+              <p className="mono-label mb-2 text-signal">After</p>
+              <p className="text-sm text-[#F8FAFC]">{TOP3_STORY.after}</p>
+              <p className="mt-3 text-xs leading-relaxed text-secondary">{TOP3_STORY.asp}</p>
             </div>
           </div>
         </section>
 
-        {/* 5. Cleanup artifacts */}
+        {/* 4. Pipeline diagram */}
+        <section className="border-y mcc-border bg-[#070A0F]/80">
+          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+            <p className="mono-label">How it works</p>
+            <h2 className="mt-2 max-w-2xl text-2xl font-semibold tracking-tight text-[#F8FAFC] sm:text-3xl">
+              Scan the repo. Map the risk. Open the cleanup PR.
+            </h2>
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-secondary">
+              {SITE_TAGLINES.positioning}
+            </p>
+            <div className="mt-12">
+              <RepoDietPipeline />
+            </div>
+          </div>
+        </section>
+
+        {/* 5. Before / After */}
+        <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+          <p className="mono-label">{TRANSFORMATION_SECTION.eyebrow}</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#F8FAFC] sm:text-3xl">
+            {TRANSFORMATION_SECTION.title}
+          </h2>
+          <div className="mt-12">
+            <BeforeAfterDiff />
+          </div>
+        </section>
+
+        {/* 6. Use cases */}
+        <section className="border-y mcc-border bg-[#070A0F]/80">
+          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+            <p className="mono-label">When to use RepoDiet Operator</p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#F8FAFC] sm:text-3xl">
+              Real automation for real cleanup debt
+            </h2>
+            <div className="mt-10 grid gap-4 sm:grid-cols-2">
+              {USE_CASES.map((item) => (
+                <div key={item.title} className="bento-glow mcc-panel rounded-lg p-5">
+                  <h3 className="text-sm font-semibold text-[#F8FAFC]">{item.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-secondary">{item.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 7. Cleanup artifacts */}
         <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
           <p className="mono-label">{OUTPUTS_SECTION.eyebrow}</p>
           <h2 className="mt-2 max-w-3xl text-2xl font-semibold tracking-tight text-[#F8FAFC] sm:text-3xl">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -26,7 +27,7 @@ import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { ArtifactCard } from "./patch-kit/artifact-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { DownloadPanel } from "./patch-kit/download-panel";
-import { CreateCleanupPrPanel } from "./patch-kit/create-cleanup-pr-panel";
+import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
 import {
   ARTIFACT_DEFINITIONS,
   buildSafeDeleteRows,
@@ -48,6 +49,9 @@ function phaseIndex(phase: PatchKitPhase): number {
 }
 
 export function PatchKitTab() {
+  const searchParams = useSearchParams();
+  const demoMode =
+    searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
   const { session, findings, patchKit, setPatchKit } = useAppSession();
   const [phase, setPhase] = useState<PatchKitPhase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -210,13 +214,6 @@ export function PatchKitTab() {
           <PatchKitSummaryCards summary={patchKit.summary} />
           <SafetyPolicyCard />
 
-          <CreateCleanupPrPanel
-            repoUrl={session.repoUrl}
-            branch={session.branch || undefined}
-            findings={findings}
-            patchKit={patchKit}
-          />
-
           <div>
             <h3 className="text-sm font-medium mb-3">Artifact previews</h3>
             <div className="grid gap-3 lg:grid-cols-2">
@@ -253,6 +250,14 @@ export function PatchKitTab() {
           />
         </>
       )}
+
+      <RepoDietOperatorSection
+        repoUrl={session.repoUrl}
+        branch={session.branch || undefined}
+        findings={findings}
+        patchKit={patchKit}
+        demoMode={demoMode}
+      />
     </div>
   );
 }

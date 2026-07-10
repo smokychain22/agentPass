@@ -31,29 +31,10 @@ export function PricingPage() {
           {PRICING_SECTION.description}
         </p>
 
-        <div className="mt-14 space-y-10">
-          <div>
-            <p className="mono-label mb-4">For builders</p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {PRICING_TIERS.slice(0, 2).map((tier) => (
-                <PricingCard key={tier.name} tier={tier} />
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="mono-label mb-4">For agent workflows</p>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 lg:max-w-sm">
-              <PricingCard tier={PRICING_TIERS[2]} />
-            </div>
-          </div>
-
-          <div>
-            <p className="mono-label mb-4">For custom cleanup</p>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 lg:max-w-sm">
-              <PricingCard tier={PRICING_TIERS[3]} />
-            </div>
-          </div>
+        <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {PRICING_TIERS.map((tier) => (
+            <PricingCard key={tier.name} tier={tier} />
+          ))}
         </div>
 
         <p className="mt-10 max-w-2xl text-sm leading-relaxed text-[#64748B]">

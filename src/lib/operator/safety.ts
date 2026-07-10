@@ -32,10 +32,13 @@ function matchesAny(path: string, patterns: RegExp[]): boolean {
   return patterns.some((p) => p.test(path));
 }
 
+const OPERATOR_SAFE_DIRS = /(^|\/)(archive|backup|old|tmp|temp)(\/|$)/i;
+
 /** Final gate before any file deletion on a cleanup branch. */
 export function isOperatorSafeDeletePath(filePath: string): boolean {
   const path = normalizePath(filePath);
   if (!path) return false;
+  if (!OPERATOR_SAFE_DIRS.test(path)) return false;
   if (isDoNotTouchPath(path) || isRouteLikePath(path)) return false;
   if (matchesAny(path, EXTRA_BLOCKED)) return false;
   return isSafeCandidatePath(path);

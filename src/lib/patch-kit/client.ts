@@ -36,6 +36,11 @@ export interface CreateCleanupPrResponse {
   warnings: string[];
 }
 
+export function buildPrSummaryText(result: CreateCleanupPrResponse): string {
+  const { repo, actionSummary } = result;
+  return `RepoDiet created a review-ready cleanup PR for ${repo.owner}/${repo.name}. It applied ${actionSummary.filesDeleted} safe candidate removals, added ${actionSummary.artifactsAdded} cleanup artifacts, skipped ${actionSummary.reviewFirstSkipped} review-first items, protected ${actionSummary.doNotTouchSkipped} do-not-touch items, and did not mutate main.`;
+}
+
 export async function runCreateCleanupPr(
   request: CreateCleanupPrRequest
 ): Promise<CreateCleanupPrResponse> {
