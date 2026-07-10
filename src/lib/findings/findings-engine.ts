@@ -6,7 +6,8 @@ import { runJscpd } from "./run-jscpd";
 import { runMadge } from "./run-madge";
 import { runAiSlopHeuristics } from "./ai-slop-heuristics";
 import { normalizeFindings } from "./normalize-findings";
-import type { FindingsPayload } from "./types";
+import { buildSummaryFromFindings } from "./stats";
+import type { FindingsPayload, Finding } from "./types";
 import type { FindingsJobStage } from "@/lib/jobs/types";
 
 export type FindingsStageCallback = (stage: FindingsJobStage) => void;
@@ -75,21 +76,22 @@ export async function runFindingsCategory(
 
   if (category === "all") return full;
 
-  const empty = {
-    duplicateClusters: 0,
-    unusedFiles: 0,
-    unusedDependencies: 0,
-    unusedExports: 0,
-    orphanPatterns: 0,
-    slopSignals: 0,
-    reviewRequired: 0,
-    safeCandidates: 0,
-  };
+  function withSummary(partial: Partial<FindingsPayload>): FindingsPayload {
+    const merged = { ...full, ...partial };
+    const flat: Finding[] = [
+      ...merged.duplicates,
+      ...merged.unused.files,
+      ...merged.unused.dependencies,
+      ...merged.unused.exports,
+      ...merged.orphans,
+      ...merged.slopSignals,
+    ];
+    return { ...merged, summary: buildSummaryFromFindings(flat) };
+  }
 
   if (category === "duplicates") {
-    return {
-      ...full,
-      summary: { ...empty, duplicateClusters: full.duplicates.length, reviewRequired: full.duplicates.length },
+    return withSummary({
+      duplicates: full.duplicates,
       unused: { files: [], dependencies: [], exports: [] },
       orphans: [],
       slopSignals: [],
@@ -98,56 +100,34 @@ export async function runFindingsCategory(
         reviewFirst: full.duplicates.map((f) => f.id),
         doNotTouch: [],
       },
-    };
+    });
   }
 
   if (category === "unused_files") {
-    const files = full.unused.files;
-    return {
-      ...full,
-      summary: {
-        ...empty,
-        unusedFiles: files.length,
-        unusedExports: full.unused.exports.length,
-        reviewRequired: files.length + full.unused.exports.length,
-      },
+    return withSummary({
       duplicates: [],
-      unused: { files, dependencies: [], exports: full.unused.exports },
+      unused: { files: full.unused.files, dependencies: [], exports: full.unused.exports },
       orphans: [],
       slopSignals: [],
-    };
+    });
   }
 
   if (category === "unused_dependencies") {
-    const deps = full.unused.dependencies;
-    return {
-      ...full,
-      summary: {
-        ...empty,
-        unusedDependencies: deps.length,
-        reviewRequired: deps.length,
-      },
+    return withSummary({
       duplicates: [],
-      unused: { files: [], dependencies: deps, exports: [] },
+      unused: { files: [], dependencies: full.unused.dependencies, exports: [] },
       orphans: [],
       slopSignals: [],
-    };
+    });
   }
 
   if (category === "orphans") {
-    return {
-      ...full,
-      summary: {
-        ...empty,
-        orphanPatterns: full.orphans.length,
-        slopSignals: full.slopSignals.length,
-        reviewRequired: full.orphans.length + full.slopSignals.length,
-      },
+    return withSummary({
       duplicates: [],
       unused: { files: [], dependencies: [], exports: [] },
       orphans: full.orphans,
       slopSignals: full.slopSignals,
-    };
+    });
   }
 
   return full;

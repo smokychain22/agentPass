@@ -22,6 +22,7 @@ import {
   normalizeRepoPath,
   severityForAction,
 } from "./confidence";
+import { assertFindingsInvariants, buildSummaryFromFindings } from "./stats";
 
 interface NormalizeInput {
   scanId: string;
@@ -302,17 +303,14 @@ function buildSummary(
   orphans: Finding[],
   slop: Finding[]
 ): FindingsSummary {
-  const all = [...duplicates, ...unusedFiles, ...unusedDeps, ...unusedExports, ...orphans, ...slop];
-  return {
-    duplicateClusters: duplicates.length,
-    unusedFiles: unusedFiles.length,
-    unusedDependencies: unusedDeps.length,
-    unusedExports: unusedExports.length,
-    orphanPatterns: orphans.length,
-    slopSignals: slop.length,
-    reviewRequired: all.filter((f) => f.action === "review_first").length,
-    safeCandidates: all.filter((f) => f.action === "safe_candidate").length,
-  };
+  return buildSummaryFromFindings([
+    ...duplicates,
+    ...unusedFiles,
+    ...unusedDeps,
+    ...unusedExports,
+    ...orphans,
+    ...slop,
+  ]);
 }
 
 function toToolReport<T>(result: AnalyzerRunResult<T>): ToolRunReport {
@@ -356,7 +354,7 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
     slopSignals
   );
 
-  return {
+  const payload: FindingsPayload = {
     scanId: input.scanId,
     repo: {
       owner: input.repo.owner,
@@ -389,4 +387,7 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
       madge: toToolReport(input.madgeResult),
     },
   };
+
+  assertFindingsInvariants(payload);
+  return payload;
 }

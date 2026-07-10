@@ -312,15 +312,13 @@ export function ScanTab() {
                 <DetailRow label="Config files" value={String(result.configFiles.length)} />
               </dl>
             </ScanDetailPanel>
-            <ScanDetailPanel title="Framework signals">
+            <ScanDetailPanel title="Framework detection">
               <div className="space-y-2">
-                <DetailRow
-                  label="Confidence"
-                  value={`${Math.round(result.framework.confidence * 100)}%`}
-                />
+                <DetailRow label="Framework" value={result.framework.name} />
+                <p className="text-xs text-muted-foreground">Detected from deterministic signals:</p>
                 <ul className="space-y-1 font-mono text-xs text-muted-foreground">
                   {result.framework.signals.map((s) => (
-                    <li key={s}>— {s}</li>
+                    <li key={s}>✓ {s}</li>
                   ))}
                 </ul>
               </div>

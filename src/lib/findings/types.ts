@@ -72,6 +72,7 @@ export interface Finding {
 }
 
 export interface FindingsSummary {
+  totalFindings: number;
   duplicateClusters: number;
   unusedFiles: number;
   unusedDependencies: number;
@@ -80,6 +81,7 @@ export interface FindingsSummary {
   slopSignals: number;
   reviewRequired: number;
   safeCandidates: number;
+  doNotTouch: number;
 }
 
 export interface FindingsPayload {

@@ -7,6 +7,12 @@ import { Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppSession } from "@/components/app/app-session";
 import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
+import { SummaryCards } from "./findings/summary-cards";
+import { AnalyzerSourcesPanel } from "./findings/analyzer-sources-panel";
+import { RiskSummaryPanel } from "./findings/risk-summary-panel";
+import { FindingsWorkspace } from "./findings/findings-workspace";
+import { RepositoryMap } from "./findings/repository-map";
+import { JsonExportCard } from "./findings/json-export";
 import {
   FINDINGS_STEPS,
   buildCleanupPrompt,
@@ -14,10 +20,7 @@ import {
   runFindingsAnalysis,
   type FindingsPhase,
 } from "@/lib/findings/client";
-import { SummaryCards } from "./findings/summary-cards";
-import { FindingsWorkspace } from "./findings/findings-workspace";
-import { RepositoryMap } from "./findings/repository-map";
-import { JsonExportCard } from "./findings/json-export";
+import { freeCleanupCta } from "@/lib/cleanup/eligibility";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
@@ -25,6 +28,8 @@ import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
 import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { DEMO_NOTICE } from "@/lib/demo/constants";
 import { FileSearch } from "lucide-react";
+import { Panel } from "@/components/design-system/panel";
+import type { Finding } from "@/lib/findings/types";
 
 const LOADING: FindingsPhase[] = [
   "preparing",
@@ -146,18 +151,30 @@ export function FindingsTab() {
                 "Run Findings"
               )}
             </Button>
-            <Button variant="secondary" disabled={!findings} onClick={downloadFindings}>
-              Download findings.json
-            </Button>
-            <Button variant="outline" disabled={!findings} onClick={copyPrompt}>
-              <Copy className="h-4 w-4" aria-hidden />
-              {promptCopied ? "Copied" : "Copy Cleanup Prompt"}
-            </Button>
+            {findings && (
+              <Button asChild>
+                <Link href="/app?tab=cleanup">{freeCleanupCta(allFindings).label}</Link>
+              </Button>
+            )}
             {findings && (
               <Button variant="ghost" asChild>
                 <Link href="/app?tab=patch">Continue to Patch Kit</Link>
               </Button>
             )}
+            <details className="relative">
+              <summary className="cursor-pointer list-none rounded-md border border-border/40 px-3 py-2 text-sm text-muted-foreground hover:bg-card-elevated">
+                Developer tools
+              </summary>
+              <div className="absolute right-0 z-10 mt-2 flex min-w-[200px] flex-col gap-1 rounded-md border border-border/60 bg-card p-2 shadow-lg">
+                <Button variant="secondary" size="sm" disabled={!findings} onClick={downloadFindings}>
+                  Download findings.json
+                </Button>
+                <Button variant="outline" size="sm" disabled={!findings} onClick={copyPrompt}>
+                  <Copy className="h-4 w-4" aria-hidden />
+                  {promptCopied ? "Copied" : "Copy Cleanup Prompt"}
+                </Button>
+              </div>
+            </details>
           </>
         }
       />
@@ -207,7 +224,9 @@ export function FindingsTab() {
             />
           )}
 
-          <SummaryCards summary={findings.summary} />
+          <SummaryCards payload={findings} />
+          <AnalyzerSourcesPanel payload={findings} />
+          <RiskSummaryPanel summary={findings.summary} />
           <RepositoryMap findings={allFindings} />
           <FindingsWorkspace
             findings={allFindings}
@@ -215,6 +234,8 @@ export function FindingsTab() {
             onTogglePatchSelection={toggleFindingSelection}
           />
           <JsonExportCard payload={findings} />
+
+          <PanelCTA findings={allFindings} />
         </>
       )}
 
@@ -227,5 +248,22 @@ export function FindingsTab() {
         />
       )}
     </div>
+  );
+}
+
+function PanelCTA({ findings }: { findings: Finding[] }) {
+  const cta = freeCleanupCta(findings);
+  return (
+    <Panel variant="elevated" padding="md">
+      <p className="ds-label mb-2">See RepoDiet solve real issues</p>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {cta.mode === "auto_fix"
+          ? `Run a limited cleanup on up to ${cta.count} high-confidence safe finding${cta.count === 1 ? "" : "s"}. RepoDiet generates changes, verifies them in an isolated workspace, and shows every diff. Your repository is never modified.`
+          : "RepoDiet did not find an issue safe enough to modify automatically. Review findings with evidence and a conservative remediation plan instead."}
+      </p>
+      <Button asChild disabled={cta.count === 0}>
+        <Link href="/app?tab=cleanup">{cta.label}</Link>
+      </Button>
+    </Panel>
   );
 }

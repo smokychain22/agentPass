@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { IGNORED_DIRS } from "@/lib/scanner/types";
 import { SKIP_EXTENSIONS } from "../types";
@@ -57,7 +58,78 @@ function extractImports(content: string): string[] {
   return specs;
 }
 
+async function loadTsconfigPaths(rootDir: string): Promise<Record<string, string>> {
+  try {
+    const raw = await fs.readFile(path.join(rootDir, "tsconfig.json"), "utf8");
+    const parsed = JSON.parse(raw) as {
+      compilerOptions?: { paths?: Record<string, string[]> };
+    };
+    const paths = parsed.compilerOptions?.paths ?? {};
+    const out: Record<string, string> = {};
+    for (const [alias, targets] of Object.entries(paths)) {
+      const key = alias.replace(/\*$/, "");
+      const target = targets[0]?.replace(/\*$/, "") ?? "";
+      if (key && target) out[key] = target.replace(/^\.\//, "");
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function discoverNextEntryPoints(rootDir: string): Promise<string[]> {
+  const entries = new Set<string>();
+  const routeFiles = [
+    "page.tsx",
+    "page.ts",
+    "page.jsx",
+    "page.js",
+    "layout.tsx",
+    "layout.ts",
+    "route.ts",
+    "route.js",
+    "loading.tsx",
+    "error.tsx",
+    "not-found.tsx",
+  ];
+
+  async function walk(dir: string, rel: string): Promise<void> {
+    const full = path.join(rootDir, rel);
+    let items: Dirent[];
+    try {
+      items = await fs.readdir(full, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const item of items) {
+      if (IGNORED_DIRS.has(item.name)) continue;
+      const childRel = rel ? `${rel}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        await walk(dir, childRel);
+      } else if (routeFiles.includes(item.name)) {
+        entries.add(childRel.replace(/\\/g, "/"));
+      }
+    }
+  }
+
+  for (const root of ["app", "src/app", "pages", "src/pages"]) {
+    await walk(rootDir, root);
+  }
+
+  for (const special of ["middleware.ts", "middleware.js", "instrumentation.ts", "src/instrumentation.ts"]) {
+    try {
+      await fs.access(path.join(rootDir, special));
+      entries.add(special);
+    } catch {
+      /* skip */
+    }
+  }
+
+  return [...entries];
+}
+
 async function resolveEntryPoints(rootDir: string): Promise<string[]> {
+  const found = new Set<string>(await discoverNextEntryPoints(rootDir));
   const candidates = [
     "app/page.tsx",
     "app/page.ts",
@@ -70,11 +142,10 @@ async function resolveEntryPoints(rootDir: string): Promise<string[]> {
     "index.ts",
     "index.js",
   ];
-  const found: string[] = [];
   for (const c of candidates) {
     try {
       await fs.access(path.join(rootDir, c));
-      found.push(c);
+      found.add(c);
     } catch {
       /* skip */
     }
@@ -85,19 +156,39 @@ async function resolveEntryPoints(rootDir: string): Promise<string[]> {
       module?: string;
     };
     for (const entry of [pkg.main, pkg.module].filter(Boolean) as string[]) {
-      if (!found.includes(entry)) found.push(entry);
+      found.add(entry);
     }
   } catch {
     /* no package.json */
   }
-  return found.length ? found : ["app/page.tsx", "pages/index.tsx", "src/index.ts", "index.ts"];
+  return found.size ? [...found] : ["app/page.tsx", "pages/index.tsx", "src/index.ts", "index.ts"];
 }
 
 function resolveImport(
   fromFile: string,
   spec: string,
-  fileSet: Set<string>
+  fileSet: Set<string>,
+  aliasPaths: Record<string, string>
 ): string | null {
+  for (const [alias, target] of Object.entries(aliasPaths)) {
+    if (spec === alias || spec.startsWith(alias)) {
+      const rest = spec.slice(alias.length);
+      const joined = path.posix.join(target, rest);
+      const tries = [
+        joined,
+        `${joined}.ts`,
+        `${joined}.tsx`,
+        `${joined}.js`,
+        `${joined}.jsx`,
+        `${joined}/index.ts`,
+        `${joined}/index.tsx`,
+      ];
+      for (const t of tries) {
+        if (fileSet.has(t)) return t;
+      }
+    }
+  }
+
   if (spec.startsWith(".") || spec.startsWith("/")) {
     const base = path.posix.dirname(fromFile);
     const joined = path.posix.normalize(path.posix.join(base, spec));
@@ -198,12 +289,13 @@ async function detectUnusedDependencies(
 export async function analyzeImportGraph(rootDir: string): Promise<ImportGraphAnalysis> {
   const files = await walkCodeFiles(rootDir);
   const fileSet = new Set(files.map((f) => f.rel));
+  const aliasPaths = await loadTsconfigPaths(rootDir);
   const imports = new Map<string, string[]>();
 
   for (const file of files) {
     const resolved: string[] = [];
     for (const spec of extractImports(file.content)) {
-      const target = resolveImport(file.rel, spec, fileSet);
+      const target = resolveImport(file.rel, spec, fileSet, aliasPaths);
       if (target) resolved.push(target);
     }
     imports.set(file.rel, resolved);

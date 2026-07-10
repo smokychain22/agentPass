@@ -1,4 +1,5 @@
 import type { Finding, FindingsPayload } from "@/lib/findings/types";
+import { buildSummaryFromFindings } from "@/lib/findings/stats";
 
 export function filterFindingsBySelection(
   findings: FindingsPayload,
@@ -27,16 +28,7 @@ export function filterFindingsBySelection(
 
   return {
     ...findings,
-    summary: {
-      duplicateClusters: duplicates.length,
-      unusedFiles: unusedFiles.length,
-      unusedDependencies: unusedDeps.length,
-      unusedExports: unusedExports.length,
-      orphanPatterns: orphans.length,
-      slopSignals: slopSignals.length,
-      reviewRequired: all.filter((f) => f.action === "review_first").length,
-      safeCandidates: all.filter((f) => f.action === "safe_candidate").length,
-    },
+    summary: buildSummaryFromFindings(all),
     duplicates,
     unused: {
       files: unusedFiles,

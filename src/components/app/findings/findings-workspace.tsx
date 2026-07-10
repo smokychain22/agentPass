@@ -28,10 +28,10 @@ type BucketKey = "all" | "safe_candidate" | "review_first" | "do_not_touch";
 
 const CATEGORIES: { key: CategoryKey; label: string }[] = [
   { key: "all", label: "All findings" },
-  { key: "duplicates", label: "Duplicate Logic" },
-  { key: "dead_files", label: "Dead Files" },
+  { key: "duplicates", label: "Potential Duplicates" },
+  { key: "dead_files", label: "Potentially Unreferenced" },
   { key: "dependencies", label: "Unused Dependencies" },
-  { key: "orphans", label: "Orphan Modules" },
+  { key: "orphans", label: "Potential Orphan Modules" },
   { key: "slop", label: "AI-Slop Signals" },
   { key: "protected", label: "Protected Files" },
 ];

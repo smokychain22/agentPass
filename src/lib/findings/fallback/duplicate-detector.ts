@@ -4,8 +4,23 @@ import type { JscpdRawReport } from "../types";
 import { IGNORED_DIRS } from "@/lib/scanner/types";
 
 const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-const MIN_CHUNK_LINES = 4;
+const MIN_CHUNK_LINES = 15;
+const MIN_CHUNK_CHARS = 80;
 const MAX_FILES = 400;
+
+function isImportOnlyChunk(chunk: string): boolean {
+  const lines = chunk.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return true;
+  return lines.every(
+    (line) =>
+      line.startsWith("import ") ||
+      line.startsWith("export ") && line.includes(" from ") ||
+      line.startsWith("//") ||
+      line === "{" ||
+      line === "}" ||
+      line === ");"
+  );
+}
 
 function normalizeLines(content: string): string[] {
   return content
@@ -48,7 +63,8 @@ export async function runDuplicateFallback(rootDir: string): Promise<JscpdRawRep
   for (const file of files) {
     for (let i = 0; i <= file.lines.length - MIN_CHUNK_LINES; i++) {
       const chunk = file.lines.slice(i, i + MIN_CHUNK_LINES).join("\n");
-      if (chunk.length < 40) continue;
+      if (chunk.length < MIN_CHUNK_CHARS) continue;
+      if (isImportOnlyChunk(chunk)) continue;
       const key = chunk;
       const list = chunkMap.get(key) ?? [];
       list.push({ file: file.rel, start: i + 1, end: i + MIN_CHUNK_LINES });

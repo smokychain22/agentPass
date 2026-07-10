@@ -7,6 +7,7 @@ import { ScanTab } from "@/components/app/scan-tab";
 import { FindingsTab } from "@/components/app/findings-tab";
 import { PatchKitTab } from "@/components/app/patch-kit-tab";
 import { VerifyTab } from "@/components/app/verify-tab";
+import { CleanupTab } from "@/components/app/cleanup-tab";
 import { AppSessionProvider, useAppSession } from "@/components/app/app-session";
 import { AppTopBar } from "@/components/app/shell/app-top-bar";
 import { WorkflowRail, type WorkflowStepId } from "@/components/app/shell/workflow-rail";
@@ -57,6 +58,7 @@ function AppWorkspace() {
             {tab === "findings" && <FindingsTab />}
             {tab === "patch" && <PatchKitTab />}
             {tab === "verify" && <VerifyTab />}
+            {tab === "cleanup" && <CleanupTab />}
           </Container>
         </main>
       </div>

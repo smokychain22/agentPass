@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Check, Lock, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type WorkflowStepId = "scan" | "findings" | "patch" | "verify";
+export type WorkflowStepId = "scan" | "findings" | "patch" | "verify" | "cleanup";
 
 export type StepState = "inactive" | "active" | "completed" | "locked" | "failed";
 

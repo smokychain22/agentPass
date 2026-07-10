@@ -1,59 +1,64 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import type { Finding } from "@/lib/findings/types";
 import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
 
 interface RepositoryMapProps {
   findings: Finding[];
+  onSelectFinding?: (findingId: string) => void;
 }
 
 interface MapNode {
   id: string;
   label: string;
+  fullPath: string;
+  findingId?: string;
   level: "safe" | "review" | "protected" | "danger" | "neutral";
   x: number;
   y: number;
 }
 
-function buildNodes(findings: Finding[]): MapNode[] {
-  const paths = new Set<string>();
-  paths.add("repo/");
+const MAX_NODES = 16;
 
-  for (const f of findings) {
-    for (const file of f.files.slice(0, 1)) {
+function buildNodes(findings: Finding[]): MapNode[] {
+  const nodes: MapNode[] = [
+    { id: "root", label: "repository", fullPath: "/", level: "neutral", x: 140, y: 16 },
+  ];
+  const seen = new Set<string>();
+
+  for (const finding of findings) {
+    for (const file of finding.files) {
+      if (seen.has(file) || nodes.length >= MAX_NODES) continue;
+      seen.add(file);
       const parts = file.split("/");
-      if (parts.length > 1) paths.add(`${parts[0]}/`);
-      paths.add(file.length > 24 ? `${file.slice(0, 22)}…` : file);
+      const label = parts.length > 2 ? `${parts[0]}/${parts[1]}` : file;
+      nodes.push({
+        id: file,
+        label: label.length > 28 ? `${label.slice(0, 26)}…` : label,
+        fullPath: file,
+        findingId: finding.id,
+        level:
+          finding.action === "safe_candidate"
+            ? "safe"
+            : finding.action === "do_not_touch"
+              ? "protected"
+              : finding.type === "orphan_pattern"
+                ? "danger"
+                : "review",
+        x: 24 + ((nodes.length - 1) % 4) * 72,
+        y: 56 + Math.floor((nodes.length - 1) / 4) * 44,
+      });
     }
-    if (f.packageName) paths.add(f.packageName);
   }
 
-  const items = [...paths].slice(0, 12);
-  const cols = 4;
-  return items.map((label, i) => {
-    const finding = findings.find((f) => f.files.some((file) => file.includes(label.replace("…", ""))) || f.packageName === label);
-    const level =
-      finding?.action === "safe_candidate"
-        ? "safe"
-        : finding?.action === "do_not_touch"
-          ? "protected"
-          : finding?.type === "orphan_pattern"
-            ? "danger"
-            : finding
-              ? "review"
-              : "neutral";
-
-    return {
-      id: `${label}-${i}`,
-      label,
-      level,
-      x: 40 + (i % cols) * 72,
-      y: 36 + Math.floor(i / cols) * 48,
-    };
-  });
+  return nodes;
 }
 
-export function RepositoryMap({ findings }: RepositoryMapProps) {
-  const nodes = buildNodes(findings);
+export function RepositoryMap({ findings, onSelectFinding }: RepositoryMapProps) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const nodes = useMemo(() => buildNodes(findings), [findings]);
 
   return (
     <Panel variant="elevated" padding="md">
@@ -67,28 +72,36 @@ export function RepositoryMap({ findings }: RepositoryMapProps) {
         </div>
       </div>
 
-      <svg viewBox="0 0 320 200" className="w-full rounded border border-border/40 bg-[#05080D]/50" role="img" aria-label="Repository structure map">
-        <line x1="160" y1="20" x2="160" y2="180" stroke="currentColor" strokeOpacity="0.08" />
-        {nodes.map((node, i) => {
-          if (i === 0) return null;
-          return (
-            <line
-              key={`line-${node.id}`}
-              x1={nodes[0].x + 24}
-              y1={nodes[0].y + 12}
-              x2={node.x + 24}
-              y2={node.y + 12}
-              stroke="currentColor"
-              strokeOpacity="0.12"
-            />
-          );
-        })}
+      <svg
+        viewBox="0 0 320 220"
+        className="w-full rounded border border-border/40 bg-[#05080D]/50"
+        role="img"
+        aria-label="Repository structure map"
+      >
+        {nodes.slice(1).map((node) => (
+          <line
+            key={`line-${node.id}`}
+            x1={nodes[0].x + 40}
+            y1={nodes[0].y + 12}
+            x2={node.x + 40}
+            y2={node.y + 12}
+            stroke="currentColor"
+            strokeOpacity="0.12"
+          />
+        ))}
         {nodes.map((node) => (
-          <g key={node.id}>
+          <g
+            key={node.id}
+            onMouseEnter={() => setHovered(node.fullPath)}
+            onMouseLeave={() => setHovered(null)}
+            onClick={() => node.findingId && onSelectFinding?.(node.findingId)}
+            style={{ cursor: node.findingId ? "pointer" : "default" }}
+          >
+            <title>{node.fullPath}</title>
             <rect
               x={node.x}
               y={node.y}
-              width="48"
+              width="80"
               height="24"
               rx="4"
               fill="#0B111A"
@@ -103,31 +116,45 @@ export function RepositoryMap({ findings }: RepositoryMapProps) {
                         ? "#FF5C6C"
                         : "#18BFFF"
               }
-              strokeOpacity="0.5"
+              strokeOpacity={hovered === node.fullPath ? 1 : 0.5}
             />
             <text
-              x={node.x + 24}
+              x={node.x + 40}
               y={node.y + 15}
               textAnchor="middle"
               fill="currentColor"
               fontSize="6"
               fontFamily="monospace"
             >
-              {node.label.length > 10 ? `${node.label.slice(0, 9)}…` : node.label}
+              {node.label}
             </text>
           </g>
         ))}
       </svg>
 
-      {/* Keyboard-accessible fallback list */}
-      <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto scrollbar-thin lg:hidden">
-        {nodes.map((node) => (
-          <li key={`list-${node.id}`} className="flex items-center justify-between font-mono text-[10px] text-muted-foreground">
-            <span>{node.label}</span>
-            <RiskBadge level={node.level}>{node.level}</RiskBadge>
+      {hovered && (
+        <p className="mt-2 font-mono text-[10px] text-electric/90">{hovered}</p>
+      )}
+
+      <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto scrollbar-thin">
+        {nodes.slice(1).map((node) => (
+          <li key={`list-${node.id}`}>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left font-mono text-[10px] text-muted-foreground hover:bg-card-elevated hover:text-foreground"
+              onClick={() => node.findingId && onSelectFinding?.(node.findingId)}
+            >
+              <span className="truncate">{node.fullPath}</span>
+              <RiskBadge level={node.level}>{node.level}</RiskBadge>
+            </button>
           </li>
         ))}
       </ul>
+      {findings.length > MAX_NODES && (
+        <p className="mt-2 text-[10px] text-muted-foreground">
+          Showing {MAX_NODES - 1} of {findings.length} mapped paths. Use the findings list for full coverage.
+        </p>
+      )}
     </Panel>
   );
 }
