@@ -89,7 +89,7 @@ function dryRunUnusedImport(
   return modified === source ? null : modified;
 }
 
-function buildTextDiff(relPath: string, original: string, modified: string): string {
+export function buildTextDiff(relPath: string, original: string, modified: string): string {
   const origLines = original.split("\n");
   const modLines = modified.split("\n");
   const lines: string[] = [

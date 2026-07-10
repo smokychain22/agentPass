@@ -107,6 +107,9 @@ function mergeExecutionAudits(
       byId.set(exec.findingId, {
         ...existing,
         ...exec,
+        scanEligible: existing.scanEligible,
+        proposedSourceChanged: existing.proposedSourceChanged,
+        proposedDiffGenerated: existing.proposedDiffGenerated,
         strategyIds: exec.strategyIds.length ? exec.strategyIds : existing.strategyIds,
       });
     } else {
@@ -218,7 +221,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
 
     const transformerCompatible = compatibleFindings.length;
-    const dryRunPassed = preflightAudits.filter((a) => a.contentChanged).length;
+    const dryRunPassed = preflightAudits.filter((a) => a.scanEligible).length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
       maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,

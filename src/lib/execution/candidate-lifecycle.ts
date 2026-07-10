@@ -32,11 +32,13 @@ export interface CandidateAuditRecord {
   strategyIds: string[];
   sourceFound: boolean;
   sourceHashMatched: boolean;
-  /** Transformer was invoked against source. */
+  /** Passed strict scan-time preflight (actionable candidate). */
+  scanEligible: boolean;
+  /** Transformer was invoked in the cleanup workspace. */
   transformAttempted: boolean;
-  /** Modified content differs from original. */
+  /** Execution produced a non-empty source modification. */
   contentChanged: boolean;
-  /** @deprecated Use transformAttempted */
+  /** @deprecated Use transformAttempted + contentChanged */
   dryRunSucceeded: boolean;
   proposedSourceChanged: boolean;
   proposedDiffGenerated: boolean;
@@ -69,13 +71,85 @@ export function blockerCodeFromPreflight(preflight: FixPreflightResult): Blocker
   return "transform_noop";
 }
 
+export function blockerCodeFromAttemptReason(reason: string, displayReason?: string): BlockerCode {
+  const text = `${reason} ${displayReason ?? ""}`.toLowerCase();
+  if (text.includes("diff_generation_failed") || text.includes("unified diff is empty")) {
+    return "diff_generation_failed";
+  }
+  if (text.includes("patch validation")) return "patch_validation_failed";
+  if (text.includes("verification") || text.includes("regression")) {
+    return "verification_regression";
+  }
+  if (text.includes("hash")) return "source_hash_mismatch";
+  if (text.includes("workspace_path_mismatch")) return "workspace_write_failed";
+  if (text.includes("write_failed")) return "workspace_write_failed";
+  if (text.includes("noop") || text.includes("no diff") || text.includes("identical source")) {
+    return "transform_noop";
+  }
+  return "transform_noop";
+}
+
+export function mergeExecutionIntoAudit(
+  audit: CandidateAuditRecord,
+  attempt?: {
+    status: string;
+    reason: string;
+    displayReason: string;
+    patchValidation?: { status: string };
+    modifiedSources?: Record<string, string>;
+  }
+): CandidateAuditRecord {
+  if (attempt?.status === "retained") {
+    return {
+      ...audit,
+      transformAttempted: true,
+      contentChanged: true,
+      dryRunSucceeded: true,
+      patchValidated: attempt.patchValidation?.status === "passed",
+      retained: true,
+      blockerCode: undefined,
+      blockerMessage: undefined,
+    };
+  }
+
+  if (attempt) {
+    const executionDiffGenerated = Object.keys(attempt.modifiedSources ?? {}).length > 0;
+    return {
+      ...audit,
+      transformAttempted: true,
+      contentChanged: executionDiffGenerated,
+      dryRunSucceeded: false,
+      patchValidated: attempt.patchValidation?.status === "passed",
+      retained: false,
+      blockerCode: blockerCodeFromAttemptReason(attempt.reason, attempt.displayReason),
+      blockerMessage: attempt.displayReason,
+    };
+  }
+
+  if (audit.scanEligible) {
+    return {
+      ...audit,
+      transformAttempted: false,
+      contentChanged: false,
+      dryRunSucceeded: false,
+      blockerCode: "not_attempted",
+      blockerMessage: "Eligible finding was not attempted within attempt limit.",
+    };
+  }
+
+  return {
+    ...audit,
+    transformAttempted: false,
+    dryRunSucceeded: false,
+  };
+}
+
 export function auditFromPreflight(
   finding: Finding,
   preflight: FixPreflightResult,
   projectRoot?: string
 ): CandidateAuditRecord {
-  const contentChanged = isActionablePreflight(preflight);
-  const transformAttempted = preflight.strategyAvailable && preflight.sourceLocated;
+  const scanEligible = isActionablePreflight(preflight);
   return {
     findingId: finding.id,
     findingType: finding.type,
@@ -85,15 +159,16 @@ export function auditFromPreflight(
     strategyIds: preflight.strategyId ? [preflight.strategyId] : [],
     sourceFound: preflight.sourceLocated,
     sourceHashMatched: preflight.sourceHashMatches,
-    transformAttempted,
-    contentChanged,
-    dryRunSucceeded: contentChanged,
+    scanEligible,
+    transformAttempted: false,
+    contentChanged: false,
+    dryRunSucceeded: false,
     proposedSourceChanged: preflight.dryRunChangedSource,
     proposedDiffGenerated: preflight.diffGenerated,
     patchValidated: false,
     verificationSupported: preflight.requiredVerificationSupported,
     retained: false,
-    blockerCode: contentChanged ? undefined : blockerCodeFromPreflight(preflight),
+    blockerCode: scanEligible ? undefined : blockerCodeFromPreflight(preflight),
     blockerMessage: preflight.blocker,
   };
 }
@@ -133,16 +208,20 @@ export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
   validated: number;
   verified: number;
 } {
-  const eligible = audits.length;
+  const eligible = audits.filter((a) => a.scanEligible).length;
   const attempted = audits.filter((a) => a.transformAttempted).length;
-  const generatedChanges = audits.filter((a) => a.retained && a.contentChanged).length;
+  const generatedChanges = audits.filter((a) => a.contentChanged && a.transformAttempted).length;
   const noop = audits.filter(
-    (a) => a.transformAttempted && !a.contentChanged && a.blockerCode === "transform_noop"
+    (a) => a.transformAttempted && a.blockerCode === "transform_noop"
   ).length;
   const failed = audits.filter(
-    (a) => a.transformAttempted && !a.contentChanged && a.blockerCode !== "transform_noop"
+    (a) =>
+      a.transformAttempted &&
+      a.blockerCode !== "transform_noop" &&
+      a.blockerCode !== "not_attempted" &&
+      !a.retained
   ).length;
-  const notAttempted = audits.filter((a) => !a.transformAttempted).length;
+  const notAttempted = audits.filter((a) => a.blockerCode === "not_attempted").length;
   const validated = audits.filter((a) => a.retained && a.patchValidated).length;
   return {
     eligible,
@@ -199,6 +278,7 @@ export async function auditTransformerCompatibleFindings(
         strategyIds: [],
         sourceFound: false,
         sourceHashMatched: false,
+        scanEligible: false,
         transformAttempted: false,
         contentChanged: false,
         dryRunSucceeded: false,

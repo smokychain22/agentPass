@@ -44,8 +44,8 @@ import { enrichFindingsWithPreflight, isActionableFinding } from "@/lib/findings
 import {
   type CandidateAuditRecord,
   auditFromPreflight,
-  blockerCodeFromPreflight,
   formatBlockerBreakdown,
+  mergeExecutionIntoAudit,
 } from "./candidate-lifecycle";
 import { CleanupRunStateMachine, type CleanupStateTransition } from "./cleanup-run-state";
 
@@ -393,6 +393,7 @@ export async function runFreeCleanupCore(
           strategyIds: [],
           sourceFound: false,
           sourceHashMatched: false,
+          scanEligible: false,
           transformAttempted: false,
           contentChanged: false,
           dryRunSucceeded: false,
@@ -406,40 +407,7 @@ export async function runFreeCleanupCore(
         };
       }
       const audit = auditFromPreflight(finding, preflight, finding.projectRoot);
-      if (attempt?.status === "retained") {
-        return {
-          ...audit,
-          patchValidated: attempt.patchValidation?.status === "passed",
-          retained: true,
-          blockerCode: undefined,
-          blockerMessage: undefined,
-        };
-      }
-      if (attempt) {
-        let blockerCode = audit.blockerCode;
-        const reason = attempt.reason.toLowerCase();
-        if (reason.includes("noop") || reason.includes("no diff")) blockerCode = "transform_noop";
-        else if (reason.includes("patch validation")) blockerCode = "patch_validation_failed";
-        else if (reason.includes("verification") || reason.includes("regression")) {
-          blockerCode = "verification_regression";
-        } else if (reason.includes("hash")) blockerCode = "source_hash_mismatch";
-        else if (!blockerCode) blockerCode = blockerCodeFromPreflight(preflight) ?? "transform_noop";
-        return {
-          ...audit,
-          patchValidated: attempt.patchValidation?.status === "passed",
-          retained: false,
-          blockerCode,
-          blockerMessage: attempt.displayReason,
-        };
-      }
-      if (audit.dryRunSucceeded) {
-        return {
-          ...audit,
-          blockerCode: "not_attempted",
-          blockerMessage: "Dry-run passed but candidate was not attempted within attempt limit.",
-        };
-      }
-      return audit;
+      return mergeExecutionIntoAudit(audit, attempt);
     });
 
     const blockerBreakdown = formatBlockerBreakdown(candidateAudits);

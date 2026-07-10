@@ -7,8 +7,9 @@ import type { PackageManager } from "@/lib/scanner/types";
 import {
   removeUnusedSymbolFromImport,
   convertSymbolToTypeOnlyImport,
-  removeUnusedImportLine,
+  removeUnusedSymbolAtLine,
 } from "@/lib/findings/unused-import-detector";
+import { buildTextDiff } from "../fix-preflight";
 import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
 import { resolvePhase1TransformPlugin, type Phase1PluginId } from "./phase1-plugins";
@@ -134,6 +135,8 @@ async function applyRemoveUnusedImport(
     finding.evidence.summary;
   const symbol =
     finding.evidence.signals.find((s) => s.startsWith("symbol="))?.slice(7) ?? "";
+  const lineRaw = finding.evidence.signals.find((s) => s.startsWith("line="))?.slice(5);
+  const lineNumber = lineRaw ? Number(lineRaw) : undefined;
 
   const full = path.join(rootDir, rel);
   const original = await fs.readFile(full, "utf8");
@@ -154,6 +157,10 @@ async function applyRemoveUnusedImport(
     case "remove_unused_named_specifier":
     default:
       modified = removeUnusedSymbolFromImport(original, importLine, symbol);
+      if (modified === original && Number.isFinite(lineNumber)) {
+        const atLine = removeUnusedSymbolAtLine(original, lineNumber!, symbol);
+        if (atLine) modified = atLine;
+      }
       break;
   }
 
@@ -164,7 +171,11 @@ async function applyRemoveUnusedImport(
   await ensureGitBaseline(rootDir);
   await fs.writeFile(full, modified, "utf8");
   const persisted = await fs.readFile(full, "utf8");
-  const diff = await gitDiff(rootDir, [rel]);
+  let diff = await gitDiff(rootDir, [rel]);
+  if (!diff.trim() && modified !== original) {
+    diff = buildTextDiff(rel, original, modified);
+    if (!diff.endsWith("\n")) diff = `${diff}\n`;
+  }
 
   const invariant = validateTransformInvariants({
     originalSource: original,

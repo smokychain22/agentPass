@@ -145,9 +145,11 @@ export function PatchKitTab() {
             ? "RepoDiet found review findings, but none have a registered transformer for automatic cleanup."
             : patchKit?.summary.blockerSummary
               ? patchKit.summary.blockerSummary
-              : patchKit?.summary.transformerCompatible
-                ? `${patchKit.summary.transformerCompatible} transformer-compatible finding(s). RepoDiet dry-runs up to fifteen candidates and retains up to five verified changes.`
-                : `${supportedCount} transformer-compatible finding(s) for cleanup.`
+              : patchKit?.summary.eligibleFindings
+                ? `${patchKit.summary.eligibleFindings} eligible finding(s). Quick Cleanup attempts up to fifteen candidates and retains up to five verified changes.`
+                : patchKit?.summary.transformerCompatible
+                  ? `${patchKit.summary.transformerCompatible} eligible finding(s). Quick Cleanup attempts up to fifteen candidates and retains up to five verified changes.`
+                  : `${supportedCount} eligible finding(s) for cleanup.`
         }
         actions={
           <>
@@ -240,12 +242,12 @@ export function PatchKitTab() {
             />
           )}
           {patchKit.summary.verifiedChanges === 0 &&
-            (patchKit.summary.transformerCompatible ?? 0) > 0 && (
+            (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 && (
               <FeedbackBanner
                 variant="warning"
                 message={
                   patchKit.summary.blockerSummary ??
-                  `${patchKit.summary.transformerCompatible} transformer-compatible finding(s); ${patchKit.summary.dryRunPassed ?? 0} dry-run successful; 0 verified changes retained.`
+                  `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible; ${patchKit.summary.attemptedTransformations ?? 0} attempted; ${patchKit.summary.generatedChanges ?? 0} generated; 0 verified changes retained.`
                 }
                 dismissible={false}
               />

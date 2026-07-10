@@ -184,6 +184,7 @@ function run() {
         strategyIds: [],
         sourceFound: true,
         sourceHashMatched: true,
+        scanEligible: true,
         transformAttempted: true,
         contentChanged: false,
         dryRunSucceeded: false,

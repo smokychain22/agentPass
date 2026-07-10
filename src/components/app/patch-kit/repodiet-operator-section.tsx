@@ -457,11 +457,11 @@ export function RepoDietOperatorSection({
               <p className="font-mono text-2xl font-semibold text-signal">{validatedChanges}</p>
               {validatedChanges > 0 && patchValidated ? (
                 <p className="text-signal">Ready to create cleanup PR.</p>
-              ) : (patchKit?.summary.transformerCompatible ?? patchKit?.summary.supportedFixesDetected) ? (
+              ) : (patchKit?.summary.eligibleFindings ?? patchKit?.summary.transformerCompatible) ? (
                 <p>
-                  {patchKit.summary.transformerCompatible ??
-                    patchKit.summary.supportedFixesDetected}{" "}
-                  transformer-compatible; {patchKit.summary.dryRunPassed ?? 0} dry-run successful;{" "}
+                  {patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible}{" "}
+                  eligible; {patchKit.summary.attemptedTransformations ?? 0} attempted;{" "}
+                  {patchKit.summary.generatedChanges ?? 0} generated;{" "}
                   {validatedChanges > 0
                     ? "patch validation must pass before cleanup PR."
                     : "none verified yet."}
@@ -524,8 +524,8 @@ export function RepoDietOperatorSection({
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
               {patchKit?.summary.blockerSummary
                 ? patchKit.summary.blockerSummary
-                : (patchKit?.summary.transformerCompatible ?? 0) > 0
-                  ? `${patchKit.summary.transformerCompatible} transformer-compatible finding(s); 0 verified changes retained. You can create a report-only PR with cleanup artifacts.`
+                : (patchKit?.summary.eligibleFindings ?? patchKit?.summary.transformerCompatible ?? 0) > 0
+                  ? `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible finding(s); ${patchKit.summary.attemptedTransformations ?? 0} attempted; ${patchKit.summary.generatedChanges ?? 0} generated; 0 verified changes retained. You can create a report-only PR with cleanup artifacts.`
                   : "No validated code changes were generated. RepoDiet can create a report-only PR with cleanup artifacts instead."}
             </div>
           )}

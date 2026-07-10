@@ -5,7 +5,9 @@ import {
 } from "../src/lib/execution/constants";
 import {
   auditFromPreflight,
+  blockerCodeFromAttemptReason,
   formatBlockerBreakdown,
+  mergeExecutionIntoAudit,
   summarizeBlockers,
   type CandidateAuditRecord,
 } from "../src/lib/execution/candidate-lifecycle";
@@ -107,8 +109,56 @@ test("transform noop does not consume attempt limit", () => {
 
 test("audit records blocker for dry-run noop", () => {
   const audit = auditFromPreflight(sampleFinding(), noopPreflight());
+  assert.equal(audit.scanEligible, false);
   assert.equal(audit.dryRunSucceeded, false);
+  assert.equal(audit.transformAttempted, false);
   assert.equal(audit.blockerCode, "transform_noop");
+});
+
+test("execution noop does not show as dry-run passed", () => {
+  const base = auditFromPreflight(sampleFinding(), {
+    ...noopPreflight(),
+    classification: "actionable_candidate",
+    dryRunChangedSource: true,
+    diffGenerated: true,
+    blocker: undefined,
+    blockerCode: undefined,
+  });
+  assert.equal(base.scanEligible, true);
+  const merged = mergeExecutionIntoAudit(base, {
+    status: "skipped",
+    reason: "diff_generation_failed",
+    displayReason: "diff_generation_failed: Unified diff is empty.",
+    modifiedSources: {},
+  });
+  assert.equal(merged.transformAttempted, true);
+  assert.equal(merged.dryRunSucceeded, false);
+  assert.equal(merged.blockerCode, "diff_generation_failed");
+});
+
+test("not attempted eligible findings keep scan eligibility only", () => {
+  const base = auditFromPreflight(sampleFinding(), {
+    ...noopPreflight(),
+    classification: "actionable_candidate",
+    dryRunChangedSource: true,
+    diffGenerated: true,
+    blocker: undefined,
+    blockerCode: undefined,
+  });
+  const merged = mergeExecutionIntoAudit(base, undefined);
+  assert.equal(merged.scanEligible, true);
+  assert.equal(merged.transformAttempted, false);
+  assert.equal(merged.blockerCode, "not_attempted");
+});
+
+test("blocker code prefers diff_generation_failed over noop substring", () => {
+  assert.equal(
+    blockerCodeFromAttemptReason(
+      "transform_noop",
+      "diff_generation_failed: Unified diff is empty."
+    ),
+    "diff_generation_failed"
+  );
 });
 
 test("blocker breakdown is explicit not generic skipped", () => {
@@ -120,6 +170,7 @@ test("blocker breakdown is explicit not generic skipped", () => {
       strategyIds: [],
       sourceFound: true,
       sourceHashMatched: true,
+      scanEligible: true,
       transformAttempted: true,
       contentChanged: false,
       dryRunSucceeded: false,
@@ -137,9 +188,10 @@ test("blocker breakdown is explicit not generic skipped", () => {
       strategyIds: [],
       sourceFound: true,
       sourceHashMatched: true,
-      transformAttempted: true,
-      contentChanged: true,
-      dryRunSucceeded: true,
+      scanEligible: true,
+      transformAttempted: false,
+      contentChanged: false,
+      dryRunSucceeded: false,
       proposedSourceChanged: true,
       proposedDiffGenerated: true,
       patchValidated: false,
@@ -149,9 +201,10 @@ test("blocker breakdown is explicit not generic skipped", () => {
     },
   ];
   const summary = formatBlockerBreakdown(audits);
-  assert.match(summary, /Eligible findings/i);
+  assert.match(summary, /Eligible findings: 2/i);
   assert.match(summary, /Changes generated: 0/i);
   assert.match(summary, /No-op: 1/i);
+  assert.match(summary, /Not attempted: 1/i);
   const counts = summarizeBlockers(audits);
   assert.equal(counts.transform_noop, 1);
   assert.equal(counts.not_attempted, 1);
