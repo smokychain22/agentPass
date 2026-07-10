@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/github-app/config";
+import { parseInstallCallbackParams } from "@/lib/github-app/install-callback";
 import {
   clearInstallSessionId,
   saveInstallationSession,
@@ -26,23 +27,14 @@ function redirectWithError(code: string, returnPath?: string, scanId?: string) {
 }
 
 export async function GET(request: NextRequest) {
-  const installationIdRaw = request.nextUrl.searchParams.get("installation_id");
-  const state = request.nextUrl.searchParams.get("state");
-
-  if (!installationIdRaw) {
-    return redirectWithError("missing_installation");
+  const parsed = parseInstallCallbackParams(request.nextUrl.searchParams);
+  if (!parsed.ok) {
+    return redirectWithError(parsed.errorCode);
   }
 
-  const installationId = Number(installationIdRaw);
-  if (!Number.isFinite(installationId) || installationId <= 0) {
-    return redirectWithError("invalid_installation");
-  }
+  const { installationId, setupAction, stateToken } = parsed.params;
 
-  if (!state) {
-    return redirectWithError("invalid_state");
-  }
-
-  const resolved = await resolveInstallFlowState(state);
+  const resolved = await resolveInstallFlowState(stateToken);
   if (!resolved.ok) {
     const code =
       resolved.reason === "expired"
@@ -69,7 +61,7 @@ export async function GET(request: NextRequest) {
     const sessionKey = await buildSessionKey(request);
 
     if (!hasAccess) {
-      await consumeInstallFlowState(state);
+      await consumeInstallFlowState(stateToken);
       return redirectWithError("repo_not_granted", flow.returnPath, flow.scanId);
     }
 
@@ -79,13 +71,15 @@ export async function GET(request: NextRequest) {
       installationOwner: session.accountLogin,
       installationOwnerType: session.accountType,
       repositoryFullName: flow.repositoryFullName,
+      setupAction,
       authorizedAt: new Date().toISOString(),
     });
 
-    await consumeInstallFlowState(state);
+    await consumeInstallFlowState(stateToken);
 
     const returnUrl = new URL(flow.returnPath, getAppBaseUrl());
     returnUrl.searchParams.set("github", "connected");
+    returnUrl.searchParams.set("setup_action", setupAction);
     if (flow.scanId) returnUrl.searchParams.set("scanId", flow.scanId);
     return NextResponse.redirect(returnUrl.toString());
   } catch {

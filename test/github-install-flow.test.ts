@@ -9,6 +9,7 @@ import {
   generateInstallStateToken,
   resolveInstallFlowState,
 } from "../src/lib/github-app/install-flow";
+import { parseInstallCallbackParams } from "../src/lib/github-app/install-callback";
 import { accessCopyForState } from "../src/lib/github-app/access-states";
 import { parseRepositoryFullName } from "../src/lib/github-app/repository";
 import { setDurableRecord } from "../src/lib/store/durable-store";
@@ -99,6 +100,70 @@ async function run() {
   await test("repo_not_granted recovery copy", () => {
     const copy = accessCopyForState("repo_not_granted", "Circle-Arc-Net");
     assert.match(copy.primaryAction ?? "", /Try Again/i);
+  });
+
+  await test("install callback validates installation_id, setup_action, state", () => {
+    const valid = parseInstallCallbackParams(
+      new URLSearchParams({
+        installation_id: "12345",
+        setup_action: "install",
+        state: "opaque-state-token",
+      })
+    );
+    assert.equal(valid.ok, true);
+    if (valid.ok) {
+      assert.equal(valid.params.installationId, 12345);
+      assert.equal(valid.params.setupAction, "install");
+      assert.equal(valid.params.stateToken, "opaque-state-token");
+    }
+
+    const update = parseInstallCallbackParams(
+      new URLSearchParams({
+        installation_id: "99",
+        setup_action: "update",
+        state: "token-2",
+      })
+    );
+    assert.equal(update.ok, true);
+    if (update.ok) assert.equal(update.params.setupAction, "update");
+
+    const missingInstall = parseInstallCallbackParams(
+      new URLSearchParams({ setup_action: "install", state: "x" })
+    );
+    assert.equal(missingInstall.ok, false);
+    if (!missingInstall.ok) assert.equal(missingInstall.errorCode, "missing_installation");
+
+    const invalidInstall = parseInstallCallbackParams(
+      new URLSearchParams({
+        installation_id: "abc",
+        setup_action: "install",
+        state: "x",
+      })
+    );
+    assert.equal(invalidInstall.ok, false);
+    if (!invalidInstall.ok) assert.equal(invalidInstall.errorCode, "invalid_installation");
+
+    const missingAction = parseInstallCallbackParams(
+      new URLSearchParams({ installation_id: "1", state: "x" })
+    );
+    assert.equal(missingAction.ok, false);
+    if (!missingAction.ok) assert.equal(missingAction.errorCode, "missing_setup_action");
+
+    const invalidAction = parseInstallCallbackParams(
+      new URLSearchParams({
+        installation_id: "1",
+        setup_action: "delete",
+        state: "x",
+      })
+    );
+    assert.equal(invalidAction.ok, false);
+    if (!invalidAction.ok) assert.equal(invalidAction.errorCode, "invalid_setup_action");
+
+    const missingState = parseInstallCallbackParams(
+      new URLSearchParams({ installation_id: "1", setup_action: "install" })
+    );
+    assert.equal(missingState.ok, false);
+    if (!missingState.ok) assert.equal(missingState.errorCode, "invalid_state");
   });
 
   console.log("All GitHub install flow tests passed.");

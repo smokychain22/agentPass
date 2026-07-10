@@ -78,8 +78,9 @@ function githubErrorMessage(code: string | null, repoName: string): string | nul
     case "state_reused":
     case "invalid_state":
       return "Your GitHub connection request was invalid. Try again.";
-    case "setup_failed":
-      return "GitHub could not finish connecting RepoDiet. Try again.";
+    case "invalid_setup_action":
+    case "missing_setup_action":
+      return "GitHub returned an unexpected installation action. Try again.";
     default:
       return "GitHub connection did not complete. Try again.";
   }

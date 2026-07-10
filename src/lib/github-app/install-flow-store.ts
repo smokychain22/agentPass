@@ -22,6 +22,7 @@ export interface RepoInstallBinding {
   installationOwner: string;
   installationOwnerType: string;
   repositoryFullName: string;
+  setupAction?: "install" | "update";
   authorizedAt: string;
 }
 
