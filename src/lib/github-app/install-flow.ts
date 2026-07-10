@@ -9,7 +9,8 @@ import {
 } from "./install-flow-store";
 import {
   clearPendingInstallCookie,
-  resolveInstallFlowFromCookie,
+  readPendingInstallCookie,
+  recordFromPendingInstall,
   savePendingInstallCookie,
 } from "./install-flow-cookie";
 import { parseRepositoryFullName } from "./repository";
@@ -28,12 +29,9 @@ export async function createInstallFlow(input: {
 }): Promise<{ stateToken: string }> {
   const { owner, repo } = parseRepositoryFullName(input.repositoryFullName);
   const stateToken = createSignedInstallState({
-    sessionKey: input.sessionKey,
     repositoryFullName: input.repositoryFullName,
-    owner,
-    repo,
-    scanId: input.scanId,
     returnPath: input.returnPath,
+    scanId: input.scanId,
   });
   const record = createInstallFlowRecord({
     stateToken,
@@ -55,18 +53,27 @@ async function resolveFromLegacyStores(
   const stateHash = hashInstallState(stateToken);
   const record = await readInstallFlow(stateHash);
   if (record) return record;
-  return resolveInstallFlowFromCookie(stateToken);
+  const pending = await readPendingInstallCookie();
+  if (pending && hashInstallState(stateToken) === pending.stateHash) {
+    return recordFromPendingInstall(pending);
+  }
+  return null;
 }
 
 export async function resolveInstallFlowState(
-  stateToken: string
+  stateToken: string,
+  sessionKey?: string
 ): Promise<
   | { ok: true; record: InstallFlowRecord }
   | { ok: false; reason: "invalid" | "expired" | "reused" }
 > {
   const signedPayload = verifySignedInstallState(stateToken);
   if (signedPayload) {
-    const record = installFlowRecordFromSignedState(stateToken, signedPayload);
+    const record = installFlowRecordFromSignedState(
+      stateToken,
+      signedPayload,
+      sessionKey ?? "pending"
+    );
     const durable = await readInstallFlow(record.stateHash);
     if (durable?.usedAt) return { ok: false, reason: "reused" };
     return { ok: true, record };
@@ -81,6 +88,14 @@ export async function resolveInstallFlowState(
   if (record.usedAt) return { ok: false, reason: "reused" };
   if (isInstallFlowExpired(record)) return { ok: false, reason: "expired" };
   return { ok: true, record };
+}
+
+export async function resolveInstallFlowFromPendingCookie(): Promise<InstallFlowRecord | null> {
+  const pending = await readPendingInstallCookie();
+  if (!pending) return null;
+  const record = recordFromPendingInstall(pending);
+  if (isInstallFlowExpired(record)) return null;
+  return record;
 }
 
 export async function consumeInstallFlowState(stateToken: string): Promise<InstallFlowRecord | null> {

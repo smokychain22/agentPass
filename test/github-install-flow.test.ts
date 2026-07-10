@@ -82,32 +82,27 @@ async function run() {
   await test("signed install state round-trips without durable store", async () => {
     await withGitHubAppEnv(() => {
       const stateToken = createSignedInstallState({
-        sessionKey: "sess-signed",
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-        owner: "Ibrahimmovic",
-        repo: "Circle-Arc-Net",
         scanId: "scan_signed",
         returnPath: "https://skillswap-skillswap7.vercel.app/app?tab=patch&scanId=scan_signed",
       });
 
       const payload = verifySignedInstallState(stateToken);
       assert.ok(payload);
-      assert.equal(payload?.repositoryFullName, "Ibrahimmovic/Circle-Arc-Net");
-      assert.equal(payload?.returnPath.includes("skillswap-skillswap7.vercel.app"), true);
+      assert.equal(payload?.rf, "Ibrahimmovic/Circle-Arc-Net");
+      assert.equal(payload?.rp.includes("skillswap-skillswap7.vercel.app"), true);
+      assert.ok(stateToken.length < 400);
     });
   });
 
   await test("resolve install flow accepts signed state without durable record", async () => {
     await withGitHubAppEnv(async () => {
       const stateToken = createSignedInstallState({
-        sessionKey: "sess-signed-2",
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-        owner: "Ibrahimmovic",
-        repo: "Circle-Arc-Net",
         returnPath: "https://skillswap-skillswap7.vercel.app/app?tab=patch",
       });
 
-      const resolved = await resolveInstallFlowState(stateToken);
+      const resolved = await resolveInstallFlowState(stateToken, "sess-signed-2");
       assert.equal(resolved.ok, true);
     });
   });
@@ -115,10 +110,7 @@ async function run() {
   await test("install flow record expires", async () => {
     await withGitHubAppEnv(() => {
       const token = createSignedInstallState({
-        sessionKey: "sess",
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-        owner: "Ibrahimmovic",
-        repo: "Circle-Arc-Net",
         returnPath: "/app?tab=patch",
       });
       const record = createInstallFlowRecord({
@@ -147,10 +139,7 @@ async function run() {
   await test("resolve install flow accepts valid state once", async () => {
     await withGitHubAppEnv(async () => {
       const token = createSignedInstallState({
-        sessionKey: "sess-1",
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-        owner: "Ibrahimmovic",
-        repo: "Circle-Arc-Net",
         scanId: "scan_1",
         returnPath: "/app?tab=patch&scanId=scan_1",
       });
@@ -220,10 +209,10 @@ async function run() {
     assert.notEqual(url, "https://github.com/app");
   });
 
-  await test("existing installation URL begins with https://github.com/settings/installations/", () => {
-    const url = buildConfigureInstallationUrl(12345, "state-token");
-    assert.match(url, /^https:\/\/github\.com\/settings\/installations\/12345/);
-    assert.match(url, /\?state=state-token$/);
+  await test("existing installation configure URL uses public installations/new flow", () => {
+    const url = buildConfigureInstallationUrl("repodiet-operator", "state-token");
+    assert.match(url, /^https:\/\/github\.com\/apps\/repodiet-operator\/installations\/new\?state=/);
+    assert.doesNotMatch(url, /settings\/installations/);
   });
 
   await test("resolveGitHubInstallRedirect uses configure flow for same-owner missing repo", () => {
@@ -236,7 +225,7 @@ async function run() {
       hasRepositoryAccess: false,
     });
     assert.equal(resolved.flow, "configure");
-    assert.match(resolved.url, /^https:\/\/github\.com\/settings\/installations\/99/);
+    assert.match(resolved.url, /\/installations\/new\?state=/);
     assert.equal(installRedirectUrlHasState(resolved.url, stateToken), true);
   });
 

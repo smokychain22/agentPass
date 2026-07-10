@@ -5,20 +5,18 @@ import {
   hashInstallState,
   type InstallFlowRecord,
 } from "./install-flow-store";
+import { parseRepositoryFullName } from "./repository";
 
 const FLOW_TTL_MS = 30 * 60 * 1000;
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
-export interface SignedInstallStatePayload {
+interface CompactSignedInstallStatePayload {
   v: typeof STATE_VERSION;
-  owner: string;
-  repo: string;
-  repositoryFullName: string;
-  returnPath: string;
-  scanId?: string;
-  sessionKey: string;
+  rf: string;
+  rp: string;
+  s?: string;
   exp: number;
-  nonce: string;
+  n: string;
 }
 
 function signingSecret(): string {
@@ -30,6 +28,15 @@ function sign(encodedPayload: string): string {
   return createHmac("sha256", signingSecret()).update(encodedPayload, "utf8").digest("base64url");
 }
 
+function splitSignedToken(stateToken: string): { encoded: string; signature: string } | null {
+  const dot = stateToken.lastIndexOf(".");
+  if (dot <= 0 || dot === stateToken.length - 1) return null;
+  return {
+    encoded: stateToken.slice(0, dot),
+    signature: stateToken.slice(dot + 1),
+  };
+}
+
 function verifySignature(encodedPayload: string, signature: string): boolean {
   const expected = sign(encodedPayload);
   const sigBuf = Buffer.from(signature);
@@ -38,29 +45,58 @@ function verifySignature(encodedPayload: string, signature: string): boolean {
   return timingSafeEqual(sigBuf, expBuf);
 }
 
+function decodeLegacyPayload(encoded: string): CompactSignedInstallStatePayload | null {
+  try {
+    const raw = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+
+    if (raw.v === 2 && typeof raw.rf === "string" && typeof raw.rp === "string") {
+      return {
+        v: STATE_VERSION,
+        rf: raw.rf,
+        rp: raw.rp,
+        s: typeof raw.s === "string" ? raw.s : undefined,
+        exp: Number(raw.exp),
+        n: typeof raw.n === "string" ? raw.n : "legacy",
+      };
+    }
+
+    if (raw.v === 1 && typeof raw.repositoryFullName === "string") {
+      return {
+        v: STATE_VERSION,
+        rf: raw.repositoryFullName,
+        rp: String(raw.returnPath ?? "/app?tab=patch"),
+        s: typeof raw.scanId === "string" ? raw.scanId : undefined,
+        exp: Number(raw.exp),
+        n: typeof raw.nonce === "string" ? raw.nonce : "legacy",
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function createSignedInstallState(input: {
-  sessionKey: string;
   repositoryFullName: string;
-  owner: string;
-  repo: string;
-  scanId?: string;
   returnPath: string;
+  scanId?: string;
   ttlMs?: number;
 }): string {
   if (!isGitHubAppConfigured()) {
     throw new Error("GitHub App is not configured.");
   }
 
-  const payload: SignedInstallStatePayload = {
+  const payload: CompactSignedInstallStatePayload = {
     v: STATE_VERSION,
-    owner: input.owner,
-    repo: input.repo,
-    repositoryFullName: input.repositoryFullName,
-    returnPath: input.returnPath,
-    scanId: input.scanId,
-    sessionKey: input.sessionKey,
+    rf: input.repositoryFullName,
+    rp: input.returnPath,
+    s: input.scanId,
     exp: Date.now() + (input.ttlMs ?? FLOW_TTL_MS),
-    nonce: randomBytes(16).toString("base64url"),
+    n: randomBytes(12).toString("base64url"),
   };
 
   const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -69,47 +105,48 @@ export function createSignedInstallState(input: {
 
 export function verifySignedInstallState(
   stateToken: string
-): SignedInstallStatePayload | null {
+): CompactSignedInstallStatePayload | null {
   if (!isGitHubAppConfigured()) return null;
 
-  const [encoded, signature] = stateToken.split(".");
-  if (!encoded || !signature) return null;
-  if (!verifySignature(encoded, signature)) return null;
+  const parts = splitSignedToken(stateToken);
+  if (!parts) return null;
+  if (!verifySignature(parts.encoded, parts.signature)) return null;
+
+  const payload = decodeLegacyPayload(parts.encoded);
+  if (!payload) return null;
+  if (payload.v !== STATE_VERSION && payload.v !== 1) return null;
+  if (!payload.rf || !payload.rp) return null;
+  if (!payload.exp || Date.now() > payload.exp) return null;
 
   try {
-    const payload = JSON.parse(
-      Buffer.from(encoded, "base64url").toString("utf8")
-    ) as SignedInstallStatePayload;
-
-    if (payload.v !== STATE_VERSION) return null;
-    if (!payload.owner || !payload.repo || !payload.repositoryFullName) return null;
-    if (!payload.returnPath || !payload.sessionKey) return null;
-    if (!payload.exp || Date.now() > payload.exp) return null;
-
-    return payload;
+    parseRepositoryFullName(payload.rf);
   } catch {
     return null;
   }
+
+  return payload;
 }
 
 export function installFlowRecordFromSignedState(
   stateToken: string,
-  payload: SignedInstallStatePayload
+  payload: CompactSignedInstallStatePayload,
+  sessionKey: string
 ): InstallFlowRecord {
+  const { owner, repo } = parseRepositoryFullName(payload.rf);
   return createInstallFlowRecord({
     stateToken,
-    sessionKey: payload.sessionKey,
-    repositoryFullName: payload.repositoryFullName,
-    owner: payload.owner,
-    repo: payload.repo,
-    scanId: payload.scanId,
-    returnPath: payload.returnPath,
+    sessionKey,
+    repositoryFullName: payload.rf,
+    owner,
+    repo,
+    scanId: payload.s,
+    returnPath: payload.rp,
   });
 }
 
 export function isSignedInstallStateToken(stateToken: string): boolean {
-  const [encoded, signature] = stateToken.split(".");
-  return Boolean(encoded && signature && encoded.length > 20);
+  const parts = splitSignedToken(stateToken);
+  return Boolean(parts && parts.encoded.length > 20 && parts.signature.length > 10);
 }
 
 export function signedStateHash(stateToken: string): string {

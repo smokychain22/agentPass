@@ -73,7 +73,7 @@ function githubErrorMessage(code: string | null, repoName: string): string | nul
   if (!code) return null;
   switch (code) {
     case "repo_not_granted":
-      return accessCopyForState("repo_not_granted", repoName).body;
+      return `GitHub saved the installation, but ${repoName} was not included. Click Grant Access again, select that repository on GitHub, then click Save.`;
     case "state_expired":
       return accessCopyForState("state_expired", repoName).body;
     case "wrong_account":
@@ -185,13 +185,25 @@ export function RepoDietOperatorSection({
   }, [runPreflight]);
 
   useEffect(() => {
-    if (
+    const githubConnected =
       searchParams.get("github") === "connected" ||
-      searchParams.get("github_connected") === "true"
-    ) {
-      void refreshGitHubStatus().then(() => runPreflight());
-    }
-  }, [searchParams, refreshGitHubStatus, runPreflight]);
+      searchParams.get("github_connected") === "true";
+    const githubRecovered = searchParams.get("github_recovered") === "installation_only";
+
+    if (!githubConnected && !githubRecovered) return;
+
+    void refreshGitHubStatus()
+      .then(() => runPreflight())
+      .finally(() => {
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("github");
+        params.delete("github_connected");
+        params.delete("github_recovered");
+        params.delete("setup_action");
+        const qs = params.toString();
+        router.replace(qs ? `/app?${qs}` : "/app?tab=patch", { scroll: false });
+      });
+  }, [searchParams, refreshGitHubStatus, runPreflight, router]);
 
   const grantAccess = async () => {
     if (!repositoryFullName) return;

@@ -26,13 +26,8 @@ export function buildNewInstallationUrl(slug: string, state?: string): string {
   return `${base}?state=${encodeURIComponent(state)}`;
 }
 
-export function buildConfigureInstallationUrl(
-  installationId: number,
-  state?: string
-): string {
-  const base = `https://github.com/settings/installations/${installationId}`;
-  if (!state) return base;
-  return `${base}?state=${encodeURIComponent(state)}`;
+export function buildConfigureInstallationUrl(slug: string, state?: string): string {
+  return buildNewInstallationUrl(slug, state);
 }
 
 export function resolveGitHubInstallRedirect(input: {
@@ -51,7 +46,7 @@ export function resolveGitHubInstallRedirect(input: {
 
   if (!input.hasRepositoryAccess) {
     return {
-      url: buildConfigureInstallationUrl(input.installationId, input.stateToken),
+      url: buildConfigureInstallationUrl(input.slug, input.stateToken),
       flow: "configure",
     };
   }
@@ -92,10 +87,11 @@ export function assertValidGitHubInstallRedirectUrl(
     return;
   }
 
-  if (!url.startsWith("https://github.com/settings/installations/")) {
-    throw new Error(
-      "Configure URL must begin with https://github.com/settings/installations/."
-    );
+  if (
+    !url.startsWith("https://github.com/apps/") ||
+    !url.includes("/installations/new")
+  ) {
+    throw new Error("Configure URL must use the public GitHub App installation flow.");
   }
 }
 
