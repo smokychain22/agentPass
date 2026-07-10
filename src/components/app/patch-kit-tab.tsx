@@ -26,6 +26,7 @@ import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { ArtifactCard } from "./patch-kit/artifact-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { DownloadPanel } from "./patch-kit/download-panel";
+import { CreateCleanupPrPanel } from "./patch-kit/create-cleanup-pr-panel";
 import {
   ARTIFACT_DEFINITIONS,
   buildSafeDeleteRows,
@@ -208,6 +209,13 @@ export function PatchKitTab() {
         <>
           <PatchKitSummaryCards summary={patchKit.summary} />
           <SafetyPolicyCard />
+
+          <CreateCleanupPrPanel
+            repoUrl={session.repoUrl}
+            branch={session.branch || undefined}
+            findings={findings}
+            patchKit={patchKit}
+          />
 
           <div>
             <h3 className="text-sm font-medium mb-3">Artifact previews</h3>

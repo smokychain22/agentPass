@@ -235,6 +235,82 @@ export const TOOL_MANIFEST_ENTRIES: ToolManifestEntry[] = [
       warnings: [],
     },
   },
+  {
+    name: "create_cleanup_pr",
+    endpoint: "/api/tools/create_cleanup_pr",
+    method: "POST",
+    description:
+      "Create a review-ready GitHub cleanup pull request with safe deletions and RepoDiet artifacts.",
+    inputSchema: {
+      type: "object",
+      required: ["repoUrl"],
+      properties: {
+        repoUrl: JSON_SCHEMAS.repoUrl,
+        branch: JSON_SCHEMAS.branch,
+        githubToken: {
+          type: "string",
+          description:
+            "Fine-grained GitHub token with repo contents and pull request access. Used once and never stored.",
+        },
+        mode: {
+          type: "string",
+          enum: ["safe_only", "report_only"],
+          default: "safe_only",
+        },
+        findings: {
+          type: "object",
+          description: "Optional precomputed findings payload to reuse.",
+        },
+        patchKit: {
+          type: "object",
+          description: "Optional precomputed patch kit payload to reuse.",
+        },
+        demo: {
+          type: "boolean",
+          default: false,
+          description: "Use server demo token for the configured demo repository only.",
+        },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        tool: { type: "string" },
+        version: { type: "string" },
+        repo: { type: "object" },
+        pullRequest: { type: "object" },
+        actionSummary: { type: "object" },
+        policy: { type: "object" },
+        warnings: { type: "array", items: { type: "string" } },
+      },
+    },
+    exampleRequest: {
+      repoUrl: "https://github.com/repodiet/demo-slop-app",
+      branch: "main",
+      mode: "safe_only",
+      demo: true,
+    },
+    exampleResponse: {
+      ok: true,
+      tool: "create_cleanup_pr",
+      version: A2MCP_VERSION,
+      repo: {
+        owner: "repodiet",
+        name: "demo-slop-app",
+        baseBranch: "main",
+        cleanupBranch: "repodiet/cleanup-20260710120000",
+      },
+      pullRequest: {
+        url: "https://github.com/repodiet/demo-slop-app/pull/1",
+        number: 1,
+        title: "RepoDiet: safe cleanup (5 files)",
+      },
+      policy: { mainBranchMutated: false, requiresHumanMerge: true },
+      warnings: [],
+    },
+  },
 ];
 
 export function buildServiceManifest() {
@@ -293,6 +369,7 @@ export function buildHealthResponse() {
       find_unused_dependencies: "available",
       generate_cleanup_patch: "available",
       generate_regression_checklist: "available",
+      create_cleanup_pr: "available",
     },
     analyzers: {
       knip: "native_or_fallback",

@@ -1,8 +1,13 @@
 export const ERROR_CODES = [
   "INVALID_INPUT",
   "INVALID_GITHUB_URL",
+  "MISSING_GITHUB_TOKEN",
+  "DEMO_REPO_ONLY",
   "REPO_NOT_FOUND",
   "BRANCH_NOT_FOUND",
+  "NO_SAFE_CANDIDATES",
+  "GITHUB_PERMISSION_DENIED",
+  "PR_CREATION_FAILED",
   "REPO_TOO_LARGE",
   "SCAN_TIMEOUT",
   "ANALYZER_FAILED",
@@ -31,6 +36,14 @@ export interface FindDeadFilesInput extends RepoToolInput {
 
 export interface GenerateCleanupPatchInput extends RepoToolInput {
   includeZip?: boolean;
+}
+
+export interface CreateCleanupPrInput extends RepoToolInput {
+  githubToken?: string;
+  mode?: "safe_only" | "report_only";
+  findings?: Record<string, unknown>;
+  patchKit?: Record<string, unknown>;
+  demo?: boolean;
 }
 
 function readRepoBody(body: Record<string, unknown>): RepoToolInput {
@@ -85,6 +98,32 @@ export const ToolInputSchemas = {
     return {
       ...base,
       includeZip: record.includeZip === true,
+    };
+  },
+
+  createCleanupPr(body: unknown): CreateCleanupPrInput {
+    if (!body || typeof body !== "object") throw new Error("Invalid request body.");
+    const record = body as Record<string, unknown>;
+    const base = readRepoBody(record);
+    const mode =
+      record.mode === "report_only" || record.mode === "safe_only"
+        ? record.mode
+        : "safe_only";
+
+    return {
+      ...base,
+      githubToken:
+        typeof record.githubToken === "string" ? record.githubToken.trim() : undefined,
+      mode,
+      findings:
+        record.findings && typeof record.findings === "object"
+          ? (record.findings as Record<string, unknown>)
+          : undefined,
+      patchKit:
+        record.patchKit && typeof record.patchKit === "object"
+          ? (record.patchKit as Record<string, unknown>)
+          : undefined,
+      demo: record.demo === true,
     };
   },
 };

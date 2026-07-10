@@ -79,7 +79,8 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, tool: string): P
 export async function runToolRoute<T extends Record<string, unknown>>(
   tool: string,
   request: Request,
-  handler: (body: unknown) => Promise<{ data: T; warnings?: string[] }>
+  handler: (body: unknown) => Promise<{ data: T; warnings?: string[] }>,
+  timeoutMs: number = TOOL_TIMEOUT_MS
 ): Promise<NextResponse> {
   try {
     if (request.method !== "POST") {
@@ -93,7 +94,7 @@ export async function runToolRoute<T extends Record<string, unknown>>(
       throw new ToolExecutionError("INVALID_INPUT", "Request body must be valid JSON.", 400);
     }
 
-    const { data, warnings = [] } = await withTimeout(handler(body), TOOL_TIMEOUT_MS, tool);
+    const { data, warnings = [] } = await withTimeout(handler(body), timeoutMs, tool);
     return toolSuccessResponse(tool, data, warnings);
   } catch (err) {
     const mapped = mapErrorToToolError(err, tool);

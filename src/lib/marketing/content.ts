@@ -3,7 +3,7 @@ import { TOOL_MANIFEST_ENTRIES } from "@/lib/a2mcp/tool-manifest";
 import { buildDemoTerminalLines, getDemoScanStats } from "@/lib/demo/terminal-lines";
 
 export const TRUST_LINE =
-  "Public GitHub repos only · No repo mutation · No auto-delete · Review-first patches";
+  "Public GitHub repos · Safe-candidate cleanup PRs · Human merge required · No token storage";
 
 export const FOOTER_OKX_COPY =
   "RepoDiet is also available as an A2MCP-ready Software Utility for agent workflows.";
@@ -15,17 +15,17 @@ export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
 export const DEMO_SCAN_STATS = getDemoScanStats();
 
 export const HERO = {
-  badge: "AI CODEBASE CLEANUP",
-  headline: "Your AI-built repo is getting heavier every commit.",
+  badge: "REPODIET OPERATOR",
+  headline: "RepoDiet Operator turns AI-code-bloat into a review-ready GitHub cleanup PR.",
   subheadline:
-    "RepoDiet scans JavaScript and TypeScript codebases for duplicate logic, unused files, dependency drift, orphan modules, and AI-slop patterns — then generates a conservative cleanup bundle your team can review safely.",
+    "RepoDiet scans messy AI-built repos, separates safe cleanup from risky files, creates a cleanup branch, commits only safe changes, and opens a GitHub PR with a regression checklist.",
 };
 
 export const SITE_TAGLINES = {
-  debt: "AI code creates cleanup debt. RepoDiet turns it into a review-ready patch bundle.",
+  debt: "AI code creates cleanup debt. RepoDiet Operator turns it into a review-ready cleanup PR.",
   positioning:
-    "Not auto-clean. Not a linter. A conservative cleanup workflow for AI-built repos.",
-  workflow: "Scan the repo. Map the risk. Generate the bundle. Verify before merging.",
+    "Not auto-clean. Not a linter. A conservative cleanup operator for AI-built repos.",
+  workflow: "Scan the repo. Map the risk. Generate the bundle. Open the cleanup PR. Verify before merging.",
   safety:
     "RepoDiet protects routes, configs, env files, lockfiles, and public assets by default.",
   audience: "Built for teams and solo builders using AI coding tools every day.",
@@ -96,6 +96,12 @@ export const PIPELINE_STEPS = [
     accent: "signal" as const,
   },
   {
+    id: "pr",
+    title: "Cleanup PR",
+    chips: ["Safe deletes", "Artifacts", "Human review"],
+    accent: "signal" as const,
+  },
+  {
     id: "verify",
     title: "Verify",
     chips: ["Build", "Lint", "Routes"],
@@ -149,7 +155,7 @@ export const FLOW_METRICS = [
 
 export const OUTPUTS_SECTION = {
   eyebrow: "Deliverables",
-  title: "RepoDiet does not just report problems. It ships cleanup artifacts.",
+  title: "RepoDiet Operator does not just report problems. It opens review-ready cleanup PRs.",
   subtitle: "Sample bundle generated from the messy demo repo — real Patch Kit output.",
 };
 
@@ -231,12 +237,12 @@ export const SAFETY_SECTION = {
 
 export const SAFETY_CARDS = [
   {
-    title: "No repo mutation",
-    description: "RepoDiet never writes to your GitHub repo.",
+    title: "No main-branch pushes",
+    description: "RepoDiet Operator opens a cleanup branch and PR — it never commits directly to main.",
   },
   {
-    title: "No auto-delete",
-    description: "Cleanup artifacts are review-first — you decide what merges.",
+    title: "Safe candidates only",
+    description: "Only conservative safe-delete files are removed. Review-first items stay untouched.",
   },
   {
     title: "Protected files",
@@ -244,12 +250,12 @@ export const SAFETY_CARDS = [
       "Routes, env files, configs, lockfiles, API handlers, and public assets are protected.",
   },
   {
-    title: "Fallback transparency",
-    description: "Analyzer sources are marked: native or fallback.",
+    title: "Token hygiene",
+    description: "User tokens are used once server-side and never stored or logged.",
   },
   {
     title: "Regression-first",
-    description: "Every bundle includes checks before merging.",
+    description: "Every cleanup PR includes checklist artifacts before merging.",
   },
 ];
 
@@ -348,12 +354,13 @@ export const OKX_DEMO_FLOW = [
 ];
 
 export const SAFETY_POLICY_PUBLIC = [
-  "RepoDiet never mutates repositories.",
-  "RepoDiet never asks for private GitHub tokens.",
-  "RepoDiet only scans public repos.",
+  "RepoDiet Operator never pushes directly to main.",
+  "RepoDiet Operator never merges pull requests automatically.",
+  "User GitHub tokens are used once and never stored.",
+  "RepoDiet only scans public repos unless a user token is provided.",
   "RepoDiet never reads or displays .env values.",
-  "RepoDiet never auto-deletes files.",
-  "Patch bundles are review-first artifacts.",
+  "Only safe-candidate files are deleted on cleanup branches.",
+  "Every cleanup PR includes regression checklist artifacts.",
 ];
 
 export const RUNTIME_LIMITS = [
