@@ -68,6 +68,7 @@ export async function withDurableDb<T>(
       repository_policies: {},
       guard_runs: {},
       tasks: {},
+      a2a_tasks: {},
     };
     return fn(db);
   });

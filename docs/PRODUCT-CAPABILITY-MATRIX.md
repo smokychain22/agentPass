@@ -2,7 +2,7 @@
 
 **Branch audited:** `main` (merged `cursor/product-vision-pricing-39ce`)  
 **Audit date:** 2026-07-10  
-**Phase:** 3 — Production A2MCP Tool Layer
+**Phase:** 4 — A2A Task Orchestration
 
 This document classifies every product capability as **REAL**, **PARTIAL**, **DEMO**, **COSMETIC**, **BROKEN**, or **NOT IMPLEMENTED**.
 
@@ -218,9 +218,18 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 
 | Field | Value |
 |-------|-------|
-| **Status** | **NOT IMPLEMENTED** |
-| Present | Quotes, receipts, marketing copy |
-| Missing | Task create/poll/complete APIs, task store, payment binding |
+| **Status** | **REAL** |
+| Agent card | `GET /.well-known/agent-card.json` |
+| Submit | `POST /api/a2a/tasks` |
+| Poll | `GET /api/a2a/tasks/{taskId}` |
+| Approve | `POST /api/a2a/tasks/{taskId}/approve` |
+| Fund | `POST /api/a2a/tasks/{taskId}/fund` |
+| Orchestrator | `src/lib/a2a/orchestrator.ts` — deterministic roles, no agent theater |
+| State machine | submitted → validating → … → completed / failure states |
+| Approval | `awaiting_approval` before GitHub PR creation |
+| Callbacks | Optional `callbackUrl` on submit (best-effort) |
+| Verification | `npm run verify:a2a` |
+| Limitations | Repo Guard returns honest `unsupported`; x402 beta open access |
 
 ### 17. Repo Guard
 

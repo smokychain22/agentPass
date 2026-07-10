@@ -11,13 +11,14 @@
     "lint": "next lint",
     "generate:demo": "curl -sf \"http://localhost:3000/api/demo/stats?refresh=1\" && curl -sf \"http://localhost:3000/api/demo/sample-bundle\" -o public/demo/repodiet-demo-sample-bundle.zip",
     "api": "node server.js",
-    "test": "node test/smoke.js && node test/next-api.test.js && node test/unified-diff.test.js && tsx test/workspace.test.ts && tsx test/findings-stats.test.ts && tsx test/product-vision.test.ts && tsx test/phase1-free-proof.test.ts && tsx test/phase3-a2mcp.test.ts",
+    "test": "node test/smoke.js && node test/next-api.test.js && node test/unified-diff.test.js && tsx test/workspace.test.ts && tsx test/findings-stats.test.ts && tsx test/product-vision.test.ts && tsx test/phase1-free-proof.test.ts && tsx test/phase3-a2mcp.test.ts && tsx test/a2a-orchestration.test.ts",
     "test:api": "node test/smoke.js",
     "test:next": "node test/next-api.test.js",
     "test:production": "tsx scripts/production-smoke-test.ts",
     "test:phase1": "node scripts/phase1-integration-test.mjs",
     "test:asp": "tsx scripts/verify-asp-production.ts",
     "verify:asp": "tsx scripts/verify-asp-production.ts",
+    "verify:a2a": "tsx scripts/verify-a2a-production.ts",
     "verify:okx": "tsx scripts/verify-okx-integration.ts"
   },
   "engines": {

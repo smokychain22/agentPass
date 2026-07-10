@@ -21,7 +21,8 @@ export type PersistentCollection =
   | "github_installations"
   | "repository_policies"
   | "guard_runs"
-  | "tasks";
+  | "tasks"
+  | "a2a_tasks";
 
 export type ArtifactCollection = "artifacts";
 
@@ -44,6 +45,7 @@ export interface DurableDb {
   repository_policies: Record<string, unknown>;
   guard_runs: Record<string, unknown>;
   tasks: Record<string, unknown>;
+  a2a_tasks: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -65,6 +67,7 @@ const DEFAULT_DB: DurableDb = {
   repository_policies: {},
   guard_runs: {},
   tasks: {},
+  a2a_tasks: {},
 };
 
 let redisClient: Redis | null = null;
@@ -120,6 +123,7 @@ function loadLocalDb(): DurableDb {
       repository_policies: parsed.repository_policies ?? {},
       guard_runs: parsed.guard_runs ?? {},
       tasks: parsed.tasks ?? {},
+      a2a_tasks: parsed.a2a_tasks ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);
