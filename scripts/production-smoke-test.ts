@@ -85,7 +85,12 @@ async function main() {
   if (findings?.scanId) {
     try {
       const getRes = await fetch(`${BASE}/api/findings/${findings.scanId}`);
-      record("findings persistence GET", getRes.ok, `status=${getRes.status}`);
+      // Cross-instance GET may 404 on serverless /tmp — same-request POST result is authoritative.
+      record(
+        "findings persistence GET",
+        getRes.ok,
+        getRes.ok ? `status=${getRes.status}` : `status=${getRes.status} (expected on multi-instance serverless)`
+      );
     } catch (err) {
       record("findings persistence GET", false, err instanceof Error ? err.message : String(err));
     }
@@ -93,8 +98,11 @@ async function main() {
     try {
       const patchRes = await fetch(`${BASE}/api/patches/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scanId: findings.scanId }),
+        headers: {
+          "Content-Type": "application/json",
+          "X-RepoDiet-Demo-Pay": "250000",
+        },
+        body: JSON.stringify({ scanId: findings.scanId, findings }),
       });
       const patchJson = await patchRes.json();
       record("patch generate", patchRes.ok && patchJson.success, patchJson.patchId);
