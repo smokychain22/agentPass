@@ -23,14 +23,14 @@ export const HERO = {
   badge: "REPOSITORY INTELLIGENCE",
   headline: "Your AI-built repo is getting heavier every commit.",
   subheadline:
-    "RepoDiet scans JavaScript and TypeScript repositories for duplicate logic, dead files, dependency drift, orphan modules, and AI-generated code debt—then creates a conservative cleanup bundle and opens a review-ready GitHub PR for safe candidates.",
+    "RepoDiet finds duplicate logic, dead files, dependency drift, and orphan modules—then applies verified fixes (remove imports, delete temp files, uninstall packages) and opens a review-ready cleanup PR. You merge when ready.",
 };
 
 export const SITE_TAGLINES = {
   debt: "AI code creates cleanup debt. RepoDiet Operator turns it into a review-ready cleanup PR.",
   positioning:
-    "Not auto-clean. Not a linter. A conservative cleanup operator for AI-built repos.",
-  workflow: "Scan the repo. Map the risk. Generate the bundle. Open the cleanup PR. Verify before merging.",
+    "Not a linter. Not scan-only. A cleanup operator that edits files, deletes safe dead code, and opens PRs.",
+  workflow: "Scan → Find problems → Apply fixes → Open cleanup PR → Verify → You merge.",
   safety:
     "RepoDiet protects routes, configs, env files, lockfiles, and public assets by default.",
   audience: "Built for teams and solo builders using AI coding tools every day.",
@@ -117,14 +117,22 @@ export const WORKFLOW_STEPS = [
   {
     id: "package",
     step: "04",
-    title: "PACKAGE",
-    subtitle: "Patch, report, regression plan",
-    meta: "7 artifacts · conservative patch",
+    title: "FIX",
+    subtitle: "Apply verified changes",
+    meta: "Unused imports · temp files · packages",
+    accent: "electric" as const,
+  },
+  {
+    id: "deliver",
+    step: "05",
+    title: "DELIVER",
+    subtitle: "Cleanup PR + artifacts",
+    meta: "7 artifacts · git-validated patch",
     accent: "electric" as const,
   },
   {
     id: "verify",
-    step: "05",
+    step: "06",
     title: "VERIFY",
     subtitle: "Build, lint, routes",
     meta: "Regression checklist prepared",
@@ -188,7 +196,7 @@ export const USE_CASES = [
 
 export const TRANSFORMATION_SECTION = {
   eyebrow: "Transformation",
-  title: "Watch repository debt become a safe cleanup plan.",
+  title: "Watch repository debt become real fixes in a cleanup PR.",
 };
 
 export const TRANSFORMATION_BEFORE_TREE = [
@@ -212,8 +220,8 @@ export const TRANSFORMATION_BEFORE_LABELS = [
 export const TRANSFORMATION_PROCESSING_STEPS = [
   "Scan",
   "Classify",
-  "Protect",
-  "Package",
+  "Fix",
+  "PR",
 ] as const;
 
 export const TRANSFORMATION_AFTER_ITEMS = [
@@ -250,12 +258,12 @@ export const BEFORE_ITEMS = [
 ];
 
 export const AFTER_ITEMS = [
-  "Findings grouped by risk",
-  "Safe candidates separated from review items",
-  "Protected files clearly marked",
-  "Patch bundle generated",
-  "Cleanup PR opened for human review",
-  "Regression checklist ready before merging",
+  "Unused imports removed from source files",
+  "Temp and backup files deleted when safe",
+  "Unused packages removed from package.json",
+  "Findings grouped by risk with protected paths locked",
+  "Cleanup PR opened on a branch — never pushed to main",
+  "Regression checklist ready before you merge",
 ];
 
 export const FLOW_METRICS = [

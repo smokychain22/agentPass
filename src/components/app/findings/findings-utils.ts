@@ -1,4 +1,5 @@
 import type { Finding, FindingAction, FindingType, FindingsPayload } from "@/lib/findings/types";
+import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { findingAnalyzerLabel } from "@/lib/findings/analyzer-status";
 import type { EvidenceGrade } from "@/lib/workflow/lifecycle";
 import { evidenceGradeForFinding } from "@/lib/workflow/lifecycle";
@@ -88,18 +89,34 @@ export function confidenceExplanation(confidence: number): string {
 
 export function patchPreview(finding: Finding): string {
   if (finding.action === "do_not_touch") {
-    return "No patch action — protected by RepoDiet policy.";
+    return "Protected — RepoDiet will not modify this path.";
+  }
+  if (isActionableFinding(finding)) {
+    switch (finding.type) {
+      case "unused_import":
+        return "Auto-fix: remove unused import from source file in cleanup PR.";
+      case "unused_dependency":
+        return "Auto-fix: remove package from package.json and update lockfile in cleanup PR.";
+      case "unused_file":
+      case "ai_slop_signal":
+        return "Auto-fix: delete temp/archive/backup file when path matches safe patterns.";
+      default:
+        return "Eligible for automatic cleanup in Quick Cleanup.";
+    }
   }
   if (finding.type === "duplicate_code") {
-    return "Included in review-first recommendations; merge/refactor before deletion.";
+    return "Review first — deduplicate or extract shared code manually; auto-merge not supported yet.";
+  }
+  if (finding.type === "orphan_pattern") {
+    return "Review first — confirm route/API is unused before removal.";
   }
   if (finding.type === "unused_dependency") {
-    return "Package removal suggestion in package-cleanup.md after verification.";
+    return "Review package removal — dynamic imports or config references may exist.";
   }
   if (finding.type === "unused_file" && finding.action === "safe_candidate") {
-    return "Candidate for developer review in cleanup patch bundle.";
+    return "Review file deletion — path does not match automatic temp-file patterns.";
   }
-  return "Included in conservative cleanup recommendations after confirmation.";
+  return "Documented for review in cleanup artifacts.";
 }
 
 export function formatFindingAnalyzerLabel(

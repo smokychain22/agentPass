@@ -40,7 +40,7 @@ const mainNav = [
   },
   {
     href: "/app?tab=patch",
-    label: "Quick Cleanup",
+    label: "Fix & PR",
     icon: Package,
     tab: "patch",
     lockReason: "Run findings analysis first",
@@ -131,12 +131,12 @@ export function AppSidebar({
               else if (item.needsQuickCleanup && !quickCleanupAvailable) {
                 locked = true;
                 lockReason =
-                  "No supported deterministic fixes — review findings or create report-only PR";
+                  "No auto-fixable findings — duplicates and orphans need review";
               } else if (item.needsVerify && !verifyUnlocked) {
                 locked = true;
                 lockReason = patchKitReady
                   ? "Verify unlocks after validated changes are generated"
-                  : "Generate cleanup changes in Quick Cleanup first";
+                  : "Apply fixes in Fix & PR first";
               }
 
               const active = pathname === "/app" && activeTab === item.tab;

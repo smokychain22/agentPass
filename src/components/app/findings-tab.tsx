@@ -152,7 +152,7 @@ export function FindingsTab() {
       <WorkspaceSection
         label="Analysis workspace"
         title="Findings Engine"
-        description="RepoDiet maps duplicate code, unused files, dependencies, orphan patterns, and AI-slop signals."
+        description="RepoDiet finds duplicate code, unused imports, dead files, orphan routes, and dependency drift — then applies automatic fixes where safe."
         actions={
           <>
             <Button onClick={runFindings} disabled={isLoading}>
@@ -271,14 +271,14 @@ function PanelCTA({
   if (supportedCount > 0) {
     return (
       <Panel variant="elevated" padding="md">
-        <p className="ds-label mb-2">Deterministic cleanup available</p>
+        <p className="ds-label mb-2">Automatic fixes available</p>
         <p className="mb-4 text-sm text-muted-foreground">
-          RepoDiet found {supportedCount} transformer-compatible finding
-          {supportedCount === 1 ? "" : "es"} with registered transformers. Continue to Quick Cleanup
-          to generate real repository-specific changes, validate the patch, and verify integrity.
+          RepoDiet can automatically fix {supportedCount} finding
+          {supportedCount === 1 ? "" : "s"} in this scan — remove unused imports, delete temp/archive
+          files, uninstall unused packages — then validate the patch and open a cleanup PR.
         </p>
         <Button asChild>
-          <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
+          <Link href="/app?tab=patch">Apply fixes in Quick Cleanup</Link>
         </Button>
       </Panel>
     );

@@ -139,17 +139,15 @@ export function PatchKitTab() {
 
       <WorkspaceSection
         label="Cleanup eligibility"
-        title="Quick Cleanup"
+        title="Fix & PR"
         description={
           supportedCount === 0
-            ? "RepoDiet found review findings, but none have a registered transformer for automatic cleanup."
+            ? "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available."
             : patchKit?.summary.blockerSummary
               ? patchKit.summary.blockerSummary
               : patchKit?.summary.eligibleFindings
-                ? `${patchKit.summary.eligibleFindings} eligible finding(s). Quick Cleanup attempts up to fifteen candidates and retains up to five verified changes.`
-                : patchKit?.summary.transformerCompatible
-                  ? `${patchKit.summary.transformerCompatible} eligible finding(s). Quick Cleanup attempts up to fifteen candidates and retains up to five verified changes.`
-                  : `${supportedCount} eligible finding(s) for cleanup.`
+                ? `${patchKit.summary.eligibleFindings} finding(s) ready for automatic fixes. RepoDiet edits source files, deletes safe dead code, removes packages — then opens a cleanup PR.`
+                : `${supportedCount} finding(s) eligible for automatic cleanup.`
         }
         actions={
           <>

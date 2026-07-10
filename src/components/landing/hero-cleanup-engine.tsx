@@ -17,14 +17,14 @@ const MESSY_ITEMS = [
 ];
 
 const BUNDLE_ITEMS = [
-  { label: "Safe candidates", value: `${DEMO_SCAN_STATS.safeCandidates} files`, level: "safe" as const },
+  { label: "Auto-fixes applied", value: "imports · deps · temp files", level: "safe" as const },
   { label: "Review-first", value: `${DEMO_SCAN_STATS.reviewFirst} items`, level: "review" as const },
   { label: "Protected", value: `${DEMO_SCAN_STATS.doNotTouch} files`, level: "protected" as const },
-  { label: "Patch artifacts", value: "7 files", level: "cyan" as const },
+  { label: "Cleanup PR", value: "review branch", level: "cyan" as const },
   { label: "Regression checks", value: "prepared", level: "cyan" as const },
 ];
 
-const SCAN_STAGES = ["Index", "Map", "Classify", "Bundle"];
+const SCAN_STAGES = ["Index", "Find", "Fix", "PR"];
 
 export function HeroCleanupEngine() {
   const [activeStage, setActiveStage] = useState(0);
