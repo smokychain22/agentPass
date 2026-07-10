@@ -6,12 +6,19 @@ export interface PersistedSession {
   scanId?: string;
   scanComplete: boolean;
   selectedFindingIds: string[];
+  cleanupRunId?: string;
+}
+
+function readStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage;
 }
 
 export function loadPersistedSession(): PersistedSession | null {
-  if (typeof window === "undefined") return null;
+  const storage = readStorage();
+  if (!storage) return null;
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as PersistedSession;
   } catch {
@@ -20,13 +27,15 @@ export function loadPersistedSession(): PersistedSession | null {
 }
 
 export function savePersistedSession(session: PersistedSession): void {
-  if (typeof window === "undefined") return;
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  const storage = readStorage();
+  if (!storage) return;
+  storage.setItem(STORAGE_KEY, JSON.stringify(session));
 }
 
 export function clearPersistedSession(): void {
-  if (typeof window === "undefined") return;
-  sessionStorage.removeItem(STORAGE_KEY);
+  const storage = readStorage();
+  if (!storage) return;
+  storage.removeItem(STORAGE_KEY);
 }
 
 export async function fetchPersistedFindings(scanId: string) {

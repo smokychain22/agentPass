@@ -18,6 +18,20 @@ import {
   loadPersistedSession,
   savePersistedSession,
 } from "@/lib/session/persist-session";
+import { isActionableFinding } from "@/lib/findings/actionability-signals";
+
+function defaultSelectedFindingIds(payload: FindingsPayload): string[] {
+  return [
+    ...payload.duplicates,
+    ...payload.unused.files,
+    ...payload.unused.dependencies,
+    ...payload.unused.exports,
+    ...payload.orphans,
+    ...payload.slopSignals,
+  ]
+    .filter(isActionableFinding)
+    .map((f) => f.id);
+}
 
 export interface ScanSession {
   repoUrl: string;
@@ -89,17 +103,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       .then((payload) => {
         setFindings(payload);
         if (!stored.selectedFindingIds?.length) {
-          const defaults = [
-            ...payload.duplicates,
-            ...payload.unused.files,
-            ...payload.unused.dependencies,
-            ...payload.unused.exports,
-            ...payload.orphans,
-            ...payload.slopSignals,
-          ]
-            .filter((f) => f.action === "safe_candidate")
-            .map((f) => f.id);
-          setSelectedFindingIdsState(defaults);
+          setSelectedFindingIdsState(defaultSelectedFindingIds(payload));
         }
       })
       .catch(() => {
@@ -112,16 +116,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     setFindings(next);
     setPatchKit(null);
     if (next) {
-      const defaults = [
-        ...next.duplicates,
-        ...next.unused.files,
-        ...next.unused.dependencies,
-        ...next.unused.exports,
-        ...next.orphans,
-        ...next.slopSignals,
-      ]
-        .filter((f) => f.action === "safe_candidate")
-        .map((f) => f.id);
+      const defaults = defaultSelectedFindingIds(next);
       setSelectedFindingIdsState(defaults);
       setSession((prev) => {
         const updated = {

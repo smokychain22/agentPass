@@ -36,7 +36,7 @@ const mainNav = [
   },
   {
     href: "/app?tab=patch",
-    label: "Patch Kit",
+    label: "Quick Cleanup",
     icon: Package,
     tab: "patch",
     lockReason: "Available after findings are ready",
@@ -180,7 +180,7 @@ export function AppSidebar({
           status={scanComplete ? "complete" : "pending"}
         />
         <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-          Current session only — scans reset on refresh.
+          Workflow restores after refresh when scan findings are persisted server-side.
         </p>
       </div>
     </>
