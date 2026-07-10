@@ -1,5 +1,5 @@
 import { runBasicScan } from "@/lib/scanner/run-scan";
-import { runFindingsEngine } from "@/lib/findings/findings-engine";
+import { scanRepository } from "@/lib/execution";
 import { classifyFindingsForPatch } from "@/lib/patch-kit/safe-delete-classifier";
 import { assertFileCount } from "@/lib/a2mcp/limits";
 import {
@@ -9,7 +9,7 @@ import {
 import type { ScanRepoBloatInput } from "@/lib/a2mcp/schemas";
 import { ToolInputSchemas } from "@/lib/a2mcp/schemas";
 
-function analyzerStatus(findings: Awaited<ReturnType<typeof runFindingsEngine>>) {
+function analyzerStatus(findings: Awaited<ReturnType<typeof scanRepository>>) {
   return {
     knip: findings.rawToolReports.knip,
     jscpd: findings.rawToolReports.jscpd,
@@ -29,7 +29,7 @@ export async function executeScanRepoBloat(body: unknown) {
     if (!warnings.includes(ENV_DETECTED_WARNING)) warnings.push(ENV_DETECTED_WARNING);
   }
 
-  const findings = await runFindingsEngine(input.repoUrl, input.branch);
+  const findings = await scanRepository(input.repoUrl, input.branch);
   const buckets = classifyFindingsForPatch(findings);
 
   return {
@@ -39,7 +39,9 @@ export async function executeScanRepoBloat(body: unknown) {
         name: scan.repo.name,
         branch: scan.repo.branch,
         url: scan.repo.url,
+        commitSha: findings.repo.commitSha,
       },
+      scanId: findings.scanId,
       scan: {
         framework: scan.framework.name,
         packageManager: scan.packageManager,

@@ -2,7 +2,7 @@
 
 **Branch audited:** `main` (merged `cursor/product-vision-pricing-39ce`)  
 **Audit date:** 2026-07-10  
-**Phase:** 1 — Free Proof (one real safe fix in-product)
+**Phase:** 3 — Production A2MCP Tool Layer
 
 This document classifies every product capability as **REAL**, **PARTIAL**, **DEMO**, **COSMETIC**, **BROKEN**, or **NOT IMPLEMENTED**.
 
@@ -310,9 +310,32 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 
 ---
 
-## Next phases (do not start until Phase 0 gate passes)
+## Phase 3 — A2MCP agent tools
 
-1. **Phase 1** — Wire all job/API routes through execution engine; unify Quick Cleanup with one-fix loop
-2. **Phase 2** — End-to-end GitHub PR from cleanup tab; capture commitSha on scan jobs
-3. **Phase 3** — x402 settlement bound to task quotes; A2A task create/poll APIs
-4. **Phase 4** — Repo Guard scheduling and alerts
+| Tool | Endpoint | Engine | Status |
+|------|----------|--------|--------|
+| `scan_repository` | `POST /api/tools/scan_repository` | `scanRepository` | **REAL** |
+| `analyze_repository` | `POST /api/tools/analyze_repository` | `analyzeRepository` | **REAL** |
+| `get_findings` | `POST /api/tools/get_findings` | findings store | **REAL** |
+| `list_safe_fixes` | `POST /api/tools/list_safe_fixes` | `selectSafeFixes` | **REAL** |
+| `get_repository_health` | `POST /api/tools/get_repository_health` | findings + analyzers | **REAL** |
+| `get_task_status` | `GET /api/tools/tasks/{taskId}` | task store | **REAL** |
+| `run_free_safe_fix` | `POST /api/tools/run_free_safe_fix` | `executeFreeProof` | **REAL** |
+| `run_quick_cleanup` | `POST /api/tools/run_quick_cleanup` | `runQuickCleanup` | **REAL** |
+| `run_cleanup` | `POST /api/tools/run_cleanup` | unified runner | **REAL** |
+| `verify_cleanup` | `POST /api/tools/verify_cleanup` | `verifyChanges` | **REAL** |
+| `create_cleanup_pr` | `POST /api/tools/create_cleanup_pr` | `createCleanupPullRequest` | **REAL** |
+| `configure_repository_policy` | `POST /api/tools/configure_repository_policy` | policy store | **REAL** |
+| `activate_repo_guard` | `POST /api/tools/activate_repo_guard` | — | **NOT IMPLEMENTED** (honest failure) |
+
+**ASP manifest:** `GET /api/tools/manifest` v2.0.0 — production URL, pricing, privacy, agent flow, tool schemas.
+
+**Verification:** `npm run verify:asp` — 46-check production gate script.
+
+**Legacy tools** (`scan_repo_bloat`, etc.) remain for compatibility; `scan_repo_bloat` now calls `scanRepository`.
+
+---
+
+## Next phases
+
+1. **Phase 4** — Repo Guard scheduling and alerts; x402 settlement enforcement on paid tools

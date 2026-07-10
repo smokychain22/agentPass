@@ -1,0 +1,448 @@
+import {
+  analyzeRepository,
+  createCleanupPullRequest,
+  createExecutionReceipt,
+  executeFreeProof,
+  runQuickCleanup,
+  scanRepository,
+  selectSafeFixes,
+  verifyChanges,
+} from "@/lib/execution";
+import { getStoredFindings } from "@/lib/findings/findings-store";
+import type { FindingsPayload } from "@/lib/findings/types";
+import { phase1EligibilityReason, resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
+import { getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
+import { getExecutionReceipt } from "@/lib/store/product-store";
+import { runBasicScan } from "@/lib/scanner/run-scan";
+import { ToolInputSchemas } from "@/lib/a2mcp/schemas";
+import { Phase3InputSchemas, resolveFindingsPayload } from "@/lib/a2mcp/phase3-schemas";
+import {
+  analyzersFromFindings,
+  createTaskId,
+  getAgentTask,
+  repositoryFromFindings,
+  saveAgentTask,
+  type AgentTaskRecord,
+} from "@/lib/a2mcp/task-store";
+
+async function persistTask(task: AgentTaskRecord): Promise<AgentTaskRecord> {
+  return saveAgentTask(task);
+}
+
+async function completeTask(
+  taskId: string,
+  type: AgentTaskRecord["type"],
+  findings: FindingsPayload,
+  result: Record<string, unknown>,
+  limitations: string[] = [],
+  receipt: AgentTaskRecord["receipt"] = {}
+): Promise<AgentTaskRecord> {
+  const task: AgentTaskRecord = {
+    id: taskId,
+    type,
+    status: "completed",
+    repository: repositoryFromFindings(findings),
+    scanId: findings.scanId,
+    result,
+    analyzers: analyzersFromFindings(findings),
+    limitations,
+    receipt,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+  };
+  return persistTask(task);
+}
+
+export async function executeScanRepository(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.repoUrl(body);
+  const findings = await scanRepository(input.repoUrl, input.branch);
+  const scan = await runBasicScan(input.repoUrl, input.branch);
+
+  return completeTask(taskId, "scan_repository", findings, {
+    scanId: findings.scanId,
+    summary: findings.summary,
+    riskBuckets: findings.riskBuckets,
+    scan: {
+      framework: scan.framework.name,
+      packageManager: scan.packageManager,
+      totalFiles: scan.summary.totalFiles,
+      totalFolders: scan.summary.totalFolders,
+    },
+    mode: findings.mode,
+  });
+}
+
+export async function executeAnalyzeRepository(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const ref = Phase3InputSchemas.repoRef(body);
+  const findings = await resolveFindingsPayload(ref, getAgentTask);
+  const analyzed = await analyzeRepository(findings);
+
+  return completeTask(taskId, "analyze_repository", analyzed, {
+    scanId: analyzed.scanId,
+    summary: analyzed.summary,
+    riskBuckets: analyzed.riskBuckets,
+    findingCounts: {
+      duplicates: analyzed.duplicates.length,
+      unusedFiles: analyzed.unused.files.length,
+      unusedDependencies: analyzed.unused.dependencies.length,
+      orphans: analyzed.orphans.length,
+      slopSignals: analyzed.slopSignals.length,
+    },
+  });
+}
+
+export async function executeGetFindings(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const ref = Phase3InputSchemas.repoRef(body);
+  const findings = await resolveFindingsPayload(ref, getAgentTask);
+
+  return completeTask(taskId, "get_findings", findings, {
+    scanId: findings.scanId,
+    findings,
+  });
+}
+
+export async function executeListSafeFixes(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const ref = Phase3InputSchemas.repoRef(body);
+  const findings = await resolveFindingsPayload(ref, getAgentTask);
+  const safe = selectSafeFixes(findings, 25);
+
+  return completeTask(taskId, "list_safe_fixes", findings, {
+    scanId: findings.scanId,
+    count: safe.length,
+    fixes: safe.map((f) => ({
+      id: f.id,
+      type: f.type,
+      title: f.title,
+      files: f.files,
+      packageName: f.packageName,
+      confidence: f.confidence,
+      action: f.action,
+      plugin: resolvePhase1Plugin(f).id,
+      eligibilityReason: phase1EligibilityReason(f),
+    })),
+  });
+}
+
+export async function executeGetRepositoryHealth(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const ref = Phase3InputSchemas.repoRef(body);
+  const findings = await resolveFindingsPayload(ref, getAgentTask);
+
+  const analyzerIssues = Object.entries(findings.rawToolReports).filter(
+    ([, report]) => report.status === "failed"
+  ).length;
+
+  return completeTask(taskId, "get_repository_health", findings, {
+    scanId: findings.scanId,
+    health: {
+      score: Math.max(
+        0,
+        100 -
+          findings.summary.reviewRequired * 2 -
+          findings.summary.doNotTouch * 3 -
+          analyzerIssues * 5
+      ),
+      safeCandidates: findings.summary.safeCandidates,
+      reviewRequired: findings.summary.reviewRequired,
+      doNotTouch: findings.summary.doNotTouch,
+      totalFindings: findings.summary.totalFindings,
+      commitSha: findings.repo.commitSha ?? null,
+    },
+    analyzerStatus: analyzersFromFindings(findings),
+  });
+}
+
+export async function executeRunFreeSafeFix(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.runCleanup({ ...(body as object), operation: "free_proof" });
+  const findings = await resolveFindingsPayload(input, getAgentTask);
+  const cleanup = await executeFreeProof(findings, { findingIds: input.findingIds });
+
+  const limitations: string[] = [];
+  if (cleanup.proof.finalDecision !== "retained") {
+    limitations.push("No safe fix was retained after verification.");
+  }
+  limitations.push("GitHub repository was not modified — isolated workspace only.");
+
+  return completeTask(
+    taskId,
+    "run_free_safe_fix",
+    findings,
+    {
+      scanId: findings.scanId,
+      cleanupRunId: cleanup.id,
+      finalDecision: cleanup.proof.finalDecision,
+      changedFiles: cleanup.proof.changedFiles,
+      unifiedDiff: cleanup.unifiedDiff,
+      fixLoop: cleanup.fixLoop,
+      stateTransitions: cleanup.stateTransitions,
+    },
+    limitations,
+    cleanup.signedReceipt ?? cleanup.receipt
+  );
+}
+
+export async function executeRunQuickCleanup(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.runCleanup({ ...(body as object), operation: "quick_cleanup" });
+  const findings = await resolveFindingsPayload(input, getAgentTask);
+  const patchKit = await runQuickCleanup(
+    findings.repo.url ?? `https://github.com/${findings.repo.owner}/${findings.repo.name}`,
+    findings.repo.branch,
+    findings,
+    input.findingIds
+  );
+
+  const limitations = [
+    "Quick cleanup uses Patch Kit batch generation — not the one-fix verification loop.",
+    "Payment quote validation is recommended before production settlement.",
+  ];
+  if (!input.quoteId) {
+    limitations.push("No task quote provided — x402 settlement not verified for this run.");
+  }
+
+  return completeTask(
+    taskId,
+    "run_quick_cleanup",
+    findings,
+    {
+      scanId: findings.scanId,
+      patchId: patchKit.id,
+      summary: patchKit.summary,
+      artifacts: {
+        hasCleanupPatch: Boolean(patchKit.artifacts?.cleanupPatch),
+        zipBase64: Boolean(patchKit.zipBase64),
+      },
+    },
+    limitations,
+    {
+      taskId: patchKit.id,
+      repository: `${findings.repo.owner}/${findings.repo.name}`,
+      commitSha: findings.repo.commitSha ?? "unknown",
+      findingIds: input.findingIds ?? [],
+      patchHash: "sha256:patchkit",
+      verificationHash: "sha256:pending",
+      status: "partial",
+      timestamp: new Date().toISOString(),
+    }
+  );
+}
+
+export async function executeRunCleanup(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.runCleanup(body);
+  if (input.operation === "quick_cleanup") {
+    return executeRunQuickCleanup(body, taskId);
+  }
+  return executeRunFreeSafeFix(body, taskId);
+}
+
+export async function executeVerifyCleanup(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.verifyCleanup(body);
+  const patchId = input.patchId ?? input.cleanupRunId!;
+  const verification = await verifyChanges(patchId);
+
+  let findings: FindingsPayload | undefined;
+  if (input.scanId) {
+    findings = await getStoredFindings(input.scanId);
+  }
+
+  const stubFindings: FindingsPayload = findings ?? {
+    scanId: input.scanId ?? "unknown",
+    repo: { owner: "unknown", name: "unknown", branch: "main" },
+    summary: {
+      totalFindings: 0,
+      duplicateClusters: 0,
+      unusedFiles: 0,
+      unusedDependencies: 0,
+      unusedExports: 0,
+      orphanPatterns: 0,
+      slopSignals: 0,
+      reviewRequired: 0,
+      safeCandidates: 0,
+      doNotTouch: 0,
+    },
+    duplicates: [],
+    unused: { files: [], dependencies: [], exports: [] },
+    orphans: [],
+    slopSignals: [],
+    riskBuckets: { safeDelete: [], reviewFirst: [], doNotTouch: [] },
+    artifacts: { findingsJson: false },
+    mode: "live",
+    rawToolReports: {
+      knip: { status: "failed", source: null, sourceMode: "fallback", durationMs: 0 },
+      jscpd: { status: "failed", source: null, sourceMode: "fallback", durationMs: 0 },
+      madge: { status: "failed", source: null, sourceMode: "fallback", durationMs: 0 },
+    },
+  };
+
+  return completeTask(
+    taskId,
+    "verify_cleanup",
+    stubFindings,
+    {
+      patchId,
+      verification,
+    },
+    verification.limitations ?? [],
+    { taskId: patchId, status: verification.status === "passed" ? "verified" : "partial", timestamp: new Date().toISOString() }
+  );
+}
+
+export async function executeCreateCleanupPrPhase3(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = ToolInputSchemas.createCleanupPr(body);
+  let findings: FindingsPayload | undefined;
+
+  if (input.findings) {
+    findings = input.findings as unknown as FindingsPayload;
+  } else {
+    findings = await scanRepository(input.repoUrl, input.branch);
+  }
+
+  const pr = await createCleanupPullRequest({
+    repoUrl: input.repoUrl,
+    branch: input.branch,
+    findings,
+    patchKit: input.patchKit as never,
+    demo: input.demo,
+    githubToken: input.githubToken,
+  });
+
+  const receipt = createExecutionReceipt({
+    taskId,
+    repository: `${findings.repo.owner}/${findings.repo.name}`,
+    commitSha: findings.repo.commitSha ?? "unknown",
+    findingIds: [],
+    patchHash: "sha256:pr",
+    verificationHash: "sha256:pr",
+    status: "partial",
+    timestamp: new Date().toISOString(),
+  });
+
+  return completeTask(
+    taskId,
+    "create_cleanup_pr",
+    findings,
+    {
+      pullRequest: pr.data.pullRequest,
+      repo: pr.data.repo,
+      actionSummary: pr.data.actionSummary,
+      policy: pr.data.policy,
+    },
+    pr.warnings ?? ["Requires GitHub App installation or token for live PR creation."],
+    receipt
+  );
+}
+
+export async function executeConfigureRepositoryPolicy(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.configurePolicy(body);
+  const findings = await scanRepository(input.repoUrl, input.branch);
+  const policyId = `${findings.repo.owner}/${findings.repo.name}`;
+
+  const policy = {
+    id: policyId,
+    repository: policyId,
+    branch: findings.repo.branch,
+    protectedPaths: input.protectedPaths ?? [],
+    protectedGlobs: input.protectedGlobs ?? [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  await setDurableRecord("repository_policies", policyId, policy);
+
+  return completeTask(taskId, "configure_repository_policy", findings, {
+    policy,
+    note: "Policy stored for future scans. Full enforcement ships with Repo Guard.",
+  });
+}
+
+export async function executeActivateRepoGuard(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const input = Phase3InputSchemas.repoUrl(body);
+  const findings = await scanRepository(input.repoUrl, input.branch);
+
+  const task: AgentTaskRecord = {
+    id: taskId,
+    type: "activate_repo_guard",
+    status: "failed",
+    repository: repositoryFromFindings(findings),
+    scanId: findings.scanId,
+    result: {},
+    analyzers: analyzersFromFindings(findings),
+    limitations: [
+      "Repo Guard scheduling is not yet available in production.",
+      "Subscribe at repodiet pricing when monitoring launches.",
+    ],
+    receipt: {},
+    error: "Repo Guard is not implemented in Phase 3.",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+  };
+  return persistTask(task);
+}
+
+export async function executeGetTaskStatus(taskId: string): Promise<AgentTaskRecord | undefined> {
+  const task = await getAgentTask(taskId);
+  if (task) return task;
+
+  const cleanupRun = await getDurableRecord<Record<string, unknown>>("cleanup_runs", taskId);
+  if (cleanupRun) {
+    const receipt = await getExecutionReceipt(taskId);
+    return {
+      id: taskId,
+      type: "run_free_safe_fix",
+      status: "completed",
+      repository: {
+        owner: String(cleanupRun.repository ?? "").split("/")[0] ?? "",
+        name: String(cleanupRun.repository ?? "").split("/")[1] ?? "",
+        branch: String(cleanupRun.branch ?? "main"),
+        commitSha: String(cleanupRun.commitSha ?? ""),
+      },
+      scanId: typeof cleanupRun.scanId === "string" ? cleanupRun.scanId : undefined,
+      result: cleanupRun as Record<string, unknown>,
+      analyzers: {},
+      limitations: [],
+      receipt: receipt?.receipt ?? {},
+      createdAt: String(cleanupRun.createdAt ?? new Date().toISOString()),
+      updatedAt: String(cleanupRun.createdAt ?? new Date().toISOString()),
+      completedAt: String(cleanupRun.createdAt ?? new Date().toISOString()),
+    };
+  }
+
+  return undefined;
+}
+
+export { createTaskId };

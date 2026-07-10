@@ -67,6 +67,7 @@ export async function withDurableDb<T>(
       github_installations: {},
       repository_policies: {},
       guard_runs: {},
+      tasks: {},
     };
     return fn(db);
   });

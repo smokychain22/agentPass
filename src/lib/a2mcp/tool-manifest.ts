@@ -1,5 +1,7 @@
-import { A2MCP_VERSION, SERVICE_NAME, TOOL_TIMEOUT_MS, MAX_REPO_ZIP_BYTES, MAX_FILES_ANALYZED } from "./constants";
+import { A2MCP_VERSION, SERVICE_NAME, TOOL_TIMEOUT_MS, MAX_REPO_ZIP_BYTES, MAX_FILES_ANALYZED, OPERATOR_TOOL_TIMEOUT_MS } from "./constants";
 import { JSON_SCHEMAS } from "./schemas";
+import { getServerBaseUrl } from "@/lib/docs/base-url";
+import { PHASE3_TOOL_ENTRIES } from "./phase3-manifest";
 
 const repoInputSchema = {
   type: "object",
@@ -14,7 +16,7 @@ const repoInputSchema = {
 export interface ToolManifestEntry {
   name: string;
   endpoint: string;
-  method: "POST";
+  method: "POST" | "GET";
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
@@ -23,6 +25,7 @@ export interface ToolManifestEntry {
 }
 
 export const TOOL_MANIFEST_ENTRIES: ToolManifestEntry[] = [
+  ...PHASE3_TOOL_ENTRIES,
   {
     name: "scan_repo_bloat",
     endpoint: "/api/tools/scan_repo_bloat",
@@ -235,91 +238,67 @@ export const TOOL_MANIFEST_ENTRIES: ToolManifestEntry[] = [
       warnings: [],
     },
   },
-  {
-    name: "create_cleanup_pr",
-    endpoint: "/api/tools/create_cleanup_pr",
-    method: "POST",
-    description:
-      "Create a review-ready GitHub cleanup pull request via connected GitHub App installation. Safe deletions and RepoDiet artifacts only.",
-    inputSchema: {
-      type: "object",
-      required: ["repoUrl"],
-      properties: {
-        repoUrl: JSON_SCHEMAS.repoUrl,
-        branch: JSON_SCHEMAS.branch,
-        mode: {
-          type: "string",
-          enum: ["safe_only", "report_only"],
-          default: "safe_only",
-        },
-        findings: {
-          type: "object",
-          description: "Optional precomputed findings payload to reuse.",
-        },
-        patchKit: {
-          type: "object",
-          description: "Optional precomputed patch kit payload to reuse.",
-        },
-        demo: {
-          type: "boolean",
-          default: false,
-          description: "Demo repo only — uses server demo token, not for normal users.",
-        },
-        githubToken: {
-          type: "string",
-          description:
-            "Advanced fallback only. Primary auth is GitHub App installation via browser session.",
-        },
-      },
-      additionalProperties: false,
-    },
-    outputSchema: {
-      type: "object",
-      properties: {
-        ok: { type: "boolean" },
-        tool: { type: "string" },
-        version: { type: "string" },
-        repo: { type: "object" },
-        pullRequest: { type: "object" },
-        actionSummary: { type: "object" },
-        policy: { type: "object" },
-        warnings: { type: "array", items: { type: "string" } },
-      },
-    },
-    exampleRequest: {
-      repoUrl: "https://github.com/user/repo",
-      branch: "main",
-      mode: "safe_only",
-    },
-    exampleResponse: {
-      ok: true,
-      tool: "create_cleanup_pr",
-      version: A2MCP_VERSION,
-      repo: {
-        owner: "user",
-        name: "repo",
-        baseBranch: "main",
-        cleanupBranch: "repodiet/cleanup-20260710-abc123",
-      },
-      pullRequest: {
-        url: "https://github.com/user/repo/pull/1",
-        number: 1,
-        title: "RepoDiet: review-first cleanup bundle",
-      },
-      policy: { mainBranchMutated: false, requiresHumanMerge: true },
-      warnings: [],
-    },
-  },
 ];
 
 export function buildServiceManifest() {
+  const baseUrl = getServerBaseUrl();
   return {
     name: SERVICE_NAME,
     description:
-      "AI-code-bloat cleanup tools for JavaScript and TypeScript repositories.",
+      "AI-code-bloat cleanup tools for JavaScript and TypeScript repositories. Phase 3 agent tools execute the same engine as the web application.",
     version: A2MCP_VERSION,
     category: "Software Utility",
     runtime: "nodejs",
+    productionUrl: baseUrl,
+    operator: {
+      id: "repodiet-operator",
+      publicKeyEnv: "REPODIET_OPERATOR_PUBLIC_KEY",
+      signingAvailable: Boolean(process.env.REPODIET_OPERATOR_PRIVATE_KEY),
+    },
+    capabilities: [
+      "repository_scan",
+      "findings_analysis",
+      "safe_fix_selection",
+      "free_proof_cleanup",
+      "patch_kit_generation",
+      "cleanup_verification",
+      "cleanup_pr_creation",
+    ],
+    agentFlow: [
+      "scan_repository",
+      "analyze_repository",
+      "list_safe_fixes",
+      "run_free_safe_fix",
+      "get_task_status",
+    ],
+    pricing: {
+      freeProof: { operation: "run_free_safe_fix", limitPerRepo: 1, priceUsdt: 0 },
+      quickCleanup: { operation: "run_quick_cleanup", priceUsdt: 0.25 },
+      verifiedCleanupPr: { operation: "create_cleanup_pr", priceUsdtMin: 1, priceUsdtMax: 3 },
+      repoGuard: { operation: "activate_repo_guard", priceUsdtMonthlyMin: 3, priceUsdtMonthlyMax: 5, available: false },
+    },
+    freeLimits: {
+      freeProofFixes: 1,
+      publicReposOnly: true,
+    },
+    timeouts: {
+      defaultToolSeconds: TOOL_TIMEOUT_MS / 1000,
+      operatorToolSeconds: OPERATOR_TOOL_TIMEOUT_MS / 1000,
+      freeProofSeconds: 300,
+    },
+    payment: {
+      protocol: "x402",
+      enforcedOnTools: ["run_quick_cleanup", "create_cleanup_pr"],
+      betaOpenAccess: true,
+    },
+    healthEndpoint: `${baseUrl}/api/tools/health`,
+    supportUrl: `${baseUrl}/docs`,
+    privacy: {
+      publicReposOnly: true,
+      envFilesNeverRead: true,
+      workspaceRetention: "Ephemeral — isolated workspaces deleted after tool execution.",
+      githubMutation: "Never on scan/analyze/free proof. PR tools create branches only.",
+    },
     limits: {
       maxRepoZipMb: MAX_REPO_ZIP_BYTES / (1024 * 1024),
       maxFilesAnalyzed: MAX_FILES_ANALYZED,
@@ -356,25 +335,31 @@ export function buildToolsIndex() {
 }
 
 export function buildHealthResponse() {
+  const phase3Tools = Object.fromEntries(
+    PHASE3_TOOL_ENTRIES.map((t) => [t.name, "available"])
+  );
+  const legacyTools = {
+    scan_repo_bloat: "available",
+    detect_duplicate_code: "available",
+    find_dead_files: "available",
+    find_unused_dependencies: "available",
+    generate_cleanup_patch: "available",
+    generate_regression_checklist: "available",
+    find_orphan_patterns: "available",
+  };
+
   return {
     ok: true,
     service: SERVICE_NAME,
     version: A2MCP_VERSION,
     runtime: "nodejs",
-    tools: {
-      scan_repo_bloat: "available",
-      detect_duplicate_code: "available",
-      find_dead_files: "available",
-      find_unused_dependencies: "available",
-      generate_cleanup_patch: "available",
-      generate_regression_checklist: "available",
-      create_cleanup_pr: "available",
-    },
+    engine: "shared_execution_engine",
+    tools: { ...phase3Tools, ...legacyTools },
     analyzers: {
-      knip: "native_or_fallback",
-      jscpd: "native_or_fallback",
-      madge: "native_or_fallback",
-      heuristics: "available",
+      knip: { status: "native_or_fallback", honestLabeling: true },
+      jscpd: { status: "native_or_fallback", honestLabeling: true },
+      madge: { status: "native_or_fallback", honestLabeling: true },
+      heuristics: { status: "available", honestLabeling: true },
     },
   };
 }

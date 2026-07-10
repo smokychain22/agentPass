@@ -1,4 +1,4 @@
-export const A2MCP_VERSION = "1.0.0";
+export const A2MCP_VERSION = "2.0.0";
 export const SERVICE_NAME = "RepoDiet";
 
 export const MAX_REPO_ZIP_BYTES = 25 * 1024 * 1024;

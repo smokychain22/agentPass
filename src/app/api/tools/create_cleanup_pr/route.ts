@@ -1,15 +1,15 @@
+import { runPhase3ToolRoute } from "@/lib/a2mcp/phase3-route";
+import { executeCreateCleanupPrPhase3 } from "@/lib/a2mcp/phase3-engine";
 import { OPERATOR_TOOL_TIMEOUT_MS } from "@/lib/a2mcp/constants";
-import { runToolRoute } from "@/lib/a2mcp/responses";
-import { executeCreateCleanupPr } from "@/lib/a2mcp/tools/create-cleanup-pr";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
-  return runToolRoute(
+  return runPhase3ToolRoute(
     "create_cleanup_pr",
     request,
-    executeCreateCleanupPr,
+    executeCreateCleanupPrPhase3,
     OPERATOR_TOOL_TIMEOUT_MS
   );
 }
