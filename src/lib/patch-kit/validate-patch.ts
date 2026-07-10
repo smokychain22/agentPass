@@ -9,10 +9,15 @@ export interface PatchValidationResult {
   error?: string;
 }
 
-const DELETE_MARKERS = [/^deleted file mode /m, /^diff --git a\/.+ b\/.+$/m];
+const DELETE_MARKERS = [/^deleted file mode /m];
 
+export function patchHasApplyableOperations(patch: string): boolean {
+  return /^diff --git /m.test(extractApplyablePatch(patch));
+}
+
+/** @deprecated Use patchHasApplyableOperations */
 export function patchHasDeleteOperations(patch: string): boolean {
-  return DELETE_MARKERS.some((pattern) => pattern.test(patch));
+  return patchHasApplyableOperations(patch) && DELETE_MARKERS.some((pattern) => pattern.test(patch));
 }
 
 /** Strip comment header lines before applying patch. */
@@ -46,8 +51,8 @@ export async function validateCleanupPatchInWorkspace(
   rootDir: string,
   patch: string
 ): Promise<PatchValidationResult> {
-  if (!patchHasDeleteOperations(patch)) {
-    return { status: "skipped", error: "No delete operations in patch." };
+  if (!patchHasApplyableOperations(patch)) {
+    return { status: "skipped", error: "No applyable patch operations." };
   }
 
   const applyable = extractApplyablePatch(patch);

@@ -15,6 +15,12 @@ const DO_NOT_TOUCH_PATTERNS: RegExp[] = [
   /(^|\/)app\/.*\/route\.(tsx?|jsx?)$/,
   /(^|\/)pages\/.*\.(tsx?|jsx?)$/,
   /(^|\/)public\/.*\.(png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf)$/i,
+  /(^|\/)src\/app\/global-error\.(tsx?|jsx?)$/,
+  /(^|\/)app\/global-error\.(tsx?|jsx?)$/,
+  /(^|\/)eslint\.config\.(mjs|cjs|js|ts)$/,
+  /(^|\/)postcss\.config\.(mjs|cjs|js|ts)$/,
+  /(^|\/)tailwind\.config\.(mjs|cjs|js|ts)$/,
+  /(^|\/)instrumentation\.(ts|js)$/,
 ];
 
 const SAFE_CANDIDATE_PATTERNS: RegExp[] = [

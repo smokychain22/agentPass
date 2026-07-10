@@ -175,7 +175,7 @@ function selectedPayload(payload: FindingsPayload, selected: Finding[]): Finding
 
 export async function runFreeCleanupCore(
   payload: FindingsPayload,
-  options?: { findingIds?: string[]; maxFixes?: number }
+  options?: { findingIds?: string[]; maxFixes?: number; workspaceRootDir?: string }
 ): Promise<FreeCleanupResult> {
   const maxFixes = options?.maxFixes ?? FREE_CLEANUP_LIMIT;
   const all = flattenAll(payload);
@@ -293,7 +293,11 @@ export async function runFreeCleanupCore(
 
   const repoUrl =
     payload.repo.url ?? `https://github.com/${payload.repo.owner}/${payload.repo.name}`;
-  const workspace = await prepareRepoWorkspace(repoUrl, payload.repo.branch);
+  const ownsWorkspace = !options?.workspaceRootDir;
+  const workspace = ownsWorkspace
+    ? await prepareRepoWorkspace(repoUrl, payload.repo.branch)
+    : null;
+  const rootDir = options?.workspaceRootDir ?? workspace!.rootDir;
 
   try {
     const structuralPool = selected.filter(
@@ -301,14 +305,14 @@ export async function runFreeCleanupCore(
     );
     const preflightPool = structuralPool.length > 0 ? structuralPool : selected;
     const { findings: repreflighted } = await enrichFindingsWithPreflight(
-      workspace.rootDir,
+      rootDir,
       preflightPool
     );
     const actionableCandidates = repreflighted.filter(isActionableFinding);
     const loopCandidates =
       actionableCandidates.length > 0 ? actionableCandidates : repreflighted;
 
-    const loop = await runOneFixAtATimeLoop(workspace.rootDir, loopCandidates, {
+    const loop = await runOneFixAtATimeLoop(rootDir, loopCandidates, {
       maxFixes,
       maxAttempts: FREE_CANDIDATE_ATTEMPT_LIMIT,
       stateMachine: sm,
@@ -469,6 +473,8 @@ export async function runFreeCleanupCore(
       receipt,
     };
   } finally {
-    await workspace.cleanup();
+    if (ownsWorkspace && workspace) {
+      await workspace.cleanup();
+    }
   }
 }

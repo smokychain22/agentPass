@@ -211,7 +211,7 @@ export function FindingsTab() {
             findings.rawToolReports.madge.status !== "ok") && (
             <FeedbackBanner
               variant="warning"
-              message="Some analyzers used fallback detectors on this runtime. Findings are real and marked by source."
+              message="Native analyzers could not run on this runtime. Fallback findings are conservative estimates and are not eligible for automatic deletion without additional verification."
               dismissible={false}
             />
           )}

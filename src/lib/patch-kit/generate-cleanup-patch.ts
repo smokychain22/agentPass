@@ -49,15 +49,22 @@ export function generateCleanupPatch(safeItems: ClassifiedItem[]): string {
 /** Hard guard: never emit delete operations when there are zero safe candidates. */
 export function finalizeCleanupPatch(
   safeDeleteCount: number,
-  patch: string
+  patch: string,
+  editPatch?: string
 ): string {
-  if (safeDeleteCount === 0) {
+  const merged = editPatch?.trim()
+    ? editPatch.trim()
+    : safeDeleteCount === 0
+      ? EMPTY_CLEANUP_PATCH
+      : patch;
+
+  if (safeDeleteCount === 0 && !editPatch?.trim()) {
     return EMPTY_CLEANUP_PATCH;
   }
-  if (DELETE_MARKERS.some((pattern) => pattern.test(patch)) && safeDeleteCount === 0) {
+  if (DELETE_MARKERS.some((pattern) => pattern.test(patch)) && safeDeleteCount === 0 && !editPatch?.trim()) {
     return EMPTY_CLEANUP_PATCH;
   }
-  return patch;
+  return merged;
 }
 
 export function countPatchLines(patch: string): number {

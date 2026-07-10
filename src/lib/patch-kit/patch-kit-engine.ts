@@ -3,6 +3,9 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 import type { FindingsPayload } from "@/lib/findings/types";
+import { isAutoFixEligible } from "@/lib/cleanup/eligibility";
+import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
+import { QUICK_CLEANUP_RETAINED_FIX_LIMIT } from "@/lib/execution/constants";
 import { classifyFindingsForPatch } from "./safe-delete-classifier";
 import { filterFindingsBySelection } from "./filter-findings";
 import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
@@ -12,6 +15,7 @@ import {
   EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
 import { generateUnifiedDeletePatch } from "./generate-unified-diff";
+import { mergeCleanupPatches } from "./merge-patches";
 import { validateCleanupPatch } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
@@ -95,9 +99,42 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
 
     const safeDeleteCount = deletedPaths.length;
-    const cleanupPatch = finalizeCleanupPatch(safeDeleteCount, rawPatch);
+    const flatFindings = [
+      ...findings.duplicates,
+      ...findings.unused.files,
+      ...findings.unused.dependencies,
+      ...findings.unused.exports,
+      ...findings.orphans,
+      ...findings.slopSignals,
+    ];
+    const supportedFixesDetected = flatFindings.filter(isAutoFixEligible).length;
 
-    const patchValidation = await validateCleanupPatch(repoUrl, branch, cleanupPatch);
+    const cleanupResult = await runFreeCleanupCore(findings, {
+      maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+      workspaceRootDir: workspace.rootDir,
+    });
+    const fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
+    const validatedChanges = cleanupResult.metrics.issuesChanged;
+    const changedPaths = cleanupResult.proof.changedFiles;
+
+    const validatedEdits: Array<{ path: string; content: string }> = [];
+    for (const attempt of cleanupResult.fixLoop.attempts) {
+      if (attempt.status !== "retained") continue;
+      for (const [rel, content] of Object.entries(attempt.modifiedSources ?? {})) {
+        validatedEdits.push({ path: rel, content });
+      }
+    }
+
+    const deletePatch = safeDeleteCount > 0 ? rawPatch : "";
+    const cleanupPatch = finalizeCleanupPatch(
+      safeDeleteCount,
+      deletePatch,
+      fixDiff || undefined
+    );
+    const mergedPatch =
+      deletePatch && fixDiff ? mergeCleanupPatches(deletePatch, fixDiff) : cleanupPatch;
+
+    const patchValidation = await validateCleanupPatch(repoUrl, branch, mergedPatch);
 
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
@@ -110,22 +147,25 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const id = `patchkit_${nanoid(12)}`;
     const summary = {
       safeDeleteCandidates: safeDeleteCount,
+      validatedChanges,
+      supportedFixesDetected,
       rawReviewFindings: findings.summary.reviewRequired,
       reviewFirstItems: buckets.reviewFirst.length,
       doNotTouchItems: buckets.doNotTouch.length,
       packageSuggestions: findings.unused.dependencies.length,
-      patchLines: countPatchLines(cleanupPatch),
+      patchLines: countPatchLines(mergedPatch),
       regressionChecks: checkCount,
       bundleFileCount: BUNDLE_FILE_COUNT,
       patchValidationStatus: patchValidation.status,
       deletedPaths,
+      changedPaths,
     };
 
     const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
 
     const bundle = await generateBundle(findings.repo.name, findings.repo.branch, {
       reportMd,
-      cleanupPatch,
+      cleanupPatch: mergedPatch,
       packageCleanupMd,
       regressionChecklistMd,
       cursorPromptMd,
@@ -144,7 +184,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       patchValidation,
       artifacts: {
         reportMd,
-        cleanupPatch,
+        cleanupPatch: mergedPatch,
         packageCleanupMd,
         regressionChecklistMd,
         cursorPromptMd,
@@ -153,6 +193,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       },
       downloadUrl: `/api/patches/${id}/download`,
       zipBase64: bundle.zipBase64,
+      validatedEdits: validatedEdits.length > 0 ? validatedEdits : undefined,
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename);

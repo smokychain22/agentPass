@@ -161,11 +161,13 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const patchKit = await resolvePatchKit(input, findings);
   const buckets = classifyFindingsForPatch(findings);
   const safePaths = filterOperatorSafeDeletes(buckets.safeDelete.map((item) => item.path));
+  const validatedChanges = patchKit.summary.validatedChanges ?? 0;
+  const validatedEdits = patchKit.validatedEdits ?? [];
 
-  if (mode === "safe_only" && safePaths.length === 0) {
+  if (mode === "safe_only" && validatedChanges === 0 && safePaths.length === 0) {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
-      "No safe cleanup PR created because this repo has no safe candidates. Use report_only mode to create an audit PR.",
+      "No validated cleanup changes to apply. Use report_only mode to create an audit PR.",
       422
     );
   }
@@ -217,6 +219,17 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   }
 
   if (mode === "safe_only") {
+    for (const edit of validatedEdits) {
+      await client.upsertFile(
+        parsed.owner,
+        parsed.repo,
+        edit.path,
+        cleanupBranch,
+        edit.content,
+        `RepoDiet: apply validated cleanup edit to ${edit.path}`
+      );
+    }
+
     for (const path of safePaths) {
       const deleted = await client.deleteFile(
         parsed.owner,
@@ -260,7 +273,8 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
         mode,
         filesDeleted,
         artifactsAdded: artifactEntries.length,
-        safeCandidatesApplied: mode === "safe_only" ? filesDeleted : 0,
+        safeCandidatesApplied:
+          mode === "safe_only" ? validatedEdits.length + filesDeleted : 0,
         reviewFirstSkipped: buckets.reviewFirst.length,
         doNotTouchSkipped: buckets.doNotTouch.length,
       },

@@ -3,6 +3,11 @@ import type { Dirent } from "node:fs";
 import path from "node:path";
 import { IGNORED_DIRS } from "@/lib/scanner/types";
 import { SKIP_EXTENSIONS } from "../types";
+import {
+  isConfigReferencedDependency,
+  isFrameworkProtectedPath,
+  isToolingDependency,
+} from "../framework-protected";
 
 const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const MAX_GRAPH_FILES = 2500;
@@ -36,6 +41,8 @@ async function walkCodeFiles(rootDir: string): Promise<{ rel: string; content: s
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (!CODE_EXT.has(ext) || SKIP_EXTENSIONS.has(ext)) continue;
+        const rel = relative.replace(/\\/g, "/");
+        if (isFrameworkProtectedPath(rel)) continue;
         try {
           const content = await fs.readFile(full, "utf8");
           out.push({ rel: relative.replace(/\\/g, "/"), content });
@@ -272,6 +279,7 @@ async function detectUnusedDependencies(
   const unused: string[] = [];
 
   for (const dep of Object.keys(allDeps)) {
+    if (isToolingDependency(dep) || isConfigReferencedDependency(dep, pkg)) continue;
     const patterns = [
       `from '${dep}'`,
       `from "${dep}"`,

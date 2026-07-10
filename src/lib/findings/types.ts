@@ -121,6 +121,7 @@ export interface FindingsPayload {
     projects: Array<Record<string, unknown>>;
     workspaces: string[];
     monorepoTool?: string | null;
+    primaryProjectRoot?: string;
   };
   rawToolReports: {
     knip: ToolRunReport;

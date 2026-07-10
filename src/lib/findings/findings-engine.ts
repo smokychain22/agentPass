@@ -10,6 +10,16 @@ import { buildSummaryFromFindings } from "./stats";
 import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
 import { enrichFindingsWithPreflight } from "./enrich-preflight";
 import { countActionableFindings } from "./actionability-signals";
+import {
+  deduplicateCanonicalFindings,
+  filterFindingsToPrimaryRoot,
+  rebuildFindingsPayload,
+} from "./canonical-findings";
+import {
+  classifyProjectRoots,
+  projectRootPrefixes,
+  selectPrimaryProjectRoot,
+} from "@/lib/repository-model/primary-root";
 import type { FindingsPayload, Finding } from "./types";
 import type { FindingsJobStage } from "@/lib/jobs/types";
 
@@ -37,7 +47,7 @@ export async function runFindingsEngine(
   try {
     onStage?.("extracting");
     onStage?.("framework_detection");
-    const { buildRepositoryModel, projectSummary } = await import("@/lib/repository-model/project-graph");
+    const { buildRepositoryModel } = await import("@/lib/repository-model/project-graph");
     const repositoryModel = await buildRepositoryModel(workspace.rootDir);
 
     const scanId = `scan_${nanoid(12)}`;
@@ -101,6 +111,18 @@ export async function runFindingsEngine(
       orphans: remap(payload.orphans),
       slopSignals: remap(payload.slopSignals),
     };
+
+    let canonicalFlat = deduplicateCanonicalFindings(
+      flattenPayloadFindings(payload),
+      repositoryModel
+    );
+    const primaryRoot = selectPrimaryProjectRoot(repositoryModel);
+    const mirrorPrefixes = projectRootPrefixes(repositoryModel);
+    if (mirrorPrefixes.length > 0) {
+      canonicalFlat = filterFindingsToPrimaryRoot(canonicalFlat, primaryRoot, mirrorPrefixes);
+    }
+    payload = rebuildFindingsPayload(payload, canonicalFlat);
+
     payload.summary = {
       ...buildSummaryFromFindings(flattenPayloadFindings(payload)),
       actionableFixes: countActionableFindings(flattenPayloadFindings(payload)),
@@ -108,9 +130,17 @@ export async function runFindingsEngine(
     };
 
     payload.repositoryModel = {
-      projects: projectSummary(repositoryModel),
+      projects: classifyProjectRoots(repositoryModel).map((p) => ({
+        packageName: p.packageName,
+        projectRoot: p.relativePath || ".",
+        framework: p.framework,
+        runtimeTarget: p.runtimeTarget,
+        workspaceMember: p.workspaceMember ?? false,
+        role: p.role,
+      })),
       workspaces: repositoryModel.workspaces,
       monorepoTool: repositoryModel.monorepoTool,
+      primaryProjectRoot: primaryRoot || ".",
     };
 
     onStage?.("complete");

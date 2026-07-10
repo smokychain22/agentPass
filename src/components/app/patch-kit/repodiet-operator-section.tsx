@@ -125,6 +125,7 @@ export function RepoDietOperatorSection({
   const [summaryCopied, setSummaryCopied] = useState(false);
 
   const safeCount = patchKit?.summary.safeDeleteCandidates ?? 0;
+  const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
   const locked = !findings || !patchKit;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const githubAccountConnected = Boolean(githubStatus?.connected);
@@ -136,7 +137,7 @@ export function RepoDietOperatorSection({
     Boolean(preflight?.canCreatePullRequest);
   const canCreateSafePr =
     canCreateReportPr &&
-    safeCount > 0 &&
+    validatedChanges > 0 &&
     patchValidated;
 
   const githubReturnError = githubErrorMessage(
@@ -447,15 +448,25 @@ export function RepoDietOperatorSection({
               )}
             </InfoCard>
 
-            <InfoCard title="Safe Candidates">
-              <p className="font-mono text-2xl font-semibold text-signal">{safeCount}</p>
-              {safeCount > 0 && patchValidated ? (
+            <InfoCard title="Validated Changes">
+              <p className="font-mono text-2xl font-semibold text-signal">{validatedChanges}</p>
+              {validatedChanges > 0 && patchValidated ? (
                 <p className="text-signal">Ready to create cleanup PR.</p>
-              ) : safeCount > 0 ? (
-                <p>Patch bundle must pass validation before cleanup PR.</p>
+              ) : patchKit?.summary.supportedFixesDetected ? (
+                <p>
+                  {patchKit.summary.supportedFixesDetected} supported fix(es) detected;{" "}
+                  {validatedChanges > 0
+                    ? "patch validation must pass before cleanup PR."
+                    : "none validated yet."}
+                </p>
               ) : (
                 <p>Safe cleanup PR unavailable. Create a report-only PR instead.</p>
               )}
+            </InfoCard>
+
+            <InfoCard title="File Deletions">
+              <p className="font-mono text-2xl font-semibold text-muted-foreground">{safeCount}</p>
+              <p>Conservative delete-only candidates (archive/backup paths).</p>
             </InfoCard>
 
             <InfoCard title="PR Safety Policy">
@@ -502,10 +513,11 @@ export function RepoDietOperatorSection({
             </details>
           )}
 
-          {safeCount === 0 && (
+          {validatedChanges === 0 && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
-              No safe candidates found. RepoDiet can create a report-only PR with cleanup artifacts
-              instead.
+              {patchKit?.summary.supportedFixesDetected
+                ? `RepoDiet detected ${patchKit.summary.supportedFixesDetected} supported fix(es), but none passed validation yet. You can create a report-only PR with cleanup artifacts.`
+                : "No validated code changes were generated. RepoDiet can create a report-only PR with cleanup artifacts instead."}
             </div>
           )}
 

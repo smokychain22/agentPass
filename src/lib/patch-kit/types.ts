@@ -16,6 +16,8 @@ export interface PatchKitRepo {
 
 export interface PatchKitSummary {
   safeDeleteCandidates: number;
+  validatedChanges: number;
+  supportedFixesDetected: number;
   rawReviewFindings: number;
   reviewFirstItems: number;
   doNotTouchItems: number;
@@ -25,6 +27,7 @@ export interface PatchKitSummary {
   bundleFileCount: number;
   patchValidationStatus?: "passed" | "failed" | "skipped";
   deletedPaths?: string[];
+  changedPaths?: string[];
 }
 
 export interface PatchKitArtifacts {
@@ -48,6 +51,7 @@ export interface PatchKitPayload {
   artifacts: PatchKitArtifacts;
   downloadUrl: string;
   zipBase64?: string;
+  validatedEdits?: Array<{ path: string; content: string }>;
 }
 
 export interface PatchKitRepoContext {

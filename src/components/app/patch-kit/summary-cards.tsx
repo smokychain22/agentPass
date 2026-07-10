@@ -12,9 +12,21 @@ const cards: {
   getValue: (s: PatchKitSummary) => number;
 }[] = [
   {
+    key: "validatedChanges",
+    title: "Validated changes",
+    explanation: "Deterministic code edits that passed patch validation (imports, edits, deletions).",
+    getValue: (s) => s.validatedChanges ?? 0,
+  },
+  {
+    key: "supportedFixesDetected",
+    title: "Supported fixes",
+    explanation: "Findings with deterministic transformers available (before validation).",
+    getValue: (s) => s.supportedFixesDetected ?? 0,
+  },
+  {
     key: "safeDeleteCandidates",
-    title: "Safe candidates",
-    explanation: "Unique files eligible for conservative cleanup.patch entries.",
+    title: "File deletions",
+    explanation: "Conservative delete-only paths (archive/backup style).",
     getValue: (s) => s.safeDeleteCandidates,
   },
   {

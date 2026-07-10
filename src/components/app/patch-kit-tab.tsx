@@ -118,9 +118,13 @@ export function PatchKitTab() {
       {Toast}
 
       <WorkspaceSection
-        label="Paid cleanup"
+        label="Cleanup eligibility"
         title="Quick Cleanup"
-        description="Select safe-candidate findings, then run up to five supported fixes with validated diffs and verification."
+        description={
+          patchKit?.summary.supportedFixesDetected
+            ? `${patchKit.summary.supportedFixesDetected} supported fix(es) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
+            : "RepoDiet applies up to five supported deterministic fixes with validated diffs and verification."
+        }
         actions={
           <>
             <Button onClick={generate} disabled={isLoading || isRateLimited}>
@@ -195,12 +199,20 @@ export function PatchKitTab() {
               variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
               message={
                 patchKit.patchValidation.status === "passed"
-                  ? `Patch validated with git apply --check (${patchKit.summary.safeDeleteCandidates} file deletions).`
+                  ? `Patch validated with git apply --check (${patchKit.summary.validatedChanges} change(s), ${patchKit.summary.safeDeleteCandidates} file deletion(s)).`
                   : `Patch validation: ${patchKit.patchValidation.status}${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}`
               }
               dismissible={false}
             />
           )}
+          {patchKit.summary.validatedChanges === 0 &&
+            patchKit.summary.supportedFixesDetected > 0 && (
+              <FeedbackBanner
+                variant="warning"
+                message={`${patchKit.summary.supportedFixesDetected} supported fix(es) were detected, but none were validated for this run. Review findings or retry Quick Cleanup.`}
+                dismissible={false}
+              />
+            )}
           <PatchKitSummaryCards summary={patchKit.summary} />
           <SafetyPolicyCard />
           <PatchKitWorkspace
