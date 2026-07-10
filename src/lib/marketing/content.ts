@@ -538,16 +538,48 @@ export const PRICING_TIERS = [
 export const OKX_DEMO_FLOW = [
   "Paste a public GitHub repository and scan",
   "Run Findings Engine — evidence-backed risk buckets",
-  "Fix One Safe Issue Free — real diff + verification",
-  "Run Quick Cleanup — up to five supported fixes",
+  "Fix One Safe Issue Free — real diff + verification with proof ladder counts",
+  "Run Quick Cleanup — deterministic transformers with auditable stages",
   "Create Verified Cleanup PR on a demo repository",
-  "Agent pays via x402 and receives signed execution receipt",
+  "Agent calls A2MCP tools and receives cleanupProof with PR URL and signed receipt",
 ];
 
 export const OKX_A2A_SERVICE = {
   name: "RepoDiet Operator — Create a safe cleanup PR for my AI-built repo",
   description:
     "RepoDiet Operator scans an AI-built JavaScript/TypeScript repo, classifies cleanup risk, creates a safe cleanup branch, applies only safe candidate removals, adds cleanup artifacts, and opens a GitHub PR for review. It never pushes to main, never merges PRs, and protects routes, configs, env files, lockfiles, API handlers, and public assets.",
+};
+
+export const OKX_JUDGE_PITCH = {
+  headline: "Autonomous repository repair for AI-built codebases",
+  problem:
+    "AI coding tools help teams ship faster but leave duplicate logic, dead files, unused dependencies, and abandoned modules behind. General coding agents can fix these issues when explicitly prompted — but they require judgment, prompt engineering, and manual Git workflow.",
+  differentiation:
+    "RepoDiet is a vertical cleanup operator — not a horizontal coding agent. Connect a repository and RepoDiet automatically detects evidence-backed debt, applies deterministic transformations, verifies the repository, and delivers a review-ready pull request without cleanup prompts.",
+  proofContract:
+    "Every action moves through an auditable proof ladder: Detected → Eligible → Attempted → Generated → Validated → Verified → Delivered. Numbers come from backend execution, not scan-time estimates.",
+  vsAgents: [
+    "Cursor, Claude Code, and Codex can edit repositories — but users must instruct each cleanup step and manage safety.",
+    "Sonar, Knip, and jscpd mostly detect — RepoDiet removes imports, deletes confirmed dead files, uninstalls packages, and opens PRs.",
+    "Code-review bots inspect new changes — RepoDiet cleans accumulated repository debt and can prevent it from returning.",
+  ],
+  agentUtility:
+    "A2MCP tools expose the same engine as the web app: scan_repository, generate_cleanup_patch, verify_cleanup, create_cleanup_pr. Agents pay for verified outcomes — diffs, verification logs, and PR URLs — not reports.",
+  demoProof: [
+    "Unused import removed with exact diff",
+    "Stale backup file deleted",
+    "Unused dependency removed from package.json and lockfile",
+    "Protected Next.js route left untouched",
+    "Typecheck, lint, and build passed on modified copy",
+    "Cleanup PR opened on repodiet/cleanup-* branch — main untouched",
+  ],
+};
+
+export const OKX_COMPETITIVE_POSITION = {
+  nearDirect: "5–10 products (e.g. Slopfix, Moderne) overlap with repository cleanup and modernization.",
+  adjacent: "40–70 tools cover parts of the workflow — static analyzers, review bots, and general coding agents.",
+  repodietCategory:
+    "Dependabot for repository bloat + Sonar for AI-generated debt + a deterministic cleanup agent — continuous hygiene, not one-off scans.",
 };
 
 export const SAFETY_POLICY_PUBLIC = [

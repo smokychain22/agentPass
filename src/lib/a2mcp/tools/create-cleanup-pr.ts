@@ -4,6 +4,7 @@ import {
   createCleanupPullRequest,
   createExecutionReceipt,
 } from "@/lib/execution";
+import { buildCleanupProof, formatProofLadderSummary } from "@/lib/execution/proof-ladder";
 import {
   hashPatchContent,
   hashVerification,
@@ -36,9 +37,31 @@ export async function executeCreateCleanupPr(body: unknown) {
   const signedReceipt = createExecutionReceipt(receipt);
   await saveExecutionReceiptRecord(signedReceipt);
 
+  const patchKit = input.patchKit as PatchKitPayload | undefined;
+  const pullRequestUrl = result.data.pullRequest.url;
+  const cleanupProof =
+    patchKit?.cleanupProof ??
+    (patchKit?.summary
+      ? buildCleanupProof({
+          findings: patchKit.artifacts.findingsJson,
+          summary: patchKit.summary,
+          verificationStatus:
+            patchKit.patchValidation?.status === "passed" ? "passed" : "partial",
+          pullRequestUrl,
+        })
+      : undefined);
+
   return {
     data: {
       ...result.data,
+      scanId: patchKit?.scanId ?? patchKit?.artifacts.findingsJson.scanId,
+      commitSha: baseCommitSha,
+      pullRequestUrl,
+      cleanupProof: cleanupProof
+        ? { ...cleanupProof, pullRequestUrl, verificationStatus: "passed" as const }
+        : undefined,
+      proofLadder: cleanupProof?.ladder,
+      outcomeSummary: cleanupProof ? formatProofLadderSummary(cleanupProof.ladder) : undefined,
       signedReceipt,
     },
     warnings: result.warnings,

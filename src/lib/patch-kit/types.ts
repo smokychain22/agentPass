@@ -56,6 +56,8 @@ export interface PatchKitSummary {
   changedPaths?: string[];
   blockerBreakdown?: Partial<Record<BlockerCode, number>>;
   blockerSummary?: string;
+  detectedSignals?: number;
+  proofLadder?: import("@/lib/execution/proof-ladder").ProofLadderCounts;
 }
 
 export interface PatchKitArtifacts {
@@ -93,6 +95,7 @@ export interface PatchKitPayload {
   zipBase64?: string;
   validatedEdits?: Array<{ path: string; content: string }>;
   changeManifest?: ChangeManifestEntry[];
+  cleanupProof?: import("@/lib/execution/proof-ladder").CleanupProof;
 }
 
 export interface PatchKitRepoContext {

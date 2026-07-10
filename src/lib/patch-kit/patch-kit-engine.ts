@@ -37,11 +37,14 @@ import { generateReport } from "./generate-report";
 import { buildPatchkitSummaryJson, generateBundle } from "./generate-bundle";
 import { storePatchKit } from "./patch-kit-store";
 import { supportedTransformerFor } from "@/lib/workflow/lifecycle";
+import { buildCleanupProof, buildProofLadderCounts } from "@/lib/execution/proof-ladder";
+import { countDiffLines } from "@/lib/execution/one-fix-at-a-time";
 import type {
   ChangeManifestEntry,
   PatchKitGenerateBody,
   PatchKitPayload,
   PatchKitRepoContext,
+  PatchKitSummary,
   TransformerResult,
 } from "./types";
 
@@ -322,13 +325,15 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const reportMd = generateReport(findings, buckets, context);
 
     const attemptStats = summarizeCleanupAttempts(candidateAudits);
+    const { added: linesAdded, removed: linesRemoved } = countDiffLines(mergedPatch);
 
     const id = `patchkit_${nanoid(12)}`;
-    const summary = {
+    const summary: PatchKitSummary = {
       safeDeleteCandidates: safeDeleteCount,
       supportedFixesDetected: transformerCompatible,
       transformerCompatible,
       dryRunPassed,
+      detectedSignals: findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? 0,
       eligibleFindings: attemptStats.eligible,
       attemptedTransformations: attemptStats.attempted,
       noopTransformations: attemptStats.noop,
@@ -353,6 +358,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       blockerBreakdown,
       blockerSummary,
     };
+
+    summary.proofLadder = buildProofLadderCounts({ findings, summary });
 
     const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
 
@@ -410,6 +417,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       zipBase64: bundle.zipBase64,
       validatedEdits: validatedEdits.length > 0 ? validatedEdits : undefined,
       changeManifest,
+      cleanupProof: buildCleanupProof({
+        findings,
+        summary,
+        patchLines: { added: linesAdded, removed: linesRemoved },
+        verificationStatus: "pending",
+      }),
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);

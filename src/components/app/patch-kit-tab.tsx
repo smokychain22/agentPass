@@ -17,6 +17,7 @@ import { RateLimitHttpError } from "@/lib/jobs/client";
 import type { RateLimitSnapshot } from "@/lib/security/rate-limit";
 import { useRateLimitCooldown } from "@/hooks/use-rate-limit-cooldown";
 import { PatchKitSummaryCards } from "./patch-kit/summary-cards";
+import { ProofLadderPanel } from "./patch-kit/proof-ladder-panel";
 import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
@@ -258,6 +259,9 @@ export function PatchKitTab() {
                 dismissible={false}
               />
             )}
+          {patchKit.summary.proofLadder && (
+            <ProofLadderPanel ladder={patchKit.summary.proofLadder} />
+          )}
           <PatchKitSummaryCards summary={patchKit.summary} />
           {patchKit.candidateAudits && patchKit.candidateAudits.length > 0 && (
             <CandidateAuditTable audits={patchKit.candidateAudits} />

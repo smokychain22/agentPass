@@ -15,7 +15,9 @@ import {
   A2MCP_TOOLS_HIGHLIGHT,
   AGENT_API_PRICING,
   OKX_A2A_SERVICE,
+  OKX_COMPETITIVE_POSITION,
   OKX_DEMO_FLOW,
+  OKX_JUDGE_PITCH,
   PRICING_TIERS,
 } from "@/lib/marketing/content";
 import { CopyButton } from "./copy-button";
@@ -148,6 +150,45 @@ export function OkxPageContent() {
               </Badge>
             ))}
           </div>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="text-lg font-semibold">Why RepoDiet wins on outcomes</h2>
+          <Card className="mt-4 border-electric/20 bg-electric/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{OKX_JUDGE_PITCH.headline}</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground leading-relaxed space-y-4">
+              <p>{OKX_JUDGE_PITCH.problem}</p>
+              <p>{OKX_JUDGE_PITCH.differentiation}</p>
+              <p className="font-medium text-foreground">{OKX_JUDGE_PITCH.proofContract}</p>
+              <ul className="space-y-2">
+                {OKX_JUDGE_PITCH.vsAgents.map((item) => (
+                  <li key={item} className="flex gap-2">
+                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-electric" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <p>{OKX_JUDGE_PITCH.agentUtility}</p>
+              <div>
+                <p className="mb-2 font-medium text-foreground">Live demo proof points</p>
+                <ul className="space-y-1">
+                  {OKX_JUDGE_PITCH.demoProof.map((item) => (
+                    <li key={item} className="flex gap-2">
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Market context: {OKX_COMPETITIVE_POSITION.nearDirect}{" "}
+            {OKX_COMPETITIVE_POSITION.adjacent} RepoDiet owns{" "}
+            {OKX_COMPETITIVE_POSITION.repodietCategory}
+          </p>
         </section>
 
         <section className="mt-12">
