@@ -69,6 +69,13 @@ async function run() {
     }
   });
 
+  await test("x402 beta mode does not block browser patch requests", async () => {
+    const x402Path = path.join(ROOT, "src/lib/payment/x402.ts");
+    const source = fs.readFileSync(x402Path, "utf8");
+    assert.match(source, /REQUIRE_REAL_X402/);
+    assert.match(source, /Beta\/demo deployment/);
+  });
+
   if (process.env.REPODIET_TEST_OFFLINE === "1") {
     console.log("\nOffline mode — skipping HTTP integration tests.");
     console.log("\nAll offline tests passed.");

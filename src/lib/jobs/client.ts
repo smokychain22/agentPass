@@ -74,7 +74,6 @@ export async function startJob(
   return json.jobId;
 }
 
-/** Start job; returns result immediately when POST runs synchronously (production). */
 export async function startJobOrResult<T>(
   endpoint: string,
   body: Record<string, unknown>
@@ -85,7 +84,21 @@ export async function startJobOrResult<T>(
     body: JSON.stringify(body),
   });
 
-  const json = (await res.json()) as JobPollResponse<T> & { success: boolean };
+  const json = (await res.json()) as JobPollResponse<T> & {
+    success: boolean;
+    error?: string;
+    x402Version?: number;
+  };
+
+  if (res.status === 402 || json.x402Version) {
+    throw new Error(
+      "Payment required for patch bundle generation. x402 settlement is not enabled on this deployment yet — contact support or retry after payment is configured."
+    );
+  }
+
+  if (!res.ok && !json.jobId) {
+    throw new Error(json.error ?? `Request failed (${res.status}).`);
+  }
 
   if (!json.jobId) {
     throw new Error(json.error ?? "Failed to start job.");

@@ -66,9 +66,13 @@ export function PatchKitTab() {
       setPatchKit(result);
       show("success", "Patch bundle generated");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Patch kit generation failed.";
+      const raw = err instanceof Error ? err.message : "Patch kit generation failed.";
+      const isPayment = raw.toLowerCase().includes("payment");
+      const msg = isPayment
+        ? "Patch bundle generation requires x402 payment on this deployment."
+        : raw;
       setError(msg);
-      show("error", "Patch kit generation failed");
+      show("error", isPayment ? "Payment required" : "Patch kit generation failed");
     }
   }, [findings, session, setPatchKit, show, selectedFindingIds]);
 
@@ -147,8 +151,16 @@ export function PatchKitTab() {
 
       {error && (
         <ErrorState
-          title="Patch kit generation failed"
-          message="Findings are still available. Retry bundle generation."
+          title={
+            error.toLowerCase().includes("payment")
+              ? "Payment required"
+              : "Patch kit generation failed"
+          }
+          message={
+            error.toLowerCase().includes("payment")
+              ? "Patch bundle generation is a paid step when x402 is enabled. On the public beta deployment this should be free — retry after the latest deploy, or use the demo repository."
+              : "Findings are still available. Retry bundle generation."
+          }
           technicalDetail={error}
           actions={[{ label: "Retry", onClick: generate }]}
         />
