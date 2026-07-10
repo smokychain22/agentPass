@@ -5,6 +5,7 @@ import {
   createInstallationAccessToken,
   getInstallationDetails,
   installationIncludesRepository,
+  installationIncludesRepositoryWithRetry,
 } from "./installations";
 import { isGitHubAppConfigured } from "./config";
 import { readInstallationSession } from "./session";
@@ -92,6 +93,16 @@ export async function runGitHubPreflight(
       owner,
       repo
     );
+
+    if (!repositoryAccessible && session) {
+      const retried = await installationIncludesRepositoryWithRetry(
+        session.installationId,
+        owner,
+        repo,
+        { attempts: 3, delayMs: 1000 }
+      );
+      repositoryAccessible = retried.granted;
+    }
 
     if (repositoryAccessible && permissionsVerified) {
       try {

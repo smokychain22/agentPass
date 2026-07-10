@@ -1,6 +1,7 @@
 import { createGitHubAppJwt } from "./jwt";
 import type { GitHubInstallationSession, InstallationTokenResult } from "./types";
 import { getInstallationOctokit } from "./octokit";
+import { repositoryFullNameInList } from "./repository-match";
 
 export async function createInstallationAccessToken(
   installationId: number
@@ -125,7 +126,15 @@ export async function listInstallationAccessibleRepos(
     const repos = await octokit.paginate(octokit.rest.apps.listReposAccessibleToInstallation, {
       per_page: 100,
     });
-    return repos.map((r) => `${r.owner?.login}/${r.name}`).filter(Boolean);
+    return repos
+      .map((entry) => {
+        if (entry.full_name) return entry.full_name;
+        if (entry.owner?.login && entry.name) {
+          return `${entry.owner.login}/${entry.name}`;
+        }
+        return "";
+      })
+      .filter(Boolean);
   } catch {
     return [];
   }
@@ -136,8 +145,38 @@ export async function installationIncludesRepository(
   owner: string,
   repo: string
 ): Promise<boolean> {
-  const hasDirect = await installationHasRepoAccess(installationId, owner, repo);
-  if (hasDirect) return true;
   const repos = await listInstallationAccessibleRepos(installationId);
-  return repos.includes(`${owner}/${repo}`);
+  if (repositoryFullNameInList(repos, owner, repo)) {
+    return true;
+  }
+  return installationHasRepoAccess(installationId, owner, repo);
+}
+
+export async function installationIncludesRepositoryWithRetry(
+  installationId: number,
+  owner: string,
+  repo: string,
+  options?: { attempts?: number; delayMs?: number }
+): Promise<{ granted: boolean; accessibleRepos: string[] }> {
+  const attempts = options?.attempts ?? 6;
+  const delayMs = options?.delayMs ?? 2000;
+  let accessibleRepos: string[] = [];
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    accessibleRepos = await listInstallationAccessibleRepos(installationId);
+    if (repositoryFullNameInList(accessibleRepos, owner, repo)) {
+      return { granted: true, accessibleRepos };
+    }
+
+    const hasDirect = await installationHasRepoAccess(installationId, owner, repo);
+    if (hasDirect) {
+      return { granted: true, accessibleRepos };
+    }
+
+    if (attempt < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return { granted: false, accessibleRepos };
 }

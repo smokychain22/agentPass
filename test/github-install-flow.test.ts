@@ -349,6 +349,18 @@ async function run() {
     assert.doesNotThrow(() => assertClientGitHubInstallRedirectUrl(url, "configure"));
   });
 
+  await test("repository full names match case-insensitively", async () => {
+    const { repositoryFullNameInList } = await import("../src/lib/github-app/repository-match");
+    assert.equal(
+      repositoryFullNameInList(
+        ["ibrahimmovic/circle-arc-net", "other/repo"],
+        "Ibrahimmovic",
+        "Circle-Arc-Net"
+      ),
+      true
+    );
+  });
+
   await test("repository full name parser", () => {
     const parsed = parseRepositoryFullName("Ibrahimmovic/Circle-Arc-Net");
     assert.equal(parsed.owner, "Ibrahimmovic");

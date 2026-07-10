@@ -12,7 +12,7 @@ import {
 } from "@/lib/github-app/install-flow";
 import {
   fetchInstallationSession,
-  installationIncludesRepository,
+  installationIncludesRepositoryWithRetry,
 } from "@/lib/github-app/installations";
 import { saveRepoInstallBinding, type InstallFlowRecord } from "@/lib/github-app/install-flow-store";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
@@ -34,6 +34,18 @@ function redirectWithError(
   return NextResponse.redirect(url.toString());
 }
 
+function redirectWithSuccess(
+  returnPath: string | undefined,
+  scanId: string | undefined,
+  params: Record<string, string>
+): NextResponse {
+  const url = resolveRepodietReturnUrl(returnPath, scanId);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return NextResponse.redirect(url.toString());
+}
+
 async function resolveFlowRecord(
   stateToken: string,
   sessionKey: string
@@ -50,17 +62,6 @@ async function resolveFlowRecord(
   }
 
   return primary;
-}
-
-async function repositoryAccessWithRetry(
-  installationId: number,
-  owner: string,
-  repo: string
-): Promise<boolean> {
-  const first = await installationIncludesRepository(installationId, owner, repo);
-  if (first) return true;
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  return installationIncludesRepository(installationId, owner, repo);
 }
 
 export async function GET(request: NextRequest) {
@@ -109,14 +110,11 @@ export async function GET(request: NextRequest) {
       await clearInstallSessionId();
       await clearPendingInstallCookie();
 
-      const returnUrl = resolveRepodietReturnUrl(
-        pending?.returnPath,
-        pending?.scanId
-      );
-      returnUrl.searchParams.set("github", "connected");
-      returnUrl.searchParams.set("setup_action", setupAction);
-      returnUrl.searchParams.set("github_recovered", "installation_only");
-      return NextResponse.redirect(returnUrl.toString());
+      return redirectWithSuccess(pending?.returnPath, pending?.scanId, {
+        github: "connected",
+        setup_action: setupAction,
+        github_recovered: "installation_only",
+      });
     } catch {
       await clearPendingInstallCookie();
       return redirectWithError(code, pending?.returnPath, pending?.scanId);
@@ -128,7 +126,7 @@ export async function GET(request: NextRequest) {
   try {
     const session = await fetchInstallationSession(installationId);
     const ownerMatches = githubOwnersMatch(session.accountLogin, flow.owner);
-    const hasAccess = await repositoryAccessWithRetry(
+    const access = await installationIncludesRepositoryWithRetry(
       installationId,
       flow.owner,
       flow.repo
@@ -142,7 +140,9 @@ export async function GET(request: NextRequest) {
       targetRepo: flow.repo,
       installationOwner: session.accountLogin,
       ownerMatches,
-      hasAccess,
+      hasAccess: access.granted,
+      accessibleRepoCount: access.accessibleRepos.length,
+      accessibleReposSample: access.accessibleRepos.slice(0, 5),
       stateLength: stateToken.length,
     });
 
@@ -154,7 +154,9 @@ export async function GET(request: NextRequest) {
     await saveInstallationSession(session);
     await clearInstallSessionId();
 
-    if (!hasAccess) {
+    const trustUpdateCallback = setupAction === "update";
+
+    if (!access.granted && !trustUpdateCallback) {
       await consumeInstallFlowState(stateToken);
       return redirectWithError("repo_not_granted", flow.returnPath, flow.scanId);
     }
@@ -171,10 +173,15 @@ export async function GET(request: NextRequest) {
 
     await consumeInstallFlowState(stateToken);
 
-    const returnUrl = resolveRepodietReturnUrl(flow.returnPath, flow.scanId);
-    returnUrl.searchParams.set("github", "connected");
-    returnUrl.searchParams.set("setup_action", setupAction);
-    return NextResponse.redirect(returnUrl.toString());
+    const successParams: Record<string, string> = {
+      github: "connected",
+      setup_action: setupAction,
+    };
+    if (!access.granted && trustUpdateCallback) {
+      successParams.github_repo_pending = "true";
+    }
+
+    return redirectWithSuccess(flow.returnPath, flow.scanId, successParams);
   } catch (err) {
     console.error("[github-install-complete] setup failed", {
       installationId,

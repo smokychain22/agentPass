@@ -190,8 +190,9 @@ export function RepoDietOperatorSection({
       searchParams.get("github") === "connected" ||
       searchParams.get("github_connected") === "true";
     const githubRecovered = searchParams.get("github_recovered") === "installation_only";
+    const githubRepoPending = searchParams.get("github_repo_pending") === "true";
 
-    if (!githubConnected && !githubRecovered) return;
+    if (!githubConnected && !githubRecovered && !githubRepoPending) return;
 
     void refreshGitHubStatus()
       .then(() => runPreflight())
@@ -200,6 +201,7 @@ export function RepoDietOperatorSection({
         params.delete("github");
         params.delete("github_connected");
         params.delete("github_recovered");
+        params.delete("github_repo_pending");
         params.delete("setup_action");
         const qs = params.toString();
         router.replace(qs ? `/app?${qs}` : "/app?tab=patch", { scroll: false });
