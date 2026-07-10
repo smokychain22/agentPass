@@ -15,6 +15,7 @@ export interface PatchKitRepo {
 
 export interface PatchKitSummary {
   safeDeleteCandidates: number;
+  rawReviewFindings: number;
   reviewFirstItems: number;
   doNotTouchItems: number;
   packageSuggestions: number;

@@ -87,6 +87,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
   const id = `patchkit_${nanoid(12)}`;
   const summary = {
     safeDeleteCandidates: safeDeleteCount,
+    rawReviewFindings: findings.summary.reviewRequired,
     reviewFirstItems: buckets.reviewFirst.length,
     doNotTouchItems: buckets.doNotTouch.length,
     packageSuggestions: findings.unused.dependencies.length,

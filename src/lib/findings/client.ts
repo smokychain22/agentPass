@@ -91,7 +91,13 @@ export const CLEANUP_PROMPT_PREFIX =
 
 export function buildCleanupPrompt(payload: FindingsPayload): string {
   const s = payload.summary;
+  const safeLine =
+    s.safeCandidates === 0
+      ? "Safe candidates are 0, so do not generate delete operations yet. Only propose a review plan and group findings by safest-first cleanup order."
+      : "Start with safe candidates only, then review remaining items separately.";
+
   return `${CLEANUP_PROMPT_PREFIX}
+${safeLine}
 
 Repository: ${payload.repo.owner}/${payload.repo.name} (${payload.repo.branch})
 Scan ID: ${payload.scanId}
@@ -103,7 +109,7 @@ Summary:
 - Unused exports: ${s.unusedExports}
 - Orphan patterns: ${s.orphanPatterns}
 - AI-slop signals: ${s.slopSignals}
-- Review required: ${s.reviewRequired}
+- Raw review findings: ${s.reviewRequired}
 - Safe candidates: ${s.safeCandidates}
 
 Tools: knip=${payload.rawToolReports.knip}, jscpd=${payload.rawToolReports.jscpd}, madge=${payload.rawToolReports.madge}`;

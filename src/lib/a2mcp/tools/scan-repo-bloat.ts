@@ -55,6 +55,8 @@ export async function executeScanRepoBloat(body: unknown) {
         orphanPatterns: findings.summary.orphanPatterns,
         aiSlopSignals: findings.summary.slopSignals,
         safeCandidates: buckets.safeDelete.length,
+        rawReviewFindings: findings.summary.reviewRequired,
+        uniqueReviewItems: buckets.reviewFirst.length,
         reviewFirst: buckets.reviewFirst.length,
         doNotTouch: buckets.doNotTouch.length,
       },

@@ -13,8 +13,8 @@ const buckets = [
   },
   {
     key: "reviewFirst" as const,
-    title: "Review First",
-    description: "Needs human or agent review before patching.",
+    title: "Raw Review Findings",
+    description: "Raw findings that need review before cleanup (finding-level count).",
     accent: "border-electric/30 bg-electric/5",
     titleColor: "text-electric",
   },

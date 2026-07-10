@@ -41,9 +41,9 @@ const cards: {
   },
   {
     key: "reviewRequired",
-    title: "Review Required",
-    explanation: "Findings that need human or agent review before patching.",
-    status: (n) => `${n} item${n === 1 ? "" : "s"} in review queue`,
+    title: "Raw Review Findings",
+    explanation: "Raw findings that need review before cleanup.",
+    status: (n) => `${n} raw finding${n === 1 ? "" : "s"} flagged for review`,
   },
 ];
 

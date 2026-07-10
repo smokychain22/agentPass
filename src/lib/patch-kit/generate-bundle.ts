@@ -64,6 +64,13 @@ export function buildPatchkitSummaryJson(
       generatedAt: new Date().toISOString(),
       repo,
       summary,
+      countSemantics: {
+        rawReviewFindings:
+          "Total findings flagged review_first before path deduplication.",
+        uniqueReviewItems:
+          "Deduplicated files/packages documented for patch review.",
+        doNotTouchItems: "Protected framework, config, route, and runtime paths.",
+      },
       artifacts: [...BUNDLE_ARTIFACT_FILES],
       bundleFileCount: BUNDLE_ARTIFACT_FILES.length,
     },

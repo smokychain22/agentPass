@@ -50,8 +50,15 @@ export function generateReport(
 - Orphan patterns: ${findings.summary.orphanPatterns}
 - AI-slop signals: ${findings.summary.slopSignals}
 - Safe candidates: ${buckets.safeDelete.length}
-- Review first: ${buckets.reviewFirst.length}
-- Do not touch: ${buckets.doNotTouch.length}
+- Raw review findings: ${findings.summary.reviewRequired}
+- Unique review items: ${buckets.reviewFirst.length}
+- Do not touch protected items: ${buckets.doNotTouch.length}
+
+## Count semantics
+
+- **Raw review findings** — total findings flagged \`review_first\` before path deduplication.
+- **Unique review items** — deduplicated files/packages documented for patch review.
+- **Do not touch** — protected framework, config, route, and runtime paths.
 
 ## Key findings
 

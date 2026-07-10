@@ -27,6 +27,8 @@ export async function executeGenerateCleanupPatch(body: unknown) {
       },
       summary: {
         safeCandidates: patchKit.summary.safeDeleteCandidates,
+        rawReviewFindings: patchKit.summary.rawReviewFindings,
+        uniqueReviewItems: patchKit.summary.reviewFirstItems,
         reviewFirst: patchKit.summary.reviewFirstItems,
         doNotTouch: patchKit.summary.doNotTouchItems,
         packageSuggestions: patchKit.summary.packageSuggestions,

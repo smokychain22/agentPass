@@ -32,14 +32,20 @@ export function generateCursorPrompt(
           .join("\n")
       : "- (none)";
 
+  const safeCount = buckets.safeDelete.length;
+  const safeGuidance =
+    safeCount === 0
+      ? "Safe candidates are 0, so do not generate delete operations yet. Only propose a review plan and group findings by safest-first cleanup order."
+      : "Start with safe candidates only, then handle unique review items separately.";
+
   return `# Cursor Cleanup Prompt
 
 You are cleaning a JavaScript/TypeScript repo using RepoDiet findings.
 
 ## Rules
 - Do not delete framework routes, layouts, API routes, config files, env files, lockfiles, or public assets without confirmation.
-- Start with safe candidates only.
-- For Review First items, inspect imports and runtime usage before changing.
+- ${safeGuidance}
+- For unique review items, inspect imports and runtime usage before changing.
 - After every cleanup batch, run lint and build.
 - Preserve app behavior.
 
@@ -55,14 +61,15 @@ You are cleaning a JavaScript/TypeScript repo using RepoDiet findings.
 - Unused dependencies: ${findings.summary.unusedDependencies}
 - Orphan patterns: ${findings.summary.orphanPatterns}
 - AI-slop signals: ${findings.summary.slopSignals}
-- Safe candidates: ${buckets.safeDelete.length}
-- Review first: ${buckets.reviewFirst.length}
-- Do not touch: ${buckets.doNotTouch.length}
+- Safe candidates: ${safeCount}
+- Raw review findings: ${findings.summary.reviewRequired}
+- Unique review items: ${buckets.reviewFirst.length}
+- Do not touch protected items: ${buckets.doNotTouch.length}
 
 ## Safe candidates
 ${safeList}
 
-## Review first
+## Unique review items
 ${reviewList}
 
 ## Do not touch
