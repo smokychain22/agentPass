@@ -69,11 +69,12 @@ async function run() {
     }
   });
 
-  await test("x402 beta mode does not block browser patch requests", async () => {
+  await test("x402 supports quote-bound and demo bypass modes", async () => {
     const x402Path = path.join(ROOT, "src/lib/payment/x402.ts");
     const source = fs.readFileSync(x402Path, "utf8");
     assert.match(source, /REQUIRE_REAL_X402/);
-    assert.match(source, /Beta\/demo deployment/);
+    assert.match(source, /quote-bound/);
+    assert.match(source, /x-repodiet-demo-pay/);
   });
 
   if (process.env.REPODIET_TEST_OFFLINE === "1") {

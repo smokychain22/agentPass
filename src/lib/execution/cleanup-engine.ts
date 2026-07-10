@@ -132,11 +132,12 @@ export async function executeTaskQuote(input: {
   branch: string;
   commitSha: string;
   findingIds: string[];
-  operation: TaskOperation;
+  operation: import("./task-quote").TaskOperation;
   sourceFileCount?: number;
+  idempotencyKey?: string;
 }) {
-  const quote = createTaskQuote(input);
-  await saveTaskQuote(quote);
+  const { createQuoteForOperation } = await import("@/lib/payment");
+  const quote = await createQuoteForOperation(input);
   return quote;
 }
 

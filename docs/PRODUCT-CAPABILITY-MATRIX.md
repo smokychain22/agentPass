@@ -150,7 +150,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | Frontend route | `/app?tab=patch` |
 | API route | `POST /api/jobs/patch` |
 | Execution service | `runPatchKitEngine` (not yet unified one-fix loop) |
-| Payment | x402 when `REQUIRE_REAL_X402=1`; beta bypass otherwise |
+| Payment | Bound quote via `POST /api/tasks/quote` + `POST /api/tasks/pay` |
 | Limitations | Up to 5 fixes via patch kit, not per-finding loop yet |
 
 ### 10. Verified Cleanup PR (1–3 USDT)
@@ -162,7 +162,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | API route | `POST /api/tools/create_cleanup_pr` |
 | Execution service | `createCleanupPullRequest` |
 | Persistence | GitHub branch + PR; `execution_receipts` |
-| Payment | **NOT IMPLEMENTED** on PR route (beta open) |
+| Payment | Bound quote + entitlement on A2A/orchestrator path; legacy demo header on tool route |
 | Limitations | Requires GitHub App install or demo token |
 
 ### 11. GitHub App integration
@@ -199,11 +199,15 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 
 | Field | Value |
 |-------|-------|
-| **Status** | **DEMO** |
-| Service | `lib/payment/x402.ts` |
-| Enforced on | patch job, patches/generate, verify/run |
-| Not enforced on | A2MCP tools, cleanup run, create_cleanup_pr |
-| Limitations | Beta bypass unless `REQUIRE_REAL_X402=1`; no crypto verify of signatures |
+| **Status** | **REAL** (test mode) / **STRICT** when `REQUIRE_REAL_X402=1` |
+| Services | `lib/payment/*` — quote binding, settlement, lifecycle |
+| Quote | `POST /api/tasks/quote` → HTTP 402 with bound quote |
+| Pay | `POST /api/tasks/pay` → verify signature, fund quote |
+| Enforced on | A2A orchestrator paid tasks, quote-bound execution |
+| Legacy demo | `x-repodiet-demo-pay` header on patch/verify when not strict |
+| Receipt | `SignedReceiptV1` RSA-SHA256 via `REPODIET_OPERATOR_PRIVATE_KEY` |
+| Verification | `npm run verify:x402` |
+| Limitations | Facilitator URL optional; on-chain verify when strict + facilitator configured |
 
 ### 15. A2MCP tools
 
@@ -229,7 +233,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | Approval | `awaiting_approval` before GitHub PR creation |
 | Callbacks | Optional `callbackUrl` on submit (best-effort) |
 | Verification | `npm run verify:a2a` |
-| Limitations | Repo Guard returns honest `unsupported`; x402 beta open access |
+| Limitations | Repo Guard returns honest `unsupported`; x402 quote binding on paid A2A tasks |
 
 ### 17. Repo Guard
 
@@ -279,7 +283,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | `cleanup_changes` | Per-change records | Redis/local | **PREPARED** |
 | `verification_runs` | Verification history | Redis/local | **PREPARED** |
 | `task_quotes` | Context-bound quotes | Redis/local | **REAL** |
-| `payments` | Payment settlement | Redis/local | **PREPARED** |
+| `payments` | Payment settlement + replay locks | Redis/local | **REAL** |
 | `execution_receipts` | Signed receipts | Redis/local | **REAL** |
 | `github_installations` | Install metadata | Redis/local | **PREPARED** |
 | `repository_policies` | Protected paths / policies | Redis/local | **PREPARED** |
@@ -298,7 +302,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | Operator private key in client | **PASS** — server env only |
 | Runtime writes under `/var/task` | **PASS** — redirected to tmpdir |
 | Fake success on cleanup | **PASS** — real workspace + git apply |
-| x402 bypass documented | **PASS** — beta mode explicit |
+| x402 quote binding + replay protection | **PASS** — bound quotes, nonce, idempotency |
 | Repo Guard false CTA | **PASS** — marked Coming Soon |
 
 ---
@@ -347,4 +351,5 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 
 ## Next phases
 
-1. **Phase 4** — Repo Guard scheduling and alerts; x402 settlement enforcement on paid tools
+1. **Phase 5** — Live x402 settlement (bound quotes, pay route, signed receipts) — **DONE**
+2. **Phase 6** — Repo Guard scheduling and alerts; strict x402 on all paid tool routes

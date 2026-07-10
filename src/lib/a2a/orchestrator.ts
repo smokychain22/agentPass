@@ -2,17 +2,23 @@ import {
   analyzeRepository,
   createCleanupPullRequest,
   createExecutionReceipt,
-  createTaskQuote,
   executeFreeProof,
   runQuickCleanup,
   scanRepository,
   selectSafeFixes,
 } from "@/lib/execution";
 import { runVerification } from "@/lib/verify/run-verification";
-import { validateTaskQuote } from "@/lib/execution/task-quote";
+import {
+  createQuoteForOperation,
+  requireEntitlement,
+  verifyAndFundQuote,
+  markQuoteCompleted,
+  handleExecutionFailure,
+  signTestPaymentPayload,
+  getBoundQuote,
+} from "@/lib/payment";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import type { FindingsPayload } from "@/lib/findings/types";
-import { getTaskQuote } from "@/lib/store/product-store";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { A2ATaskStateMachine } from "./task-state-machine";
 import {
@@ -78,6 +84,9 @@ async function failTask(
   };
   await saveA2ATask(finalized);
   await deliverTaskCallback(finalized);
+  if (task.input.quoteId && status === "verification_failed") {
+    await handleExecutionFailure(task.input.quoteId, "verification_failed");
+  }
   return finalized;
 }
 
@@ -99,6 +108,9 @@ async function completeTask(
   };
   await saveA2ATask(finalized);
   await deliverTaskCallback(finalized);
+  if (task.input.quoteId) {
+    await markQuoteCompleted(task.input.quoteId, task.id);
+  }
   return finalized;
 }
 
@@ -170,14 +182,16 @@ async function ensurePayment(
     return failTask(task, sm, "unsupported", "Task type does not support payment mapping.");
   }
 
-  const hasPayment = Boolean(task.input.quoteId || task.input.paymentReference);
-  if (!hasPayment) {
+  const repository = `${findings.repo.owner}/${findings.repo.name}`;
+  const findingIds = task.input.findingIds ?? [];
+
+  if (!task.input.quoteId) {
     sm.emit("quote_required", "orchestrator");
-    const quote = createTaskQuote({
-      repository: `${findings.repo.owner}/${findings.repo.name}`,
+    const quote = await createQuoteForOperation({
+      repository,
       branch: findings.repo.branch,
       commitSha: findings.repo.commitSha ?? "unknown",
-      findingIds: task.input.findingIds ?? [],
+      findingIds,
       operation,
       sourceFileCount: findings.summary.totalFindings,
     });
@@ -185,7 +199,7 @@ async function ensurePayment(
       quoteId: quote.quoteId,
       limitations: [
         ...task.limitations,
-        `Quote required: ${quote.priceLabel}. Fund via POST /api/a2a/tasks/${task.id}/fund`,
+        `Quote ${quote.quoteId}: ${quote.priceLabel}. Pay via POST /api/tasks/pay then POST /api/a2a/tasks/${task.id}/fund`,
       ],
       result: { ...task.result, receipt: { quote } },
     });
@@ -193,20 +207,25 @@ async function ensurePayment(
     return syncTask(task, sm);
   }
 
-  if (task.input.quoteId) {
-    const quoteRecord = await getTaskQuote(task.input.quoteId);
-    if (quoteRecord) {
-      const validation = validateTaskQuote(quoteRecord, {
-        repository: `${findings.repo.owner}/${findings.repo.name}`,
-        branch: findings.repo.branch,
-        commitSha: findings.repo.commitSha ?? "unknown",
-        findingIds: task.input.findingIds ?? [],
-        operation,
+  const entitlement = await requireEntitlement({
+    quoteId: task.input.quoteId,
+    repository,
+    branch: findings.repo.branch,
+    commitSha: findings.repo.commitSha ?? "unknown",
+    findingIds,
+    operation,
+    taskId: task.id,
+  });
+
+  if (!entitlement.ok) {
+    if (entitlement.status === "payment_required") {
+      sm.emit("awaiting_payment", "orchestrator", task.input.quoteId);
+      return syncTask(task, sm, {
+        limitations: [...task.limitations, entitlement.reason ?? "Payment required."],
       });
-      if (!validation.ok) {
-        return failTask(task, sm, "payment_failed", validation.reason ?? "Quote validation failed.");
-      }
     }
+    await handleExecutionFailure(task.input.quoteId, "invalid_payment");
+    return failTask(task, sm, "payment_failed", entitlement.reason ?? "Entitlement denied.");
   }
 
   sm.emit("funded", "orchestrator", task.input.paymentReference ?? task.input.quoteId);
@@ -427,7 +446,7 @@ export async function submitA2ATask(type: A2ATaskType, input: A2ATaskInput): Pro
 
 export async function fundA2ATask(
   taskId: string,
-  input: { quoteId?: string; paymentReference?: string }
+  input: { quoteId?: string; paymentReference?: string; payer?: string; idempotencyKey?: string }
 ): Promise<A2ATaskRecord> {
   const existing = await getA2ATask(taskId);
   if (!existing) throw new Error("Task not found.");
@@ -435,21 +454,79 @@ export async function fundA2ATask(
     throw new Error(`Task is not awaiting payment (status=${existing.status}).`);
   }
 
+  const quoteId = input.quoteId ?? existing.input.quoteId;
+  if (!quoteId) throw new Error("quoteId is required.");
+
+  const quote = await getBoundQuote(quoteId);
+  if (!quote) throw new Error("Quote not found.");
+
+  const paymentReference =
+    input.paymentReference ?? `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`;
+  const payer = input.payer ?? "0x0000000000000000000000000000000000000001";
+  const idempotencyKey = input.idempotencyKey ?? `idem_${taskId}_${quoteId}`;
+
+  let paymentSignature: string | undefined;
+  if (process.env.REPODIET_X402_TEST_SECRET) {
+    paymentSignature =
+      signTestPaymentPayload({
+        quoteId,
+        paymentReference,
+        payer,
+        amountMicro: quote.amountMicro,
+        nonce: quote.nonce,
+        requestHash: quote.requestHash,
+      }) ?? undefined;
+  }
+
+  const funded = await verifyAndFundQuote({
+    quoteId,
+    paymentReference,
+    payer,
+    amountMicro: quote.amountMicro,
+    currency: quote.currency,
+    network: quote.network,
+    recipient: quote.recipient,
+    nonce: quote.nonce,
+    idempotencyKey,
+    paymentSignature,
+  });
+
+  if (!funded.ok) {
+    const sm = new A2ATaskStateMachine(existing.transitions);
+    return failTask(existing, sm, "payment_failed", funded.reason ?? "Payment failed.");
+  }
+
+  if (funded.existingTaskId && funded.existingTaskId !== taskId) {
+    throw new Error(`Duplicate payment — existing task ${funded.existingTaskId}`);
+  }
+
   const task = await updateA2ATask(taskId, {
     input: {
       ...existing.input,
-      quoteId: input.quoteId ?? existing.input.quoteId,
-      paymentReference:
-        input.paymentReference ?? existing.input.paymentReference ?? `beta_${Date.now()}`,
+      quoteId,
+      paymentReference,
     },
   });
   if (!task) throw new Error("Failed to update task.");
 
   const sm = new A2ATaskStateMachine(task.transitions);
   const findings = await loadFindings(task);
-  const funded = await ensurePayment(task, sm, findings);
-  if (funded.status === "payment_failed") return funded;
-  return executeChanges(funded, sm, findings);
+  const entitled = await requireEntitlement({
+    quoteId,
+    repository: quote.repository,
+    branch: quote.branch,
+    commitSha: quote.commitSha,
+    findingIds: quote.findingIds,
+    operation: quote.operation,
+    taskId,
+  });
+  if (!entitled.ok) {
+    return failTask(task, sm, "payment_failed", entitled.reason ?? "Entitlement lock failed.");
+  }
+
+  sm.emit("funded", "orchestrator", paymentReference);
+  await syncTask(task, sm);
+  return executeChanges(task, sm, findings);
 }
 
 export async function approveA2ATask(taskId: string, approved: boolean): Promise<A2ATaskRecord> {

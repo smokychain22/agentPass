@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
-import { executeTaskQuote } from "@/lib/execution";
 import type { TaskOperation } from "@/lib/execution/task-quote";
+import { createQuoteForOperation, quoteTo402Response } from "@/lib/payment";
 
 export const runtime = "nodejs";
 
@@ -18,6 +18,8 @@ export async function POST(request: Request) {
       findingIds?: string[];
       operation: TaskOperation;
       sourceFileCount?: number;
+      idempotencyKey?: string;
+      verificationProfile?: "standard" | "strict";
     };
 
     if (!body.repository || !body.commitSha || !body.operation) {
@@ -27,16 +29,26 @@ export async function POST(request: Request) {
       );
     }
 
-    const quote = await executeTaskQuote({
+    const quote = await createQuoteForOperation({
       repository: body.repository,
       branch: body.branch ?? "main",
       commitSha: body.commitSha,
       findingIds: body.findingIds ?? [],
       operation: body.operation,
       sourceFileCount: body.sourceFileCount,
+      idempotencyKey: body.idempotencyKey,
     });
 
-    return NextResponse.json({ success: true, quote });
+    if (quote.amountMicro !== "0") {
+      const resourceUrl = new URL(request.url).toString();
+      return NextResponse.json(quoteTo402Response(quote, resourceUrl), { status: 402 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      quote,
+      lifecycleStatus: quote.lifecycleStatus,
+    });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(

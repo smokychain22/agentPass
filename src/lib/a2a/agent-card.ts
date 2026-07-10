@@ -63,12 +63,23 @@ export function buildAgentCard() {
     authentication: {
       publicScan: "none",
       githubMutation: "github_app_installation_or_token",
-      paidTasks: "task_quote_optional_in_beta",
+      paidTasks: "bound_quote_via_x402",
     },
     payment: {
       protocol: "x402",
       quoteEndpoint: `${baseUrl}/api/tasks/quote`,
-      betaOpenAccess: true,
+      payEndpoint: `${baseUrl}/api/tasks/pay`,
+      enforcement: process.env.REQUIRE_REAL_X402 === "1" ? "strict" : "test_or_demo",
+      binding: [
+        "quoteId",
+        "operation",
+        "repository",
+        "branch",
+        "commitSha",
+        "findingIds",
+        "requestHash",
+        "nonce",
+      ],
     },
     endpoints: {
       submitTask: `${baseUrl}/api/a2a/tasks`,
