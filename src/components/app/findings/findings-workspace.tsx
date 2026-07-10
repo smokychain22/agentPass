@@ -2,15 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import type { Finding } from "@/lib/findings/types";
+import type { Finding, FindingsPayload } from "@/lib/findings/types";
 import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
 import { Input } from "@/components/ui/input";
 import { FindingDetail } from "./finding-detail";
 import {
   actionLabel,
+  formatFindingAnalyzerLabel,
   findingTarget,
-  sourceLabel,
   typeLabel,
 } from "../findings/findings-utils";
 import { cn } from "@/lib/utils";
@@ -62,12 +62,14 @@ function matchesBucket(finding: Finding, bucket: BucketKey): boolean {
 
 interface FindingsWorkspaceProps {
   findings: Finding[];
+  rawToolReports?: FindingsPayload["rawToolReports"];
   selectedForPatch?: string[];
   onTogglePatchSelection?: (findingId: string) => void;
 }
 
 export function FindingsWorkspace({
   findings,
+  rawToolReports,
   selectedForPatch = [],
   onTogglePatchSelection,
 }: FindingsWorkspaceProps) {
@@ -211,7 +213,7 @@ export function FindingsWorkspace({
                       {findingTarget(finding)}
                     </p>
                     <p className="mt-1 text-[10px] text-muted-foreground">
-                      {typeLabel(finding.type)} · {sourceLabel(finding.source)}
+                      {typeLabel(finding.type)} · {formatFindingAnalyzerLabel(finding, rawToolReports)}
                     </p>
                     </button>
                   </div>
@@ -228,7 +230,7 @@ export function FindingsWorkspace({
       {/* Detail — desktop */}
       <div className="hidden lg:block">
         {selected ? (
-          <FindingDetail finding={selected} />
+          <FindingDetail finding={selected} rawToolReports={rawToolReports} />
         ) : (
           <Panel variant="elevated" padding="md" className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">Select a finding to inspect details.</p>
@@ -246,7 +248,7 @@ export function FindingsWorkspace({
             aria-label="Close finding detail"
           />
           <div className="absolute inset-x-0 bottom-0 max-h-[85vh] overflow-y-auto rounded-t-xl border-t border-border/60 bg-[#05080D] p-4 scrollbar-thin">
-            <FindingDetail finding={selected} onClose={() => setMobileDetailOpen(false)} />
+            <FindingDetail finding={selected} rawToolReports={rawToolReports} onClose={() => setMobileDetailOpen(false)} />
           </div>
         </div>
       )}
