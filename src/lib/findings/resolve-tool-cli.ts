@@ -3,7 +3,20 @@ import fs from "node:fs";
 import path from "node:path";
 
 function projectRequire() {
-  return createRequire(path.join(process.cwd(), "package.json"));
+  const pkgJson = path.join(process.cwd(), "package.json");
+  try {
+    return createRequire(pkgJson);
+  } catch {
+    return createRequire(import.meta.url);
+  }
+}
+
+function packageDir(packageName: string): string | null {
+  const segments = packageName.startsWith("@")
+    ? packageName.split("/")
+    : [packageName];
+  const dir = path.join(process.cwd(), "node_modules", ...segments);
+  return exists(path.join(dir, "package.json")) ? dir : null;
 }
 
 function exists(filePath: string): boolean {
@@ -16,6 +29,8 @@ function exists(filePath: string): boolean {
 }
 
 function packageRoot(packageName: string): string | null {
+  const fromFs = packageDir(packageName);
+  if (fromFs) return fromFs;
   try {
     const pkgJson = projectRequire().resolve(`${packageName}/package.json`);
     return path.dirname(pkgJson);
@@ -32,9 +47,14 @@ export interface ModuleProbe {
 }
 
 export function probePackage(name: string): ModuleProbe {
+  const dir = packageDir(name);
+  if (!dir) {
+    return { name, resolved: false, error: `${name} not found under node_modules` };
+  }
   try {
-    const pkgJson = projectRequire().resolve(`${name}/package.json`);
-    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8")) as { version?: string };
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as {
+      version?: string;
+    };
     return { name, resolved: true, version: pkg.version };
   } catch (err) {
     return {
