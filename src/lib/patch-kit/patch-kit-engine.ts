@@ -27,6 +27,7 @@ import { generateReport } from "./generate-report";
 import { buildPatchkitSummaryJson, generateBundle } from "./generate-bundle";
 import { storePatchKit } from "./patch-kit-store";
 import type {
+  ChangeManifestEntry,
   PatchKitGenerateBody,
   PatchKitPayload,
   PatchKitRepoContext,
@@ -185,8 +186,28 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       patchkitSummaryJson,
     });
 
+    const changeManifest: ChangeManifestEntry[] = cleanupResult.fixLoop.attempts
+      .filter((a) => a.status === "retained")
+      .flatMap((a) =>
+        a.changedPaths.map((path) => ({
+          findingId: a.findingId,
+          transformationType: a.pluginId,
+          filePath: path,
+          operation: "edit" as const,
+        }))
+      );
+    deletedPaths.forEach((path) => {
+      changeManifest.push({
+        findingId: "safe_delete",
+        transformationType: "file_deletion",
+        filePath: path,
+        operation: "delete",
+      });
+    });
+
     const payload: PatchKitPayload = {
       id,
+      scanId: findings.scanId,
       repo: {
         owner: findings.repo.owner,
         name: findings.repo.name,
@@ -206,9 +227,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       downloadUrl: `/api/patches/${id}/download`,
       zipBase64: bundle.zipBase64,
       validatedEdits: validatedEdits.length > 0 ? validatedEdits : undefined,
+      changeManifest,
     };
 
-    await storePatchKit(payload, bundle.zipBuffer, bundle.filename);
+    await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);
     return payload;
   } finally {
     await workspace.cleanup();

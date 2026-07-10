@@ -55,7 +55,8 @@ export function analyzerStageLabel(report: FindingsPayload["rawToolReports"][key
 export async function runFindingsAnalysis(
   repoUrl: string,
   branch: string | undefined,
-  onPhase: (phase: FindingsPhase) => void
+  onPhase: (phase: FindingsPhase) => void,
+  scanId?: string
 ): Promise<FindingsPayload> {
   onPhase("preparing");
 
@@ -63,6 +64,7 @@ export async function runFindingsAnalysis(
     const started = await startJobOrResult<FindingsPayload>("/api/jobs/findings", {
       repoUrl: repoUrl.trim(),
       branch: branch?.trim() || undefined,
+      scanId: scanId?.trim() || undefined,
     });
 
     if (started.result) {

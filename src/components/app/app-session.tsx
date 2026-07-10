@@ -15,8 +15,11 @@ import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import {
   clearPersistedSession,
   fetchPersistedFindings,
+  fetchPersistedPatchKit,
+  fetchPersistedScan,
   loadPersistedSession,
   savePersistedSession,
+  type PersistedSession,
 } from "@/lib/session/persist-session";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 
@@ -38,6 +41,7 @@ export interface ScanSession {
   branch: string;
   scanResult: ScanPayload | null;
   scanComplete: boolean;
+  scanRecordId?: string;
 }
 
 interface AppSessionContextValue {
@@ -66,15 +70,19 @@ const AppSessionContext = createContext<AppSessionContextValue | null>(null);
 function persist(
   session: ScanSession,
   findings: FindingsPayload | null,
-  selectedFindingIds: string[]
+  selectedFindingIds: string[],
+  patchKit: PatchKitPayload | null
 ) {
-  savePersistedSession({
+  const data: PersistedSession = {
     repoUrl: session.repoUrl,
     branch: session.branch,
-    scanId: findings?.scanId,
+    scanId: findings?.scanId ?? session.scanRecordId,
+    scanRecordId: session.scanRecordId ?? findings?.scanId,
     scanComplete: session.scanComplete,
     selectedFindingIds,
-  });
+    patchKitId: patchKit?.id,
+  };
+  savePersistedSession(data);
 }
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
@@ -86,35 +94,50 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = loadPersistedSession();
-    if (!stored?.scanId) {
+    if (!stored?.scanId && !stored?.scanRecordId) {
       setHydrating(false);
       return;
     }
+
+    const scanKey = stored.scanId ?? stored.scanRecordId!;
 
     setSession({
       repoUrl: stored.repoUrl,
       branch: stored.branch,
       scanResult: null,
       scanComplete: stored.scanComplete,
+      scanRecordId: stored.scanRecordId ?? stored.scanId,
     });
     setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
 
-    void fetchPersistedFindings(stored.scanId)
-      .then((payload) => {
-        setFindings(payload);
-        if (!stored.selectedFindingIds?.length) {
-          setSelectedFindingIdsState(defaultSelectedFindingIds(payload));
+    void Promise.all([
+      fetchPersistedFindings(scanKey).catch(() => null),
+      stored.scanRecordId ? fetchPersistedScan(stored.scanRecordId) : fetchPersistedScan(scanKey),
+      fetchPersistedPatchKit(scanKey),
+    ])
+      .then(([findingsPayload, scanPayload, patchPayload]) => {
+        if (findingsPayload) {
+          setFindings(findingsPayload);
+          if (!stored.selectedFindingIds?.length) {
+            setSelectedFindingIdsState(defaultSelectedFindingIds(findingsPayload));
+          }
         }
+        if (scanPayload) {
+          setSession((prev) => ({
+            ...prev,
+            scanResult: scanPayload,
+            scanComplete: true,
+            scanRecordId: scanPayload.id,
+          }));
+        }
+        if (patchPayload) setPatchKit(patchPayload);
       })
-      .catch(() => {
-        clearPersistedSession();
-      })
+      .catch(() => clearPersistedSession())
       .finally(() => setHydrating(false));
   }, []);
 
   const setFindingsState = useCallback((next: FindingsPayload | null) => {
     setFindings(next);
-    setPatchKit(null);
     if (next) {
       const defaults = defaultSelectedFindingIds(next);
       setSelectedFindingIdsState(defaults);
@@ -124,10 +147,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           repoUrl: prev.repoUrl || next.repo.url || `https://github.com/${next.repo.owner}/${next.repo.name}`,
           branch: prev.branch || next.repo.branch,
           scanComplete: true,
+          scanRecordId: prev.scanRecordId ?? next.scanId,
         };
-        persist(updated, next, defaults);
+        persist(updated, next, defaults, null);
         return updated;
       });
+      setPatchKit(null);
     }
   }, []);
 
@@ -138,12 +163,13 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         branch,
         scanResult: result,
         scanComplete: true,
+        scanRecordId: result.id,
       };
       setSession(nextSession);
       setFindings(null);
       setPatchKit(null);
       setSelectedFindingIdsState([]);
-      persist(nextSession, null, []);
+      persist(nextSession, null, [], null);
     },
     []
   );
@@ -151,24 +177,34 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const setPatchKitState = useCallback(
     (next: PatchKitPayload | null) => {
       setPatchKit(next);
+      setSession((prev) => {
+        persist(prev, findings, selectedFindingIds, next);
+        return prev;
+      });
     },
-    []
+    [findings, selectedFindingIds]
   );
 
-  const toggleFindingSelection = useCallback((findingId: string) => {
-    setSelectedFindingIdsState((prev) => {
-      const next = prev.includes(findingId)
-        ? prev.filter((id) => id !== findingId)
-        : [...prev, findingId];
-      persist(session, findings, next);
-      return next;
-    });
-  }, [session, findings]);
+  const toggleFindingSelection = useCallback(
+    (findingId: string) => {
+      setSelectedFindingIdsState((prev) => {
+        const next = prev.includes(findingId)
+          ? prev.filter((id) => id !== findingId)
+          : [...prev, findingId];
+        persist(session, findings, next, patchKit);
+        return next;
+      });
+    },
+    [session, findings, patchKit]
+  );
 
-  const setSelectedFindingIds = useCallback((ids: string[]) => {
-    setSelectedFindingIdsState(ids);
-    persist(session, findings, ids);
-  }, [session, findings]);
+  const setSelectedFindingIds = useCallback(
+    (ids: string[]) => {
+      setSelectedFindingIdsState(ids);
+      persist(session, findings, ids, patchKit);
+    },
+    [session, findings, patchKit]
+  );
 
   const resetSession = useCallback(() => {
     setSession(emptySession);

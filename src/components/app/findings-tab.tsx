@@ -20,7 +20,6 @@ import {
   runFindingsAnalysis,
   type FindingsPhase,
 } from "@/lib/findings/client";
-import { freeCleanupCta } from "@/lib/cleanup/eligibility";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
@@ -29,7 +28,9 @@ import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { DEMO_NOTICE } from "@/lib/demo/constants";
 import { FileSearch } from "lucide-react";
 import { Panel } from "@/components/design-system/panel";
-import type { Finding } from "@/lib/findings/types";
+import { ProjectRootPanel } from "./findings/project-root-panel";
+import { computeWorkflowGates } from "@/lib/workflow/gates";
+import { isActionableFinding } from "@/lib/findings/actionability-signals";
 
 const LOADING: FindingsPhase[] = [
   "preparing",
@@ -68,7 +69,8 @@ export function FindingsTab() {
       const result = await runFindingsAnalysis(
         session.repoUrl,
         session.branch || undefined,
-        setPhase
+        setPhase,
+        session.scanRecordId ?? session.scanResult?.id
       );
       setFindings(result);
       show("success", "Findings ready — review classification");
@@ -124,6 +126,12 @@ export function FindingsTab() {
   }
 
   const allFindings = findings ? flattenFindings(findings) : [];
+  const supportedCount = allFindings.filter(isActionableFinding).length;
+  const gates = computeWorkflowGates({
+    scanComplete: session.scanComplete,
+    findings,
+    patchKit: null,
+  });
 
   return (
     <div className="space-y-6">
@@ -151,13 +159,8 @@ export function FindingsTab() {
                 "Run Findings"
               )}
             </Button>
-            {findings && (
+            {findings && gates.quickCleanupAvailable && (
               <Button asChild>
-                <Link href="/app?tab=cleanup">{freeCleanupCta(allFindings).label}</Link>
-              </Button>
-            )}
-            {findings && (
-              <Button variant="ghost" asChild>
                 <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
               </Button>
             )}
@@ -226,6 +229,7 @@ export function FindingsTab() {
 
           <SummaryCards payload={findings} />
           <AnalyzerSourcesPanel payload={findings} />
+          <ProjectRootPanel payload={findings} />
           <RiskSummaryPanel summary={findings.summary} />
           <RepositoryMap findings={allFindings} />
           <FindingsWorkspace
@@ -235,7 +239,7 @@ export function FindingsTab() {
           />
           <JsonExportCard payload={findings} />
 
-          <PanelCTA findings={allFindings} />
+          <PanelCTA findings={allFindings} supportedCount={supportedCount} />
         </>
       )}
 
@@ -251,18 +255,39 @@ export function FindingsTab() {
   );
 }
 
-function PanelCTA({ findings }: { findings: Finding[] }) {
-  const cta = freeCleanupCta(findings);
+function PanelCTA({
+  findings,
+  supportedCount,
+}: {
+  findings: import("@/lib/findings/types").Finding[];
+  supportedCount: number;
+}) {
+  if (supportedCount > 0) {
+    return (
+      <Panel variant="elevated" padding="md">
+        <p className="ds-label mb-2">Deterministic cleanup available</p>
+        <p className="mb-4 text-sm text-muted-foreground">
+          RepoDiet found {supportedCount} supported fix
+          {supportedCount === 1 ? "" : "es"} with registered transformers. Continue to Quick Cleanup
+          to generate real repository-specific changes, validate the patch, and verify integrity.
+        </p>
+        <Button asChild>
+          <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
+        </Button>
+      </Panel>
+    );
+  }
+
   return (
     <Panel variant="elevated" padding="md">
-      <p className="ds-label mb-2">See RepoDiet solve real issues</p>
+      <p className="ds-label mb-2">Review findings</p>
       <p className="mb-4 text-sm text-muted-foreground">
-        {cta.mode === "auto_fix"
-          ? `Run a limited cleanup on up to ${cta.count} high-confidence safe finding${cta.count === 1 ? "" : "s"}. RepoDiet generates changes, verifies them in an isolated workspace, and shows every diff. Your repository is never modified.`
-          : "RepoDiet did not find an issue safe enough to modify automatically. Review findings with evidence and a conservative remediation plan instead."}
+        RepoDiet found issues for review, but no deterministic cleanup transformation is available
+        for this scan. You can export findings or create a report-only PR after Quick Cleanup
+        artifacts are generated.
       </p>
-      <Button asChild disabled={cta.count === 0}>
-        <Link href="/app?tab=cleanup">{cta.label}</Link>
+      <Button variant="secondary" asChild>
+        <Link href="/app?tab=patch">View Quick Cleanup options</Link>
       </Button>
     </Panel>
   );

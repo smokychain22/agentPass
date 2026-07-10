@@ -7,28 +7,28 @@ import type { FindingsSummary } from "@/lib/findings/types";
 export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
   const rows = [
     {
-      label: "Detected findings",
+      label: "Detected",
       value: summary.detectedFindings ?? summary.totalFindings,
       level: "review" as const,
-      hint: "Analyzer evidence before fix preflight",
+      hint: "Signals from analyzers and heuristics — not yet transformed",
     },
     {
-      label: "Actionable fixes",
-      value: summary.actionableFixes ?? 0,
+      label: "Supported fixes",
+      value: summary.supportedFixes ?? summary.actionableFixes ?? 0,
       level: "safe" as const,
-      hint: "Dry-run proved a valid deterministic transformation",
+      hint: "Deterministic transformer available (detected → supported)",
     },
     {
       label: "Review required",
-      value: summary.reviewRequired,
+      value: summary.reviewRequiredFindings ?? summary.reviewRequired,
       level: "review" as const,
-      hint: "Needs human review before any deletion",
+      hint: "Needs human review — not eligible for automatic cleanup",
     },
     {
       label: "Protected",
-      value: summary.doNotTouch,
+      value: summary.protectedFindings ?? summary.doNotTouch,
       level: "protected" as const,
-      hint: "Routes, configs, and framework entry points",
+      hint: "Routes, configs, lockfiles — automatic deletion forbidden",
     },
   ];
 
@@ -47,9 +47,10 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
         ))}
       </div>
       <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-        Total findings: {summary.totalFindings} · actionable fixes:{" "}
-        {summary.actionableFixes ?? 0} · review ({summary.reviewRequired}) · protected (
-        {summary.doNotTouch})
+        Lifecycle: detected ({summary.detectedFindings ?? summary.totalFindings}) → supported (
+        {summary.supportedFixes ?? summary.actionableFixes ?? 0}) · review (
+        {summary.reviewRequiredFindings ?? summary.reviewRequired}) · protected (
+        {summary.protectedFindings ?? summary.doNotTouch})
       </p>
     </Panel>
   );

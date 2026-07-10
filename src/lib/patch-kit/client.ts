@@ -190,20 +190,16 @@ export type PatchKitPhase =
   | "idle"
   | "classifying"
   | "patch"
-  | "package"
-  | "regression"
-  | "cursor"
+  | "validating"
   | "bundle"
   | "complete"
   | "failed";
 
 export const PATCH_KIT_STEPS: { phase: PatchKitPhase; label: string }[] = [
-  { phase: "classifying", label: "Classifying safe deletes" },
-  { phase: "patch", label: "Building cleanup patch" },
-  { phase: "package", label: "Generating package suggestions" },
-  { phase: "regression", label: "Writing regression checklist" },
-  { phase: "cursor", label: "Preparing Cursor prompt" },
-  { phase: "bundle", label: "Creating ZIP bundle" },
+  { phase: "classifying", label: "Loading supported findings" },
+  { phase: "patch", label: "Generating cleanup changes" },
+  { phase: "validating", label: "Validating patch (git apply --check)" },
+  { phase: "bundle", label: "Building artifact bundle" },
   { phase: "complete", label: "Complete" },
 ];
 
@@ -212,7 +208,7 @@ const STAGE_TO_PHASE: Record<string, PatchKitPhase> = {
   loading_findings: "classifying",
   classifying: "classifying",
   generating_patch: "patch",
-  validating_patch: "patch",
+  validating_patch: "validating",
   building_bundle: "bundle",
   complete: "complete",
 };

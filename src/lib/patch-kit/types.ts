@@ -40,8 +40,18 @@ export interface PatchKitArtifacts {
   patchkitSummaryJson: string;
 }
 
+export interface ChangeManifestEntry {
+  findingId: string;
+  transformationType: string;
+  filePath: string;
+  operation: "edit" | "delete" | "add";
+  linesAdded?: number;
+  linesRemoved?: number;
+}
+
 export interface PatchKitPayload {
   id: string;
+  scanId?: string;
   repo: PatchKitRepo;
   summary: PatchKitSummary;
   patchValidation?: {
@@ -52,6 +62,7 @@ export interface PatchKitPayload {
   downloadUrl: string;
   zipBase64?: string;
   validatedEdits?: Array<{ path: string; content: string }>;
+  changeManifest?: ChangeManifestEntry[];
 }
 
 export interface PatchKitRepoContext {

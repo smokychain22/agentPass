@@ -20,7 +20,9 @@ interface WorkflowRailProps {
   activeStep: WorkflowStepId;
   scanComplete: boolean;
   findingsReady: boolean;
+  quickCleanupAvailable: boolean;
   patchKitReady: boolean;
+  verifyUnlocked: boolean;
   failedStep?: WorkflowStepId;
   className?: string;
 }
@@ -30,7 +32,9 @@ function resolveState(
   activeStep: WorkflowStepId,
   scanComplete: boolean,
   findingsReady: boolean,
+  quickCleanupAvailable: boolean,
   patchKitReady: boolean,
+  verifyUnlocked: boolean,
   failedStep?: WorkflowStepId
 ): { state: StepState; lockReason?: string } {
   if (failedStep === stepId) return { state: "failed" };
@@ -44,17 +48,31 @@ function resolveState(
     return { state: scanComplete ? "completed" : "inactive" };
   }
   if (stepId === "findings") {
-    if (!scanComplete) return { state: "locked", lockReason: "Available after repository scan" };
+    if (!scanComplete) return { state: "locked", lockReason: "Complete repository scan first" };
     if (activeStep === "findings") return { state: findingsReady ? "completed" : "active" };
     return { state: findingsReady ? "completed" : "inactive" };
   }
   if (stepId === "patch") {
-    if (!findingsReady) return { state: "locked", lockReason: "Available after findings are ready" };
+    if (!findingsReady) return { state: "locked", lockReason: "Run findings analysis first" };
+    if (!quickCleanupAvailable) {
+      return {
+        state: "locked",
+        lockReason: "No supported deterministic fixes — review findings or create report-only PR",
+      };
+    }
     if (activeStep === "patch") return { state: patchKitReady ? "completed" : "active" };
     return { state: patchKitReady ? "completed" : "inactive" };
   }
   if (stepId === "verify") {
-    if (!patchKitReady) return { state: "locked", lockReason: "Available after Quick Cleanup is run" };
+    if (!patchKitReady) {
+      return { state: "locked", lockReason: "Generate cleanup changes in Quick Cleanup first" };
+    }
+    if (!verifyUnlocked) {
+      return {
+        state: "locked",
+        lockReason: "Verify unlocks after validated changes are generated",
+      };
+    }
     if (activeStep === "verify") return { state: "active" };
     return { state: idx < activeIdx ? "completed" : "inactive" };
   }
@@ -65,7 +83,9 @@ export function WorkflowRail({
   activeStep,
   scanComplete,
   findingsReady,
+  quickCleanupAvailable,
   patchKitReady,
+  verifyUnlocked,
   failedStep,
   className,
 }: WorkflowRailProps) {
@@ -74,25 +94,61 @@ export function WorkflowRail({
       id: "scan",
       label: "Scan",
       href: "/app",
-      ...resolveState("scan", activeStep, scanComplete, findingsReady, patchKitReady, failedStep),
+      ...resolveState(
+        "scan",
+        activeStep,
+        scanComplete,
+        findingsReady,
+        quickCleanupAvailable,
+        patchKitReady,
+        verifyUnlocked,
+        failedStep
+      ),
     },
     {
       id: "findings",
       label: "Findings",
       href: "/app?tab=findings",
-      ...resolveState("findings", activeStep, scanComplete, findingsReady, patchKitReady, failedStep),
+      ...resolveState(
+        "findings",
+        activeStep,
+        scanComplete,
+        findingsReady,
+        quickCleanupAvailable,
+        patchKitReady,
+        verifyUnlocked,
+        failedStep
+      ),
     },
     {
       id: "patch",
       label: "Quick Cleanup",
       href: "/app?tab=patch",
-      ...resolveState("patch", activeStep, scanComplete, findingsReady, patchKitReady, failedStep),
+      ...resolveState(
+        "patch",
+        activeStep,
+        scanComplete,
+        findingsReady,
+        quickCleanupAvailable,
+        patchKitReady,
+        verifyUnlocked,
+        failedStep
+      ),
     },
     {
       id: "verify",
       label: "Verify",
       href: "/app?tab=verify",
-      ...resolveState("verify", activeStep, scanComplete, findingsReady, patchKitReady, failedStep),
+      ...resolveState(
+        "verify",
+        activeStep,
+        scanComplete,
+        findingsReady,
+        quickCleanupAvailable,
+        patchKitReady,
+        verifyUnlocked,
+        failedStep
+      ),
     },
   ];
 

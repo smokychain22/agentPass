@@ -10,6 +10,7 @@ import { buildSummaryFromFindings } from "./stats";
 import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
 import { enrichFindingsWithPreflight } from "./enrich-preflight";
 import { countActionableFindings } from "./actionability-signals";
+import { enrichPayloadLifecycle } from "./enrich-lifecycle";
 import {
   deduplicateCanonicalFindings,
   filterFindingsToPrimaryRoot,
@@ -39,7 +40,8 @@ function flattenPayloadFindings(payload: FindingsPayload): Finding[] {
 export async function runFindingsEngine(
   repoUrl: string,
   branch?: string,
-  onStage?: FindingsStageCallback
+  onStage?: FindingsStageCallback,
+  options?: { scanId?: string }
 ): Promise<FindingsPayload> {
   onStage?.("fetching_repo");
   const workspace = await prepareRepoWorkspace(repoUrl, branch);
@@ -50,7 +52,7 @@ export async function runFindingsEngine(
     const { buildRepositoryModel } = await import("@/lib/repository-model/project-graph");
     const repositoryModel = await buildRepositoryModel(workspace.rootDir);
 
-    const scanId = `scan_${nanoid(12)}`;
+    const scanId = options?.scanId ?? `scan_${nanoid(12)}`;
 
     onStage?.("jscpd");
     const jscpdResult = await runJscpd(workspace.rootDir);
@@ -122,6 +124,8 @@ export async function runFindingsEngine(
       canonicalFlat = filterFindingsToPrimaryRoot(canonicalFlat, primaryRoot, mirrorPrefixes);
     }
     payload = rebuildFindingsPayload(payload, canonicalFlat);
+
+    payload = enrichPayloadLifecycle(payload);
 
     payload.summary = {
       ...buildSummaryFromFindings(flattenPayloadFindings(payload)),

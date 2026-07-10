@@ -13,6 +13,7 @@ interface StoredPatchKit {
   zipBuffer: Buffer;
   filename: string;
   createdAt: string;
+  scanId?: string;
 }
 
 const globalCache = globalThis as unknown as {
@@ -29,21 +30,33 @@ function cache(): Map<string, StoredPatchKit> {
 export async function storePatchKit(
   payload: PatchKitPayload,
   zipBuffer: Buffer,
-  filename: string
+  filename: string,
+  scanId?: string
 ): Promise<void> {
   const record: StoredPatchKit = {
     payload,
     zipBuffer,
     filename,
     createdAt: new Date().toISOString(),
+    scanId,
   };
   await setDurableRecord("patchKits", payload.id, {
     payload,
     filename,
     createdAt: record.createdAt,
+    scanId,
   });
+  if (scanId) {
+    await setDurableRecord("patchKitsByScan", scanId, { patchKitId: payload.id });
+  }
   await writeArtifact(payload.id, zipBuffer, "zip");
   cache().set(payload.id, record);
+}
+
+export async function getPatchKitByScanId(scanId: string): Promise<StoredPatchKit | undefined> {
+  const index = await getDurableRecord<{ patchKitId: string }>("patchKitsByScan", scanId);
+  if (!index?.patchKitId) return undefined;
+  return getStoredPatchKit(index.patchKitId);
 }
 
 export async function getStoredPatchKit(id: string): Promise<StoredPatchKit | undefined> {

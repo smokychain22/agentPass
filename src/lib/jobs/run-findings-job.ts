@@ -26,13 +26,18 @@ export async function createFindingsJob(
   return (await saveJob(job)) as FindingsJob;
 }
 
-export async function runFindingsJob(jobId: string): Promise<FindingsJob> {
+export async function runFindingsJob(jobId: string, scanId?: string): Promise<FindingsJob> {
   const job = (await updateJob(jobId, { status: "running", stage: "fetching_repo" })) as FindingsJob;
 
   try {
-    const findings = await runFindingsEngine(job.repoUrl, job.branch, (stage: FindingsJobStage) => {
-      void updateJob(jobId, { status: "running", stage });
-    });
+    const findings = await runFindingsEngine(
+      job.repoUrl,
+      job.branch,
+      (stage: FindingsJobStage) => {
+        void updateJob(jobId, { status: "running", stage });
+      },
+      { scanId }
+    );
 
     await storeFindings(findings);
 

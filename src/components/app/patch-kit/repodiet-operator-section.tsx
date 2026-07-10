@@ -46,6 +46,8 @@ interface RepoDietOperatorSectionProps {
   findings: FindingsPayload | null;
   patchKit: PatchKitPayload | null;
   demoMode: boolean;
+  requireVerificationForCleanupPr?: boolean;
+  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | null;
 }
 
 function InfoCard({
@@ -99,6 +101,8 @@ export function RepoDietOperatorSection({
   findings,
   patchKit,
   demoMode,
+  requireVerificationForCleanupPr = false,
+  verificationStatus = null,
 }: RepoDietOperatorSectionProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -138,7 +142,8 @@ export function RepoDietOperatorSection({
   const canCreateSafePr =
     canCreateReportPr &&
     validatedChanges > 0 &&
-    patchValidated;
+    patchValidated &&
+    (!requireVerificationForCleanupPr || verificationStatus === "passed");
 
   const githubReturnError = githubErrorMessage(
     searchParams.get("github_error"),
@@ -521,10 +526,21 @@ export function RepoDietOperatorSection({
             </div>
           )}
 
+          {requireVerificationForCleanupPr && validatedChanges > 0 && patchValidated && verificationStatus !== "passed" && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
+              Cleanup PR requires verification to pass on the Verify tab before code changes can be delivered.
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => submit("safe_only")}
               disabled={loading || (!canCreateSafePr && !needsManualToken)}
+              title={
+                requireVerificationForCleanupPr && verificationStatus !== "passed"
+                  ? "Run verification on the Verify tab first"
+                  : undefined
+              }
             >
               {loading && loadingMode === "safe_only" ? (
                 <>

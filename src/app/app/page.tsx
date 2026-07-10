@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { ScanTab } from "@/components/app/scan-tab";
@@ -13,6 +13,7 @@ import { AppTopBar } from "@/components/app/shell/app-top-bar";
 import { WorkflowRail, type WorkflowStepId } from "@/components/app/shell/workflow-rail";
 import { Container } from "@/components/design-system/container";
 import { GridBackground } from "@/components/design-system/grid-background";
+import { computeWorkflowGates } from "@/lib/workflow/gates";
 
 function AppWorkspace() {
   const searchParams = useSearchParams();
@@ -21,6 +22,16 @@ function AppWorkspace() {
   const { session, findings, patchKit } = useAppSession();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
+  const gates = useMemo(
+    () =>
+      computeWorkflowGates({
+        scanComplete: session.scanComplete,
+        findings,
+        patchKit,
+      }),
+    [session.scanComplete, findings, patchKit]
+  );
+
   const scanStatus = session.scanComplete ? "complete" : "idle";
 
   return (
@@ -28,9 +39,11 @@ function AppWorkspace() {
       <GridBackground variant="subtle" className="fixed inset-0 z-0" />
 
       <AppSidebar
-        scanComplete={session.scanComplete}
-        findingsReady={Boolean(findings)}
-        patchKitReady={Boolean(patchKit)}
+        scanComplete={gates.scanComplete}
+        findingsReady={gates.findingsReady}
+        quickCleanupAvailable={gates.quickCleanupAvailable}
+        patchKitReady={gates.patchKitReady}
+        verifyUnlocked={gates.verifyUnlocked}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
       />
@@ -48,9 +61,11 @@ function AppWorkspace() {
           <Container>
             <WorkflowRail
               activeStep={tab}
-              scanComplete={session.scanComplete}
-              findingsReady={Boolean(findings)}
-              patchKitReady={Boolean(patchKit)}
+              scanComplete={gates.scanComplete}
+              findingsReady={gates.findingsReady}
+              quickCleanupAvailable={gates.quickCleanupAvailable}
+              patchKitReady={gates.patchKitReady}
+              verifyUnlocked={gates.verifyUnlocked}
               className="mb-6"
             />
 

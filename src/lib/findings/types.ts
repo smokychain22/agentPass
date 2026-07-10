@@ -58,6 +58,17 @@ export interface FindingEvidence {
   signals: string[];
 }
 
+export type FindingLifecycleState =
+  | "detected"
+  | "supported"
+  | "generated"
+  | "validated"
+  | "verified"
+  | "approved"
+  | "delivered";
+
+export type EvidenceGrade = "strong" | "moderate" | "weak";
+
 export interface Finding {
   id: string;
   type: FindingType;
@@ -73,6 +84,13 @@ export interface Finding {
   source: FindingSource;
   sourceMode: SourceMode;
   evidence: FindingEvidence;
+  lifecycleState?: FindingLifecycleState;
+  evidenceGrade?: EvidenceGrade;
+  supportedTransformer?: string | null;
+  protected?: boolean;
+  protectionReason?: string;
+  suggestedAction?: string;
+  projectRoot?: string;
 }
 
 export interface FindingsSummary {
@@ -88,6 +106,9 @@ export interface FindingsSummary {
   actionableFixes?: number;
   detectedFindings?: number;
   doNotTouch: number;
+  supportedFixes?: number;
+  reviewRequiredFindings?: number;
+  protectedFindings?: number;
 }
 
 export interface FindingsPayload {

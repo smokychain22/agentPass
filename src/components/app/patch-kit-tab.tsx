@@ -21,20 +21,17 @@ import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
 import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
+import { ChangeManifestTable } from "./patch-kit/change-manifest-table";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
+import { computeWorkflowGates } from "@/lib/workflow/gates";
+import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import { flattenFindings } from "@/lib/findings/client";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState, classifyPatchError } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 
-const LOADING: PatchKitPhase[] = [
-  "classifying",
-  "patch",
-  "package",
-  "regression",
-  "cursor",
-  "bundle",
-];
+const LOADING: PatchKitPhase[] = ["classifying", "patch", "validating", "bundle"];
 
 function phaseIndex(phase: PatchKitPhase): number {
   if (phase === "idle" || phase === "failed") return -1;
@@ -87,10 +84,22 @@ export function PatchKitTab() {
     }
   }, [findings, session, setPatchKit, show, selectedFindingIds, isRateLimited]);
 
-  const safeDeleteRows = useMemo(
-    () => (findings ? buildSafeDeleteRows(findings) : []),
-    [findings]
+  const supportedCount = useMemo(() => {
+    if (!findings) return 0;
+    return flattenFindings(findings).filter(isActionableFinding).length;
+  }, [findings]);
+
+  const gates = useMemo(
+    () =>
+      computeWorkflowGates({
+        scanComplete: session.scanComplete,
+        findings,
+        patchKit,
+      }),
+    [session.scanComplete, findings, patchKit]
   );
+
+  const canContinueToVerify = gates.verifyUnlocked;
 
   const handleCopy = async (text: string, label: string) => {
     await navigator.clipboard.writeText(text);
@@ -102,6 +111,11 @@ export function PatchKitTab() {
     downloadPatchKitZip(patchKit, patchKit.repo.name, patchKit.repo.branch);
     show("success", "Bundle download started");
   };
+
+  const safeDeleteRows = useMemo(
+    () => (findings ? buildSafeDeleteRows(findings) : []),
+    [findings]
+  );
 
   if (!findings) {
     return (
@@ -121,25 +135,29 @@ export function PatchKitTab() {
         label="Cleanup eligibility"
         title="Quick Cleanup"
         description={
-          patchKit?.summary.supportedFixesDetected
-            ? `${patchKit.summary.supportedFixesDetected} supported fix(es) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
-            : "RepoDiet applies up to five supported deterministic fixes with validated diffs and verification."
+          supportedCount === 0
+            ? "RepoDiet found review findings, but none are currently supported for deterministic cleanup."
+            : patchKit?.summary.supportedFixesDetected
+              ? `${patchKit.summary.supportedFixesDetected} supported fix(es) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
+              : `${supportedCount} eligible finding(s) for deterministic cleanup.`
         }
         actions={
           <>
-            <Button onClick={generate} disabled={isLoading || isRateLimited}>
-              {isLoading ? (
-                <>
-                  <Loader2 className="animate-spin" aria-hidden />
-                  Running…
-                </>
-              ) : patchKit ? (
-                "Regenerate Quick Cleanup"
-              ) : (
-                "Run Quick Cleanup"
-              )}
-            </Button>
-            {patchKit && (
+            {supportedCount > 0 && (
+              <Button onClick={generate} disabled={isLoading || isRateLimited}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="animate-spin" aria-hidden />
+                    Running…
+                  </>
+                ) : patchKit ? (
+                  "Regenerate Quick Cleanup"
+                ) : (
+                  "Generate Cleanup Changes"
+                )}
+              </Button>
+            )}
+            {canContinueToVerify && (
               <Button variant="ghost" asChild>
                 <Link href="/app?tab=verify">Continue to Verify</Link>
               </Button>
@@ -183,12 +201,20 @@ export function PatchKitTab() {
         />
       )}
 
-      {!patchKit && !isLoading && !error && (
+      {supportedCount === 0 && (
+        <FeedbackBanner
+          variant="info"
+          message="RepoDiet found issues for review, but no deterministic cleanup transformation is available for this scan. A report-only PR remains available after artifacts are generated."
+          dismissible={false}
+        />
+      )}
+
+      {!patchKit && !isLoading && !error && supportedCount > 0 && (
         <EmptyState
           icon={Package}
-          title="Findings ready — run Quick Cleanup"
-          description="RepoDiet applies up to five supported safe fixes, validates each change, and packages deliverables for review."
-          action={{ label: "Run Quick Cleanup", onClick: generate }}
+          title="Supported fixes ready"
+          description="RepoDiet will generate real repository-specific changes, validate the patch with git apply --check, and package deliverables for review."
+          action={{ label: "Generate Cleanup Changes", onClick: generate }}
         />
       )}
 
@@ -214,6 +240,9 @@ export function PatchKitTab() {
               />
             )}
           <PatchKitSummaryCards summary={patchKit.summary} />
+          {patchKit.changeManifest && patchKit.changeManifest.length > 0 && (
+            <ChangeManifestTable entries={patchKit.changeManifest} />
+          )}
           <SafetyPolicyCard />
           <PatchKitWorkspace
             artifacts={patchKit.artifacts}
@@ -231,6 +260,7 @@ export function PatchKitTab() {
         findings={findings}
         patchKit={patchKit}
         demoMode={demoMode}
+        requireVerificationForCleanupPr
       />
     </div>
   );

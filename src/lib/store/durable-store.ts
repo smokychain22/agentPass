@@ -53,6 +53,7 @@ export async function withDurableDb<T>(
       jobs: {},
       findings: {},
       patchKits: {},
+      patchKitsByScan: {},
       verifications: {},
       usage,
       repositories: {},

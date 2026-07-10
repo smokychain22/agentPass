@@ -7,6 +7,7 @@ export type PersistentCollection =
   | "jobs"
   | "findings"
   | "patchKits"
+  | "patchKitsByScan"
   | "verifications"
   | "usage"
   | "repositories"
@@ -33,6 +34,7 @@ export interface DurableDb {
   jobs: Record<string, unknown>;
   findings: Record<string, unknown>;
   patchKits: Record<string, unknown>;
+  patchKitsByScan: Record<string, unknown>;
   verifications: Record<string, unknown>;
   usage: Record<string, unknown>;
   repositories: Record<string, unknown>;
@@ -58,6 +60,7 @@ const DEFAULT_DB: DurableDb = {
   jobs: {},
   findings: {},
   patchKits: {},
+  patchKitsByScan: {},
   verifications: {},
   usage: {},
   repositories: {},
@@ -117,6 +120,7 @@ function loadLocalDb(): DurableDb {
       jobs: parsed.jobs ?? {},
       findings: parsed.findings ?? {},
       patchKits: parsed.patchKits ?? {},
+      patchKitsByScan: parsed.patchKitsByScan ?? {},
       verifications: parsed.verifications ?? {},
       usage: parsed.usage ?? {},
       repositories: parsed.repositories ?? {},

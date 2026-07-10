@@ -4,8 +4,10 @@ export interface PersistedSession {
   repoUrl: string;
   branch: string;
   scanId?: string;
+  scanRecordId?: string;
   scanComplete: boolean;
   selectedFindingIds: string[];
+  patchKitId?: string;
   cleanupRunId?: string;
 }
 
@@ -38,6 +40,27 @@ export function clearPersistedSession(): void {
   storage.removeItem(STORAGE_KEY);
 }
 
+export async function fetchPersistedPatchKit(scanId: string) {
+  const res = await fetch(`/api/patches/by-scan/${scanId}`);
+  const json = (await res.json()) as {
+    success: boolean;
+    patchKit?: import("@/lib/patch-kit/types").PatchKitPayload;
+    error?: string;
+  };
+  if (!json.success || !json.patchKit) return null;
+  return json.patchKit;
+}
+
+export async function fetchPersistedScan(scanId: string) {
+  const res = await fetch(`/api/scans/${scanId}`);
+  const json = (await res.json()) as {
+    success: boolean;
+    scan?: import("@/lib/scanner/run-scan").ScanPayload;
+    error?: string;
+  };
+  if (!json.success || !json.scan) return null;
+  return json.scan;
+}
 export async function fetchPersistedFindings(scanId: string) {
   const res = await fetch(`/api/findings/${scanId}`);
   const json = (await res.json()) as {

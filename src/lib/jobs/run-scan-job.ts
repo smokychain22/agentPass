@@ -1,6 +1,7 @@
 import { createJobId, saveJob, updateJob } from "./job-store";
 import { durableNow } from "@/lib/store/durable-store";
 import { runBasicScan } from "@/lib/scanner/run-scan";
+import { storeAppScan } from "@/lib/scan/app-scan-store";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import type { ScanJob, ScanJobStage } from "./types";
 
@@ -21,6 +22,7 @@ export async function runScanJob(
     setStage("file_tree");
 
     const scan = await runBasicScan(repoUrl, branch);
+    await storeAppScan(scan.id, { payload: scan, ownerKey });
 
     return (await updateJob(jobId, {
       status: "complete",

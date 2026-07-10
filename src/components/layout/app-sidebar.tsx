@@ -24,34 +24,41 @@ const mainNav = [
     lockReason: undefined as string | undefined,
     needsScan: false,
     needsFindings: false,
+    needsQuickCleanup: false,
+    needsVerify: false,
   },
   {
     href: "/app?tab=findings",
     label: "Findings",
     icon: FileSearch,
     tab: "findings",
-    lockReason: "Available after repository scan",
+    lockReason: "Complete repository scan first",
     needsScan: true,
     needsFindings: false,
+    needsQuickCleanup: false,
+    needsVerify: false,
   },
   {
     href: "/app?tab=patch",
     label: "Quick Cleanup",
     icon: Package,
     tab: "patch",
-    lockReason: "Available after findings are ready",
+    lockReason: "Run findings analysis first",
     needsScan: true,
     needsFindings: true,
+    needsQuickCleanup: true,
+    needsVerify: false,
   },
   {
     href: "/app?tab=verify",
     label: "Verify",
     icon: ShieldCheck,
     tab: "verify",
-    lockReason: "Available after patch bundle is generated",
+    lockReason: "Generate and validate cleanup changes first",
     needsScan: true,
     needsFindings: true,
-    needsPatchKit: true,
+    needsQuickCleanup: false,
+    needsVerify: true,
   },
 ];
 
@@ -63,7 +70,9 @@ const secondaryNav = [
 interface AppSidebarProps {
   scanComplete?: boolean;
   findingsReady?: boolean;
+  quickCleanupAvailable?: boolean;
   patchKitReady?: boolean;
+  verifyUnlocked?: boolean;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
@@ -71,7 +80,9 @@ interface AppSidebarProps {
 export function AppSidebar({
   scanComplete = false,
   findingsReady = false,
+  quickCleanupAvailable = false,
   patchKitReady = false,
+  verifyUnlocked = false,
   mobileOpen = false,
   onMobileClose,
 }: AppSidebarProps) {
@@ -105,10 +116,22 @@ export function AppSidebar({
           <p className="mb-2 px-2 ds-label">Workflow</p>
           <ul className="space-y-0.5">
             {mainNav.map((item) => {
-              const locked =
-                (item.needsScan && !scanComplete) ||
-                (item.needsFindings && !findingsReady) ||
-                ("needsPatchKit" in item && item.needsPatchKit && !patchKitReady);
+              let locked = false;
+              let lockReason = item.lockReason;
+
+              if (item.needsScan && !scanComplete) locked = true;
+              else if (item.needsFindings && !findingsReady) locked = true;
+              else if (item.needsQuickCleanup && !quickCleanupAvailable) {
+                locked = true;
+                lockReason =
+                  "No supported deterministic fixes — review findings or create report-only PR";
+              } else if (item.needsVerify && !verifyUnlocked) {
+                locked = true;
+                lockReason = patchKitReady
+                  ? "Verify unlocks after validated changes are generated"
+                  : "Generate cleanup changes in Quick Cleanup first";
+              }
+
               const active = pathname === "/app" && activeTab === item.tab;
 
               return (
@@ -116,7 +139,7 @@ export function AppSidebar({
                   {locked ? (
                     <span
                       className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground/50"
-                      title={item.lockReason}
+                      title={lockReason}
                     >
                       <item.icon className="h-4 w-4 shrink-0 opacity-50" aria-hidden />
                       <span className="flex-1">{item.label}</span>
@@ -138,9 +161,9 @@ export function AppSidebar({
                       {item.label}
                     </Link>
                   )}
-                  {locked && item.lockReason && (
+                  {locked && lockReason && (
                     <p className="px-2.5 pb-1 pt-0.5 text-[10px] leading-snug text-muted-foreground/60">
-                      {item.lockReason}
+                      {lockReason}
                     </p>
                   )}
                 </li>
@@ -180,7 +203,8 @@ export function AppSidebar({
           status={scanComplete ? "complete" : "pending"}
         />
         <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-          Workflow restores after refresh when scan findings are persisted server-side.
+          Workflow restores after refresh when scan, findings, and patch data are persisted
+          server-side.
         </p>
       </div>
     </>
@@ -188,12 +212,10 @@ export function AppSidebar({
 
   return (
     <>
-      {/* Desktop sidebar */}
       <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/30 lg:flex">
         {content}
       </aside>
 
-      {/* Mobile drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button

@@ -112,9 +112,10 @@ export function ScanTab() {
     }
   }, [searchParams, startScan, session.scanComplete]);
 
+  const displayResult = result ?? session.scanResult;
   const currentStep = phaseIndex(phase as ScanPhase);
   const showIdle = phase === "idle" && !session.scanComplete;
-  const showSuccess = phase === "complete" && result;
+  const showSuccess = (phase === "complete" || session.scanComplete) && displayResult;
 
   const pasteUrl = async () => {
     try {
@@ -252,15 +253,23 @@ export function ScanTab() {
 
       {showIdle && <ScanEmptyIllustration />}
 
-      {showSuccess && result && (
+      {showSuccess && displayResult && (
         <div className="space-y-4">
           <Panel variant="safe" padding="md">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-semibold text-signal">Scan complete</p>
                 <p className="mt-1 font-mono text-xs text-muted-foreground">
-                  {result.repo.owner}/{result.repo.name} · {result.repo.branch}
+                  {displayResult.repo.owner}/{displayResult.repo.name} · {displayResult.repo.branch}
+                  {displayResult.repo.commitSha ? (
+                    <> · <span title="Commit SHA">{displayResult.repo.commitSha.slice(0, 7)}</span></>
+                  ) : null}
                 </p>
+                {session.scanRecordId && (
+                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                    Scan ID: {session.scanRecordId}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button asChild>
@@ -277,29 +286,73 @@ export function ScanTab() {
           </Panel>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard label="Framework" value={result.framework.name} accent="cyan" />
+            <MetricCard label="Framework" value={displayResult.framework.name} accent="cyan" />
             <MetricCard
               label="Package manager"
-              value={result.packageManager.toUpperCase()}
+              value={displayResult.packageManager.toUpperCase()}
               accent="neutral"
             />
             <MetricCard
               label="Files indexed"
-              value={result.summary.totalFiles.toLocaleString()}
+              value={displayResult.summary.totalFiles.toLocaleString()}
               accent="neutral"
             />
             <MetricCard
-              label="Top folders"
-              value={result.topLevelFolders.length}
+              label="Analyzable source"
+              value={(
+                displayResult.repositoryModel?.analyzableSourceFiles ??
+                displayResult.summary.totalFiles
+              ).toLocaleString()}
               accent="neutral"
-              hint={result.topLevelFolders.slice(0, 3).join(", ") || "—"}
             />
           </div>
 
-          {result.warnings.length > 0 && (
+          {displayResult.repositoryModel && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Project roots</p>
+              <p className="mb-3 text-sm text-muted-foreground">
+                Primary root:{" "}
+                <span className="font-mono text-foreground">
+                  {displayResult.repositoryModel.primaryProjectRoot}
+                </span>
+                {displayResult.repositoryModel.monorepoTool
+                  ? ` · ${displayResult.repositoryModel.monorepoTool} monorepo`
+                  : ""}
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border/40 text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="py-2 pr-4">Root</th>
+                      <th className="py-2 pr-4">Framework</th>
+                      <th className="py-2 pr-4">Role</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayResult.repositoryModel.projects.map((p) => {
+                      const project = p as {
+                        projectRoot?: string;
+                        framework?: string;
+                        role?: string;
+                      };
+                      return (
+                        <tr key={String(project.projectRoot)} className="border-b border-border/20">
+                          <td className="py-2 pr-4 font-mono text-xs">{project.projectRoot || "."}</td>
+                          <td className="py-2 pr-4">{project.framework ?? "unknown"}</td>
+                          <td className="py-2 pr-4">{project.role ?? "unknown"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+
+          {displayResult.warnings.length > 0 && (
             <FeedbackBanner
               variant="warning"
-              message={result.warnings.join(" · ")}
+              message={displayResult.warnings.join(" · ")}
               dismissible={false}
             />
           )}
@@ -307,17 +360,24 @@ export function ScanTab() {
           <div className="grid gap-4 lg:grid-cols-2">
             <ScanDetailPanel title="Repository summary">
               <dl className="space-y-2 text-sm">
-                <DetailRow label="Total folders" value={result.summary.totalFolders.toLocaleString()} />
-                <DetailRow label="Total size" value={`${result.summary.totalSizeKb.toLocaleString()} KB`} />
-                <DetailRow label="Config files" value={String(result.configFiles.length)} />
+                <DetailRow label="Total folders" value={displayResult.summary.totalFolders.toLocaleString()} />
+                <DetailRow label="Total size" value={`${displayResult.summary.totalSizeKb.toLocaleString()} KB`} />
+                <DetailRow label="Config files" value={String(displayResult.configFiles.length)} />
+                <DetailRow
+                  label="Protected paths"
+                  value={String(displayResult.repositoryModel?.protectedFileCount ?? "—")}
+                />
+                {displayResult.repo.commitSha && (
+                  <DetailRow label="Commit SHA" value={displayResult.repo.commitSha} />
+                )}
               </dl>
             </ScanDetailPanel>
             <ScanDetailPanel title="Framework detection">
               <div className="space-y-2">
-                <DetailRow label="Framework" value={result.framework.name} />
+                <DetailRow label="Framework" value={displayResult.framework.name} />
                 <p className="text-xs text-muted-foreground">Detected from deterministic signals:</p>
                 <ul className="space-y-1 font-mono text-xs text-muted-foreground">
-                  {result.framework.signals.map((s) => (
+                  {displayResult.framework.signals.map((s) => (
                     <li key={s}>✓ {s}</li>
                   ))}
                 </ul>
