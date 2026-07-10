@@ -275,7 +275,7 @@ export function buildServiceManifest() {
       freeProof: { operation: "run_free_safe_fix", limitPerRepo: 1, priceUsdt: 0 },
       quickCleanup: { operation: "run_quick_cleanup", priceUsdt: 0.25 },
       verifiedCleanupPr: { operation: "create_cleanup_pr", priceUsdtMin: 1, priceUsdtMax: 3 },
-      repoGuard: { operation: "activate_repo_guard", priceUsdtMonthlyMin: 3, priceUsdtMonthlyMax: 5, available: false },
+      repoGuard: { operation: "activate_repo_guard", priceUsdtMonthlyMin: 3, priceUsdtMonthlyMax: 5, available: true },
     },
     freeLimits: {
       freeProofFixes: 1,

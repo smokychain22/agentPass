@@ -48,9 +48,10 @@ export function buildAgentCard() {
       },
       {
         type: "repository.guard_activation",
-        description: "Repo Guard monitoring (not yet available).",
+        description: "Activate continuous repository monitoring with delta scans and policy enforcement.",
         paymentRequired: true,
-        available: false,
+        priceHint: "3–5 USDT/month",
+        available: true,
       },
     ] satisfies Array<{
       type: A2ATaskType;
@@ -87,6 +88,9 @@ export function buildAgentCard() {
       approveTask: `${baseUrl}/api/a2a/tasks/{taskId}/approve`,
       fundTask: `${baseUrl}/api/a2a/tasks/{taskId}/fund`,
       cancelTask: `${baseUrl}/api/a2a/tasks/{taskId}/cancel`,
+      guardRun: `${baseUrl}/api/guard/run`,
+      guardStatus: `${baseUrl}/api/guard/{repository}`,
+      githubWebhook: `${baseUrl}/api/github/webhook`,
       manifest: `${baseUrl}/api/tools/manifest`,
       health: `${baseUrl}/api/tools/health`,
     },
@@ -138,7 +142,7 @@ export function buildAgentCard() {
       "Max ZIP 25MB, 5000 files",
       "No automatic merge to main",
       "GitHub PR tasks require explicit approval",
-      "Repo Guard not yet available",
+      "Repo Guard monitors connected repositories after merges and on schedule",
     ],
     safetyPolicies: [
       "Routes, configs, env files, lockfiles, and API handlers are protected by default",

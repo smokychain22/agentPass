@@ -233,22 +233,31 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | Approval | `awaiting_approval` before GitHub PR creation |
 | Callbacks | Optional `callbackUrl` on submit (best-effort) |
 | Verification | `npm run verify:a2a` |
-| Limitations | Repo Guard returns honest `unsupported`; x402 quote binding on paid A2A tasks |
+| Limitations | x402 quote binding on paid A2A tasks |
 
 ### 17. Repo Guard
 
 | Field | Value |
 |-------|-------|
-| **Status** | **NOT IMPLEMENTED** |
-| Pricing CTA | Marked "Coming Soon" |
-| Prepared | `guard_runs` collection, quote type |
+| **Status** | **REAL** |
+| Activate | `POST /api/guard/run` (action=activate), A2A `repository.guard_activation`, A2MCP `activate_repo_guard` |
+| Webhook | `POST /api/github/webhook` — push, pull_request merged |
+| Manual scan | `POST /api/guard/run` (repository) |
+| Status | `GET /api/guard/{owner/repo}` |
+| Delta analysis | `src/lib/guard/delta-analysis.ts` — new/resolved/recurring/ignored |
+| Triggers | PR merged, default branch push, manifest change, file-count spike, manual, weekly |
+| Pricing | 3–5 USDT/month (launch quote 4 USDT) |
+| Verification | `npm run verify:guard` |
 
 ### 18. Repository memory / policies
 
 | Field | Value |
 |-------|-------|
-| **Status** | **NOT IMPLEMENTED** |
-| Prepared | `repository_policies` collection |
+| **Status** | **REAL** |
+| Store | `repository_policies` collection via `src/lib/guard/repository-memory.ts` |
+| Configure | `POST /api/tools/configure_repository_policy` |
+| Fields | protectedPaths, allowAutomaticFixes, rejectedFindings, approval prefs, notification settings |
+| Enforcement | Policy applied during guard delta scans and safe-candidate selection |
 
 ### 19. Landing / marketing animations
 
@@ -287,7 +296,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | `execution_receipts` | Signed receipts | Redis/local | **REAL** |
 | `github_installations` | Install metadata | Redis/local | **PREPARED** |
 | `repository_policies` | Protected paths / policies | Redis/local | **PREPARED** |
-| `guard_runs` | Repo Guard scheduled runs | Redis/local | **PREPARED** |
+| `guard_runs` | Guard subscriptions + delta runs | Redis/local | **REAL** |
 
 **Workspace rule:** Ephemeral repo clones use `os.tmpdir()/repodiet` on serverless — never `/var/task/data`.
 
@@ -351,5 +360,5 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 
 ## Next phases
 
-1. **Phase 5** — Live x402 settlement (bound quotes, pay route, signed receipts) — **DONE**
-2. **Phase 6** — Repo Guard scheduling and alerts; strict x402 on all paid tool routes
+1. **Phase 6** — Repo Guard + repository memory — **DONE**
+2. **Phase 7** — Production demo hardening + `npm run smoke:full`

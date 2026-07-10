@@ -160,3 +160,26 @@ export const createCleanupPullRequestFromEngine = createCleanupPullRequest;
 
 /** @deprecated Use createTaskQuote */
 export const quoteCleanupTask = createTaskQuote;
+
+export async function activateRepoGuard(input: {
+  repoUrl: string;
+  branch?: string;
+  quoteId?: string;
+  paymentReference?: string;
+  installationId?: string;
+  callbackUrl?: string;
+  protectedPaths?: string[];
+}) {
+  const { activateRepoGuard: activate } = await import("@/lib/guard/guard-engine");
+  return activate(input);
+}
+
+export async function runGuardScan(repository: string) {
+  const { runManualGuardScan } = await import("@/lib/guard/guard-engine");
+  return runManualGuardScan(repository);
+}
+
+export async function getRepoGuardStatus(repository: string) {
+  const { getGuardStatus } = await import("@/lib/guard/guard-engine");
+  return getGuardStatus(repository);
+}

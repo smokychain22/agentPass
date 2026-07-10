@@ -511,19 +511,19 @@ export const PRICING_TIERS = [
   {
     name: "Repo Guard",
     price: "3–5 USDT/month",
-    description: "Continuous monitoring and one cleanup PR allowance per month. Coming soon.",
+    description: "Continuous monitoring with delta scans, policy enforcement, and monthly cleanup PR allowance.",
     features: [
       "One connected repository",
       "Weekly scans + post-merge checks",
-      "New-debt alerts",
+      "New-debt alerts (ignored findings suppressed)",
       "Monthly cleanup PR allowance",
       "Protected paths per repository",
-      "Finding history",
+      "Finding history and delta analysis",
     ],
-    cta: "Coming Soon",
-    href: "/pricing#repo-guard",
+    cta: "Activate Repo Guard",
+    href: "/app?tab=guard",
     highlighted: false,
-    unavailable: true,
+    unavailable: false,
   },
 ];
 

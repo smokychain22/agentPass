@@ -11,7 +11,8 @@ import {
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { phase1EligibilityReason, resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
-import { getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
+import { getDurableRecord } from "@/lib/store/durable-store";
+import { updateRepositoryPolicy } from "@/lib/guard/repository-memory";
 import { getExecutionReceipt } from "@/lib/store/product-store";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 import { ToolInputSchemas } from "@/lib/a2mcp/schemas";
@@ -369,20 +370,16 @@ export async function executeConfigureRepositoryPolicy(
   const findings = await scanRepository(input.repoUrl, input.branch);
   const policyId = `${findings.repo.owner}/${findings.repo.name}`;
 
-  const policy = {
-    id: policyId,
+  const memory = await updateRepositoryPolicy({
     repository: policyId,
     branch: findings.repo.branch,
-    protectedPaths: input.protectedPaths ?? [],
-    protectedGlobs: input.protectedGlobs ?? [],
-    updatedAt: new Date().toISOString(),
-  };
-
-  await setDurableRecord("repository_policies", policyId, policy);
+    protectedPaths: input.protectedPaths,
+    protectedGlobs: input.protectedGlobs,
+  });
 
   return completeTask(taskId, "configure_repository_policy", findings, {
-    policy,
-    note: "Policy stored for future scans. Full enforcement ships with Repo Guard.",
+    policy: memory,
+    note: "Repository memory and policy enforced on guard scans and fix selection.",
   });
 }
 
@@ -391,27 +388,46 @@ export async function executeActivateRepoGuard(
   taskId: string
 ): Promise<AgentTaskRecord> {
   const input = Phase3InputSchemas.repoUrl(body);
-  const findings = await scanRepository(input.repoUrl, input.branch);
+  const record = body as Record<string, unknown>;
+  const { activateRepoGuard } = await import("@/lib/guard/guard-engine");
+  const { deltaPresentation } = await import("@/lib/guard/delta-analysis");
 
-  const task: AgentTaskRecord = {
-    id: taskId,
-    type: "activate_repo_guard",
-    status: "failed",
-    repository: repositoryFromFindings(findings),
-    scanId: findings.scanId,
-    result: {},
-    analyzers: analyzersFromFindings(findings),
-    limitations: [
-      "Repo Guard scheduling is not yet available in production.",
-      "Subscribe at repodiet pricing when monitoring launches.",
-    ],
-    receipt: {},
-    error: "Repo Guard is not implemented in Phase 3.",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-  };
-  return persistTask(task);
+  const activation = await activateRepoGuard({
+    repoUrl: input.repoUrl,
+    branch: input.branch,
+    quoteId: typeof record.quoteId === "string" ? record.quoteId : undefined,
+    paymentReference:
+      typeof record.paymentReference === "string" ? record.paymentReference : undefined,
+    callbackUrl: typeof record.callbackUrl === "string" ? record.callbackUrl : undefined,
+    protectedPaths: Array.isArray(record.protectedPaths)
+      ? record.protectedPaths.filter((p): p is string => typeof p === "string")
+      : undefined,
+  });
+
+  const findings = await getStoredFindings(activation.baselineRun.currentScanId!);
+  if (!findings) {
+    const scanned = await scanRepository(input.repoUrl, input.branch);
+    return completeTask(taskId, "activate_repo_guard", scanned, {
+      guard: activation.subscription,
+      baselineRun: {
+        id: activation.baselineRun.id,
+        delta: activation.baselineRun.delta
+          ? deltaPresentation(activation.baselineRun.delta)
+          : null,
+      },
+    });
+  }
+
+  return completeTask(taskId, "activate_repo_guard", findings, {
+    guard: activation.subscription,
+    baselineRun: {
+      id: activation.baselineRun.id,
+      status: activation.baselineRun.status,
+      delta: activation.baselineRun.delta ? deltaPresentation(activation.baselineRun.delta) : null,
+      proposal: activation.baselineRun.proposal,
+      notification: activation.baselineRun.notification,
+    },
+  });
 }
 
 export async function executeGetTaskStatus(taskId: string): Promise<AgentTaskRecord | undefined> {

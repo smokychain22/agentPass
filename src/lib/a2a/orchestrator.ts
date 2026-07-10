@@ -413,16 +413,59 @@ async function executeChanges(
     }
   }
 
+  if (task.type === "repository.guard_activation") {
+    sm.emit("generating_changes", "orchestrator");
+    task = await syncTask(task, sm);
+    try {
+      const { activateRepoGuard } = await import("@/lib/guard/guard-engine");
+      const { deltaPresentation } = await import("@/lib/guard/delta-analysis");
+      const activation = await activateRepoGuard({
+        repoUrl: input.repoUrl,
+        branch: input.branch,
+        quoteId: task.input.quoteId,
+        paymentReference: task.input.paymentReference,
+        callbackUrl: input.callbackUrl,
+      });
+      if (task.input.quoteId) {
+        await markQuoteCompleted(task.input.quoteId, task.id);
+      }
+      return completeTask(task, sm, {
+        guard: {
+          subscriptionId: activation.subscription.id,
+          repository: activation.subscription.repository,
+          status: activation.subscription.status,
+          expiresAt: activation.subscription.expiresAt,
+          monthlyPrAllowanceRemaining: activation.subscription.monthlyPrAllowanceRemaining,
+        },
+        baselineRun: {
+          id: activation.baselineRun.id,
+          status: activation.baselineRun.status,
+          delta: activation.baselineRun.delta
+            ? deltaPresentation(activation.baselineRun.delta)
+            : null,
+          proposal: activation.baselineRun.proposal,
+          notification: activation.baselineRun.notification,
+        },
+        findings: task.result.findings,
+      });
+    } catch (err) {
+      if (task.input.quoteId) {
+        await handleExecutionFailure(task.input.quoteId, "platform_failure");
+      }
+      return failTask(
+        task,
+        sm,
+        "analysis_failed",
+        err instanceof Error ? err.message : "Repo Guard activation failed.",
+        "orchestrator"
+      );
+    }
+  }
+
   return failTask(task, sm, "unsupported", "Unsupported task type.");
 }
 
 export async function submitA2ATask(type: A2ATaskType, input: A2ATaskInput): Promise<A2ATaskRecord> {
-  if (type === "repository.guard_activation") {
-    const task = buildInitialTask(type, input, repoFromUrl(input.repoUrl, input.branch));
-    const sm = new A2ATaskStateMachine(task.transitions);
-    return failTask(task, sm, "unsupported", "Repo Guard activation is not available in this release.");
-  }
-
   let task = buildInitialTask(type, input, repoFromUrl(input.repoUrl, input.branch));
   const sm = new A2ATaskStateMachine(task.transitions);
   await saveA2ATask(task);

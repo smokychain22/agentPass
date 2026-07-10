@@ -109,6 +109,8 @@ export interface A2ATaskResult {
     branch?: string;
   };
   receipt?: Record<string, unknown>;
+  guard?: Record<string, unknown>;
+  baselineRun?: Record<string, unknown>;
 }
 
 export interface A2ATaskRecord {
