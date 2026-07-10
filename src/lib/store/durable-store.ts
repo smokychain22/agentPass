@@ -69,6 +69,9 @@ export async function withDurableDb<T>(
       guard_runs: {},
       tasks: {},
       a2a_tasks: {},
+      okx_orders: {},
+      marketplace_deliveries: {},
+      payment_entitlements: {},
     };
     return fn(db);
   });

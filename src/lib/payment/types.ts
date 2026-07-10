@@ -1,5 +1,14 @@
 import type { TaskOperation } from "@/lib/execution/task-quote";
 
+export type A2mcpOperation =
+  | "scan_repository"
+  | "analyze_repository"
+  | "list_safe_fixes"
+  | "verify_patch"
+  | "repository_health_delta";
+
+export type CommerceOperation = TaskOperation | A2mcpOperation;
+
 export type VerificationProfile = "standard" | "strict";
 
 export type PaymentLifecycleStatus =
@@ -25,7 +34,7 @@ export type QuoteStatus = "active" | "payment_required" | "funded" | "consumed" 
 
 export interface BoundQuote {
   quoteId: string;
-  operation: TaskOperation;
+  operation: CommerceOperation;
   repository: string;
   branch: string;
   commitSha: string;
@@ -77,7 +86,7 @@ export interface EntitlementContext {
   branch: string;
   commitSha: string;
   findingIds: string[];
-  operation: TaskOperation;
+  operation: CommerceOperation;
   quoteId: string;
   taskId?: string;
 }

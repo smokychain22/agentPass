@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { TaskOperation } from "@/lib/execution/task-quote";
+import type { CommerceOperation } from "@/lib/payment/types";
 import {
   getBoundQuote,
   getPaymentByIdempotencyKey,
@@ -31,7 +31,7 @@ export async function createQuoteForOperation(input: {
   branch: string;
   commitSha: string;
   findingIds: string[];
-  operation: TaskOperation;
+  operation: CommerceOperation;
   sourceFileCount?: number;
   idempotencyKey?: string;
 }): Promise<BoundQuote> {

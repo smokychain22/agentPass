@@ -10,6 +10,6 @@ export async function POST(request: Request) {
     "create_cleanup_pr",
     request,
     executeCreateCleanupPrPhase3,
-    OPERATOR_TOOL_TIMEOUT_MS
+    { timeoutMs: OPERATOR_TOOL_TIMEOUT_MS }
   );
 }

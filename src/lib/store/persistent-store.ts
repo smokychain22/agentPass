@@ -22,7 +22,10 @@ export type PersistentCollection =
   | "repository_policies"
   | "guard_runs"
   | "tasks"
-  | "a2a_tasks";
+  | "a2a_tasks"
+  | "okx_orders"
+  | "marketplace_deliveries"
+  | "payment_entitlements";
 
 export type ArtifactCollection = "artifacts";
 
@@ -46,6 +49,9 @@ export interface DurableDb {
   guard_runs: Record<string, unknown>;
   tasks: Record<string, unknown>;
   a2a_tasks: Record<string, unknown>;
+  okx_orders: Record<string, unknown>;
+  marketplace_deliveries: Record<string, unknown>;
+  payment_entitlements: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -68,6 +74,9 @@ const DEFAULT_DB: DurableDb = {
   guard_runs: {},
   tasks: {},
   a2a_tasks: {},
+  okx_orders: {},
+  marketplace_deliveries: {},
+  payment_entitlements: {},
 };
 
 let redisClient: Redis | null = null;
@@ -124,6 +133,9 @@ function loadLocalDb(): DurableDb {
       guard_runs: parsed.guard_runs ?? {},
       tasks: parsed.tasks ?? {},
       a2a_tasks: parsed.a2a_tasks ?? {},
+      okx_orders: parsed.okx_orders ?? {},
+      marketplace_deliveries: parsed.marketplace_deliveries ?? {},
+      payment_entitlements: parsed.payment_entitlements ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);

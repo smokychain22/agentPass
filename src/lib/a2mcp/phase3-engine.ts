@@ -85,10 +85,16 @@ export async function executeAnalyzeRepository(
   const ref = Phase3InputSchemas.repoRef(body);
   const findings = await resolveFindingsPayload(ref, getAgentTask);
   const analyzed = await analyzeRepository(findings);
+  const safe = selectSafeFixes(analyzed, 25);
 
   return completeTask(taskId, "analyze_repository", analyzed, {
     scanId: analyzed.scanId,
-    summary: analyzed.summary,
+    summary: {
+      totalFindings: analyzed.summary.totalFindings,
+      safeCandidates: safe.length,
+      reviewFirst: analyzed.riskBuckets.reviewFirst.length,
+      protected: analyzed.riskBuckets.doNotTouch.length,
+    },
     riskBuckets: analyzed.riskBuckets,
     findingCounts: {
       duplicates: analyzed.duplicates.length,
@@ -135,6 +141,88 @@ export async function executeListSafeFixes(
       plugin: resolvePhase1Plugin(f).id,
       eligibilityReason: phase1EligibilityReason(f),
     })),
+  });
+}
+
+export async function executeVerifyPatch(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const cleanupRunId =
+    (typeof record.cleanupRunId === "string" ? record.cleanupRunId : undefined) ??
+    (typeof record.patchId === "string" ? record.patchId : undefined);
+  if (!cleanupRunId) {
+    throw new Error("cleanupRunId or patchId is required.");
+  }
+  const verification = await verifyChanges(cleanupRunId);
+  const ref = Phase3InputSchemas.repoRef(body);
+  const findings = await resolveFindingsPayload(ref, getAgentTask);
+
+  return completeTask(
+    taskId,
+    "verify_patch",
+    findings,
+    {
+      cleanupRunId,
+      verification: {
+        status: verification.status,
+        checks: verification.checks,
+        limitations: verification.limitations,
+      },
+    },
+    verification.limitations
+  );
+}
+
+export async function executeRepositoryHealthDelta(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const baseScanId = typeof record.baseScanId === "string" ? record.baseScanId : undefined;
+  const headScanId =
+    typeof record.headScanId === "string"
+      ? record.headScanId
+      : typeof record.scanId === "string"
+        ? record.scanId
+        : undefined;
+  const baseCommitSha =
+    typeof record.baseCommitSha === "string" ? record.baseCommitSha : undefined;
+  const headCommitSha =
+    typeof record.headCommitSha === "string" ? record.headCommitSha : undefined;
+
+  const ref = Phase3InputSchemas.repoRef(body);
+  const current = await resolveFindingsPayload(
+    headScanId ? { scanId: headScanId } : ref,
+    getAgentTask
+  );
+  const previous = baseScanId ? await getStoredFindings(baseScanId) : undefined;
+
+  const { analyzeGuardDelta } = await import("@/lib/guard/delta-analysis");
+  const { loadRepositoryMemory } = await import("@/lib/guard/repository-memory");
+  const memory = await loadRepositoryMemory(`${current.repo.owner}/${current.repo.name}`);
+
+  const delta = await analyzeGuardDelta({
+    memory,
+    previousScanId: baseScanId,
+    currentScanId: current.scanId,
+    previousCommitSha: baseCommitSha ?? previous?.repo.commitSha,
+    currentCommitSha: headCommitSha ?? current.repo.commitSha ?? "unknown",
+    currentFindings: current,
+  });
+
+  return completeTask(taskId, "repository_health_delta", current, {
+    delta: {
+      newFindings: delta.newFindings.length,
+      resolvedFindings: delta.resolvedFindings.length,
+      recurringFindings: delta.recurringFindings.length,
+      ignoredFindings: delta.ignoredFindings.length,
+      newSafeCandidates: delta.newSafeCandidates.length,
+      previousCommitSha: delta.previousCommitSha,
+      currentCommitSha: delta.currentCommitSha,
+    },
+    details: delta,
   });
 }
 

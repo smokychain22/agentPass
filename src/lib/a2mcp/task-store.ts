@@ -13,7 +13,9 @@ export type AgentTaskType =
   | "verify_cleanup"
   | "create_cleanup_pr"
   | "configure_repository_policy"
-  | "activate_repo_guard";
+  | "activate_repo_guard"
+  | "verify_patch"
+  | "repository_health_delta";
 
 export type AgentTaskStatus = "queued" | "running" | "completed" | "failed";
 

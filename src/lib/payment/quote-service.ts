@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { nanoid } from "nanoid";
-import type { TaskOperation } from "@/lib/execution/task-quote";
+import type { CommerceOperation } from "./types";
 import { quoteCleanupPrPrice } from "@/lib/pricing/quote";
 import {
   QUOTE_TTL_MS,
@@ -24,10 +24,20 @@ function requestHash(parts: Record<string, string | string[]>): string {
 }
 
 export function priceForOperation(
-  operation: TaskOperation,
+  operation: CommerceOperation,
   sourceFileCount?: number
 ): { amountMicro: string; priceLabel: string } {
   switch (operation) {
+    case "scan_repository":
+      return { amountMicro: "10000", priceLabel: "0.01 USDT" };
+    case "analyze_repository":
+      return { amountMicro: "30000", priceLabel: "0.03 USDT" };
+    case "list_safe_fixes":
+      return { amountMicro: "10000", priceLabel: "0.01 USDT" };
+    case "verify_patch":
+      return { amountMicro: "50000", priceLabel: "0.05 USDT" };
+    case "repository_health_delta":
+      return { amountMicro: "30000", priceLabel: "0.03 USDT" };
     case "free_proof":
       return { amountMicro: "0", priceLabel: "Free" };
     case "quick_cleanup":
@@ -48,7 +58,7 @@ export async function createBoundQuote(input: {
   branch: string;
   commitSha: string;
   findingIds: string[];
-  operation: TaskOperation;
+  operation: CommerceOperation;
   verificationProfile?: VerificationProfile;
   sourceFileCount?: number;
   idempotencyKey?: string;
@@ -127,7 +137,7 @@ export function validateQuoteBinding(
     branch: string;
     commitSha: string;
     findingIds: string[];
-    operation: TaskOperation;
+    operation: CommerceOperation;
   }
 ): { ok: boolean; reason?: string; status?: BoundQuote["lifecycleStatus"] } {
   if (new Date(quote.expiresAt).getTime() < Date.now()) {

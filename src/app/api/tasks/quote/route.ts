@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
-import type { TaskOperation } from "@/lib/execution/task-quote";
+import type { CommerceOperation } from "@/lib/payment/types";
 import { createQuoteForOperation, quoteTo402Response } from "@/lib/payment";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
       branch?: string;
       commitSha: string;
       findingIds?: string[];
-      operation: TaskOperation;
+      operation: CommerceOperation;
       sourceFileCount?: number;
       idempotencyKey?: string;
       verificationProfile?: "standard" | "strict";
