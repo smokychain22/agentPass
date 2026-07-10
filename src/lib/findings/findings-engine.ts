@@ -8,6 +8,8 @@ import { runAiSlopHeuristics } from "./ai-slop-heuristics";
 import { normalizeFindings } from "./normalize-findings";
 import { buildSummaryFromFindings } from "./stats";
 import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
+import { enrichExactDuplicateFindings } from "./enrich-exact-duplicates";
+import { enrichFileHygieneFindings } from "./enrich-file-hygiene";
 import { enrichFindingsWithPreflight } from "./enrich-preflight";
 import { countActionableFindings } from "./actionability-signals";
 import { enrichPayloadLifecycle } from "./enrich-lifecycle";
@@ -94,6 +96,35 @@ export async function runFindingsEngine(
         },
       };
     }
+
+    const exactDupFindings = await enrichExactDuplicateFindings(
+      workspace.rootDir,
+      flattenPayloadFindings(payload)
+    );
+    if (exactDupFindings.length > 0) {
+      payload = {
+        ...payload,
+        duplicates: [...payload.duplicates, ...exactDupFindings],
+      };
+    }
+
+    const hygieneEnriched = await enrichFileHygieneFindings(
+      workspace.rootDir,
+      flattenPayloadFindings(payload)
+    );
+    const hygieneById = new Map(hygieneEnriched.map((f) => [f.id, f]));
+    const newHygieneOnly = hygieneEnriched.filter(
+      (f) => f.source === "repodiet_hygiene" && !flattenPayloadFindings(payload).some((x) => x.id === f.id)
+    );
+    const remapHygiene = (items: Finding[]) => items.map((f) => hygieneById.get(f.id) ?? f);
+    payload = {
+      ...payload,
+      unused: {
+        files: [...remapHygiene(payload.unused.files), ...newHygieneOnly],
+        dependencies: payload.unused.dependencies,
+        exports: payload.unused.exports,
+      },
+    };
 
     const flatBeforePreflight = flattenPayloadFindings(payload);
     const { findings: preflighted } = await enrichFindingsWithPreflight(

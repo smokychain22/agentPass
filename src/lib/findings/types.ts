@@ -17,6 +17,8 @@ export type FindingSource =
   | "madge"
   | "heuristic"
   | "repodiet_import"
+  | "repodiet_exact_dup"
+  | "repodiet_hygiene"
   | "knip_fallback"
   | "jscpd_fallback"
   | "madge_fallback";

@@ -33,6 +33,7 @@ export interface WorkflowGates {
   verifiedChanges: number;
   patchValidated: boolean;
   verifyUnlocked: boolean;
+  verificationPassed: boolean;
   cleanupPrAvailable: boolean;
   reportOnlyPrAvailable: boolean;
 }
@@ -43,6 +44,7 @@ export function computeWorkflowGates(input: {
   findings: FindingsPayload | null;
   patchKit: PatchKitPayload | null;
   quickCleanupRunning?: boolean;
+  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | null;
 }): WorkflowGates {
   const findings = input.findings;
   const patchKit = input.patchKit;
@@ -61,12 +63,13 @@ export function computeWorkflowGates(input: {
   const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const patchKitReady = Boolean(patchKit?.id);
+  const verificationPassed = input.verificationStatus === "passed";
 
   let quickCleanupState: QuickCleanupWorkflowState = "inactive";
   if (input.quickCleanupRunning) {
     quickCleanupState = "running";
   } else if (patchKitReady) {
-    if (verifiedChanges > 0 && patchValidated) {
+    if (validatedChanges > 0 && patchValidated) {
       quickCleanupState = "complete";
     } else if (generatedChanges === 0 && validatedChanges === 0) {
       quickCleanupState = "failed";
@@ -93,11 +96,13 @@ export function computeWorkflowGates(input: {
     verifiedChanges,
     patchValidated,
     verifyUnlocked: patchKitReady && patchValidated && validatedChanges > 0,
+    verificationPassed,
     cleanupPrAvailable:
       patchKitReady &&
       patchValidated &&
-      verifiedChanges > 0 &&
-      generatedChanges > 0,
+      validatedChanges > 0 &&
+      generatedChanges > 0 &&
+      verificationPassed,
     reportOnlyPrAvailable: findingsReady,
   };
 }

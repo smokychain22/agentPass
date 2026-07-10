@@ -5,6 +5,9 @@ export type Phase1PluginId =
   | "remove_unused_import"
   | "remove_unused_dependency"
   | "remove_temp_file"
+  | "remove_empty_file"
+  | "remove_confirmed_unused_file"
+  | "consolidate_exact_duplicate"
   | "review_only";
 
 export interface Phase1FixPlugin {
@@ -55,6 +58,33 @@ function hasActionablePreflight(finding: Finding): boolean {
   return finding.evidence.signals.some((s) => s === "classification=actionable_candidate");
 }
 
+function isTempFilePath(filePath: string): boolean {
+  return TEMP_FILE_PATTERNS.some((p) => p.test(filePath.replace(/\\/g, "/")));
+}
+
+function hasExactDuplicateEvidence(finding: Finding): boolean {
+  return finding.evidence.signals.some((s) => s === "exact_file_duplicate=true");
+}
+
+function hasEmptyFileEvidence(finding: Finding): boolean {
+  return finding.evidence.signals.some((s) => s === "empty_file=true");
+}
+
+function inboundRefCount(finding: Finding): number {
+  const raw = finding.evidence.signals.find((s) => s.startsWith("inbound_refs="))?.slice(13);
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) ? n : -1;
+}
+
+function isConfirmedUnusedFile(finding: Finding): boolean {
+  if (finding.type !== "unused_file") return false;
+  if (finding.sourceMode !== "native" || finding.source !== "knip") return false;
+  const file = finding.files[0];
+  if (!file || isTempFilePath(file)) return false;
+  if (!hasActionablePreflight(finding)) return false;
+  return inboundRefCount(finding) === 0;
+}
+
 /** Structural eligibility before dry-run preflight. */
 export function isPhase1StructuralCandidate(finding: Finding): boolean {
   if (finding.action !== "safe_candidate") return false;
@@ -69,15 +99,16 @@ export function isPhase1StructuralCandidate(finding: Finding): boolean {
   if (finding.type === "unused_dependency") {
     return Boolean(finding.packageName);
   }
+  if (finding.type === "duplicate_code" && hasExactDuplicateEvidence(finding)) {
+    return finding.files.length >= 2;
+  }
   if (finding.type === "unused_file" || finding.type === "ai_slop_signal") {
     const file = finding.files[0];
-    return Boolean(file && isTempFilePath(file) && finding.files.length === 1);
+    if (hasEmptyFileEvidence(finding) && file) return true;
+    if (file && isTempFilePath(file) && finding.files.length === 1) return true;
+    if (isConfirmedUnusedFile(finding)) return true;
   }
   return false;
-}
-
-function isTempFilePath(filePath: string): boolean {
-  return TEMP_FILE_PATTERNS.some((p) => p.test(filePath.replace(/\\/g, "/")));
 }
 
 export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
@@ -151,6 +182,48 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
     },
   },
   {
+    id: "remove_empty_file",
+    label: "Remove empty file",
+    description: "Delete whitespace-only source files with zero inbound references.",
+    supports(finding) {
+      if (finding.type !== "unused_file" && finding.type !== "ai_slop_signal") return false;
+      if (!hasEmptyFileEvidence(finding)) return false;
+      if (!baseEligible(finding)) return false;
+      return inboundRefCount(finding) === 0;
+    },
+    eligibilityReason() {
+      return "Empty source file with no inbound references.";
+    },
+  },
+  {
+    id: "consolidate_exact_duplicate",
+    label: "Consolidate exact duplicate file",
+    description: "Rewrite imports to canonical file and delete byte-identical duplicate.",
+    supports(finding) {
+      if (finding.type !== "duplicate_code") return false;
+      if (!hasExactDuplicateEvidence(finding)) return false;
+      if (!baseEligible(finding)) return false;
+      if (!hasActionablePreflight(finding)) return false;
+      return Boolean(signalValue(finding, "canonical=") && signalValue(finding, "duplicate="));
+    },
+    eligibilityReason() {
+      return "Exact file duplicate with content hash evidence.";
+    },
+  },
+  {
+    id: "remove_confirmed_unused_file",
+    label: "Remove confirmed unused file",
+    description: "Delete Knip-confirmed unused file with zero inbound references.",
+    supports(finding) {
+      return isConfirmedUnusedFile(finding) && baseEligible(finding);
+    },
+    eligibilityReason(finding) {
+      if (inboundRefCount(finding) !== 0) return "File still has inbound references.";
+      if (!hasActionablePreflight(finding)) return "Preflight did not confirm safe deletion.";
+      return "Native Knip unused file with zero inbound references.";
+    },
+  },
+  {
     id: "review_only",
     label: "Review only",
     description: "Requires human review — not eligible for Phase 1 automatic fix.",
@@ -159,8 +232,15 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
   },
 ];
 
+function signalValue(finding: Finding, prefix: string): string | undefined {
+  return finding.evidence.signals.find((s) => s.startsWith(prefix))?.slice(prefix.length);
+}
+
 const PLUGIN_ORDER: Phase1PluginId[] = [
+  "consolidate_exact_duplicate",
   "remove_temp_file",
+  "remove_empty_file",
+  "remove_confirmed_unused_file",
   "remove_unused_import",
   "remove_unused_dependency",
   "review_only",
@@ -176,6 +256,15 @@ export function resolvePhase1Plugin(finding: Finding): Phase1FixPlugin {
 
 /** Resolve plugin for dry-run/apply using structural evidence (preflight not required). */
 export function resolvePhase1TransformPlugin(finding: Finding): Phase1FixPlugin {
+  if (finding.type === "duplicate_code" && hasExactDuplicateEvidence(finding)) {
+    return PHASE1_PLUGINS.find((p) => p.id === "consolidate_exact_duplicate")!;
+  }
+  if (hasEmptyFileEvidence(finding)) {
+    return PHASE1_PLUGINS.find((p) => p.id === "remove_empty_file")!;
+  }
+  if (isConfirmedUnusedFile(finding)) {
+    return PHASE1_PLUGINS.find((p) => p.id === "remove_confirmed_unused_file")!;
+  }
   if (isPhase1StructuralCandidate(finding)) {
     if (finding.type === "unused_import") {
       return PHASE1_PLUGINS.find((p) => p.id === "remove_unused_import")!;
@@ -203,7 +292,7 @@ export function phase1EligibilityReason(finding: Finding): string {
   const plugin = resolvePhase1Plugin(finding);
   if (plugin.id === "review_only") {
     if (finding.action === "do_not_touch") return "Protected — do not modify.";
-    if (finding.type === "duplicate_code") return "Duplicate code requires manual review.";
+    if (finding.type === "duplicate_code") return "Near-duplicate or non-exact duplicate requires manual review.";
     if (finding.type === "orphan_pattern") return "Orphan routes/APIs cannot be safely proven.";
     if (finding.sourceMode === "fallback") return "Fallback findings need deterministic confirmation.";
     return plugin.eligibilityReason(finding);

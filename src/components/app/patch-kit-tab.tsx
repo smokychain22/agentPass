@@ -239,7 +239,15 @@ export function PatchKitTab() {
               dismissible={false}
             />
           )}
+          {patchKit.summary.generatedChanges === 0 && patchKit.summary.validatedChanges === 0 && (
+              <FeedbackBanner
+                variant="warning"
+                message="RepoDiet found issues, but no supported source changes were generated. Review blockers below or try Regenerate after re-scanning."
+                dismissible={false}
+              />
+            )}
           {patchKit.summary.verifiedChanges === 0 &&
+            (patchKit.summary.generatedChanges ?? 0) > 0 &&
             (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 && (
               <FeedbackBanner
                 variant="warning"

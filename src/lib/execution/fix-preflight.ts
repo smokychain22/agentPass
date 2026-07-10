@@ -118,6 +118,45 @@ export function buildTextDiff(relPath: string, original: string, modified: strin
   return lines.join("\n");
 }
 
+async function dryRunDeleteFile(
+  rootDir: string,
+  finding: Finding
+): Promise<GeneratedChangePayload | null> {
+  const { previewUnifiedDeletePatch } = await import("@/lib/patch-kit/generate-unified-diff");
+  const rel = finding.files[0];
+  if (!rel) return null;
+  const safeItems = finding.files.map((file) => ({
+    path: file,
+    reason: finding.reason,
+    findingId: finding.id,
+    findingType: finding.type,
+  }));
+  const originals: Record<string, string> = {};
+  for (const file of finding.files) {
+    try {
+      originals[file] = await fs.readFile(path.join(rootDir, file), "utf8");
+    } catch {
+      originals[file] = "";
+    }
+  }
+  const scratch = path.join(rootDir, ".repodiet-scratch");
+  await fs.mkdir(scratch, { recursive: true });
+  const { patch, deletedPaths } = await previewUnifiedDeletePatch(rootDir, safeItems, scratch);
+  if (!patch.trim() || deletedPaths.length === 0) return null;
+  const { additions, deletions } = countDiffStats(patch);
+  const deleted = deletedPaths[0] ?? rel;
+  return {
+    originalSource: originals[deleted] ?? "",
+    modifiedSource: "",
+    originalHash: hashSource(originals[deleted] ?? ""),
+    modifiedHash: hashSource(""),
+    unifiedDiff: patch,
+    changedFiles: deletedPaths,
+    additions,
+    deletions,
+  };
+}
+
 export async function dryRunPhase1Fix(
   rootDir: string,
   finding: Finding,
@@ -149,34 +188,31 @@ export async function dryRunPhase1Fix(
 
   if (plugin.id === "remove_temp_file") {
     if (strategyId === "archive_proposed_change") return null;
-    const { previewUnifiedDeletePatch } = await import("@/lib/patch-kit/generate-unified-diff");
-    const safeItems = finding.files.map((file) => ({
-      path: file,
-      reason: finding.reason,
-      findingId: finding.id,
-      findingType: finding.type,
-    }));
-    const originals: Record<string, string> = {};
-    for (const rel of finding.files) {
-      try {
-        originals[rel] = await fs.readFile(path.join(rootDir, rel), "utf8");
-      } catch {
-        originals[rel] = "";
-      }
-    }
-    const scratch = path.join(rootDir, ".repodiet-scratch");
-    await fs.mkdir(scratch, { recursive: true });
-    const { patch, deletedPaths } = await previewUnifiedDeletePatch(rootDir, safeItems, scratch);
-    if (!patch.trim() || deletedPaths.length === 0) return null;
-    const { additions, deletions } = countDiffStats(patch);
-    const rel = deletedPaths[0] ?? finding.files[0];
+    return dryRunDeleteFile(rootDir, finding);
+  }
+
+  if (
+    plugin.id === "remove_empty_file" ||
+    plugin.id === "remove_confirmed_unused_file"
+  ) {
+    return dryRunDeleteFile(rootDir, finding);
+  }
+
+  if (plugin.id === "consolidate_exact_duplicate") {
+    const canonical = finding.evidence.signals.find((s) => s.startsWith("canonical="))?.slice(10);
+    const duplicate = finding.evidence.signals.find((s) => s.startsWith("duplicate="))?.slice(10);
+    if (!canonical || !duplicate) return null;
+    const original = await fs.readFile(path.join(rootDir, duplicate), "utf8");
+    const unifiedDiff = buildTextDiff(duplicate, original, "");
+    const { additions, deletions } = countDiffStats(unifiedDiff);
+    if (additions + deletions === 0) return null;
     return {
-      originalSource: originals[rel] ?? "",
+      originalSource: original,
       modifiedSource: "",
-      originalHash: hashSource(originals[rel] ?? ""),
+      originalHash: hashSource(original),
       modifiedHash: hashSource(""),
-      unifiedDiff: patch,
-      changedFiles: deletedPaths,
+      unifiedDiff,
+      changedFiles: [duplicate],
       additions,
       deletions,
     };

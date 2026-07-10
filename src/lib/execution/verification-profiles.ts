@@ -33,6 +33,9 @@ export function resolveVerificationProfile(pluginId: Phase1PluginId): Verificati
     case "remove_unused_dependency":
       return "unused_dependency";
     case "remove_temp_file":
+    case "remove_empty_file":
+    case "remove_confirmed_unused_file":
+    case "consolidate_exact_duplicate":
       return "file_deletion";
     default:
       return "full_repository";

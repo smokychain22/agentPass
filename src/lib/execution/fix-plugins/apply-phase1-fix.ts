@@ -20,6 +20,12 @@ import {
   type TransformAuditRecord,
 } from "../transform-audit";
 
+import {
+  applyConsolidateExactDuplicate,
+  applyRemoveConfirmedUnusedFile,
+  applyRemoveEmptyFile,
+} from "./apply-extra-transforms";
+
 export interface AppliedFix {
   pluginId: Phase1PluginId;
   strategyId: string;
@@ -317,6 +323,12 @@ export async function applyPhase1Fix(
   switch (plugin.id) {
     case "remove_temp_file":
       return applyRemoveTempFile(rootDir, finding, resolvedStrategy);
+    case "remove_empty_file":
+      return applyRemoveEmptyFile(rootDir, finding, resolvedStrategy);
+    case "remove_confirmed_unused_file":
+      return applyRemoveConfirmedUnusedFile(rootDir, finding, resolvedStrategy);
+    case "consolidate_exact_duplicate":
+      return applyConsolidateExactDuplicate(rootDir, finding, resolvedStrategy);
     case "remove_unused_import":
       return applyRemoveUnusedImport(rootDir, finding, resolvedStrategy);
     case "remove_unused_dependency":

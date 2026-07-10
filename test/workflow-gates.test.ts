@@ -136,8 +136,20 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
   });
   assert.equal(gates.quickCleanupAvailable, true);
   assert.equal(gates.verifyUnlocked, true);
-  assert.equal(gates.cleanupPrAvailable, true);
+  assert.equal(gates.cleanupPrAvailable, false);
   assert.equal(gates.quickCleanupState, "complete");
+});
+
+test("computeWorkflowGates unlocks cleanup PR only after verification passes", () => {
+  const gates = computeWorkflowGates({
+    scanComplete: true,
+    projectRootConfirmed: true,
+    findings: minimalFindings(),
+    patchKit: minimalPatchKit(),
+    verificationStatus: "passed",
+  });
+  assert.equal(gates.cleanupPrAvailable, true);
+  assert.equal(gates.verificationPassed, true);
 });
 
 test("computeWorkflowGates blocks verify when patch validation failed", () => {
