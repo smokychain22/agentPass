@@ -3,12 +3,28 @@ function readEnv(name: string): string | undefined {
   return value || undefined;
 }
 
+function readEnvAny(names: string[]): string | undefined {
+  for (const name of names) {
+    const value = readEnv(name);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function decodePrivateKey(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.includes("BEGIN")) {
+    return trimmed;
+  }
+  return Buffer.from(trimmed, "base64").toString("utf8");
+}
+
 export function isGitHubAppConfigured(): boolean {
   return Boolean(
     readEnv("GITHUB_APP_ID") &&
       readEnv("GITHUB_APP_CLIENT_ID") &&
       readEnv("GITHUB_APP_CLIENT_SECRET") &&
-      readEnv("GITHUB_APP_PRIVATE_KEY_BASE64") &&
+      readEnvAny(["GITHUB_APP_PRIVATE_KEY_BASE64", "REPODIET_OPERATOR_PRIVATE_KEY"]) &&
       readEnv("GITHUB_APP_SLUG")
   );
 }
@@ -17,14 +33,17 @@ export function getGitHubAppConfig() {
   const appId = readEnv("GITHUB_APP_ID");
   const clientId = readEnv("GITHUB_APP_CLIENT_ID");
   const clientSecret = readEnv("GITHUB_APP_CLIENT_SECRET");
-  const privateKeyBase64 = readEnv("GITHUB_APP_PRIVATE_KEY_BASE64");
+  const privateKeyRaw = readEnvAny([
+    "GITHUB_APP_PRIVATE_KEY_BASE64",
+    "REPODIET_OPERATOR_PRIVATE_KEY",
+  ]);
   const slug = readEnv("GITHUB_APP_SLUG");
 
-  if (!appId || !clientId || !clientSecret || !privateKeyBase64 || !slug) {
+  if (!appId || !clientId || !clientSecret || !privateKeyRaw || !slug) {
     throw new Error("GitHub App environment variables are not fully configured.");
   }
 
-  const privateKey = Buffer.from(privateKeyBase64, "base64").toString("utf8");
+  const privateKey = decodePrivateKey(privateKeyRaw);
 
   return {
     appId,
@@ -44,7 +63,7 @@ export function getGitHubAppInstallUrl(state?: string): string {
 }
 
 export function getAppBaseUrl(): string {
-  const explicit = readEnv("NEXT_PUBLIC_APP_URL");
+  const explicit = readEnvAny(["NEXT_PUBLIC_APP_URL", "GITHUB_APP_PUBLIC_URL"]);
   if (explicit) return explicit.replace(/\/$/, "");
 
   const vercel = readEnv("VERCEL_URL");
