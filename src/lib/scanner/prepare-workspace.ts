@@ -9,7 +9,7 @@ import {
 } from "@/lib/demo/constants";
 import { getDemoRepoLocalPath } from "@/lib/demo/paths";
 import { parseGitHubUrl, buildRepoUrl } from "@/lib/github/parse-github-url";
-import { fetchRepoZip, RepoFetchError } from "@/lib/github/fetch-repo-zip";
+import { fetchRepoZip, fetchBranchCommitSha, RepoFetchError } from "@/lib/github/fetch-repo-zip";
 import { assertZipSize } from "@/lib/a2mcp/limits";
 import { unzipRepoToDir } from "@/lib/scanner/unzip-repo";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
@@ -19,6 +19,7 @@ export interface RepoInfo {
   name: string;
   branch: string;
   url: string;
+  commitSha?: string;
 }
 
 export interface RepoWorkspace {
@@ -39,11 +40,12 @@ async function prepareFromGithubZip(
   try {
     const { buffer, branch } = await fetchRepoZip(owner, name, branchInput);
     assertZipSize(buffer.byteLength);
+    const commitSha = (await fetchBranchCommitSha(owner, name, branch)) ?? undefined;
 
     await fs.writeFile(workspace.archivePath, Buffer.from(buffer));
     const rootDir = await unzipRepoToDir(buffer, workspace.extractPath);
 
-    const repo: RepoInfo = { owner, name, branch, url };
+    const repo: RepoInfo = { owner, name, branch, url, commitSha };
     const capturedRoot = workspace.root;
     return {
       rootDir,

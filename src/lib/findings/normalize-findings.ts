@@ -361,6 +361,7 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
       name: input.repo.name,
       branch: input.repo.branch,
       url: input.repo.url,
+      commitSha: input.repo.commitSha,
     },
     mode: input.mode,
     summary,

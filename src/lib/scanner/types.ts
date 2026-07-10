@@ -60,6 +60,7 @@ export const ScanResultSchema = z.object({
     name: z.string(),
     branch: z.string(),
     url: z.string(),
+    commitSha: z.string().optional(),
   }),
   framework: FrameworkDetectionSchema,
   packageManager: PackageManagerSchema,

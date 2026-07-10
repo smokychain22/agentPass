@@ -17,8 +17,8 @@ function cache(): Map<string, FindingsPayload> {
 }
 
 export async function storeFindings(payload: FindingsPayload): Promise<void> {
-  cache().set(payload.scanId, payload);
   await setDurableRecord("findings", payload.scanId, payload);
+  cache().set(payload.scanId, payload);
 }
 
 export async function getStoredFindings(scanId: string): Promise<FindingsPayload | undefined> {

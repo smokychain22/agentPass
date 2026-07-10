@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { runFindingsEngine } from "@/lib/findings/findings-engine";
-import { storeFindings } from "@/lib/findings/findings-store";
+import { scanRepository } from "@/lib/execution";
 import { FindingsRunBodySchema } from "@/lib/findings/types";
 
 export const runtime = "nodejs";
@@ -9,8 +8,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const body = FindingsRunBodySchema.parse(await request.json());
-    const findings = await runFindingsEngine(body.repoUrl, body.branch);
-    await storeFindings(findings);
+    const findings = await scanRepository(body.repoUrl, body.branch);
 
     return NextResponse.json({ success: true, findings });
   } catch (err) {

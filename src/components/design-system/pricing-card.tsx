@@ -11,6 +11,7 @@ export interface PricingPlan {
   cta: string;
   href: string;
   highlighted?: boolean;
+  unavailable?: boolean;
 }
 
 interface PricingCardProps {
@@ -46,14 +47,20 @@ export function PricingCard({ tier }: PricingCardProps) {
           </li>
         ))}
       </ul>
-      <Button
-        asChild
-        variant={tier.highlighted ? "default" : "secondary"}
-        size="sm"
-        className="w-full"
-      >
-        <Link href={tier.href}>{tier.cta}</Link>
-      </Button>
+      {tier.unavailable ? (
+        <Button variant="secondary" size="sm" className="w-full" disabled>
+          {tier.cta}
+        </Button>
+      ) : (
+        <Button
+          asChild
+          variant={tier.highlighted ? "default" : "secondary"}
+          size="sm"
+          className="w-full"
+        >
+          <Link href={tier.href}>{tier.cta}</Link>
+        </Button>
+      )}
     </div>
   );
 }

@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { getStoredFindings } from "@/lib/findings/findings-store";
-import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
-import { signExecutionReceipt } from "@/lib/operator/sign-receipt";
+import { executeFreeProof } from "@/lib/execution";
 import { FREE_CLEANUP_LIMIT, isAutoFixEligible } from "@/lib/cleanup/eligibility";
 import type { FindingsPayload } from "@/lib/findings/types";
 
@@ -32,7 +31,7 @@ export async function POST(request: Request) {
 
     if (body.findingIds && body.findingIds.length > FREE_CLEANUP_LIMIT) {
       return NextResponse.json(
-        { success: false, error: `Maximum ${FREE_CLEANUP_LIMIT} findings per free cleanup run.` },
+        { success: false, error: `Maximum ${FREE_CLEANUP_LIMIT} findings per free proof run.` },
         { status: 422 }
       );
     }
@@ -50,17 +49,17 @@ export async function POST(request: Request) {
       const invalid = picked.filter((f) => !isAutoFixEligible(f) && f.action === "do_not_touch");
       if (invalid.length > 0) {
         return NextResponse.json(
-          { success: false, error: "Protected findings cannot be included in free cleanup." },
+          { success: false, error: "Protected findings cannot be included in free proof." },
           { status: 422 }
         );
       }
     }
 
-    const result = await runFreeCleanupCore(findings, { findingIds: body.findingIds });
+    const { signedReceipt, ...cleanup } = await executeFreeProof(findings, {
+      findingIds: body.findingIds,
+    });
 
-    const signedReceipt = signExecutionReceipt(result.receipt);
-
-    return NextResponse.json({ success: true, cleanup: result, signedReceipt });
+    return NextResponse.json({ success: true, cleanup, signedReceipt });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(
@@ -68,7 +67,7 @@ export async function POST(request: Request) {
         { status: 429, headers: { "Retry-After": String(err.retryAfterSeconds) } }
       );
     }
-    const message = err instanceof Error ? err.message : "Free cleanup failed.";
+    const message = err instanceof Error ? err.message : "Free proof failed.";
     return NextResponse.json({ success: false, error: message }, { status: 422 });
   }
 }

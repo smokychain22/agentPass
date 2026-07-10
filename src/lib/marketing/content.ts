@@ -511,7 +511,7 @@ export const PRICING_TIERS = [
   {
     name: "Repo Guard",
     price: "3–5 USDT/month",
-    description: "Continuous monitoring and one cleanup PR allowance per month.",
+    description: "Continuous monitoring and one cleanup PR allowance per month. Coming soon.",
     features: [
       "One connected repository",
       "Weekly scans + post-merge checks",
@@ -520,9 +520,10 @@ export const PRICING_TIERS = [
       "Protected paths per repository",
       "Finding history",
     ],
-    cta: "Connect Repository",
-    href: "/app?tab=patch",
+    cta: "Coming Soon",
+    href: "/pricing#repo-guard",
     highlighted: false,
+    unavailable: true,
   },
 ];
 

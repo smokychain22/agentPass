@@ -27,6 +27,7 @@ export function CleanupTab() {
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<"idle" | "running" | "complete" | "failed">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [cleanupStep, setCleanupStep] = useState(0);
   const [result, setResult] = useState<FreeCleanupResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -50,9 +51,11 @@ export function CleanupTab() {
     if (!findings) return;
     setError(null);
     setPhase("running");
-    show("info", "Running free cleanup in isolated workspace…");
+    setCleanupStep(0);
+    show("info", "Running free proof in isolated workspace…");
 
     try {
+      setCleanupStep(1);
       const res = await fetch("/api/cleanup/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -63,7 +66,8 @@ export function CleanupTab() {
         }),
       });
       const json = await res.json();
-      if (!json.success) throw new Error(json.error ?? "Cleanup failed.");
+      if (!json.success) throw new Error(json.error ?? "Free proof failed.");
+      setCleanupStep(2);
       setResult(json.cleanup as FreeCleanupResult);
       setPhase("complete");
       show("success", json.cleanup.verifiedLabel ?? "Cleanup complete");
@@ -79,7 +83,7 @@ export function CleanupTab() {
     return (
       <LockedTab
         step="Free"
-        title="Free Cleanup Run"
+        title="Free Proof"
         description="Available after findings analysis. Run the Findings Engine first."
       />
     );
@@ -137,7 +141,7 @@ export function CleanupTab() {
             { id: "patch", label: "Generating changes" },
             { id: "verify", label: "Validating patch" },
           ]}
-          currentIndex={1}
+          currentIndex={cleanupStep}
         />
       )}
 

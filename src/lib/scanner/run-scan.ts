@@ -25,7 +25,10 @@ export async function runBasicScan(
 
     return {
       id: randomUUID(),
-      repo: workspace.repo,
+      repo: {
+        ...workspace.repo,
+        commitSha: workspace.repo.commitSha,
+      },
       framework,
       packageManager: pm.packageManager,
       packageManagerLockfile: pm.lockfile,

@@ -8,7 +8,19 @@ export type PersistentCollection =
   | "findings"
   | "patchKits"
   | "verifications"
-  | "usage";
+  | "usage"
+  | "repositories"
+  | "repository_snapshots"
+  | "scans"
+  | "cleanup_runs"
+  | "cleanup_changes"
+  | "verification_runs"
+  | "task_quotes"
+  | "payments"
+  | "execution_receipts"
+  | "github_installations"
+  | "repository_policies"
+  | "guard_runs";
 
 export type ArtifactCollection = "artifacts";
 
@@ -18,6 +30,18 @@ export interface DurableDb {
   patchKits: Record<string, unknown>;
   verifications: Record<string, unknown>;
   usage: Record<string, unknown>;
+  repositories: Record<string, unknown>;
+  repository_snapshots: Record<string, unknown>;
+  scans: Record<string, unknown>;
+  cleanup_runs: Record<string, unknown>;
+  cleanup_changes: Record<string, unknown>;
+  verification_runs: Record<string, unknown>;
+  task_quotes: Record<string, unknown>;
+  payments: Record<string, unknown>;
+  execution_receipts: Record<string, unknown>;
+  github_installations: Record<string, unknown>;
+  repository_policies: Record<string, unknown>;
+  guard_runs: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -26,6 +50,18 @@ const DEFAULT_DB: DurableDb = {
   patchKits: {},
   verifications: {},
   usage: {},
+  repositories: {},
+  repository_snapshots: {},
+  scans: {},
+  cleanup_runs: {},
+  cleanup_changes: {},
+  verification_runs: {},
+  task_quotes: {},
+  payments: {},
+  execution_receipts: {},
+  github_installations: {},
+  repository_policies: {},
+  guard_runs: {},
 };
 
 let redisClient: Redis | null = null;
@@ -68,6 +104,18 @@ function loadLocalDb(): DurableDb {
       patchKits: parsed.patchKits ?? {},
       verifications: parsed.verifications ?? {},
       usage: parsed.usage ?? {},
+      repositories: parsed.repositories ?? {},
+      repository_snapshots: parsed.repository_snapshots ?? {},
+      scans: parsed.scans ?? {},
+      cleanup_runs: parsed.cleanup_runs ?? {},
+      cleanup_changes: parsed.cleanup_changes ?? {},
+      verification_runs: parsed.verification_runs ?? {},
+      task_quotes: parsed.task_quotes ?? {},
+      payments: parsed.payments ?? {},
+      execution_receipts: parsed.execution_receipts ?? {},
+      github_installations: parsed.github_installations ?? {},
+      repository_policies: parsed.repository_policies ?? {},
+      guard_runs: parsed.guard_runs ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);

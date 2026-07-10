@@ -67,6 +67,23 @@ export async function fetchDefaultBranch(
   return data.default_branch ?? null;
 }
 
+export async function fetchBranchCommitSha(
+  owner: string,
+  repo: string,
+  branch: string
+): Promise<string | null> {
+  try {
+    const res = await tryFetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { object?: { sha?: string } };
+    return data.object?.sha ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchRepoZip(
   owner: string,
   repo: string,

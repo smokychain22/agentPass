@@ -37,13 +37,13 @@ export async function storePatchKit(
     filename,
     createdAt: new Date().toISOString(),
   };
-  cache().set(payload.id, record);
   await setDurableRecord("patchKits", payload.id, {
     payload,
     filename,
     createdAt: record.createdAt,
   });
   await writeArtifact(payload.id, zipBuffer, "zip");
+  cache().set(payload.id, record);
 }
 
 export async function getStoredPatchKit(id: string): Promise<StoredPatchKit | undefined> {

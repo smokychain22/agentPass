@@ -35,7 +35,7 @@ export function PricingPage() {
             description={PRICING_SECTION.description}
           />
 
-          <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" id="repo-guard">
             {PRICING_TIERS.map((tier) => (
               <PricingCard key={tier.name} tier={tier} />
             ))}
@@ -48,7 +48,7 @@ export function PricingPage() {
             {CLEANUP_PR_PRICING_NOTE}
           </p>
 
-          <section className="mt-16">
+          <section className="mt-16" id="agent-api">
             <h2 className="mb-4 text-lg font-semibold text-foreground">Agent API (launch pricing)</h2>
             <Panel variant="elevated" padding="md">
               <ul className="space-y-2 text-sm text-muted-foreground">

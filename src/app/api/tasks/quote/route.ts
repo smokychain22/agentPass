@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
-import { quoteCleanupTask } from "@/lib/execution/cleanup-engine";
+import { executeTaskQuote } from "@/lib/execution";
 import type { TaskOperation } from "@/lib/execution/task-quote";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const quote = quoteCleanupTask({
+    const quote = await executeTaskQuote({
       repository: body.repository,
       branch: body.branch ?? "main",
       commitSha: body.commitSha,

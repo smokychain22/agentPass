@@ -249,6 +249,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
         name: parsed.repo,
         baseBranch,
         cleanupBranch,
+        baseCommitSha: baseSha,
       },
       pullRequest: {
         url: pr.url,

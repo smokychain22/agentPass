@@ -55,6 +55,18 @@ export async function withDurableDb<T>(
       patchKits: {},
       verifications: {},
       usage,
+      repositories: {},
+      repository_snapshots: {},
+      scans: {},
+      cleanup_runs: {},
+      cleanup_changes: {},
+      verification_runs: {},
+      task_quotes: {},
+      payments: {},
+      execution_receipts: {},
+      github_installations: {},
+      repository_policies: {},
+      guard_runs: {},
     };
     return fn(db);
   });

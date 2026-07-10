@@ -3,6 +3,9 @@ import { FREE_CLEANUP_LIMIT, QUICK_CLEANUP_LIMIT, freeCleanupCta } from "../src/
 import type { Finding } from "../src/lib/findings/types";
 import { quoteCleanupPrPrice } from "../src/lib/pricing/quote";
 import { createTaskQuote, validateTaskQuote } from "../src/lib/execution/task-quote";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 function mockFinding(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -55,6 +58,27 @@ test("cleanup PR medium repo price", () => {
 
 test("cleanup PR large repo price", () => {
   assert.equal(quoteCleanupPrPrice(500).amountUsdt, 3);
+});
+
+test("execution engine exports required functions", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const source = fs.readFileSync(
+    path.join(root, "src/lib/execution/cleanup-engine.ts"),
+    "utf8"
+  );
+  const required = [
+    "scanRepository",
+    "analyzeRepository",
+    "selectSafeFixes",
+    "generateChanges",
+    "verifyChanges",
+    "createCleanupPullRequest",
+    "createTaskQuote",
+    "createExecutionReceipt",
+  ];
+  for (const name of required) {
+    assert.match(source, new RegExp(`export (async )?function ${name}`), `${name} missing`);
+  }
 });
 
 test("task quote rejects commit mismatch", () => {
