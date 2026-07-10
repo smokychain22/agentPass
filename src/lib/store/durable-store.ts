@@ -1,9 +1,38 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-const DATA_DIR = process.env.REPODIET_DATA_DIR || path.join(process.cwd(), "data");
-const ARTIFACTS_DIR = path.join(DATA_DIR, "artifacts");
+function resolveDataDir(): string {
+  if (process.env.REPODIET_DATA_DIR) {
+    return process.env.REPODIET_DATA_DIR;
+  }
+  // Vercel/serverless: project dir is read-only — use /tmp
+  if (process.env.VERCEL === "1" || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), "repodiet-data");
+  }
+  const local = path.join(process.cwd(), "data");
+  try {
+    if (!fs.existsSync(local)) fs.mkdirSync(local, { recursive: true });
+    const probe = path.join(local, ".write-probe");
+    fs.writeFileSync(probe, "ok");
+    fs.unlinkSync(probe);
+    return local;
+  } catch {
+    return path.join(os.tmpdir(), "repodiet-data");
+  }
+}
+
+let cachedDataDir: string | null = null;
+
+function dataDir(): string {
+  if (!cachedDataDir) cachedDataDir = resolveDataDir();
+  return cachedDataDir;
+}
+
+function artifactsDir(): string {
+  return path.join(dataDir(), "artifacts");
+}
 
 export interface DurableDb {
   jobs: Record<string, unknown>;
@@ -22,12 +51,14 @@ const DEFAULT_DB: DurableDb = {
 };
 
 function ensureDirs(): void {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(ARTIFACTS_DIR)) fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+  const root = dataDir();
+  const artifacts = artifactsDir();
+  if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
+  if (!fs.existsSync(artifacts)) fs.mkdirSync(artifacts, { recursive: true });
 }
 
 function dbPath(): string {
-  return path.join(DATA_DIR, "db.json");
+  return path.join(dataDir(), "db.json");
 }
 
 export function durableId(prefix = "id"): string {
@@ -97,7 +128,7 @@ function withDurableDbSync(fn: (db: DurableDb) => void): void {
 
 export function artifactPath(id: string, ext = "zip"): string {
   ensureDirs();
-  return path.join(ARTIFACTS_DIR, `${id}.${ext}`);
+  return path.join(artifactsDir(), `${id}.${ext}`);
 }
 
 export function writeArtifact(id: string, buffer: Buffer, ext = "zip"): string {
@@ -120,11 +151,15 @@ export function deleteArtifact(id: string, ext = "zip"): void {
 export function isDurableStoreWritable(): boolean {
   try {
     ensureDirs();
-    const probe = path.join(DATA_DIR, ".write-probe");
+    const probe = path.join(dataDir(), ".write-probe");
     fs.writeFileSync(probe, "ok");
     fs.unlinkSync(probe);
     return true;
   } catch {
     return false;
   }
+}
+
+export function getDataDir(): string {
+  return dataDir();
 }
