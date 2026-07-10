@@ -16,6 +16,8 @@ import {
   TOOL_TIMEOUT_MS,
 } from "@/lib/a2mcp/constants";
 import { buildToolCurl, getServerBaseUrl } from "@/lib/docs/base-url";
+import { MarketingCta } from "@/components/landing/marketing-cta";
+import { A2MCP_READINESS_COPY } from "@/lib/marketing/content";
 import { ToolEndpointCard } from "./tool-endpoint-card";
 import { CodePanel } from "./code-panel";
 import { CopyButton } from "./copy-button";
@@ -221,11 +223,13 @@ export function ApiDocs() {
               <CardTitle className="text-sm font-medium">Agent integration note</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground leading-relaxed">
-              RepoDiet endpoints are A2MCP-ready deterministic JSON tools. Payment/x402 enforcement
-              can be added at the gateway/listing layer. Current public demo endpoints are open for
-              review and hackathon testing.
+              {A2MCP_READINESS_COPY}
             </CardContent>
           </Card>
+        </section>
+
+        <section className="mt-12">
+          <MarketingCta />
         </section>
       </main>
       <SiteFooter />

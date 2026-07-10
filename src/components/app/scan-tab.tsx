@@ -53,7 +53,8 @@ export function ScanTab() {
   const [result, setResult] = useState<ScanPayload | null>(null);
 
   useEffect(() => {
-    if (searchParams.get("demo") === "1") {
+    const demo = searchParams.get("demo");
+    if (demo === "1" || demo === "true") {
       setRepoUrl(DEMO_REPO);
     }
   }, [searchParams]);

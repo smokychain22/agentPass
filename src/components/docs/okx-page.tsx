@@ -10,6 +10,12 @@ import { Button } from "@/components/ui/button";
 import { TOOL_MANIFEST_ENTRIES } from "@/lib/a2mcp/tool-manifest";
 import { A2MCP_VERSION } from "@/lib/a2mcp/constants";
 import { buildToolCurl, getServerBaseUrl } from "@/lib/docs/base-url";
+import { MarketingCta } from "@/components/landing/marketing-cta";
+import {
+  A2MCP_READINESS_COPY,
+  OKX_DEMO_FLOW,
+  PRICING_TIERS,
+} from "@/lib/marketing/content";
 import { CopyButton } from "./copy-button";
 
 const LIVE_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
@@ -165,25 +171,47 @@ export function OkxPageContent() {
         </section>
 
         <section className="mt-12">
-          <h2 className="text-lg font-semibold">Proposed pricing (x402)</h2>
+          <h2 className="text-lg font-semibold">Pricing</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            ASP pricing model for OKX listing. Public demo endpoints are currently open — payment/x402
-            enforcement is not live on the demo deployment.
+            ASP tiers for OKX listing. Public demo endpoints are open — x402 payment enforcement is
+            not live on the demo deployment.
           </p>
-          <div className="mt-4 space-y-2">
-            {PROPOSED_PRICING.map((row) => (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {PRICING_TIERS.map((tier) => (
               <div
-                key={row.tool}
-                className="flex flex-col gap-1 rounded-md border border-border bg-card/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                key={tier.name}
+                className="rounded-md border border-border bg-card/50 px-4 py-3"
               >
-                <div>
-                  <span className="font-mono text-sm">{row.tool}</span>
-                  <p className="text-xs text-muted-foreground mt-0.5">{row.note}</p>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium text-sm">{tier.name}</span>
+                  <span className="font-mono text-sm text-electric shrink-0">{tier.price}</span>
                 </div>
-                <span className="font-mono text-sm text-electric shrink-0">{row.price}</span>
+                <p className="text-xs text-muted-foreground mt-1">{tier.description}</p>
               </div>
             ))}
           </div>
+          <Button asChild variant="outline" size="sm" className="mt-4">
+            <Link href="/pricing">View full pricing</Link>
+          </Button>
+          <details className="mt-6">
+            <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
+              Per-tool proposed pricing (x402)
+            </summary>
+            <div className="mt-3 space-y-2">
+              {PROPOSED_PRICING.map((row) => (
+                <div
+                  key={row.tool}
+                  className="flex flex-col gap-1 rounded-md border border-border bg-card/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <span className="font-mono text-sm">{row.tool}</span>
+                    <p className="text-xs text-muted-foreground mt-0.5">{row.note}</p>
+                  </div>
+                  <span className="font-mono text-sm text-electric shrink-0">{row.price}</span>
+                </div>
+              ))}
+            </div>
+          </details>
         </section>
 
         <section className="mt-12">
@@ -206,12 +234,28 @@ export function OkxPageContent() {
         </section>
 
         <section className="mt-12">
-          <h2 className="text-lg font-semibold">A2MCP readiness</h2>
+          <h2 className="text-lg font-semibold">A2MCP-ready endpoints</h2>
           <Card className="mt-4 border-electric/20 bg-electric/5">
             <CardContent className="py-4 text-sm text-muted-foreground leading-relaxed">
-              RepoDiet endpoints are A2MCP-ready deterministic JSON tools. Payment/x402 enforcement
-              can be added at the gateway/listing layer. Current public demo endpoints are open for
-              review and hackathon testing.
+              {A2MCP_READINESS_COPY}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="text-lg font-semibold">Demo flow</h2>
+          <Card className="mt-4 border-border/80">
+            <CardContent className="py-4">
+              <ol className="space-y-3">
+                {OKX_DEMO_FLOW.map((step, i) => (
+                  <li key={step} className="flex items-start gap-3 text-sm text-muted-foreground">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border font-mono text-xs text-electric">
+                      {i + 1}
+                    </span>
+                    {step}
+                  </li>
+                ))}
+              </ol>
             </CardContent>
           </Card>
         </section>
@@ -232,13 +276,8 @@ export function OkxPageContent() {
           </Card>
         </section>
 
-        <div className="mt-12 flex flex-wrap gap-3">
-          <Button asChild>
-            <Link href="/app">Open App</Link>
-          </Button>
-          <Button asChild variant="secondary">
-            <Link href="/docs">Read API Docs</Link>
-          </Button>
+        <div className="mt-12">
+          <MarketingCta />
         </div>
       </main>
       <SiteFooter />

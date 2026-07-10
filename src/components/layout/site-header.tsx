@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 const navLinks = [
   { href: "/app", label: "App" },
   { href: "/docs", label: "Docs" },
+  { href: "/pricing", label: "Pricing" },
   { href: "/okx", label: "OKX ASP" },
 ];
 
@@ -61,6 +62,9 @@ export function SiteFooter() {
         <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
           <Link href="/docs" className="hover:text-foreground transition-colors">
             Docs
+          </Link>
+          <Link href="/pricing" className="hover:text-foreground transition-colors">
+            Pricing
           </Link>
           <Link href="/okx" className="hover:text-foreground transition-colors">
             OKX ASP
