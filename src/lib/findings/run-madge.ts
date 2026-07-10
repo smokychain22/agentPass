@@ -7,6 +7,7 @@ import { madgeScriptPath } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runMadgeFallback } from "./fallback/madge-fallback";
 import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
+import { analyzerChildEnv } from "./analyzer-child-env";
 
 async function resolveEntry(rootDir: string): Promise<string> {
   const candidates = [
@@ -52,7 +53,7 @@ async function runMadgeInternal(rootDir: string): Promise<AnalyzerRunResult<Madg
     const result = await execa(process.execPath, [scriptPath, rootDir, entry], {
       timeout: TOOL_TIMEOUT_MS,
       reject: false,
-      env: { ...process.env, FORCE_COLOR: "0" },
+      env: analyzerChildEnv(),
     });
 
     logAnalyzer("madge", "cli_finished", {

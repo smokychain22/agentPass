@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { runKnip } from "@/lib/findings/run-knip";
 import { runMadge } from "@/lib/findings/run-madge";
 import { runJscpd } from "@/lib/findings/run-jscpd";
+import { probeAnalyzerTooling } from "@/lib/findings/resolve-tool-cli";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -9,43 +10,9 @@ import fs from "node:fs/promises";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-interface ModuleProbe {
-  name: string;
-  resolved: boolean;
-  version?: string;
-  error?: string;
-}
-
-async function probeModule(name: string): Promise<ModuleProbe> {
-  try {
-    await import(name);
-    let version: string | undefined;
-    try {
-      const pkgPath = require.resolve(`${name}/package.json`);
-      const pkg = JSON.parse(await fs.readFile(pkgPath, "utf8")) as { version?: string };
-      version = pkg.version;
-    } catch {
-      /* version optional */
-    }
-    return { name, resolved: true, version };
-  } catch (err) {
-    return {
-      name,
-      resolved: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
 export async function GET() {
   const started = Date.now();
-  const modules = await Promise.all([
-    probeModule("commander"),
-    probeModule("formdata-node"),
-    probeModule("knip"),
-    probeModule("madge"),
-    probeModule("jscpd"),
-  ]);
+  const modules = probeAnalyzerTooling();
 
   const workspace = await createScanWorkspace("analyzer-self-test");
   const rootDir = workspace.extractPath;
@@ -55,6 +22,11 @@ export async function GET() {
     await fs.writeFile(
       path.join(rootDir, "package.json"),
       JSON.stringify({ name: "analyzer-self-test", private: true, version: "0.0.0" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { module: "ESNext", moduleResolution: "bundler" } }),
       "utf8"
     );
     await fs.writeFile(
@@ -76,8 +48,13 @@ export async function GET() {
       knip.status !== "failed" &&
       madge.status !== "failed" &&
       jscpd.status !== "failed";
+    const analyzersNative =
+      knip.status === "ok" &&
+      madge.status === "ok" &&
+      jscpd.status === "ok";
 
-    const status = allModulesResolved && analyzersHealthy ? "passed" : "failed";
+    const status =
+      allModulesResolved && analyzersHealthy && analyzersNative ? "passed" : "failed";
 
     return NextResponse.json(
       {
@@ -89,16 +66,19 @@ export async function GET() {
             status: knip.status,
             sourceMode: knip.sourceMode,
             durationMs: knip.durationMs,
+            error: knip.error,
           },
           madge: {
             status: madge.status,
             sourceMode: madge.sourceMode,
             durationMs: madge.durationMs,
+            error: madge.error,
           },
           jscpd: {
             status: jscpd.status,
             sourceMode: jscpd.sourceMode,
             durationMs: jscpd.durationMs,
+            error: jscpd.error,
           },
         },
       },

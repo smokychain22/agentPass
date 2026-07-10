@@ -7,6 +7,7 @@ import { knipCliPath, knipVersion } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runKnipFallback } from "./fallback/knip-fallback";
 import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
+import { analyzerChildEnv } from "./analyzer-child-env";
 
 export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
   return timedAnalyzer("knip", () => runKnipInternal(rootDir));
@@ -55,7 +56,7 @@ async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipR
       cwd: rootDir,
       timeout: TOOL_TIMEOUT_MS,
       reject: false,
-      env: { ...process.env, FORCE_COLOR: "0" },
+      env: analyzerChildEnv(),
     });
 
     logAnalyzer("knip", "cli_finished", {

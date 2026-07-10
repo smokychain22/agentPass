@@ -2,7 +2,9 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 
-const require = createRequire(import.meta.url);
+function projectRequire() {
+  return createRequire(path.join(process.cwd(), "package.json"));
+}
 
 function exists(filePath: string): boolean {
   try {
@@ -15,11 +17,70 @@ function exists(filePath: string): boolean {
 
 function packageRoot(packageName: string): string | null {
   try {
-    const pkgJson = require.resolve(`${packageName}/package.json`);
+    const pkgJson = projectRequire().resolve(`${packageName}/package.json`);
     return path.dirname(pkgJson);
   } catch {
     return null;
   }
+}
+
+export interface ModuleProbe {
+  name: string;
+  resolved: boolean;
+  version?: string;
+  error?: string;
+}
+
+export function probePackage(name: string): ModuleProbe {
+  try {
+    const pkgJson = projectRequire().resolve(`${name}/package.json`);
+    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8")) as { version?: string };
+    return { name, resolved: true, version: pkg.version };
+  } catch (err) {
+    return {
+      name,
+      resolved: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export function probeAnalyzerTooling(): ModuleProbe[] {
+  const probes: ModuleProbe[] = [
+    probePackage("commander"),
+    probePackage("formdata-node"),
+    probePackage("knip"),
+    probePackage("madge"),
+    probePackage("jscpd"),
+    probePackage("fd-package-json"),
+    probePackage("walkdir"),
+  ];
+
+  const knip = resolveKnipCli();
+  probes.push({
+    name: "knip-cli",
+    resolved: !!knip,
+    version: knip?.version,
+    error: knip ? undefined : "Knip CLI path not found",
+  });
+
+  const jscpd = resolveJscpdCli();
+  probes.push({
+    name: "jscpd-cli",
+    resolved: !!jscpd,
+    version: jscpd?.version,
+    error: jscpd ? undefined : "jscpd CLI path not found",
+  });
+
+  const madge = resolveMadgeEntry();
+  probes.push({
+    name: "madge-script",
+    resolved: !!madge,
+    version: madge?.version,
+    error: madge ? undefined : "madge-scan.mjs not found",
+  });
+
+  return probes;
 }
 
 export function resolveKnipCli(): { path: string; version?: string } | null {
