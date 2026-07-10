@@ -168,7 +168,7 @@ export function VerifyTab() {
             {copied ? "Copied" : "Copy Commands"}
           </Button>
           <Button variant="ghost" asChild>
-            <Link href="/app?tab=patch">Return to Patch Kit</Link>
+            <Link href="/app?tab=patch">Return to Quick Cleanup</Link>
           </Button>
         </>
       }

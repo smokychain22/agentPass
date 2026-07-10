@@ -281,9 +281,9 @@ export function formatComparisonLabel(outcome: BaselineCheck["outcome"]): string
     case "passed_before_and_after":
       return "PASSED BEFORE AND AFTER";
     case "failed_before_and_after":
-      return "FAILED BEFORE AND AFTER";
+      return "Pre-existing failure";
     case "new_failure_introduced":
-      return "NEW FAILURE INTRODUCED";
+      return "New regression";
     case "pre_existing_failure":
       return "PRE-EXISTING FAILURE";
     case "pre_existing_failure_resolved":

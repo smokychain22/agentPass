@@ -17,8 +17,11 @@ function escapeRegExp(s: string): string {
 }
 
 function symbolUsedInBody(body: string, symbol: string): boolean {
-  const re = new RegExp(`\\b${escapeRegExp(symbol)}\\b`);
-  return re.test(body);
+  const escaped = escapeRegExp(symbol);
+  const wordRe = new RegExp(`\\b${escaped}\\b`);
+  const jsxRe = new RegExp(`<${escaped}[\\s/>{]`);
+  const typeRe = new RegExp(`:\\s*${escaped}\\b|${escaped}\\s*[|&<>,;)]`);
+  return wordRe.test(body) || jsxRe.test(body) || typeRe.test(body);
 }
 
 function parseNamedImports(importClause: string): string[] {
@@ -161,8 +164,10 @@ export function removeUnusedSymbolFromImport(
       .filter(Boolean);
     const remaining = parts.filter((p) => {
       const withoutType = p.replace(/^type\s+/, "");
-      const local = (withoutType.split(/\s+as\s+/)[1] ?? withoutType.split(/\s+as\s+/)[0]).trim();
-      return local !== symbol;
+      const aliasParts = withoutType.split(/\s+as\s+/);
+      const importName = aliasParts[0]?.trim() ?? "";
+      const localName = (aliasParts[1] ?? aliasParts[0])?.trim() ?? "";
+      return localName !== symbol && importName !== symbol;
     });
 
     if (remaining.length === 0) {

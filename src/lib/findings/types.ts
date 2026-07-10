@@ -37,6 +37,8 @@ export interface ToolRunReport {
   status: ToolStatus;
   source: AnalyzerSource;
   sourceMode: SourceMode;
+  version?: string;
+  diagnosticId?: string;
   error?: string;
   durationMs: number;
 }
@@ -47,6 +49,7 @@ export interface AnalyzerRunResult<T> {
   sourceMode: SourceMode;
   report: T | null;
   error?: string;
+  version?: string;
   durationMs: number;
 }
 
@@ -112,6 +115,11 @@ export interface FindingsPayload {
     findingsJson: boolean;
   };
   mode: "demo" | "live";
+  repositoryModel?: {
+    projects: Array<Record<string, unknown>>;
+    workspaces: string[];
+    monorepoTool?: string | null;
+  };
   rawToolReports: {
     knip: ToolRunReport;
     jscpd: ToolRunReport;

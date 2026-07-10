@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { execa } from "execa";
 import type { KnipRawReport } from "./types";
 import { TOOL_TIMEOUT_MS, type AnalyzerRunResult } from "./types";
-import { knipCliPath } from "./tool-paths";
+import { knipCliPath, knipVersion } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runKnipFallback } from "./fallback/knip-fallback";
 import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
@@ -69,7 +69,7 @@ async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipR
     if (result.stdout?.trim()) {
       try {
         const report = JSON.parse(result.stdout) as KnipRawReport;
-        return finalizeAnalyzerResult("knip", "ok", report, undefined, Date.now() - started);
+        return finalizeAnalyzerResult("knip", "ok", report, undefined, Date.now() - started, knipVersion());
       } catch (parseErr) {
         logAnalyzer("knip", "json_parse_error", {
           error: parseErr instanceof Error ? parseErr.message : String(parseErr),

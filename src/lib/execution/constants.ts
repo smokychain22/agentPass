@@ -1,0 +1,2 @@
+export const FREE_RETAINED_FIX_LIMIT = 1;
+export const FREE_CANDIDATE_ATTEMPT_LIMIT = 3;

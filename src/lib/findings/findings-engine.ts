@@ -35,6 +35,8 @@ export async function runFindingsEngine(
   try {
     onStage?.("extracting");
     onStage?.("framework_detection");
+    const { buildRepositoryModel, projectSummary } = await import("@/lib/repository-model/project-graph");
+    const repositoryModel = await buildRepositoryModel(workspace.rootDir);
 
     const scanId = `scan_${nanoid(12)}`;
 
@@ -79,6 +81,12 @@ export async function runFindingsEngine(
       };
       payload.summary = buildSummaryFromFindings(flattenPayloadFindings(payload));
     }
+
+    payload.repositoryModel = {
+      projects: projectSummary(repositoryModel),
+      workspaces: repositoryModel.workspaces,
+      monorepoTool: repositoryModel.monorepoTool,
+    };
 
     onStage?.("complete");
     return payload;

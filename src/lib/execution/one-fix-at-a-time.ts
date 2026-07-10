@@ -15,12 +15,22 @@ import {
   type BaselineVerificationReport,
 } from "./baseline-verification";
 import { applyPhase1Fix, type AppliedFix } from "./fix-plugins/apply-phase1-fix";
+import {
+  FREE_CANDIDATE_ATTEMPT_LIMIT,
+  FREE_RETAINED_FIX_LIMIT,
+} from "./constants";
+import {
+  buildEligibilityEvidence,
+  formatRejectionReason,
+  type CandidateDecisionRecord,
+} from "./candidate-decision";
 import { CleanupRunStateMachine } from "./cleanup-run-state";
 
 export interface FixAttemptResult {
   finding: Finding;
   status: "retained" | "skipped" | "rejected";
   reason: string;
+  displayReason: string;
   pluginId: string;
   expectedFix: string;
   eligibilityReason: string;
@@ -32,19 +42,24 @@ export interface FixAttemptResult {
   baselineReport?: BaselineVerificationReport;
   checks: VerifyCheckResult[];
   comparison: Array<{ name: string; outcome: string; exitCode: number | null }>;
+  rollbackStatus: "completed" | "not_needed" | "failed" | "pending";
+  decision: CandidateDecisionRecord;
 }
 
 export interface OneFixLoopResult {
   stateMachine: CleanupRunStateMachine;
   attempts: FixAttemptResult[];
   retained: FixAttemptResult[];
+  decisions: CandidateDecisionRecord[];
   unifiedDiff: string;
   changedPaths: string[];
   metrics: {
     selected: number;
+    evaluated: number;
     retained: number;
     skipped: number;
     rejected: number;
+    notAttempted: number;
   };
 }
 
@@ -80,36 +95,115 @@ function sortPhase1Candidates(findings: Finding[]): Finding[] {
   });
 }
 
-async function rollbackWorkspace(rootDir: string): Promise<void> {
-  await execa("git", ["checkout", "--", "."], { cwd: rootDir, reject: false });
-  await execa("git", ["clean", "-fd"], { cwd: rootDir, reject: false });
+async function rollbackWorkspace(rootDir: string): Promise<"completed" | "failed"> {
+  try {
+    await execa("git", ["checkout", "--", "."], { cwd: rootDir, reject: false });
+    await execa("git", ["clean", "-fd"], { cwd: rootDir, reject: false });
+    return "completed";
+  } catch {
+    return "failed";
+  }
+}
+
+function recordAttempt(
+  decisions: CandidateDecisionRecord[],
+  attempts: FixAttemptResult[],
+  candidateIndex: number,
+  input: Omit<FixAttemptResult, "displayReason" | "decision">
+): void {
+  const displayReason = formatRejectionReason({
+    status: input.status,
+    reason: input.reason,
+    comparison: input.comparison,
+    patchValidation: input.patchValidation,
+    rollbackStatus: input.rollbackStatus,
+  });
+  const { added, removed } = countDiffLines(input.unifiedDiff);
+  const decision: CandidateDecisionRecord = {
+    candidateId: `cand_${candidateIndex + 1}`,
+    findingId: input.finding.id,
+    pluginId: input.pluginId,
+    state:
+      input.status === "retained"
+        ? "retained"
+        : input.status === "rejected"
+          ? "rejected"
+          : "skipped",
+    eligibilityEvidence: buildEligibilityEvidence(input.finding),
+    generatedChange: input.unifiedDiff
+      ? {
+          changedFiles: input.changedPaths,
+          unifiedDiff: input.unifiedDiff,
+          additions: added,
+          deletions: removed,
+        }
+      : undefined,
+    patchValidation: input.patchValidation,
+    baseline: input.baselineReport,
+    comparison: input.comparison,
+    finalDecision: input.status === "retained" ? "retained" : input.status,
+    rejectionReason: displayReason,
+    rollbackStatus: input.rollbackStatus,
+    checks: input.checks,
+  };
+  decisions.push(decision);
+  attempts.push({ ...input, displayReason, decision });
 }
 
 export async function runOneFixAtATimeLoop(
   rootDir: string,
   findings: Finding[],
-  options?: { maxFixes?: number; stateMachine?: CleanupRunStateMachine }
+  options?: { maxFixes?: number; maxAttempts?: number; stateMachine?: CleanupRunStateMachine }
 ): Promise<OneFixLoopResult> {
   const sm = options?.stateMachine ?? new CleanupRunStateMachine();
-  const maxFixes = options?.maxFixes ?? 1;
+  const maxFixes = options?.maxFixes ?? FREE_RETAINED_FIX_LIMIT;
+  const maxAttempts = options?.maxAttempts ?? FREE_CANDIDATE_ATTEMPT_LIMIT;
 
   sm.emit("selecting_finding");
   const candidates = sortPhase1Candidates(findings.filter(isPhase1AutoFix));
-  const maxAttempts = Math.max(maxFixes * 5, 5);
 
   const attempts: FixAttemptResult[] = [];
+  const decisions: CandidateDecisionRecord[] = [];
   const retainedDiffs: string[] = [];
   const allChanged: string[] = [];
   let retainedCount = 0;
 
-  for (const finding of candidates.slice(0, maxAttempts)) {
-    if (retainedCount >= maxFixes) break;
+  for (let i = 0; i < candidates.length; i++) {
+    const finding = candidates[i];
+    if (retainedCount >= maxFixes) {
+      decisions.push({
+        candidateId: `cand_${i + 1}`,
+        findingId: finding.id,
+        pluginId: resolvePhase1Plugin(finding).id,
+        state: "not_attempted",
+        eligibilityEvidence: buildEligibilityEvidence(finding),
+        finalDecision: "skipped",
+        rejectionReason: "A verified fix was already retained.",
+        rollbackStatus: "not_needed",
+        checks: [],
+      });
+      continue;
+    }
+    if (attempts.length >= maxAttempts) {
+      decisions.push({
+        candidateId: `cand_${i + 1}`,
+        findingId: finding.id,
+        pluginId: resolvePhase1Plugin(finding).id,
+        state: "not_attempted",
+        eligibilityEvidence: buildEligibilityEvidence(finding),
+        finalDecision: "skipped",
+        rejectionReason: `Attempt limit (${maxAttempts}) reached.`,
+        rollbackStatus: "not_needed",
+        checks: [],
+      });
+      continue;
+    }
     const plugin = resolvePhase1Plugin(finding);
     const eligibilityReason = phase1EligibilityReason(finding);
 
     if (plugin.id === "review_only") {
       sm.emit("rejected", finding.id);
-      attempts.push({
+      recordAttempt(decisions, attempts, i, {
         finding,
         status: "rejected",
         reason: eligibilityReason,
@@ -122,6 +216,7 @@ export async function runOneFixAtATimeLoop(
         modifiedSources: {},
         checks: [],
         comparison: [],
+        rollbackStatus: "not_needed",
       });
       continue;
     }
@@ -135,7 +230,8 @@ export async function runOneFixAtATimeLoop(
 
       if (!applied.unifiedDiff) {
         sm.emit("skipped", "No diff generated");
-        attempts.push({
+        const rollbackStatus = await rollbackWorkspace(rootDir);
+        recordAttempt(decisions, attempts, i, {
           finding,
           status: "skipped",
           reason: "No diff was generated for this fix.",
@@ -148,8 +244,8 @@ export async function runOneFixAtATimeLoop(
           modifiedSources: applied.modifiedSources,
           checks: [],
           comparison: [],
+          rollbackStatus,
         });
-        await rollbackWorkspace(rootDir);
         continue;
       }
 
@@ -179,8 +275,8 @@ export async function runOneFixAtATimeLoop(
 
       if (patchValidation.status !== "passed") {
         sm.emit("skipped", patchValidation.error ?? "patch validation failed");
-        await rollbackWorkspace(rootDir);
-        attempts.push({
+        const rollbackStatus = await rollbackWorkspace(rootDir);
+        recordAttempt(decisions, attempts, i, {
           finding,
           status: "skipped",
           reason: patchValidation.error ?? "Patch validation failed.",
@@ -194,6 +290,7 @@ export async function runOneFixAtATimeLoop(
           patchValidation,
           checks,
           comparison: [],
+          rollbackStatus,
         });
         continue;
       }
@@ -232,8 +329,8 @@ export async function runOneFixAtATimeLoop(
 
       if (introduced.length > 0) {
         sm.emit("skipped", `introduced failure: ${introduced.map((c) => c.name).join(", ")}`);
-        await rollbackWorkspace(rootDir);
-        attempts.push({
+        const rollbackStatus = await rollbackWorkspace(rootDir);
+        recordAttempt(decisions, attempts, i, {
           finding,
           status: "skipped",
           reason: `Verification introduced new failure in: ${introduced.map((c) => c.name).join(", ")}`,
@@ -248,6 +345,7 @@ export async function runOneFixAtATimeLoop(
           baselineReport,
           checks,
           comparison,
+          rollbackStatus,
         });
         continue;
       }
@@ -256,7 +354,7 @@ export async function runOneFixAtATimeLoop(
       retainedDiffs.push(applied.unifiedDiff);
       allChanged.push(...applied.changedPaths);
       retainedCount += 1;
-      attempts.push({
+      recordAttempt(decisions, attempts, i, {
         finding,
         status: "retained",
         reason: "Fix verified and retained.",
@@ -271,11 +369,12 @@ export async function runOneFixAtATimeLoop(
         baselineReport,
         checks,
         comparison,
+        rollbackStatus: "not_needed",
       });
     } catch (err) {
       sm.emit("skipped", err instanceof Error ? err.message : "fix failed");
-      await rollbackWorkspace(rootDir).catch(() => undefined);
-      attempts.push({
+      const rollbackStatus = await rollbackWorkspace(rootDir);
+      recordAttempt(decisions, attempts, i, {
         finding,
         status: "skipped",
         reason: err instanceof Error ? err.message : "Fix attempt failed.",
@@ -288,6 +387,7 @@ export async function runOneFixAtATimeLoop(
         modifiedSources: {},
         checks: [],
         comparison: [],
+        rollbackStatus,
       });
     }
   }
@@ -295,17 +395,22 @@ export async function runOneFixAtATimeLoop(
   const retained = attempts.filter((a) => a.status === "retained");
   sm.emit(retained.length > 0 ? "completed" : attempts.length > 0 ? "failed" : "completed");
 
+  const notAttempted = decisions.filter((d) => d.state === "not_attempted").length;
+
   return {
     stateMachine: sm,
     attempts,
     retained,
+    decisions,
     unifiedDiff: retainedDiffs.join("\n"),
     changedPaths: allChanged,
     metrics: {
-      selected: attempts.length,
+      selected: candidates.length,
+      evaluated: attempts.length,
       retained: retained.length,
       skipped: attempts.filter((a) => a.status === "skipped").length,
       rejected: attempts.filter((a) => a.status === "rejected").length,
+      notAttempted,
     },
   };
 }

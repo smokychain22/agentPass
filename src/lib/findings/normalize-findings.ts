@@ -318,6 +318,8 @@ function toToolReport<T>(result: AnalyzerRunResult<T>): ToolRunReport {
     status: result.status,
     source: result.source,
     sourceMode: result.sourceMode,
+    version: result.version,
+    diagnosticId: result.error ? `diag_${result.source ?? "tool"}_${result.status}` : undefined,
     error: result.error,
     durationMs: result.durationMs,
   };

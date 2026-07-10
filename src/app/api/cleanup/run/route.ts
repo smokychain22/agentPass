@@ -59,6 +59,15 @@ export async function POST(request: Request) {
       findingIds: body.findingIds,
     });
 
+    const { setDurableRecord } = await import("@/lib/store/durable-store");
+    await setDurableRecord("cleanup_runs", cleanup.id, {
+      ...cleanup,
+      scanId: findings.scanId,
+      commitSha: findings.repo.commitSha,
+      repository: `${findings.repo.owner}/${findings.repo.name}`,
+      persistedAt: new Date().toISOString(),
+    });
+
     return NextResponse.json({ success: true, cleanup, signedReceipt });
   } catch (err) {
     if (err instanceof RateLimitError) {

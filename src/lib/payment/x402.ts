@@ -1,4 +1,5 @@
 import { X402_ASSET, X402_NETWORK, X402_RECIPIENT } from "./constants";
+import { checkEntitlement } from "@/lib/entitlement/service";
 
 export { X402_NETWORK, X402_ASSET, X402_RECIPIENT };
 export const XLAYER = X402_NETWORK;
@@ -91,16 +92,23 @@ export function enforcePayment(
     return { ok: true, mode: "free", amount: "0", paidAt: new Date().toISOString() };
   }
 
-  const amount = options?.amountMicro ?? "50000";
-  const check = verifyPayment(request, amount);
-  if (!check.ok) {
-    const url = new URL(request.url).toString();
-    const err = new Error("Payment required");
-    (err as Error & { status: number; body: unknown }).status = 402;
-    (err as Error & { status: number; body: unknown }).body = paymentRequiredBody(url, amount);
-    throw err;
+  const entitlement = checkEntitlement({ toolKey, request });
+  if (entitlement.allowed) {
+    return {
+      ok: true,
+      mode: entitlement.mode === "free_beta" ? "demo" : entitlement.mode === "test_payment" ? "demo" : "quote-bound",
+      amount: entitlement.amountMicro ?? options?.amountMicro ?? "0",
+      paidAt: new Date().toISOString(),
+      quoteId: entitlement.quoteId,
+    };
   }
-  return check;
+
+  const amount = options?.amountMicro ?? priceFor(toolKey);
+  const url = new URL(request.url).toString();
+  const err = new Error("Payment required");
+  (err as Error & { status: number; body: unknown }).status = 402;
+  (err as Error & { status: number; body: unknown }).body = paymentRequiredBody(url, amount);
+  throw err;
 }
 
 export function priceFor(tool: string): string {

@@ -39,7 +39,8 @@ export function finalizeAnalyzerResult<T>(
   status: ToolStatus,
   report: T | null,
   error: string | undefined,
-  durationMs: number
+  durationMs: number,
+  version?: string
 ): AnalyzerRunResult<T> {
   return {
     status,
@@ -47,6 +48,7 @@ export function finalizeAnalyzerResult<T>(
     sourceMode: sourceModeFor(status),
     report,
     error,
+    version,
     durationMs,
   };
 }

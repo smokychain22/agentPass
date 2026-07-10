@@ -15,6 +15,8 @@ import {
 import { generateCursorPrompt } from "@/lib/patch-kit/generate-cursor-prompt";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { runOneFixAtATimeLoop, countDiffLines } from "./one-fix-at-a-time";
+import { FREE_CANDIDATE_ATTEMPT_LIMIT } from "./constants";
+import { formatRejectionReason } from "./candidate-decision";
 import {
   hashPatchContent,
   hashVerification,
@@ -54,6 +56,7 @@ export interface FreeCleanupResult {
       title: string;
       status: string;
       reason: string;
+      displayReason: string;
       pluginId: string;
       expectedFix: string;
       eligibilityReason: string;
@@ -61,7 +64,11 @@ export interface FreeCleanupResult {
       originalSources: Record<string, string>;
       modifiedSources: Record<string, string>;
       comparison: Array<{ name: string; outcome: string; exitCode: number | null }>;
+      rollbackStatus: string;
     }>;
+    candidateDecisions: import("./candidate-decision").CandidateDecisionRecord[];
+    evaluated: number;
+    notAttempted: number;
   };
   stateTransitions: CleanupStateTransition[];
   proof: {
@@ -206,7 +213,16 @@ export async function runFreeCleanupCore(
         checks: [],
         limitations: ["No automatic changes generated."],
       },
-      fixLoop: { selected: 0, verified: 0, skipped: 0, rejected: 0, attempts: [] },
+      fixLoop: {
+        selected: 0,
+        verified: 0,
+        skipped: 0,
+        rejected: 0,
+        evaluated: 0,
+        notAttempted: 0,
+        attempts: [],
+        candidateDecisions: [],
+      },
       stateTransitions: [{ state: "completed", at: new Date().toISOString(), detail: "review_plan" }],
       proof: {
         changedFiles: [],
@@ -251,6 +267,7 @@ export async function runFreeCleanupCore(
   try {
     const loop = await runOneFixAtATimeLoop(workspace.rootDir, selected, {
       maxFixes,
+      maxAttempts: FREE_CANDIDATE_ATTEMPT_LIMIT,
       stateMachine: sm,
     });
     const { added, removed } = countDiffLines(loop.unifiedDiff);
@@ -265,11 +282,23 @@ export async function runFreeCleanupCore(
       ? summarizeBaselineReport(primaryAttempt.baselineReport)
       : undefined;
 
-    if (loop.metrics.retained === 0 && loop.metrics.rejected > 0) {
-      limitations.push("RepoDiet refused unsupported or protected findings.");
-    }
-    if (loop.metrics.skipped > 0) {
-      limitations.push(`${loop.metrics.skipped} finding(s) skipped after verification.`);
+    const primaryRejected =
+      loop.attempts.find((a) => a.status === "skipped" || a.status === "rejected") ??
+      loop.attempts[0];
+    const headlineReason = retained
+      ? "One safe fix verified and retained"
+      : primaryRejected
+        ? primaryRejected.displayReason
+        : formatRejectionReason({
+            status: "skipped",
+            reason: "No eligible candidates were evaluated.",
+            rollbackStatus: "not_needed",
+          });
+
+    if (!retained && loop.attempts.length > 0) {
+      limitations.push(
+        `RepoDiet evaluated ${loop.attempts.length} candidate(s) but retained 0 verified change(s).`
+      );
     }
 
     const fileChanges: FileChange[] = loop.changedPaths.map((rel) => ({
@@ -321,11 +350,14 @@ export async function runFreeCleanupCore(
         verified: loop.metrics.retained,
         skipped: loop.metrics.skipped,
         rejected: loop.metrics.rejected,
+        evaluated: loop.metrics.evaluated,
+        notAttempted: loop.metrics.notAttempted,
         attempts: loop.attempts.map((a) => ({
           findingId: a.finding.id,
           title: a.finding.title,
           status: a.status,
           reason: a.reason,
+          displayReason: a.displayReason,
           pluginId: a.pluginId,
           expectedFix: a.expectedFix,
           eligibilityReason: a.eligibilityReason,
@@ -333,7 +365,9 @@ export async function runFreeCleanupCore(
           originalSources: a.originalSources,
           modifiedSources: a.modifiedSources,
           comparison: a.comparison,
+          rollbackStatus: a.rollbackStatus,
         })),
+        candidateDecisions: loop.decisions,
       },
       stateTransitions: sm.transitions,
       proof: {
@@ -369,11 +403,7 @@ export async function runFreeCleanupCore(
         selectedFindingsJson: JSON.stringify(selected, null, 2),
       },
       limitations,
-      verifiedLabel: retained
-        ? "One safe fix verified and retained"
-        : finalDecision === "rejected"
-          ? "Fix rejected — protected or unsupported"
-          : "No safe fix retained — see verification details",
+      verifiedLabel: headlineReason,
       receipt,
     };
   } finally {

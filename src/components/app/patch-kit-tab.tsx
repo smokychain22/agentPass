@@ -69,7 +69,7 @@ export function PatchKitTab() {
       const raw = err instanceof Error ? err.message : "Patch kit generation failed.";
       const isPayment = raw.toLowerCase().includes("payment");
       const msg = isPayment
-        ? "Patch bundle generation requires x402 payment on this deployment."
+        ? "Quick Cleanup requires payment on this deployment. Configure PUBLIC_BETA_FREE=1 for free beta access."
         : raw;
       setError(msg);
       show("error", isPayment ? "Payment required" : "Patch kit generation failed");
@@ -96,7 +96,7 @@ export function PatchKitTab() {
     return (
       <LockedTab
         step="03"
-        title="Patch Kit"
+        title="Quick Cleanup"
         description="Available after findings are ready. Run the Findings Engine first."
       />
     );
@@ -158,7 +158,7 @@ export function PatchKitTab() {
           }
           message={
             error.toLowerCase().includes("payment")
-              ? "Patch bundle generation is a paid step when x402 is enabled. On the public beta deployment this should be free — retry after the latest deploy, or use the demo repository."
+              ? "Quick Cleanup requires payment on this deployment."
               : "Findings are still available. Retry bundle generation."
           }
           technicalDetail={error}

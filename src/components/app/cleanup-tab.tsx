@@ -190,12 +190,72 @@ export function CleanupTab() {
           <Panel variant="elevated" padding="md">
             <p className="ds-label mb-3">Final decision</p>
             <p className="text-lg font-semibold capitalize">{result.proof.finalDecision}</p>
-            {result.proof.selectedFindingId && (
+            <p className="mt-2 text-sm text-foreground">{result.verifiedLabel}</p>
+            {findings.repo.commitSha && (
               <p className="mt-1 font-mono text-xs text-muted-foreground">
-                Finding ID: {result.proof.selectedFindingId}
+                Scanned commit: {findings.repo.commitSha}
               </p>
             )}
+            <p className="mt-1 text-xs text-muted-foreground">
+              GitHub repository was not modified — isolated workspace only.
+            </p>
           </Panel>
+
+          {result.fixLoop.attempts.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">
+                Candidate attempts ({result.fixLoop.evaluated ?? result.fixLoop.attempts.length}{" "}
+                evaluated
+                {(result.fixLoop.notAttempted ?? 0) > 0
+                  ? `, ${result.fixLoop.notAttempted} not attempted`
+                  : ""}
+                )
+              </p>
+              <ul className="space-y-3">
+                {result.fixLoop.attempts.map((attempt, idx) => (
+                  <li
+                    key={`${attempt.findingId}-${idx}`}
+                    className="rounded border border-border/40 p-3 text-sm"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium">
+                        Candidate {idx + 1}: {attempt.title}
+                      </span>
+                      <RiskBadge
+                        level={
+                          attempt.status === "retained"
+                            ? "safe"
+                            : attempt.status === "rejected"
+                              ? "danger"
+                              : "review"
+                        }
+                      >
+                        {attempt.status}
+                      </RiskBadge>
+                    </div>
+                    <p className="mt-2 text-muted-foreground">
+                      {"displayReason" in attempt && attempt.displayReason
+                        ? attempt.displayReason
+                        : attempt.reason}
+                    </p>
+                    <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                      {attempt.pluginId}
+                      {"rollbackStatus" in attempt && attempt.rollbackStatus
+                        ? ` · rollback ${attempt.rollbackStatus}`
+                        : ""}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              {result.proof.finalDecision !== "retained" && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  RepoDiet evaluated {result.fixLoop.evaluated ?? result.fixLoop.attempts.length}{" "}
+                  candidate(s) but refused all modifications because none passed the configured
+                  safety requirements.
+                </p>
+              )}
+            </Panel>
+          )}
 
           {primaryAttempt && (
             <Panel variant="elevated" padding="md">
