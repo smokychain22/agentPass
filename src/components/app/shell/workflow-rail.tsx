@@ -54,7 +54,7 @@ function resolveState(
     return { state: patchKitReady ? "completed" : "inactive" };
   }
   if (stepId === "verify") {
-    if (!patchKitReady) return { state: "locked", lockReason: "Available after patch bundle is generated" };
+    if (!patchKitReady) return { state: "locked", lockReason: "Available after Quick Cleanup is run" };
     if (activeStep === "verify") return { state: "active" };
     return { state: idx < activeIdx ? "completed" : "inactive" };
   }
@@ -84,7 +84,7 @@ export function WorkflowRail({
     },
     {
       id: "patch",
-      label: "Patch Kit",
+      label: "Quick Cleanup",
       href: "/app?tab=patch",
       ...resolveState("patch", activeStep, scanComplete, findingsReady, patchKitReady, failedStep),
     },

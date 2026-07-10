@@ -91,6 +91,7 @@ export interface FindingsPayload {
     name: string;
     branch: string;
     url?: string;
+    commitSha?: string;
   };
   summary: FindingsSummary;
   duplicates: Finding[];

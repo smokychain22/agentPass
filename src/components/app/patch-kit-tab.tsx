@@ -107,21 +107,21 @@ export function PatchKitTab() {
       {Toast}
 
       <WorkspaceSection
-        label="Review workspace"
-        title="Patch Kit"
-        description="Select safe-candidate findings, then generate a review-ready patch bundle with a validated unified diff."
+        label="Paid cleanup"
+        title="Quick Cleanup"
+        description="Select safe-candidate findings, then run up to five supported fixes with validated diffs and verification."
         actions={
           <>
             <Button onClick={generate} disabled={isLoading}>
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
-                  Generating…
+                  Running…
                 </>
               ) : patchKit ? (
-                "Regenerate Patch Bundle"
+                "Regenerate Quick Cleanup"
               ) : (
-                "Generate Patch Bundle"
+                "Run Quick Cleanup"
               )}
             </Button>
             {patchKit && (
@@ -169,9 +169,9 @@ export function PatchKitTab() {
       {!patchKit && !isLoading && !error && (
         <EmptyState
           icon={Package}
-          title="Findings ready — generate your patch bundle"
-          description="RepoDiet classifies safe deletes, builds a git-validated unified diff, and packages deliverables into a downloadable ZIP."
-          action={{ label: "Generate Patch Bundle", onClick: generate }}
+          title="Findings ready — run Quick Cleanup"
+          description="RepoDiet applies up to five supported safe fixes, validates each change, and packages deliverables for review."
+          action={{ label: "Run Quick Cleanup", onClick: generate }}
         />
       )}
 

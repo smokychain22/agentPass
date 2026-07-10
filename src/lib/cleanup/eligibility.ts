@@ -1,7 +1,8 @@
 import type { Finding } from "@/lib/findings/types";
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
 
-export const FREE_CLEANUP_LIMIT = 3;
+export const FREE_CLEANUP_LIMIT = 1;
+export const QUICK_CLEANUP_LIMIT = 5;
 
 const MIN_AUTO_FIX_CONFIDENCE = 0.75;
 
@@ -26,18 +27,24 @@ export function isReviewPlanEligible(finding: Finding): boolean {
   return finding.confidence >= 0.45;
 }
 
-export function listAutoFixEligible(findings: Finding[]): Finding[] {
+export function listAutoFixEligible(
+  findings: Finding[],
+  limit = FREE_CLEANUP_LIMIT
+): Finding[] {
   return findings
     .filter(isAutoFixEligible)
     .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, FREE_CLEANUP_LIMIT);
+    .slice(0, limit);
 }
 
-export function listReviewPlanEligible(findings: Finding[]): Finding[] {
+export function listReviewPlanEligible(
+  findings: Finding[],
+  limit = FREE_CLEANUP_LIMIT
+): Finding[] {
   return findings
     .filter(isReviewPlanEligible)
     .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, FREE_CLEANUP_LIMIT);
+    .slice(0, limit);
 }
 
 export function freeCleanupCta(findings: Finding[]): {
@@ -49,8 +56,8 @@ export function freeCleanupCta(findings: Finding[]): {
   if (auto.length > 0) {
     return {
       mode: "auto_fix",
-      count: auto.length,
-      label: `Fix ${auto.length} Safe Issue${auto.length === 1 ? "" : "s"} Free`,
+      count: 1,
+      label: "Fix One Safe Issue Free",
     };
   }
   const review = listReviewPlanEligible(findings);
@@ -58,7 +65,7 @@ export function freeCleanupCta(findings: Finding[]): {
   return {
     mode: "review_plan",
     count,
-    label: count > 0 ? `Review ${count} Finding${count === 1 ? "" : "s"} Free` : "No Eligible Findings",
+    label: count > 0 ? "Review Findings (No Safe Auto-Fix)" : "No Eligible Findings",
   };
 }
 

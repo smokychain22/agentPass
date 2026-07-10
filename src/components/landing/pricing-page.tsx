@@ -9,6 +9,8 @@ import { Panel } from "@/components/design-system/panel";
 import {
   PRICING_SECTION,
   PRICING_TIERS,
+  AGENT_API_PRICING,
+  CLEANUP_PR_PRICING_NOTE,
   RUNTIME_LIMITS,
   SAFETY_POLICY_PUBLIC,
 } from "@/lib/marketing/content";
@@ -42,6 +44,26 @@ export function PricingPage() {
           <p className="mt-8 max-w-2xl text-sm leading-relaxed text-muted-foreground">
             {PRICING_SECTION.note}
           </p>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            {CLEANUP_PR_PRICING_NOTE}
+          </p>
+
+          <section className="mt-16">
+            <h2 className="mb-4 text-lg font-semibold text-foreground">Agent API (launch pricing)</h2>
+            <Panel variant="elevated" padding="md">
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                {AGENT_API_PRICING.map((row) => (
+                  <li key={row.operation} className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      <span className="font-medium text-foreground">{row.operation}</span>
+                      <span className="ml-2 font-mono text-xs text-muted-foreground">{row.tool}</span>
+                    </span>
+                    <span className="font-mono text-electric">{row.price}</span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          </section>
 
           <section className="mt-16">
             <h2 className="mb-4 text-lg font-semibold text-foreground">Safety policy</h2>

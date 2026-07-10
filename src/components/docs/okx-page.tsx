@@ -13,6 +13,7 @@ import { MarketingCta } from "@/components/landing/marketing-cta";
 import {
   A2MCP_READINESS_COPY,
   A2MCP_TOOLS_HIGHLIGHT,
+  AGENT_API_PRICING,
   OKX_A2A_SERVICE,
   OKX_DEMO_FLOW,
   PRICING_TIERS,
@@ -21,12 +22,11 @@ import { CopyButton } from "./copy-button";
 
 const LIVE_TOOLS = A2MCP_TOOLS_HIGHLIGHT;
 
-const PROPOSED_PRICING = [
-  { tool: "scan_repo_bloat", price: "0.05 USDT", note: "Quick structure + findings summary" },
-  { tool: "generate_cleanup_patch", price: "0.25 USDT", note: "Full Patch Kit bundle" },
-  { tool: "generate_regression_checklist", price: "0.05 USDT", note: "Regression checklist" },
-  { tool: "create_cleanup_pr", price: "1–5 USDT", note: "Review-ready cleanup PR for safe candidates" },
-];
+const PROPOSED_PRICING = AGENT_API_PRICING.map((row) => ({
+  tool: row.tool,
+  price: row.price,
+  note: row.operation,
+}));
 
 const SAFETY_POLICY = [
   "Never pushes directly to main — cleanup PRs use a separate branch",

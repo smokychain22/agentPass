@@ -94,10 +94,10 @@ export function CleanupTab() {
 
       <WorkspaceSection
         label="In-app proof"
-        title="Free Cleanup Run"
+        title="Free Proof"
         description={
           cta.mode === "auto_fix"
-            ? "RepoDiet generates conservative changes, validates them in an isolated workspace, and shows every diff. Your GitHub repository is not modified."
+            ? "RepoDiet fixes one supported safe issue, validates it in an isolated workspace, and shows the real diff. Your GitHub repository is not modified."
             : "No findings met the automatic-fix safety threshold. RepoDiet will generate a conservative review plan without changing code."
         }
         actions={
@@ -117,7 +117,7 @@ export function CleanupTab() {
             </Button>
             {result && (
               <Button variant="secondary" asChild>
-                <Link href="/app?tab=patch">Continue to Patch Kit</Link>
+                <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
               </Button>
             )}
           </>
@@ -152,7 +152,7 @@ export function CleanupTab() {
 
       {!result && phase !== "running" && (
         <Panel variant="elevated" padding="md">
-          <p className="ds-label mb-3">Select findings (up to {FREE_CLEANUP_LIMIT})</p>
+          <p className="ds-label mb-3">Select one finding (free proof)</p>
           <p className="mb-4 text-sm text-muted-foreground">
             Selected: {selectedIds.length}/{FREE_CLEANUP_LIMIT}
           </p>
@@ -188,7 +188,37 @@ export function CleanupTab() {
           />
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label="Issues selected" value={result.metrics.issuesSelected} />
+            <Metric label="Findings selected" value={result.fixLoop.selected} />
+            <Metric label="Verified & retained" value={result.fixLoop.verified} />
+            <Metric label="Skipped" value={result.fixLoop.skipped} />
+            <Metric label="Rejected" value={result.fixLoop.rejected} />
+          </div>
+
+          {result.fixLoop.attempts.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Fix loop</p>
+              <ul className="space-y-2 text-sm">
+                {result.fixLoop.attempts.map((a) => (
+                  <li key={a.findingId} className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="min-w-0 truncate">{a.title}</span>
+                    <RiskBadge
+                      level={
+                        a.status === "verified"
+                          ? "safe"
+                          : a.status === "rejected"
+                            ? "danger"
+                            : "review"
+                      }
+                    >
+                      {a.status}
+                    </RiskBadge>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Metric label="Files changed" value={result.metrics.filesChanged} />
             <Metric label="Lines removed" value={result.metrics.linesRemoved} />
             <Metric label="Lines added" value={result.metrics.linesAdded} />
@@ -203,6 +233,14 @@ export function CleanupTab() {
             </Panel>
           )}
 
+          {result.verification.baselineSummary && result.verification.baselineSummary.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Baseline verification</p>
+              <pre className="whitespace-pre-wrap text-sm text-muted-foreground">
+                {result.verification.baselineSummary.join("\n")}
+              </pre>
+            </Panel>
+          )}
           {result.verification.checks.length > 0 && (
             <Panel variant="elevated" padding="md">
               <p className="ds-label mb-3 flex items-center gap-2">

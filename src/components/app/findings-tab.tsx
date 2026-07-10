@@ -158,7 +158,7 @@ export function FindingsTab() {
             )}
             {findings && (
               <Button variant="ghost" asChild>
-                <Link href="/app?tab=patch">Continue to Patch Kit</Link>
+                <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
               </Button>
             )}
             <details className="relative">

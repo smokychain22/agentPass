@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { getStoredFindings } from "@/lib/findings/findings-store";
-import { runFreeCleanup } from "@/lib/cleanup/run-free-cleanup";
+import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
+import { signExecutionReceipt } from "@/lib/operator/sign-receipt";
 import { FREE_CLEANUP_LIMIT, isAutoFixEligible } from "@/lib/cleanup/eligibility";
 import type { FindingsPayload } from "@/lib/findings/types";
 
@@ -55,9 +56,11 @@ export async function POST(request: Request) {
       }
     }
 
-    const result = await runFreeCleanup(findings, body.findingIds);
+    const result = await runFreeCleanupCore(findings, { findingIds: body.findingIds });
 
-    return NextResponse.json({ success: true, cleanup: result });
+    const signedReceipt = signExecutionReceipt(result.receipt);
+
+    return NextResponse.json({ success: true, cleanup: result, signedReceipt });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(

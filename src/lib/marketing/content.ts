@@ -404,12 +404,23 @@ export const API_SECTION = {
 
 export const PRICING_SECTION = {
   eyebrow: "Plans",
-  title: "Start free. Scale to cleanup PRs when you need action.",
+  title: "Proof first. Action when you need it.",
   description:
-    "Scan and preview on the public demo. Patch bundles and cleanup PRs when you need deliverable cleanup artifacts and GitHub actions.",
+    "RepoDiet does not just tell you what is wrong. It makes supported changes, proves what passed, and delivers a pull request you control.",
   note:
-    "Public demo endpoints are open for review. A2MCP-ready APIs — paid x402 gating is not live on the demo deployment.",
+    "Launch pricing — kept accessible and crypto-native. Free proof requires no payment. Paid tiers unlock more fixes and GitHub cleanup PRs. Verified Cleanup PR price (1–3 USDT) depends on repository size.",
 };
+
+export const CLEANUP_PR_PRICING_NOTE =
+  "Verified Cleanup PR: 1 USDT for small repos (≤150 source files), 2 USDT for medium (151–400), 3 USDT for larger supported repos.";
+
+export const AGENT_API_PRICING = [
+  { operation: "Structure scan", tool: "scan_repo_bloat", price: "0.02 USDT" },
+  { operation: "Findings analysis", tool: "scan_repo_bloat", price: "0.05 USDT" },
+  { operation: "Safe-fix proposal", tool: "generate_cleanup_patch", price: "0.10 USDT" },
+  { operation: "Verified limited cleanup", tool: "patch_bundle", price: "0.25 USDT" },
+  { operation: "Cleanup PR", tool: "create_cleanup_pr", price: "1–3 USDT" },
+] as const;
 
 export const A2MCP_TOOLS_HIGHLIGHT = [
   "scan_repo_bloat",
@@ -449,74 +460,79 @@ export const DEMO_PROGRESS_STEPS = [
 
 export const PRICING_TIERS = [
   {
-    name: "Free",
+    name: "Free Proof",
     price: "Free",
-    description: "Scan and findings preview on public repos.",
+    description: "One real safe fix with verification — proof RepoDiet genuinely works.",
     features: [
-      "Repo structure scan",
-      "Findings preview",
-      "Risk buckets",
-      "Demo repo workflow",
+      "Full structure scan",
+      "Findings analysis",
+      "Risk classification",
+      "One real safe fix",
+      "Real before-and-after diff",
+      "Basic verification",
+      "No GitHub mutation",
     ],
-    cta: "Try Demo Repo",
-    href: "/app?demo=true",
+    cta: "Fix One Safe Issue Free",
+    href: "/app?tab=cleanup",
     highlighted: false,
   },
   {
-    name: "Patch Bundle",
+    name: "Quick Cleanup",
     price: "0.25 USDT",
-    description: "Full conservative cleanup bundle with seven artifacts.",
+    description: "Up to five supported safe fixes with in-app diff review.",
     features: [
-      "Cleanup report",
-      "Patch plan",
-      "Package cleanup",
-      "Regression checklist",
-      "Cursor prompt",
-      "ZIP bundle",
+      "Up to 5 eligible safe fixes",
+      "Real code changes",
+      "In-app diff review",
+      "Patch validation",
+      "Basic lint/typecheck checks",
+      "No GitHub write unless authorized",
     ],
-    cta: "Generate Bundle",
+    cta: "Run Quick Cleanup",
     href: "/app?tab=patch",
     highlighted: false,
   },
   {
-    name: "Cleanup PR",
-    price: "1–5 USDT",
-    description: "Creates a review-ready cleanup PR for safe candidates.",
+    name: "Verified Cleanup PR",
+    price: "1–3 USDT",
+    description: CLEANUP_PR_PRICING_NOTE,
     features: [
-      "Safe candidate deletions",
-      "Cleanup branch",
-      "RepoDiet artifacts",
-      "GitHub PR opened",
-      "Human merge required",
+      "Supported safe fixes",
+      "Cleanup branch + real commits",
+      "Verification results",
+      "GitHub pull request",
+      "Human merge approval",
+      "Execution receipt",
     ],
-    cta: "Create Cleanup PR",
+    cta: "Create Verified Cleanup PR",
     href: "/app?tab=patch&demo=true",
     highlighted: true,
   },
   {
-    name: "A2A Cleanup Review",
-    price: "5–25 USDT",
-    description: "Manual review and cleanup plan for larger repos.",
+    name: "Repo Guard",
+    price: "3–5 USDT/month",
+    description: "Continuous monitoring and one cleanup PR allowance per month.",
     features: [
-      "Manual review",
-      "Cleanup plan",
-      "PR delivery",
-      "Verification checklist",
-      "Agent-to-agent delivery",
+      "One connected repository",
+      "Weekly scans + post-merge checks",
+      "New-debt alerts",
+      "Monthly cleanup PR allowance",
+      "Protected paths per repository",
+      "Finding history",
     ],
-    cta: "Contact us",
-    href: "/okx",
+    cta: "Connect Repository",
+    href: "/app?tab=patch",
     highlighted: false,
   },
 ];
 
 export const OKX_DEMO_FLOW = [
-  "Open RepoDiet app and scan the messy demo repo",
-  "Run Findings Engine to map duplicates, unused code, and risk buckets",
-  "Generate Patch Kit — conservative bundle with 7 artifacts",
-  "Create Cleanup PR — safe deletes + RepoDiet artifacts on a review branch",
-  "Open GitHub PR and run regression checklist before merging",
-  "Call A2MCP create_cleanup_pr for agent automation",
+  "Paste a public GitHub repository and scan",
+  "Run Findings Engine — evidence-backed risk buckets",
+  "Fix One Safe Issue Free — real diff + verification",
+  "Run Quick Cleanup — up to five supported fixes",
+  "Create Verified Cleanup PR on a demo repository",
+  "Agent pays via x402 and receives signed execution receipt",
 ];
 
 export const OKX_A2A_SERVICE = {

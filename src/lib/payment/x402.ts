@@ -2,15 +2,20 @@ export const XLAYER = "eip155:196";
 export const USDT_XLAYER = "0x779ded0c9e1022225f8e0630b35a9b54be713736";
 export const PAY_TO = process.env.REPODIET_PAY_TO || "0xRepoDietTreasury00000000000000001";
 
+/** Launch micro-pricing in USDT micro-units (6 decimals). */
 const PRICES: Record<string, string> = {
-  scan_repo_bloat: "50000",
-  detect_duplicate_code: "50000",
-  find_dead_files: "30000",
-  find_unused_dependencies: "30000",
-  generate_cleanup_patch: "150000",
-  generate_regression_checklist: "250000",
+  scan_repo_bloat: "20000",
+  detect_duplicate_code: "20000",
+  find_dead_files: "20000",
+  find_unused_dependencies: "20000",
+  findings_analysis: "50000",
+  generate_cleanup_patch: "100000",
+  generate_regression_checklist: "50000",
   patch_bundle: "250000",
+  quick_cleanup: "250000",
   verify_run: "50000",
+  create_cleanup_pr: "1000000",
+  repo_guard_monthly: "4000000",
   free: "0",
 };
 
@@ -85,13 +90,13 @@ export function verifyPayment(request: Request, expectedMicro: string): PaymentV
 export function enforcePayment(
   request: Request,
   toolKey: string,
-  options?: { free?: boolean }
+  options?: { free?: boolean; amountMicro?: string }
 ): PaymentVerification {
   if (options?.free) {
     return { ok: true, mode: "free", amount: "0", paidAt: new Date().toISOString() };
   }
 
-  const amount = priceFor(toolKey);
+  const amount = options?.amountMicro ?? priceFor(toolKey);
   const check = verifyPayment(request, amount);
   if (!check.ok) {
     const url = new URL(request.url).toString();
