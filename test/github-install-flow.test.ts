@@ -23,6 +23,11 @@ import {
   resolveGitHubInstallRedirect,
 } from "../src/lib/github-app/install-redirect";
 import { assertClientGitHubInstallRedirectUrl } from "../src/lib/github-app/install-redirect-client";
+import {
+  getAppBaseUrl,
+  isGitHubWebsiteUrl,
+  resolveRepodietReturnUrl,
+} from "../src/lib/github-app/app-base-url";
 import { setDurableRecord } from "../src/lib/store/durable-store";
 
 async function test(name: string, fn: () => void | Promise<void>) {
@@ -245,6 +250,54 @@ async function run() {
       assert.notEqual(resolved.url, "https://github.com/app?tab=patch");
       assert.doesNotMatch(resolved.url, /^\/app/);
     });
+  });
+
+  await test("resolveRepodietReturnUrl never targets github.com/app", () => {
+    const previous = {
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+      GITHUB_APP_PUBLIC_URL: process.env.GITHUB_APP_PUBLIC_URL,
+      VERCEL_URL: process.env.VERCEL_URL,
+    };
+
+    process.env.NEXT_PUBLIC_APP_URL = "https://github.com/apps/repodiet-operator";
+    delete process.env.VERCEL_URL;
+
+    try {
+      const url = resolveRepodietReturnUrl("/app?tab=patch&scanId=scan_123");
+      assert.equal(url.origin, "https://skillswap-skillswap7.vercel.app");
+      assert.equal(url.pathname, "/app");
+      assert.equal(url.searchParams.get("tab"), "patch");
+      assert.equal(url.searchParams.get("scanId"), "scan_123");
+      assert.notEqual(url.hostname, "github.com");
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  await test("getAppBaseUrl ignores github.com env values", () => {
+    const previous = {
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+      GITHUB_APP_PUBLIC_URL: process.env.GITHUB_APP_PUBLIC_URL,
+      VERCEL_URL: process.env.VERCEL_URL,
+    };
+
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    delete process.env.VERCEL_URL;
+    process.env.GITHUB_APP_PUBLIC_URL = "https://github.com/apps/repodiet-operator";
+
+    try {
+      const base = getAppBaseUrl();
+      assert.equal(isGitHubWebsiteUrl(base), false);
+      assert.match(base, /^https:\/\/skillswap-skillswap7\.vercel\.app$/);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   await test("repository full name parser", () => {

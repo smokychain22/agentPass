@@ -8,6 +8,11 @@ import {
   saveInstallFlow,
   type InstallFlowRecord,
 } from "./install-flow-store";
+import {
+  clearPendingInstallCookie,
+  resolveInstallFlowFromCookie,
+  savePendingInstallCookie,
+} from "./install-flow-cookie";
 import { parseRepositoryFullName } from "./repository";
 
 export function generateInstallStateToken(): string {
@@ -32,6 +37,7 @@ export async function createInstallFlow(input: {
     returnPath: input.returnPath,
   });
   await saveInstallFlow(record);
+  await savePendingInstallCookie(record);
   return { stateToken };
 }
 
@@ -43,7 +49,12 @@ export async function resolveInstallFlowState(
 > {
   const stateHash = hashInstallState(stateToken);
   const record = await readInstallFlow(stateHash);
-  if (!record) return { ok: false, reason: "invalid" };
+  if (!record) {
+    const cookieRecord = await resolveInstallFlowFromCookie(stateToken);
+    if (!cookieRecord) return { ok: false, reason: "invalid" };
+    if (isInstallFlowExpired(cookieRecord)) return { ok: false, reason: "expired" };
+    return { ok: true, record: cookieRecord };
+  }
   if (record.usedAt) return { ok: false, reason: "reused" };
   if (isInstallFlowExpired(record)) return { ok: false, reason: "expired" };
   return { ok: true, record };
@@ -53,5 +64,6 @@ export async function consumeInstallFlowState(stateToken: string): Promise<Insta
   const resolved = await resolveInstallFlowState(stateToken);
   if (!resolved.ok) return null;
   await markInstallFlowUsed(resolved.record.stateHash);
+  await clearPendingInstallCookie();
   return resolved.record;
 }

@@ -1,15 +1,25 @@
-const FALLBACK_BASE_URL = "https://skillswap-skillswap7.vercel.app";
+const REPODIET_APP_FALLBACK = "https://skillswap-skillswap7.vercel.app";
 
 export function getServerBaseUrl(): string {
-  const explicit =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.GITHUB_APP_PUBLIC_URL?.trim();
-  if (explicit) {
-    return explicit.replace(/\/$/, "");
+  const candidates = [
+    process.env.NEXT_PUBLIC_APP_URL?.trim(),
+    process.env.REPODIET_APP_URL?.trim(),
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.trim()}` : undefined,
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/\/$/, "");
+    try {
+      const hostname = new URL(normalized).hostname;
+      if (hostname !== "github.com" && !hostname.endsWith(".github.com")) {
+        return normalized;
+      }
+    } catch {
+      // ignore invalid candidate
+    }
   }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  return FALLBACK_BASE_URL;
+
+  return REPODIET_APP_FALLBACK;
 }
 
 export function buildToolCurl(

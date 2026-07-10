@@ -1,4 +1,7 @@
 import { buildNewInstallationUrl, getGitHubAppSlugOrThrow } from "./install-redirect";
+import { getAppBaseUrl } from "./app-base-url";
+
+export { getAppBaseUrl, resolveRepodietReturnUrl } from "./app-base-url";
 
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -60,14 +63,4 @@ export function getGitHubAppConfig() {
 export function getGitHubAppInstallUrl(state?: string): string {
   const slug = getGitHubAppSlugOrThrow();
   return buildNewInstallationUrl(slug, state);
-}
-
-export function getAppBaseUrl(): string {
-  const explicit = readEnvAny(["NEXT_PUBLIC_APP_URL", "GITHUB_APP_PUBLIC_URL"]);
-  if (explicit) return explicit.replace(/\/$/, "");
-
-  const vercel = readEnv("VERCEL_URL");
-  if (vercel) return `https://${vercel}`;
-
-  return "http://localhost:3000";
 }
