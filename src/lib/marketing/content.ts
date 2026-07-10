@@ -1,5 +1,6 @@
 import { BUNDLE_ARTIFACT_FILES } from "@/lib/patch-kit/bundle-manifest";
 import { TOOL_MANIFEST_ENTRIES } from "@/lib/a2mcp/tool-manifest";
+import { buildDemoTerminalLines, getDemoScanStats } from "@/lib/demo/terminal-lines";
 
 export const TRUST_LINE =
   "Public GitHub repos only · No repo mutation · No auto-delete · Review-first patches";
@@ -7,18 +8,8 @@ export const TRUST_LINE =
 export const A2MCP_READINESS_COPY =
   "RepoDiet endpoints are A2MCP-ready deterministic JSON tools. Payment/x402 enforcement can be added at the OKX listing or gateway layer. Public demo endpoints are open for hackathon review.";
 
-export const DEMO_TERMINAL_LINES = [
-  { text: "$ repodiet scan github.com/repodiet/demo-slop-app", className: "text-foreground" },
-  { text: "", className: "" },
-  { text: "Fetching repository...", className: "text-muted-foreground" },
-  { text: "Framework: Next.js", className: "text-electric" },
-  { text: "Package manager: npm", className: "text-electric" },
-  { text: "Files indexed: 214", className: "text-electric" },
-  { text: "Duplicate clusters: 18", className: "text-electric" },
-  { text: "Unused files: 42", className: "text-electric" },
-  { text: "AI-slop signals: 9", className: "text-electric" },
-  { text: "Patch bundle: ready", className: "text-signal" },
-];
+export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
+export const DEMO_SCAN_STATS = getDemoScanStats();
 
 export const PROBLEM_CARDS = [
   {

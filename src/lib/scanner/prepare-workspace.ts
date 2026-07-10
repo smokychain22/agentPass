@@ -2,6 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  DEMO_REPO_BRANCH,
+  DEMO_REPO_NAME,
+  DEMO_REPO_OWNER,
+  DEMO_REPO_URL,
+  isDemoRepoUrl,
+} from "@/lib/demo/constants";
+import { getDemoRepoLocalPath } from "@/lib/demo/paths";
 import { parseGitHubUrl, buildRepoUrl } from "@/lib/github/parse-github-url";
 import { fetchRepoZip, RepoFetchError } from "@/lib/github/fetch-repo-zip";
 import { assertZipSize } from "@/lib/a2mcp/limits";
@@ -21,10 +29,47 @@ export interface RepoWorkspace {
   cleanup: () => Promise<void>;
 }
 
+async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
+  const sourceDir = getDemoRepoLocalPath();
+  try {
+    await fs.access(sourceDir);
+  } catch {
+    throw new Error(
+      `Demo repo workspace not found at ${sourceDir}. Ensure demo-repos/repodiet-demo-slop-app is present.`
+    );
+  }
+
+  const workDir = path.join(os.tmpdir(), `repodiet-${randomUUID()}`);
+  const rootDir = path.join(workDir, "repo");
+  await fs.mkdir(rootDir, { recursive: true });
+  await fs.cp(sourceDir, rootDir, { recursive: true });
+
+  const repo: RepoInfo = {
+    owner: DEMO_REPO_OWNER,
+    name: DEMO_REPO_NAME,
+    branch: DEMO_REPO_BRANCH,
+    url: DEMO_REPO_URL,
+  };
+
+  const capturedWorkDir = workDir;
+  return {
+    rootDir,
+    workDir: capturedWorkDir,
+    repo,
+    cleanup: async () => {
+      await fs.rm(capturedWorkDir, { recursive: true, force: true }).catch(() => {});
+    },
+  };
+}
+
 export async function prepareRepoWorkspace(
   repoUrl: string,
   branchInput?: string
 ): Promise<RepoWorkspace> {
+  if (isDemoRepoUrl(repoUrl)) {
+    return prepareLocalDemoWorkspace();
+  }
+
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) {
     throw new Error(

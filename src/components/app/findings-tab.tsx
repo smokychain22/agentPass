@@ -1,17 +1,20 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
   Copy,
+  Info,
   Loader2,
   Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DEMO_NOTICE } from "@/lib/demo/constants";
 import { useAppSession } from "@/components/app/app-session";
 import { LockedTab } from "@/components/app/locked-tab";
 import {
@@ -43,10 +46,13 @@ function phaseIndex(phase: FindingsPhase): number {
 }
 
 export function FindingsTab() {
+  const searchParams = useSearchParams();
   const { session, findings, setFindings } = useAppSession();
   const [phase, setPhase] = useState<FindingsPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [promptCopied, setPromptCopied] = useState(false);
+  const demoAutoStarted = useRef(false);
+  const isDemoMode = searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
 
   const isLoading = LOADING.includes(phase);
   const currentStep = phaseIndex(phase);
@@ -66,6 +72,19 @@ export function FindingsTab() {
       setError(err instanceof Error ? err.message : "Findings analysis failed.");
     }
   }, [session, setFindings]);
+
+  useEffect(() => {
+    if (
+      isDemoMode &&
+      session.scanComplete &&
+      !findings &&
+      phase === "idle" &&
+      !demoAutoStarted.current
+    ) {
+      demoAutoStarted.current = true;
+      void runFindings();
+    }
+  }, [isDemoMode, session.scanComplete, findings, phase, runFindings]);
 
   const copyPrompt = async () => {
     if (!findings) return;
@@ -88,6 +107,15 @@ export function FindingsTab() {
 
   return (
     <div className="space-y-8">
+      {isDemoMode && (
+        <Card className="border-electric/30 bg-electric/5">
+          <CardContent className="flex items-start gap-3 py-4">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-electric" />
+            <p className="text-sm text-muted-foreground leading-relaxed">{DEMO_NOTICE}</p>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Findings Engine</h2>

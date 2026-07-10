@@ -164,6 +164,9 @@ export function LandingPage() {
           <p className="mt-2 max-w-2xl text-2xl font-semibold tracking-tight">
             Seven deliverables in every ZIP bundle
           </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Sample bundle generated from demo repo — real Patch Kit output, not mock data.
+          </p>
           <div className="mt-10">
             <ArtifactPreviews />
           </div>

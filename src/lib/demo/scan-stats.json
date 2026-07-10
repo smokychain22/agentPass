@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-07-10T10:46:11.203Z",
+  "repoUrl": "https://github.com/repodiet/demo-slop-app",
+  "framework": "Next.js",
+  "packageManager": "npm",
+  "filesIndexed": 27,
+  "duplicateClusters": 7,
+  "unusedFiles": 14,
+  "unusedDependencies": 9,
+  "orphanPatterns": 1,
+  "aiSlopSignals": 6,
+  "safeCandidates": 5,
+  "reviewFirst": 16,
+  "doNotTouch": 14,
+  "patchBundleReady": true
+}

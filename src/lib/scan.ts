@@ -1,5 +1,6 @@
 import type { ScanPhase } from "@/lib/scanner/types";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
+import { isDemoRepoUrl } from "@/lib/demo/constants";
 
 export type ScanResult = Omit<ScanPayload, "id">;
 
@@ -14,12 +15,13 @@ export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
   { phase: "complete", label: "Complete" },
 ];
 
-export const DEMO_REPO =
-  "https://github.com/vercel/next.js/tree/canary/examples/hello-world";
+export { DEMO_REPO_URL as DEMO_REPO } from "@/lib/demo/constants";
+export { isDemoRepoUrl } from "@/lib/demo/constants";
 
 export function isValidGitHubUrl(input: string): boolean {
   const trimmed = input.trim();
   if (!trimmed) return false;
+  if (isDemoRepoUrl(trimmed)) return true;
   const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   try {
     const parsed = new URL(normalized);

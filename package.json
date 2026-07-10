@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "generate:demo": "curl -sf \"http://localhost:3000/api/demo/stats?refresh=1\" && curl -sf \"http://localhost:3000/api/demo/sample-bundle\" -o public/demo/repodiet-demo-sample-bundle.zip",
     "api": "node server.js",
     "test": "node test/smoke.js",
     "test:api": "node test/smoke.js"
@@ -46,6 +47,8 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
+    "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.23.0",
     "typescript": "^5.8.3"
   },
   "keywords": [

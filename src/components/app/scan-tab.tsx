@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   FolderTree,
   GitBranch,
+  Info,
   Loader2,
   Lock,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
+import { DEMO_NOTICE } from "@/lib/demo/constants";
 import {
   type ScanPhase,
   SCAN_STEPS,
@@ -45,19 +47,15 @@ function phaseIndex(phase: ScanPhase | "idle"): number {
 
 export function ScanTab() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { setScanComplete } = useAppSession();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [phase, setPhase] = useState<ScanPhase | "idle">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScanPayload | null>(null);
-
-  useEffect(() => {
-    const demo = searchParams.get("demo");
-    if (demo === "1" || demo === "true") {
-      setRepoUrl(DEMO_REPO);
-    }
-  }, [searchParams]);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const demoAutoStarted = useRef(false);
 
   const isLoading = LOADING_PHASES.includes(phase as ScanPhase);
 
@@ -65,6 +63,7 @@ export function ScanTab() {
     async (url: string, isDemo = false) => {
       setError(null);
       setResult(null);
+      setIsDemoMode(isDemo);
 
       const target = isDemo ? DEMO_REPO : url.trim();
 
@@ -86,19 +85,43 @@ export function ScanTab() {
         );
         setResult(data);
         setScanComplete(target, data.repo.branch || branch.trim(), data);
+        if (isDemo) {
+          router.push("/app?tab=findings&demo=true");
+        }
       } catch (err) {
         setPhase("failed");
         setError(err instanceof Error ? err.message : "Scan failed unexpectedly.");
       }
     },
-    [branch, setScanComplete]
+    [branch, router, setScanComplete]
   );
+
+  useEffect(() => {
+    const demo = searchParams.get("demo");
+    if (demo === "1" || demo === "true") {
+      setIsDemoMode(true);
+      setRepoUrl(DEMO_REPO);
+      if (!demoAutoStarted.current) {
+        demoAutoStarted.current = true;
+        void startScan(DEMO_REPO, true);
+      }
+    }
+  }, [searchParams, startScan]);
 
   const currentStep = phaseIndex(phase as ScanPhase);
   const showResults = phase === "complete" || isLoading;
 
   return (
     <div className="space-y-6">
+      {isDemoMode && (
+        <Card className="border-electric/30 bg-electric/5">
+          <CardContent className="flex items-start gap-3 py-4">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-electric" />
+            <p className="text-sm text-muted-foreground leading-relaxed">{DEMO_NOTICE}</p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-border/80 bg-card/80">
         <CardHeader className="pb-4">
           <CardTitle className="text-base">Repository</CardTitle>
@@ -178,7 +201,9 @@ export function ScanTab() {
                 <div>
                   <p className="text-sm font-medium">Ready to scan</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Paste a repository URL or try the demo — a public Next.js hello-world example.
+                    Paste a repository URL or try the demo — scans the seeded{" "}
+                    <span className="font-mono text-xs">repodiet-demo-slop-app</span> workspace
+                    with intentional AI-code-bloat patterns.
                   </p>
                 </div>
               </div>
