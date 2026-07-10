@@ -1,3 +1,5 @@
+import type { RateLimitSnapshot } from "@/lib/security/rate-limit";
+
 export type JobPollStatus = "queued" | "running" | "complete" | "failed";
 
 export interface JobPollResponse<T> {
@@ -9,6 +11,45 @@ export interface JobPollResponse<T> {
   isDemo?: boolean;
   result?: T;
   error?: string;
+}
+
+export class RateLimitHttpError extends Error {
+  rateLimit: RateLimitSnapshot;
+
+  constructor(message: string, rateLimit: RateLimitSnapshot) {
+    super(message);
+    this.name = "RateLimitHttpError";
+    this.rateLimit = rateLimit;
+  }
+}
+
+function parseRateLimitSnapshot(
+  res: Response,
+  json: { rateLimit?: RateLimitSnapshot }
+): RateLimitSnapshot {
+  if (json.rateLimit) return json.rateLimit;
+
+  const retryHeader = Number(res.headers.get("Retry-After") ?? "60");
+  const retryAfterSeconds = Number.isFinite(retryHeader) && retryHeader > 0 ? retryHeader : 60;
+
+  return {
+    code: "rate_limit_exceeded",
+    retryAfterSeconds,
+    limit: 0,
+    remaining: 0,
+    resetAt: new Date(Date.now() + retryAfterSeconds * 1000).toISOString(),
+  };
+}
+
+function throwIfRateLimited(
+  res: Response,
+  json: { error?: string; rateLimit?: RateLimitSnapshot }
+): void {
+  if (res.status !== 429) return;
+  throw new RateLimitHttpError(
+    json.error ?? "Rate limit exceeded. Please wait before retrying.",
+    parseRateLimitSnapshot(res, json)
+  );
 }
 
 export async function pollJob<T>(
@@ -61,7 +102,10 @@ export async function startJob(
     status?: JobPollStatus;
     result?: unknown;
     error?: string;
+    rateLimit?: RateLimitSnapshot;
   };
+
+  throwIfRateLimited(res, json);
 
   if (!json.success && json.status !== "complete") {
     throw new Error(json.error ?? "Failed to start job.");
@@ -88,6 +132,7 @@ export async function startJobOrResult<T>(
     success: boolean;
     error?: string;
     x402Version?: number;
+    rateLimit?: RateLimitSnapshot;
   };
 
   if (res.status === 402 || json.x402Version) {
@@ -95,6 +140,8 @@ export async function startJobOrResult<T>(
       "Payment required for patch bundle generation. x402 settlement is not enabled on this deployment yet — contact support or retry after payment is configured."
     );
   }
+
+  throwIfRateLimited(res, json);
 
   if (!res.ok && !json.jobId) {
     throw new Error(json.error ?? `Request failed (${res.status}).`);

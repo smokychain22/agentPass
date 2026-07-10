@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
+import { rateLimitJsonResponse } from "@/lib/api/rate-limit-response";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { createPatchJob, runPatchJob } from "@/lib/jobs/run-patch-job";
 import { getStoredFindings } from "@/lib/findings/findings-store";
@@ -15,15 +16,17 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const ownerKey = jobOwnerKey(request);
-    await enforceRateLimit(ownerKey, "patch");
-
     const body = (await request.json()) as {
       repoUrl?: string;
       branch?: string;
       scanId?: string;
       findings?: FindingsPayload;
       selectedFindingIds?: string[];
+      idempotencyKey?: string;
     };
+
+    const rateScope = body.scanId ?? body.findings?.scanId ?? body.idempotencyKey;
+    await enforceRateLimit(ownerKey, "patch", { scopeKey: rateScope });
 
     if (!body.repoUrl?.trim() && !body.scanId && !body.findings?.scanId) {
       return NextResponse.json(
@@ -71,10 +74,7 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return NextResponse.json(
-        { success: false, error: err.message },
-        { status: 429, headers: { "Retry-After": String(err.retryAfterSeconds) } }
-      );
+      return rateLimitJsonResponse(err);
     }
     const paymentErr = err as Error & { status?: number; body?: unknown };
     if (paymentErr.status === 402) {

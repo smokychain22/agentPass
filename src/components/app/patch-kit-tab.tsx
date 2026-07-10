@@ -13,6 +13,9 @@ import {
   runPatchKitGeneration,
   type PatchKitPhase,
 } from "@/lib/patch-kit/client";
+import { RateLimitHttpError } from "@/lib/jobs/client";
+import type { RateLimitSnapshot } from "@/lib/security/rate-limit";
+import { useRateLimitCooldown } from "@/hooks/use-rate-limit-cooldown";
 import { PatchKitSummaryCards } from "./patch-kit/summary-cards";
 import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
@@ -20,7 +23,7 @@ import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
 import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
-import { ErrorState } from "@/components/app/ui/error-state";
+import { ErrorState, classifyPatchError } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 
@@ -46,13 +49,18 @@ export function PatchKitTab() {
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<PatchKitPhase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [rateLimit, setRateLimit] = useState<RateLimitSnapshot | null>(null);
+  const cooldown = useRateLimitCooldown(rateLimit?.resetAt, rateLimit?.retryAfterSeconds);
 
   const isLoading = LOADING.includes(phase);
   const currentStep = phaseIndex(phase);
+  const isRateLimited = rateLimit !== null && !cooldown.canRetry;
+  const patchError = error ? classifyPatchError(error) : null;
 
   const generate = useCallback(async () => {
-    if (!findings || !session.repoUrl) return;
+    if (!findings || !session.repoUrl || isRateLimited) return;
     setError(null);
+    setRateLimit(null);
     show("info", "Generating patch bundle…");
 
     try {
@@ -66,15 +74,18 @@ export function PatchKitTab() {
       setPatchKit(result);
       show("success", "Patch bundle generated");
     } catch (err) {
+      if (err instanceof RateLimitHttpError) {
+        setRateLimit(err.rateLimit);
+        setError(err.message);
+        show("error", "Quick Cleanup limit reached");
+        return;
+      }
       const raw = err instanceof Error ? err.message : "Patch kit generation failed.";
-      const isPayment = raw.toLowerCase().includes("payment");
-      const msg = isPayment
-        ? "Quick Cleanup requires payment on this deployment. Configure PUBLIC_BETA_FREE=1 for free beta access."
-        : raw;
-      setError(msg);
-      show("error", isPayment ? "Payment required" : "Patch kit generation failed");
+      const classified = classifyPatchError(raw);
+      setError(raw);
+      show("error", classified.title);
     }
-  }, [findings, session, setPatchKit, show, selectedFindingIds]);
+  }, [findings, session, setPatchKit, show, selectedFindingIds, isRateLimited]);
 
   const safeDeleteRows = useMemo(
     () => (findings ? buildSafeDeleteRows(findings) : []),
@@ -112,7 +123,7 @@ export function PatchKitTab() {
         description="Select safe-candidate findings, then run up to five supported fixes with validated diffs and verification."
         actions={
           <>
-            <Button onClick={generate} disabled={isLoading}>
+            <Button onClick={generate} disabled={isLoading || isRateLimited}>
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
@@ -149,20 +160,22 @@ export function PatchKitTab() {
         />
       )}
 
-      {error && (
+      {error && patchError && (
         <ErrorState
-          title={
-            error.toLowerCase().includes("payment")
-              ? "Payment required"
-              : "Patch kit generation failed"
-          }
+          title={patchError.title}
           message={
-            error.toLowerCase().includes("payment")
-              ? "Quick Cleanup requires payment on this deployment."
-              : "Findings are still available. Retry bundle generation."
+            rateLimit
+              ? `${patchError.hint} Resets in ${cooldown.formatted}${rateLimit.limit > 0 ? ` (${rateLimit.remaining}/${rateLimit.limit} runs left this hour for this scan)` : ""}.`
+              : patchError.hint
           }
           technicalDetail={error}
-          actions={[{ label: "Retry", onClick: generate }]}
+          actions={[
+            {
+              label: isRateLimited ? `Retry in ${cooldown.formatted}` : "Retry",
+              onClick: generate,
+              disabled: isRateLimited,
+            },
+          ]}
         />
       )}
 

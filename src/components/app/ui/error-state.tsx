@@ -10,6 +10,7 @@ export interface ErrorStateAction {
   label: string;
   onClick: () => void;
   variant?: "default" | "secondary" | "outline";
+  disabled?: boolean;
 }
 
 interface ErrorStateProps {
@@ -63,6 +64,7 @@ export function ErrorState({
                   variant={action.variant ?? (action.label.toLowerCase().includes("retry") ? "default" : "secondary")}
                   size="sm"
                   onClick={action.onClick}
+                  disabled={action.disabled}
                 >
                   {action.label.toLowerCase().includes("retry") && (
                     <RefreshCw className="h-3.5 w-3.5" aria-hidden />
@@ -109,4 +111,30 @@ export function classifyScanError(message: string): { title: string; hint: strin
     };
   }
   return { title: "Scan failed", hint: "Review the repository URL and try again." };
+}
+
+export function classifyPatchError(message: string): { title: string; hint: string } {
+  const lower = message.toLowerCase();
+  if (lower.includes("rate limit")) {
+    return {
+      title: "Quick Cleanup limit reached",
+      hint: "You've run Quick Cleanup several times for this scan. Wait for the timer below, then retry. Your findings are still available.",
+    };
+  }
+  if (lower.includes("payment")) {
+    return {
+      title: "Payment required",
+      hint: "Quick Cleanup requires payment on this deployment. Configure PUBLIC_BETA_FREE=1 for free beta access.",
+    };
+  }
+  if (lower.includes("findings not found")) {
+    return {
+      title: "Findings expired",
+      hint: "Re-run the Findings Engine, then return to Quick Cleanup.",
+    };
+  }
+  return {
+    title: "Patch kit generation failed",
+    hint: "Findings are still available. Review the error and retry bundle generation.",
+  };
 }
