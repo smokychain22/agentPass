@@ -4,28 +4,27 @@
 
 @layer base {
   :root {
-    /* Midnight Code Clinic tokens */
-    --background: 220 33% 3%;
-    --background-alt: 222 29% 5%;
-    --foreground: 210 40% 98%;
+    --background: 216 33% 3%;
+    --background-alt: 204 44% 7%;
+    --foreground: 216 33% 97%;
     --card: 216 32% 7%;
-    --card-foreground: 210 40% 98%;
-    --card-elevated: 216 28% 10%;
+    --card-foreground: 216 33% 97%;
+    --card-elevated: 213 28% 10%;
     --muted: 216 25% 9%;
-    --muted-foreground: 215 16% 47%;
+    --muted-foreground: 215 16% 52%;
     --text-secondary: 214 20% 68%;
     --border: 214 20% 65%;
-    --border-opacity: 0.12;
     --input: 216 28% 10%;
-    --ring: 200 100% 55%;
+    --ring: 198 100% 55%;
     --accent: 216 28% 11%;
-    --accent-foreground: 210 40% 98%;
-    --electric: 200 100% 55%;
-    --electric-muted: 200 70% 35%;
+    --accent-foreground: 216 33% 97%;
+    --electric: 198 100% 55%;
+    --electric-muted: 198 70% 35%;
     --signal: 160 76% 52%;
     --signal-muted: 160 50% 32%;
+    --violet: 252 100% 68%;
     --warning: 38 90% 62%;
-    --danger: 0 91% 71%;
+    --danger: 351 100% 68%;
     --panel: 216 32% 7%;
     --radius: 0.5rem;
   }
@@ -40,10 +39,10 @@
 
   body {
     @apply bg-background text-foreground font-sans;
-    background-color: #05070a;
+    background-color: #05080d;
     background-image:
-      radial-gradient(ellipse 90% 50% at 50% -12%, rgba(24, 168, 255, 0.08), transparent),
-      radial-gradient(ellipse 45% 30% at 100% 0%, rgba(34, 230, 168, 0.04), transparent);
+      radial-gradient(ellipse 90% 50% at 50% -12%, rgba(24, 191, 255, 0.07), transparent),
+      radial-gradient(ellipse 45% 30% at 100% 0%, rgba(32, 230, 168, 0.04), transparent);
     min-height: 100vh;
   }
 }
@@ -66,13 +65,42 @@
   }
 
   .mcc-panel {
-    background-color: #0c1118;
-    border: 1px solid rgba(148, 163, 184, 0.12);
+    background-color: #0b111a;
+    border: 1px solid rgba(148, 163, 184, 0.15);
   }
 
   .mcc-panel-elevated {
-    background-color: #111821;
-    border: 1px solid rgba(148, 163, 184, 0.14);
+    background-color: #101923;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .ds-card {
+    @apply bg-card border border-border/60;
+  }
+
+  .ds-card-elevated {
+    background-color: #101923;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .ds-card-highlight {
+    background-color: #101923;
+  }
+
+  .ds-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground;
+  }
+
+  .ds-section-title {
+    @apply text-2xl font-semibold tracking-tight text-foreground sm:text-3xl;
+  }
+
+  .ds-hero-title {
+    @apply text-balance text-4xl font-semibold tracking-tight text-foreground sm:text-5xl lg:text-[3.15rem] lg:leading-[1.08];
+  }
+
+  .section-alt {
+    @apply border-y border-border/60 bg-[#07121A]/80;
   }
 
   .mcc-border {
@@ -189,5 +217,16 @@
   }
   50% {
     background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-scanline,
+  .pipeline-connector {
+    animation: none !important;
+  }
+
+  html {
+    scroll-behavior: auto;
   }
 }

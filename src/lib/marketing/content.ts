@@ -2,8 +2,13 @@ import { BUNDLE_ARTIFACT_FILES } from "@/lib/patch-kit/bundle-manifest";
 import { TOOL_MANIFEST_ENTRIES } from "@/lib/a2mcp/tool-manifest";
 import { buildDemoTerminalLines, getDemoScanStats } from "@/lib/demo/terminal-lines";
 
-export const TRUST_LINE =
-  "Public GitHub repos only · No repo mutation · No auto-delete · Review-first patches";
+export const TRUST_POINTS = [
+  "Public repositories only",
+  "No repository mutation",
+  "Review-first cleanup",
+] as const;
+
+export const TRUST_LINE = TRUST_POINTS.join(" · ");
 
 export const FOOTER_OKX_COPY =
   "RepoDiet is also available as an A2MCP-ready Software Utility for agent workflows.";
@@ -15,10 +20,10 @@ export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
 export const DEMO_SCAN_STATS = getDemoScanStats();
 
 export const HERO = {
-  badge: "AI CODEBASE CLEANUP",
+  badge: "REPOSITORY INTELLIGENCE",
   headline: "Your AI-built repo is getting heavier every commit.",
   subheadline:
-    "RepoDiet scans JavaScript and TypeScript codebases for duplicate logic, unused files, dependency drift, orphan modules, and AI-slop patterns — then generates a conservative cleanup bundle your team can review safely.",
+    "RepoDiet scans JavaScript and TypeScript repositories for duplicate logic, dead files, dependency drift, orphan modules, and AI-generated code debt—then creates a conservative cleanup bundle your team can review before merging.",
 };
 
 export const SITE_TAGLINES = {
@@ -39,74 +44,140 @@ export const PROBLEM_SECTION = {
 export const PROBLEM_CARDS = [
   {
     category: "Debt",
-    title: "Duplicate logic",
+    title: "Duplicate Logic",
     description: "AI creates new files instead of refactoring old ones.",
+    size: "large" as const,
+    signal: `${DEMO_SCAN_STATS.duplicateClusters} clusters`,
+    paths: ["Button.tsx", "ButtonCopy.tsx", "ButtonFinal.tsx"],
+    risk: "review" as const,
   },
   {
     category: "Debt",
-    title: "Dead files",
+    title: "Dead Files",
     description: "Old screens, backup folders, and unused components stay behind.",
+    size: "medium" as const,
+    signal: `${DEMO_SCAN_STATS.unusedFiles} unused`,
+    paths: ["archive/OldDashboard.tsx", "backup/GeneratedCardCopy.tsx"],
+    risk: "safe" as const,
   },
   {
     category: "Debt",
-    title: "Dependency drift",
+    title: "Dependency Drift",
     description: "Packages get installed for experiments and never removed.",
+    size: "medium" as const,
+    signal: `${DEMO_SCAN_STATS.unusedDependencies} packages`,
+    paths: ["lodash", "moment", "unused-ui-kit"],
+    risk: "review" as const,
   },
   {
     category: "Debt",
-    title: "Orphan modules",
+    title: "Orphan Modules",
     description: "Utilities and routes become disconnected from the real app flow.",
+    size: "medium" as const,
+    signal: `${DEMO_SCAN_STATS.orphanPatterns} orphan route`,
+    paths: ["lib/utils-old.ts", "app/api/old-execute"],
+    risk: "danger" as const,
   },
   {
     category: "Risk",
-    title: "Fragile cleanup",
+    title: "Fragile Cleanup Risk",
     description: "Deleting the wrong file can break routes, APIs, or builds.",
+    size: "large" as const,
+    signal: `${DEMO_SCAN_STATS.doNotTouch} protected`,
+    paths: ["routes/", "env files", "lockfiles"],
+    risk: "protected" as const,
   },
 ];
 
-export const PIPELINE_STEPS = [
+export const WORKFLOW_STEPS = [
   {
-    id: "messy",
-    title: "Messy Repo",
-    chips: ["Duplicates", "Dead files", "Drift"],
+    id: "ingest",
+    step: "01",
+    title: "INGEST",
+    subtitle: "Repository connected",
+    meta: "Public GitHub URL · branch resolved",
     accent: "muted" as const,
   },
   {
-    id: "scan",
-    title: "Scan",
-    chips: ["Framework", "Package mgr", "File tree"],
+    id: "understand",
+    step: "02",
+    title: "UNDERSTAND",
+    subtitle: "Framework and dependency graph",
+    meta: `${DEMO_SCAN_STATS.framework} · ${DEMO_SCAN_STATS.filesIndexed} files indexed`,
     accent: "electric" as const,
   },
   {
-    id: "findings",
-    title: "Findings",
-    chips: ["Duplicates", "Unused", "AI-slop"],
+    id: "classify",
+    step: "03",
+    title: "CLASSIFY",
+    subtitle: "Safe, Review, Protected",
+    meta: `${DEMO_SCAN_STATS.safeCandidates} safe · ${DEMO_SCAN_STATS.reviewFirst} review`,
+    accent: "signal" as const,
+  },
+  {
+    id: "package",
+    step: "04",
+    title: "PACKAGE",
+    subtitle: "Patch, report, regression plan",
+    meta: "7 artifacts · conservative patch",
     accent: "electric" as const,
-  },
-  {
-    id: "buckets",
-    title: "Risk Buckets",
-    chips: ["Safe", "Review", "Protected"],
-    accent: "signal" as const,
-  },
-  {
-    id: "bundle",
-    title: "Patch Bundle",
-    chips: ["Report", "Patch", "Cursor prompt"],
-    accent: "signal" as const,
   },
   {
     id: "verify",
-    title: "Verify",
-    chips: ["Build", "Lint", "Routes"],
-    accent: "electric" as const,
+    step: "05",
+    title: "VERIFY",
+    subtitle: "Build, lint, routes",
+    meta: "Regression checklist prepared",
+    accent: "signal" as const,
   },
 ];
 
+/** @deprecated Use WORKFLOW_STEPS */
+export const PIPELINE_STEPS = WORKFLOW_STEPS.map((s) => ({
+  id: s.id,
+  title: s.title,
+  chips: [s.subtitle],
+  accent: s.accent,
+}));
+
 export const TRANSFORMATION_SECTION = {
   eyebrow: "Transformation",
-  title: "From scattered AI output to review-ready cleanup.",
+  title: "Watch repository debt become a safe cleanup plan.",
 };
+
+export const TRANSFORMATION_BEFORE_TREE = [
+  "repo/",
+  "├── Button.tsx",
+  "├── ButtonCopy.tsx",
+  "├── ButtonFinal.tsx",
+  "├── OldDashboard.tsx",
+  "├── legacy-api/",
+  "└── lodash",
+] as const;
+
+export const TRANSFORMATION_BEFORE_LABELS = [
+  { path: "ButtonCopy.tsx", label: "duplicate", level: "review" as const },
+  { path: "ButtonFinal.tsx", label: "duplicate", level: "review" as const },
+  { path: "OldDashboard.tsx", label: "unused", level: "safe" as const },
+  { path: "legacy-api/", label: "orphan", level: "danger" as const },
+  { path: "lodash", label: "drift", level: "review" as const },
+] as const;
+
+export const TRANSFORMATION_PROCESSING_STEPS = [
+  "Scan",
+  "Classify",
+  "Protect",
+  "Package",
+] as const;
+
+export const TRANSFORMATION_AFTER_ITEMS = [
+  { label: "Safe cleanup candidates", value: `${DEMO_SCAN_STATS.safeCandidates} files`, level: "safe" as const },
+  { label: "Review-required findings", value: `${DEMO_SCAN_STATS.reviewFirst} items`, level: "review" as const },
+  { label: "Protected files", value: `${DEMO_SCAN_STATS.doNotTouch} locked`, level: "protected" as const },
+  { label: "Patch artifacts", value: "7 files", level: "cyan" as const },
+  { label: "Regression plan", value: "build · lint · routes", level: "cyan" as const },
+  { label: "Estimated cleanup reduction", value: `${DEMO_SCAN_STATS.unusedFiles} files flagged`, level: "mint" as const },
+] as const;
 
 export const BEFORE_DIFF_ITEMS = [
   "ButtonFinal.tsx",
@@ -229,29 +300,28 @@ export const SAFETY_SECTION = {
   title: "Built to avoid reckless AI cleanup.",
 };
 
-export const SAFETY_CARDS = [
-  {
-    title: "No repo mutation",
-    description: "RepoDiet never writes to your GitHub repo.",
-  },
-  {
-    title: "No auto-delete",
-    description: "Cleanup artifacts are review-first — you decide what merges.",
-  },
-  {
-    title: "Protected files",
-    description:
-      "Routes, env files, configs, lockfiles, API handlers, and public assets are protected.",
-  },
-  {
-    title: "Fallback transparency",
-    description: "Analyzer sources are marked: native or fallback.",
-  },
-  {
-    title: "Regression-first",
-    description: "Every bundle includes checks before merging.",
-  },
-];
+export const SAFETY_PROTECTED_CATEGORIES = [
+  { id: "routes", label: "Routes", angle: 0 },
+  { id: "env", label: "Environment files", angle: 60 },
+  { id: "config", label: "Configuration files", angle: 120 },
+  { id: "lockfiles", label: "Lockfiles", angle: 180 },
+  { id: "api", label: "API handlers", angle: 240 },
+  { id: "assets", label: "Public assets", angle: 300 },
+] as const;
+
+export const SAFETY_PRINCIPLES = [
+  { title: "No repository mutation", description: "RepoDiet never writes to your GitHub repo." },
+  { title: "No automatic deletion", description: "Cleanup artifacts are review-first — you decide what merges." },
+  { title: "Human-controlled merge", description: "Patches are generated for review, not applied silently." },
+  { title: "Regression-first verification", description: "Every bundle includes build, lint, and route checks." },
+  { title: "Fallback transparency", description: "Analyzer sources are marked: native or fallback." },
+] as const;
+
+/** @deprecated Use SAFETY_PRINCIPLES */
+export const SAFETY_CARDS = SAFETY_PRINCIPLES.map((p) => ({
+  title: p.title,
+  description: p.description,
+}));
 
 export const DEMO_SECTION = {
   eyebrow: "Live demo",
@@ -277,6 +347,33 @@ export const PRICING_SECTION = {
 };
 
 export const A2MCP_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
+
+export const A2MCP_TOOL_GROUPS = [
+  {
+    category: "Analysis",
+    tools: ["detect_duplicate_code", "find_dead_files", "find_unused_dependencies"],
+  },
+  {
+    category: "Classification",
+    tools: ["scan_repo_bloat"],
+  },
+  {
+    category: "Generation",
+    tools: ["generate_cleanup_patch"],
+  },
+  {
+    category: "Verification",
+    tools: ["generate_regression_checklist"],
+  },
+] as const;
+
+export const DEMO_PROGRESS_STEPS = [
+  "Repository loaded",
+  "Structure mapped",
+  "Findings classified",
+  "Bundle generated",
+  "Verification prepared",
+] as const;
 
 export const PRICING_TIERS = [
   {

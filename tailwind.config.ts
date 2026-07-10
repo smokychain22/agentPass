@@ -29,15 +29,18 @@ const config: Config = {
           foreground: "hsl(var(--accent-foreground))",
         },
         electric: {
-          DEFAULT: "#18A8FF",
+          DEFAULT: "#18BFFF",
           muted: "hsl(var(--electric-muted))",
         },
         signal: {
-          DEFAULT: "#22E6A8",
+          DEFAULT: "#20E6A8",
           muted: "hsl(var(--signal-muted))",
         },
-        warning: "#F5B84B",
-        danger: "#F97070",
+        violet: {
+          DEFAULT: "#7C5CFF",
+        },
+        warning: "#F5B942",
+        danger: "#FF5C6C",
         panel: "hsl(var(--panel))",
         secondary: "#9BAAC2",
       },
