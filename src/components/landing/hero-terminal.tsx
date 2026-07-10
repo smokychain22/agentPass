@@ -58,7 +58,7 @@ export function HeroTerminal() {
         </code>
       </pre>
       <p className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground font-mono">
-        Live output from seeded demo repo scan — refresh via npm run generate:demo
+        Live scan output from the messy demo repo
       </p>
     </div>
   );

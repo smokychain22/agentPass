@@ -2,35 +2,27 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SAMPLE_BUNDLE_LABEL } from "@/lib/demo/constants";
 
-interface MarketingCtaProps {
-  size?: "default" | "lg";
+interface HeroCtaProps {
   className?: string;
-  showOkx?: boolean;
 }
 
-export function MarketingCta({ size = "default", className, showOkx = false }: MarketingCtaProps) {
-  const btnSize = size === "lg" ? "lg" : "default";
+export function HeroCta({ className }: HeroCtaProps) {
   return (
     <div className={`flex flex-wrap gap-3 ${className ?? ""}`}>
-      <Button asChild size={btnSize}>
+      <Button asChild size="lg">
         <Link href="/app">Scan a Repo</Link>
       </Button>
-      <Button asChild variant="secondary" size={btnSize}>
+      <Button asChild variant="secondary" size="lg">
         <Link href="/app?demo=true">Try Messy Demo Repo</Link>
       </Button>
-      <Button asChild variant="outline" size={btnSize}>
+      <Button asChild variant="outline" size="lg">
         <a href="/api/demo/sample-bundle" download title={SAMPLE_BUNDLE_LABEL}>
           See Sample Bundle
         </a>
       </Button>
-      <Button asChild variant="outline" size={btnSize}>
+      <Button asChild variant="ghost" size="lg">
         <Link href="/docs">API Docs</Link>
       </Button>
-      {showOkx && (
-        <Button asChild variant="ghost" size={btnSize}>
-          <Link href="/okx">OKX integration</Link>
-        </Button>
-      )}
     </div>
   );
 }

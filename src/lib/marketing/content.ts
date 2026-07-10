@@ -5,123 +5,155 @@ import { buildDemoTerminalLines, getDemoScanStats } from "@/lib/demo/terminal-li
 export const TRUST_LINE =
   "Public GitHub repos only · No repo mutation · No auto-delete · Review-first patches";
 
+export const FOOTER_OKX_COPY =
+  "RepoDiet is also available as an A2MCP-ready Software Utility for agent workflows.";
+
 export const A2MCP_READINESS_COPY =
   "RepoDiet endpoints are A2MCP-ready deterministic JSON tools. Payment/x402 enforcement can be added at the OKX listing or gateway layer. Public demo endpoints are open for hackathon review.";
 
 export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
 export const DEMO_SCAN_STATS = getDemoScanStats();
 
+export const HERO = {
+  badge: "AI CODEBASE CLEANUP",
+  headline: "Your AI-built repo is getting heavier every commit.",
+  subheadline:
+    "RepoDiet scans JavaScript and TypeScript codebases for duplicate logic, unused files, dependency drift, orphan modules, and AI-slop patterns — then generates a conservative cleanup bundle your team can review safely.",
+};
+
+export const PROBLEM_SECTION = {
+  eyebrow: "The cleanup debt",
+  title: "AI helps you ship. It also leaves cleanup debt.",
+};
+
 export const PROBLEM_CARDS = [
   {
-    title: "AI code bloat",
-    description:
-      "Vibe-coded repos accumulate generated scaffolding, experiments, and half-finished modules that nobody audits.",
-  },
-  {
-    title: "Duplicate components",
-    description:
-      "AI agents often create Button2, ButtonFinal, NewCard, and unused UI variants instead of refactoring existing code.",
+    title: "Duplicate logic",
+    description: "AI creates new files instead of refactoring old ones.",
   },
   {
     title: "Dead files",
-    description:
-      "Backup folders, old routes, and orphaned utilities linger after rapid iteration cycles.",
+    description: "Old screens, backup folders, and unused components stay behind.",
   },
   {
-    title: "Unused packages",
-    description:
-      "Dependencies get installed from AI suggestions and never removed from package.json.",
+    title: "Dependency drift",
+    description: "Packages get installed for experiments and never removed.",
   },
   {
     title: "Orphan modules",
-    description:
-      "Disconnected files sit outside the import graph — hard to spot without dependency analysis.",
+    description: "Utilities and routes become disconnected from the real app flow.",
   },
   {
     title: "Fragile cleanup",
-    description:
-      "Deleting the wrong route, config, or API handler breaks production with no regression plan.",
+    description: "Deleting the wrong file can break routes, APIs, or builds.",
   },
 ];
 
-export const HOW_IT_WORKS = [
+export const PIPELINE_STEPS = [
   {
-    step: "1",
-    title: "Scan repo",
-    description: "Ingest a public GitHub repository — framework, file tree, and structure metadata.",
+    id: "messy",
+    title: "Messy AI Repo",
+    outputs: ["Duplicate components", "Unused experiments", "Dependency drift"],
+    accent: "muted" as const,
   },
   {
-    step: "2",
-    title: "Map findings",
-    description:
-      "Detect duplicates, unused files, dependency drift, orphan patterns, and AI-slop signals.",
+    id: "scan",
+    title: "RepoDiet Scan",
+    outputs: ["Framework detection", "Package manager", "File tree"],
+    accent: "electric" as const,
   },
   {
-    step: "3",
-    title: "Generate patch kit",
-    description:
-      "Produce a conservative cleanup bundle — not auto-clean, review-first artifacts only.",
+    id: "findings",
+    title: "Findings Engine",
+    outputs: ["Duplicate clusters", "Unused files", "AI-slop signals"],
+    accent: "electric" as const,
   },
   {
-    step: "4",
-    title: "Verify safely",
-    description: "Run the regression checklist before merging any cleanup changes.",
+    id: "buckets",
+    title: "Risk Buckets",
+    outputs: ["Safe candidate", "Review first", "Do not touch"],
+    accent: "signal" as const,
+  },
+  {
+    id: "bundle",
+    title: "Patch Bundle",
+    outputs: ["Report", "Patch plan", "Package cleanup", "Cursor prompt"],
+    accent: "signal" as const,
+  },
+  {
+    id: "verify",
+    title: "Regression Checklist",
+    outputs: ["Build checks", "Lint", "Route & API checks"],
+    accent: "electric" as const,
   },
 ];
+
+export const TRANSFORMATION_SECTION = {
+  eyebrow: "Transformation",
+  title: "From scattered AI output to review-ready cleanup.",
+};
 
 export const BEFORE_ITEMS = [
-  "Duplicate components scattered across folders",
-  "Packages installed by AI but not used",
-  "Old route experiments still present",
+  "Duplicate components with unclear ownership",
+  "Unused packages from old AI suggestions",
+  "Route experiments left behind",
   "TODO/FIXME placeholders hidden in source",
-  "No cleanup checklist",
+  "No safe order for cleanup",
 ];
 
 export const AFTER_ITEMS = [
   "Findings grouped by risk",
   "Safe candidates separated from review items",
-  "Do Not Touch files protected",
+  "Protected files clearly marked",
   "Patch bundle generated",
-  "Regression checklist ready",
+  "Regression checklist ready before edits",
 ];
 
 export const FLOW_METRICS = [
-  "Raw findings",
-  "Risk buckets",
+  "Raw repo",
+  "Risk map",
   "Patch bundle",
-  "Regression checklist",
+  "Verification plan",
 ];
+
+export const OUTPUTS_SECTION = {
+  eyebrow: "Deliverables",
+  title: "RepoDiet does not just report problems. It ships cleanup artifacts.",
+  subtitle: "Sample bundle generated from the messy demo repo — real Patch Kit output.",
+};
 
 export const ARTIFACT_PREVIEWS = [
   {
     filename: "repodiet-report.md",
-    purpose: "Executive cleanup report for demo delivery and A2A handoff.",
+    purpose: "Executive summary of cleanup debt.",
     preview: `# RepoDiet Cleanup Report
 
 ## Summary
-- Raw review findings: 288
-- Unique review items: 170
-- Safe candidates: 0
-- Do not touch protected items: 6`,
+- Duplicate clusters: ${DEMO_SCAN_STATS.duplicateClusters}
+- Unused files: ${DEMO_SCAN_STATS.unusedFiles}
+- Safe candidates: ${DEMO_SCAN_STATS.safeCandidates}
+- Review-first items: ${DEMO_SCAN_STATS.reviewFirst}`,
   },
   {
     filename: "repodiet-cleanup.patch",
-    purpose: "Conservative safe-delete patch plan — review before applying.",
+    purpose: "Conservative patch plan using safe candidates only.",
     preview: `# RepoDiet cleanup patch
-No automatic delete operations generated.
-Current findings require review before patching.`,
+# Safe delete commands — review before applying.
+git rm archive/OldDashboard.tsx
+git rm backup/GeneratedCardCopy.tsx
+git rm tmp/temp-widget.tsx`,
   },
   {
     filename: "package-cleanup.md",
-    purpose: "Dependency removal suggestions with fallback warnings.",
+    purpose: "Dependency cleanup suggestions with fallback warnings.",
     preview: `# Package Cleanup Suggestions
 
 ## Review before removing
-> Fallback detector used — confirm usage before uninstalling.`,
+> Analyzer source marked — confirm usage before uninstalling.`,
   },
   {
     filename: "regression-checklist.md",
-    purpose: "Build, route, and API checks to run after cleanup.",
+    purpose: "Build, lint, route, and API checks before merging.",
     preview: `# RepoDiet Regression Checklist
 
 ## Build checks
@@ -131,33 +163,83 @@ Current findings require review before patching.`,
   },
   {
     filename: "cursor-prompt.md",
-    purpose: "Ready-to-paste Cursor agent cleanup instructions.",
+    purpose: "Ready-to-paste cleanup instructions for Cursor or Claude Code.",
     preview: `# Cursor Cleanup Prompt
 
-Safe candidates are 0, so do not generate delete operations yet.
-Only propose a review plan and group findings by safest-first cleanup order.`,
+Review safe candidates first. Do not delete protected routes or configs.
+Group findings by safest-first cleanup order.`,
   },
   {
     filename: "findings.json",
-    purpose: "Full structured findings payload for agents and export.",
+    purpose: "Structured machine-readable output for agents and APIs.",
     preview: `{
   "scanId": "scan_...",
-  "summary": { "duplicateClusters": 50, "reviewRequired": 288 },
-  "riskBuckets": { "safeDelete": [], "reviewFirst": [...] }
+  "summary": { "duplicateClusters": ${DEMO_SCAN_STATS.duplicateClusters} },
+  "riskBuckets": { "safeDelete": [...], "reviewFirst": [...] }
 }`,
   },
   {
     filename: "patchkit-summary.json",
-    purpose: "Bundle metadata with artifact list and count semantics.",
+    purpose: "Bundle metadata for delivery and audit.",
     preview: `{
   "bundleFileCount": 7,
   "summary": {
-    "rawReviewFindings": 288,
-    "reviewFirstItems": 170
+    "safeCandidates": ${DEMO_SCAN_STATS.safeCandidates},
+    "reviewFirstItems": ${DEMO_SCAN_STATS.reviewFirst}
   }
 }`,
   },
 ] as const;
+
+export const SAFETY_SECTION = {
+  eyebrow: "Safety model",
+  title: "Built to avoid reckless AI cleanup.",
+};
+
+export const SAFETY_CARDS = [
+  {
+    title: "No repo mutation",
+    description: "RepoDiet never writes to your GitHub repo.",
+  },
+  {
+    title: "No auto-delete",
+    description: "Cleanup artifacts are review-first — you decide what merges.",
+  },
+  {
+    title: "Protected files",
+    description:
+      "Routes, env files, configs, lockfiles, API handlers, and public assets are protected.",
+  },
+  {
+    title: "Fallback transparency",
+    description: "Analyzer sources are marked: native or fallback.",
+  },
+  {
+    title: "Regression-first",
+    description: "Every bundle includes checks before merging.",
+  },
+];
+
+export const DEMO_SECTION = {
+  eyebrow: "Live demo",
+  title: "See RepoDiet on a repo built to be messy.",
+  description:
+    "The demo repo contains intentional AI-code-bloat patterns — duplicate components, dead files, unused packages, and safe-delete candidates. Same engine as production scans. No fake findings.",
+};
+
+export const API_SECTION = {
+  eyebrow: "Agent-ready",
+  title: "JSON tools for CI, agents, and automation.",
+  description:
+    "Deterministic endpoints callable with a public repo URL. No browser session required — wire RepoDiet into your cleanup workflow.",
+};
+
+export const PRICING_SECTION = {
+  eyebrow: "Plans",
+  title: "Start free. Scale when you need full bundles.",
+  description:
+    "Scan and preview on the public demo. Full patch bundles available when you need deliverable cleanup artifacts.",
+};
 
 export const A2MCP_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
 
@@ -165,14 +247,14 @@ export const PRICING_TIERS = [
   {
     name: "Free Demo",
     price: "0 USDT",
-    description: "Explore RepoDiet on the public demo deployment.",
+    description: "Explore RepoDiet on the messy demo repo.",
     features: [
-      "Public demo repo",
-      "Scan preview",
+      "Demo repo scan",
       "Findings preview",
       "Patch bundle preview",
+      "Sample ZIP download",
     ],
-    cta: "Try Demo Repo",
+    cta: "Try Messy Demo",
     href: "/app?demo=true",
     highlighted: false,
   },
@@ -186,7 +268,7 @@ export const PRICING_TIERS = [
       "Risk buckets",
       "findings.json",
     ],
-    cta: "Run Scan",
+    cta: "Scan a Repo",
     href: "/app",
     highlighted: false,
   },
@@ -207,16 +289,16 @@ export const PRICING_TIERS = [
     highlighted: true,
   },
   {
-    name: "A2A Cleanup",
+    name: "Team Cleanup",
     price: "Custom",
-    description: "Agent-to-agent cleanup delivery with human review gates.",
+    description: "Guided cleanup delivery with human review gates.",
     features: [
       "Manual review",
       "Cleanup plan",
       "Patch delivery",
       "Verification checklist",
     ],
-    cta: "Contact via OKX",
+    cta: "Contact us",
     href: "/okx",
     highlighted: false,
   },

@@ -4,21 +4,22 @@
 
 @layer base {
   :root {
-    --background: 220 14% 5%;
-    --foreground: 210 20% 96%;
-    --card: 222 24% 9%;
-    --card-foreground: 210 20% 96%;
-    --muted: 220 16% 12%;
-    --muted-foreground: 215 12% 58%;
-    --border: 220 14% 16%;
-    --input: 220 14% 14%;
-    --ring: 199 89% 48%;
-    --accent: 220 18% 14%;
-    --accent-foreground: 210 20% 96%;
-    --electric: 199 89% 48%;
-    --electric-muted: 199 60% 35%;
+    --background: 225 22% 4%;
+    --foreground: 210 22% 96%;
+    --card: 222 32% 7%;
+    --card-foreground: 210 22% 96%;
+    --muted: 222 24% 10%;
+    --muted-foreground: 215 14% 55%;
+    --border: 220 18% 14%;
+    --input: 220 18% 12%;
+    --ring: 187 85% 48%;
+    --accent: 222 28% 11%;
+    --accent-foreground: 210 22% 96%;
+    --electric: 187 85% 48%;
+    --electric-muted: 187 55% 32%;
     --signal: 158 64% 45%;
-    --signal-muted: 158 40% 30%;
+    --signal-muted: 158 40% 28%;
+    --panel: 222 36% 6%;
     --radius: 0.5rem;
   }
 
@@ -33,9 +34,31 @@
   body {
     @apply bg-background text-foreground font-sans;
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -20%, hsl(199 89% 48% / 0.06), transparent),
-      radial-gradient(ellipse 60% 40% at 100% 0%, hsl(158 64% 45% / 0.04), transparent);
+      radial-gradient(ellipse 90% 55% at 50% -15%, hsl(187 85% 48% / 0.07), transparent),
+      radial-gradient(ellipse 50% 35% at 100% 0%, hsl(158 64% 45% / 0.04), transparent);
     min-height: 100vh;
+  }
+}
+
+@layer components {
+  .landing-grid {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.35) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.35) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, black 20%, transparent 75%);
+  }
+
+  .landing-glow {
+    background: radial-gradient(
+      ellipse 60% 40% at 50% 0%,
+      hsl(187 85% 48% / 0.06),
+      transparent 70%
+    );
+  }
+
+  .bento-card {
+    @apply transition-colors duration-200 hover:border-border hover:bg-card/90;
   }
 }
 

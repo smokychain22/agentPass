@@ -21,12 +21,12 @@ export function PricingPage() {
         </Link>
 
         <Badge variant="electric" className="mb-4 font-mono text-[10px] uppercase tracking-wider">
-          ASP Pricing
+          Plans
         </Badge>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">RepoDiet Pricing</h1>
         <p className="mt-4 max-w-2xl text-muted-foreground leading-relaxed">
-          Proposed micropayment tiers for OKX.AI listing. Public demo deployment is open — x402
-          payment enforcement is not live today.
+          Start with the free demo. Scale to full patch bundles when your team needs deliverable
+          cleanup artifacts. Agent API pricing available for automation workflows.
         </p>
 
         <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
@@ -102,6 +102,12 @@ export function PricingPage() {
               {A2MCP_READINESS_COPY}
             </CardContent>
           </Card>
+          <p className="mt-3 text-xs text-muted-foreground">
+            <Link href="/okx" className="text-electric hover:underline">
+              View OKX integration details
+            </Link>{" "}
+            for agent marketplace and submission info.
+          </p>
         </section>
 
         <div className="mt-16 text-center">

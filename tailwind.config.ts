@@ -35,6 +35,7 @@ const config: Config = {
           DEFAULT: "hsl(var(--signal))",
           muted: "hsl(var(--signal-muted))",
         },
+        panel: "hsl(var(--panel))",
       },
       fontFamily: {
         sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
