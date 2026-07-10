@@ -419,11 +419,11 @@ export const OKX_A2A_SERVICE = {
 };
 
 export const SAFETY_POLICY_PUBLIC = [
+  "Public scan mode needs no GitHub auth — scan, findings, and ZIP download only.",
+  "Cleanup PR mode uses the RepoDiet GitHub App with minimum Contents + Pull Requests permissions.",
   "RepoDiet Operator never pushes directly to main.",
   "RepoDiet Operator never merges pull requests automatically.",
-  "User GitHub tokens are used once and never stored.",
-  "RepoDiet only scans public repos unless a user token is provided.",
-  "RepoDiet never reads or displays .env values.",
+  "Installation tokens are short-lived and generated server-side — never exposed to the browser.",
   "Only safe-candidate files are deleted on cleanup branches.",
   "Every cleanup PR includes regression checklist artifacts.",
 ];

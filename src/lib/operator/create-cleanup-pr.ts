@@ -1,5 +1,5 @@
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
-import { isDemoRepoUrl } from "@/lib/demo/constants";
+import { resolveCleanupGitHubToken } from "@/lib/github-app/resolve-cleanup-token";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { GitHubClient } from "@/lib/github/github-client";
@@ -28,37 +28,6 @@ const ARTIFACT_PATHS = {
   findings: "repodiet/findings.json",
   summary: "repodiet/patchkit-summary.json",
 } as const;
-
-function resolveGitHubToken(input: CreateCleanupPrInput): string {
-  if (input.demo) {
-    if (!isDemoRepoUrl(input.repoUrl)) {
-      throw new ToolExecutionError(
-        "DEMO_REPO_ONLY",
-        "Demo mode only works with the configured demo repository.",
-        403
-      );
-    }
-    const token = process.env.GITHUB_DEMO_TOKEN?.trim();
-    if (!token) {
-      throw new ToolExecutionError(
-        "INTERNAL_ERROR",
-        "Demo GitHub token is not configured on the server.",
-        500
-      );
-    }
-    return token;
-  }
-
-  const token = input.githubToken?.trim();
-  if (!token) {
-    throw new ToolExecutionError(
-      "MISSING_GITHUB_TOKEN",
-      "A fine-grained GitHub token is required to open a cleanup pull request.",
-      401
-    );
-  }
-  return token;
-}
 
 async function resolveFindings(input: CreateCleanupPrInput): Promise<FindingsPayload> {
   if (input.findings?.scanId && input.findings?.repo?.owner) {
@@ -160,11 +129,22 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   }
 
   const mode: CleanupPrMode = input.mode === "report_only" ? "report_only" : "safe_only";
-  const token = resolveGitHubToken(input);
-  const client = new GitHubClient(token);
 
-  const repoMeta = await client.getRepo(parsed.owner, parsed.repo);
-  const baseBranch = input.branch?.trim() || parsed.branch || repoMeta.defaultBranch;
+  const repoMeta = await (async () => {
+    const token = await resolveCleanupGitHubToken({
+      demo: input.demo,
+      repoUrl: input.repoUrl,
+      owner: parsed.owner,
+      repo: parsed.repo,
+      githubToken: input.githubToken,
+    });
+    const client = new GitHubClient(token);
+    const meta = await client.getRepo(parsed.owner, parsed.repo);
+    return { client, meta };
+  })();
+
+  const client = repoMeta.client;
+  const baseBranch = input.branch?.trim() || parsed.branch || repoMeta.meta.defaultBranch;
   const cleanupBranch = buildCleanupBranchName();
 
   const findings = await resolveFindings(input);

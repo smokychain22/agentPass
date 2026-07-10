@@ -72,6 +72,12 @@ export function mapErrorToToolError(err: unknown, tool: string): ToolExecutionEr
   if (lower.includes("github token") && lower.includes("required")) {
     return new ToolExecutionError("MISSING_GITHUB_TOKEN", message, 401);
   }
+  if (lower.includes("install the repodiet github app") || lower.includes("not connected")) {
+    return new ToolExecutionError("GITHUB_APP_NOT_CONNECTED", message, 401);
+  }
+  if (lower.includes("github app is not configured")) {
+    return new ToolExecutionError("GITHUB_APP_NOT_CONFIGURED", message, 503);
+  }
   if (lower.includes("demo mode only") || lower.includes("demo repository")) {
     return new ToolExecutionError("DEMO_REPO_ONLY", message, 403);
   }

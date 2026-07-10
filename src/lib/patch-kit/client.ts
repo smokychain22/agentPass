@@ -41,12 +41,42 @@ export function buildPrSummaryText(result: CreateCleanupPrResponse): string {
   return `RepoDiet created a review-ready cleanup PR for ${repo.owner}/${repo.name}. It applied ${actionSummary.filesDeleted} safe candidate removals, added ${actionSummary.artifactsAdded} cleanup artifacts, skipped ${actionSummary.reviewFirstSkipped} review-first items, protected ${actionSummary.doNotTouchSkipped} do-not-touch items, and did not mutate main.`;
 }
 
+export interface GitHubConnectionStatus {
+  ok?: boolean;
+  connected: boolean;
+  configured: boolean;
+  account?: {
+    login: string;
+    type: string;
+  };
+  permissions?: {
+    contents: string;
+    pullRequests: string;
+    metadata: string;
+  };
+}
+
+export async function fetchGitHubConnectionStatus(): Promise<GitHubConnectionStatus> {
+  const res = await fetch("/api/github/status", { credentials: "include" });
+  const json = (await res.json()) as GitHubConnectionStatus;
+  return json;
+}
+
+export function startGitHubAppInstall(): void {
+  window.location.href = "/api/github/install";
+}
+
+export async function disconnectGitHubApp(): Promise<void> {
+  await fetch("/api/github/disconnect", { method: "POST", credentials: "include" });
+}
+
 export async function runCreateCleanupPr(
   request: CreateCleanupPrRequest
 ): Promise<CreateCleanupPrResponse> {
   const res = await fetch("/api/tools/create_cleanup_pr", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(request),
   });
 

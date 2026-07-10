@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
   Copy,
   ExternalLink,
+  Github,
   GitPullRequest,
   Loader2,
   Lock,
   Shield,
+  Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,9 +23,13 @@ import { isDemoRepoUrl } from "@/lib/demo/constants";
 import {
   buildPrSummaryText,
   copyText,
+  disconnectGitHubApp,
+  fetchGitHubConnectionStatus,
   runCreateCleanupPr,
+  startGitHubAppInstall,
   type CleanupPrMode,
   type CreateCleanupPrResponse,
+  type GitHubConnectionStatus,
 } from "@/lib/patch-kit/client";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
@@ -64,12 +71,16 @@ export function RepoDietOperatorSection({
   patchKit,
   demoMode,
 }: RepoDietOperatorSectionProps) {
+  const searchParams = useSearchParams();
   const isDemoRepo = useMemo(() => isDemoRepoUrl(repoUrl), [repoUrl]);
   const useDemoAuth = demoMode || isDemoRepo;
 
   const [loading, setLoading] = useState(false);
   const [loadingMode, setLoadingMode] = useState<CleanupPrMode | null>(null);
   const [githubToken, setGithubToken] = useState("");
+  const [showAdvancedToken, setShowAdvancedToken] = useState(false);
+  const [githubStatus, setGithubStatus] = useState<GitHubConnectionStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateCleanupPrResponse | null>(null);
   const [summaryCopied, setSummaryCopied] = useState(false);
@@ -78,6 +89,29 @@ export function RepoDietOperatorSection({
   const locked = !findings || !patchKit;
   const canCreateSafePr = !locked && safeCount > 0;
   const canCreateReportPr = !locked;
+  const githubConnected = Boolean(githubStatus?.connected);
+
+  const refreshGitHubStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const status = await fetchGitHubConnectionStatus();
+      setGithubStatus(status);
+    } catch {
+      setGithubStatus({ connected: false, configured: false });
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshGitHubStatus();
+  }, [refreshGitHubStatus]);
+
+  useEffect(() => {
+    if (searchParams.get("github_connected") === "true") {
+      void refreshGitHubStatus();
+    }
+  }, [searchParams, refreshGitHubStatus]);
 
   const submit = async (mode: CleanupPrMode) => {
     if (!findings || !patchKit) return;
@@ -92,7 +126,7 @@ export function RepoDietOperatorSection({
         branch,
         mode,
         demo: useDemoAuth,
-        githubToken: useDemoAuth ? undefined : githubToken,
+        githubToken: showAdvancedToken && githubToken.trim() ? githubToken : undefined,
         findings,
         patchKit,
       });
@@ -112,7 +146,13 @@ export function RepoDietOperatorSection({
     setTimeout(() => setSummaryCopied(false), 2000);
   };
 
-  const needsToken = !useDemoAuth && !githubToken.trim();
+  const disconnect = async () => {
+    await disconnectGitHubApp();
+    await refreshGitHubStatus();
+  };
+
+  const needsAuth =
+    !useDemoAuth && !githubConnected && !(showAdvancedToken && githubToken.trim());
 
   return (
     <section className="space-y-6 rounded-lg border border-electric/20 bg-electric/5 p-6">
@@ -121,7 +161,7 @@ export function RepoDietOperatorSection({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-lg font-semibold tracking-tight">RepoDiet Operator</h3>
             <Badge variant="electric" className="font-mono text-[9px] uppercase tracking-wider">
-              Phase 1
+              GitHub App
             </Badge>
           </div>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground leading-relaxed">
@@ -152,6 +192,60 @@ export function RepoDietOperatorSection({
         </Card>
       ) : (
         <>
+          <Card className="border-border/80 bg-card/50">
+            <CardContent className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <Github className="h-4 w-4" />
+                  GitHub connection
+                </p>
+                {statusLoading ? (
+                  <p className="text-sm text-muted-foreground">Checking connection…</p>
+                ) : useDemoAuth ? (
+                  <p className="text-sm text-muted-foreground">
+                    Demo mode — server token for{" "}
+                    <span className="font-mono text-xs">repodiet/demo-slop-app</span>
+                  </p>
+                ) : githubConnected ? (
+                  <p className="text-sm text-signal">
+                    GitHub App connected
+                    {githubStatus?.account?.login
+                      ? ` · ${githubStatus.account.login}`
+                      : ""}
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Not connected</p>
+                )}
+                {!useDemoAuth && (
+                  <p className="text-xs text-muted-foreground leading-relaxed max-w-2xl">
+                    Install RepoDiet on the repo you want to clean. Minimum permissions: Contents
+                    write and Pull Requests write. RepoDiet never pushes to main and never merges
+                    PRs.
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2 shrink-0">
+                {!useDemoAuth && !githubConnected && githubStatus?.configured !== false && (
+                  <Button onClick={startGitHubAppInstall}>
+                    <Github className="h-4 w-4" />
+                    Connect GitHub
+                  </Button>
+                )}
+                {!useDemoAuth && githubConnected && (
+                  <Button variant="outline" size="sm" onClick={disconnect}>
+                    <Unplug className="h-4 w-4" />
+                    Disconnect
+                  </Button>
+                )}
+                {!useDemoAuth && githubStatus?.configured === false && (
+                  <Badge variant="muted" className="text-xs">
+                    GitHub App not configured on server
+                  </Badge>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <InfoCard title="Cleanup Mode">
               <p>
@@ -170,10 +264,15 @@ export function RepoDietOperatorSection({
                   <p>Demo mode uses the configured demo repo token.</p>
                   <p className="font-mono text-xs">repodiet/demo-slop-app</p>
                 </>
+              ) : githubConnected ? (
+                <>
+                  <p>GitHub App installation connected.</p>
+                  <p>Short-lived installation tokens are generated server-side on demand.</p>
+                </>
               ) : (
                 <>
-                  <p>User mode accepts a fine-grained GitHub token.</p>
-                  <p>Token is used once and never stored.</p>
+                  <p>Install the RepoDiet GitHub App on your repository.</p>
+                  <p>No personal token required for the primary flow.</p>
                 </>
               )}
             </InfoCard>
@@ -183,14 +282,10 @@ export function RepoDietOperatorSection({
               {safeCount > 0 ? (
                 <p className="text-signal">Ready to create cleanup PR.</p>
               ) : (
-                <p>
-                  Safe cleanup PR unavailable. Create a report-only PR instead.
-                </p>
+                <p>Safe cleanup PR unavailable. Create a report-only PR instead.</p>
               )}
               {safeCount > 0 && (
-                <p className="font-mono text-[11px]">
-                  archive/** · backup/** · tmp/** · old/**
-                </p>
+                <p className="font-mono text-[11px]">archive/** · backup/** · tmp/** · old/**</p>
               )}
             </InfoCard>
 
@@ -217,21 +312,30 @@ export function RepoDietOperatorSection({
           </div>
 
           {!useDemoAuth && (
-            <div className="space-y-2 rounded-md border border-border bg-card/40 p-4">
-              <Label htmlFor="operator-github-token">GitHub token</Label>
-              <Input
-                id="operator-github-token"
-                type="password"
-                autoComplete="off"
-                placeholder="Fine-grained token"
-                value={githubToken}
-                onChange={(e) => setGithubToken(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Use a fine-grained GitHub token with Contents: Read/Write and Pull Requests:
-                Read/Write. RepoDiet uses it once and never stores it.
-              </p>
-            </div>
+            <details
+              className="rounded-md border border-border bg-card/40 p-4"
+              open={showAdvancedToken}
+              onToggle={(e) => setShowAdvancedToken((e.target as HTMLDetailsElement).open)}
+            >
+              <summary className="cursor-pointer text-sm font-medium">
+                Advanced manual token mode
+              </summary>
+              <div className="mt-4 space-y-2">
+                <Label htmlFor="operator-github-token">Fine-grained GitHub token</Label>
+                <Input
+                  id="operator-github-token"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Optional fallback token"
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Fallback only. Prefer the GitHub App install flow. If used, token is sent once
+                  server-side and never stored.
+                </p>
+              </div>
+            </details>
           )}
 
           {safeCount === 0 && (
@@ -244,7 +348,7 @@ export function RepoDietOperatorSection({
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => submit("safe_only")}
-              disabled={loading || !canCreateSafePr || needsToken}
+              disabled={loading || !canCreateSafePr || needsAuth}
             >
               {loading && loadingMode === "safe_only" ? (
                 <>
@@ -261,7 +365,7 @@ export function RepoDietOperatorSection({
             <Button
               variant="secondary"
               onClick={() => submit("report_only")}
-              disabled={loading || !canCreateReportPr || needsToken}
+              disabled={loading || !canCreateReportPr || needsAuth}
             >
               {loading && loadingMode === "report_only" ? (
                 <>
@@ -303,6 +407,12 @@ export function RepoDietOperatorSection({
           <div>
             <p className="text-sm font-medium text-red-300">Cleanup PR failed</p>
             <p className="mt-1 text-sm text-muted-foreground">{error}</p>
+            {!useDemoAuth && !githubConnected && error.toLowerCase().includes("install") && (
+              <Button className="mt-3" size="sm" onClick={startGitHubAppInstall}>
+                <Github className="h-4 w-4" />
+                Install GitHub App
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -316,55 +426,53 @@ export function RepoDietOperatorSection({
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <InfoCard title="PR Output" className="bg-transparent sm:col-span-2 lg:col-span-3">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">PR URL</p>
-                    <a
-                      href={result.pullRequest.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 block truncate font-mono text-xs text-electric hover:underline"
-                    >
-                      {result.pullRequest.url}
-                    </a>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Branch</p>
-                    <p className="mt-1 font-mono text-xs">{result.repo.cleanupBranch}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Files deleted
-                    </p>
-                    <p className="mt-1 font-mono text-xs">{result.actionSummary.filesDeleted}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Artifacts added
-                    </p>
-                    <p className="mt-1 font-mono text-xs">{result.actionSummary.artifactsAdded}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Review first skipped
-                    </p>
-                    <p className="mt-1 font-mono text-xs">
-                      {result.actionSummary.reviewFirstSkipped}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Do not touch protected
-                    </p>
-                    <p className="mt-1 font-mono text-xs">
-                      {result.actionSummary.doNotTouchSkipped}
-                    </p>
-                  </div>
+            <InfoCard title="PR Output" className="bg-transparent">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">PR URL</p>
+                  <a
+                    href={result.pullRequest.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 block truncate font-mono text-xs text-electric hover:underline"
+                  >
+                    {result.pullRequest.url}
+                  </a>
                 </div>
-              </InfoCard>
-            </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Branch</p>
+                  <p className="mt-1 font-mono text-xs">{result.repo.cleanupBranch}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Files deleted
+                  </p>
+                  <p className="mt-1 font-mono text-xs">{result.actionSummary.filesDeleted}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Artifacts added
+                  </p>
+                  <p className="mt-1 font-mono text-xs">{result.actionSummary.artifactsAdded}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Review first skipped
+                  </p>
+                  <p className="mt-1 font-mono text-xs">
+                    {result.actionSummary.reviewFirstSkipped}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Do not touch protected
+                  </p>
+                  <p className="mt-1 font-mono text-xs">
+                    {result.actionSummary.doNotTouchSkipped}
+                  </p>
+                </div>
+              </div>
+            </InfoCard>
             <div className="flex flex-wrap gap-2">
               <Button asChild size="sm">
                 <a href={result.pullRequest.url} target="_blank" rel="noreferrer">
