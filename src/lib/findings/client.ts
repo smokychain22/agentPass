@@ -1,5 +1,5 @@
 import type { FindingsPayload } from "./types";
-import { pollJob, startJob } from "@/lib/jobs/client";
+import { pollJob, startJobOrResult } from "@/lib/jobs/client";
 
 export type FindingsPhase =
   | "idle"
@@ -60,12 +60,17 @@ export async function runFindingsAnalysis(
   onPhase("preparing");
 
   try {
-    const jobId = await startJob("/api/jobs/findings", {
+    const started = await startJobOrResult<FindingsPayload>("/api/jobs/findings", {
       repoUrl: repoUrl.trim(),
       branch: branch?.trim() || undefined,
     });
 
-    const findings = await pollJob<FindingsPayload>("/api/jobs/findings", jobId, (stage) => {
+    if (started.result) {
+      onPhase("complete");
+      return started.result;
+    }
+
+    const findings = await pollJob<FindingsPayload>("/api/jobs/findings", started.jobId, (stage) => {
       onPhase(mapStageToPhase(stage));
     });
 

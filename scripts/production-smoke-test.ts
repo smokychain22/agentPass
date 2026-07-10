@@ -58,10 +58,15 @@ async function main() {
       body: JSON.stringify({ repoUrl: SMALL_REPO }),
     });
     const startJson = await start.json();
-    record("findings job create", start.ok && startJson.success, startJson.jobId);
+    record("findings job create", start.ok && (startJson.success || startJson.status === "complete"), startJson.jobId);
 
-    if (startJson.jobId) {
+    if (startJson.status === "complete" && startJson.result) {
+      findings = startJson.result;
+    } else if (startJson.jobId) {
       findings = await pollJob("/api/jobs/findings", startJson.jobId);
+    }
+
+    if (findings) {
       record("findings job complete", !!findings?.scanId, findings?.scanId);
 
       const knip = findings?.rawToolReports?.knip;

@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { createFindingsJob, runFindingsJob } from "@/lib/jobs/run-findings-job";
-import { getJob, assertJobOwner } from "@/lib/jobs/job-store";
+import { getJob } from "@/lib/jobs/job-store";
 import type { FindingsJob } from "@/lib/jobs/types";
 
 export const runtime = "nodejs";
@@ -20,12 +19,24 @@ export async function POST(request: Request) {
     }
 
     const job = createFindingsJob(body.repoUrl.trim(), body.branch?.trim(), ownerKey);
+    await runFindingsJob(job.id);
 
-    after(async () => {
-      await runFindingsJob(job.id);
+    const completed = getJob(job.id) as FindingsJob | undefined;
+    if (!completed) {
+      return NextResponse.json({ success: false, error: "Job completed but not retrievable." }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: completed.status !== "failed",
+      jobId: completed.id,
+      status: completed.status,
+      stage: completed.stage,
+      progress: completed.progress,
+      isDemo: completed.isDemo,
+      scanId: completed.scanId,
+      result: completed.status === "complete" ? completed.result : undefined,
+      error: completed.error,
     });
-
-    return NextResponse.json({ success: true, jobId: job.id, status: job.status });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(

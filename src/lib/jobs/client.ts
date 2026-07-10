@@ -55,10 +55,49 @@ export async function startJob(
     body: JSON.stringify(body),
   });
 
-  const json = (await res.json()) as { success: boolean; jobId?: string; error?: string };
-  if (!json.success || !json.jobId) {
+  const json = (await res.json()) as {
+    success: boolean;
+    jobId?: string;
+    status?: JobPollStatus;
+    result?: unknown;
+    error?: string;
+  };
+
+  if (!json.success && json.status !== "complete") {
+    throw new Error(json.error ?? "Failed to start job.");
+  }
+
+  if (!json.jobId) {
     throw new Error(json.error ?? "Failed to start job.");
   }
 
   return json.jobId;
+}
+
+/** Start job; returns result immediately when POST runs synchronously (production). */
+export async function startJobOrResult<T>(
+  endpoint: string,
+  body: Record<string, unknown>
+): Promise<{ jobId: string; result?: T; status?: JobPollStatus }> {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const json = (await res.json()) as JobPollResponse<T> & { success: boolean };
+
+  if (!json.jobId) {
+    throw new Error(json.error ?? "Failed to start job.");
+  }
+
+  if (json.status === "complete" && json.result) {
+    return { jobId: json.jobId, result: json.result, status: "complete" };
+  }
+
+  if (json.status === "failed") {
+    throw new Error(json.error ?? "Job failed.");
+  }
+
+  return { jobId: json.jobId, status: json.status };
 }

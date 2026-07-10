@@ -1,6 +1,6 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "./types";
-import { pollJob, startJob } from "@/lib/jobs/client";
+import { pollJob, startJobOrResult } from "@/lib/jobs/client";
 
 export type CleanupPrMode = "safe_only" | "report_only";
 
@@ -147,7 +147,7 @@ export async function runPatchKitGeneration(
   onPhase("classifying");
 
   try {
-    const jobId = await startJob("/api/jobs/patch", {
+    const started = await startJobOrResult<PatchKitPayload>("/api/jobs/patch", {
       repoUrl: repoUrl.trim(),
       branch: branch?.trim() || undefined,
       findings,
@@ -155,7 +155,12 @@ export async function runPatchKitGeneration(
       selectedFindingIds,
     });
 
-    const patchKit = await pollJob<PatchKitPayload>("/api/jobs/patch", jobId, (stage) => {
+    if (started.result) {
+      onPhase("complete");
+      return started.result;
+    }
+
+    const patchKit = await pollJob<PatchKitPayload>("/api/jobs/patch", started.jobId, (stage) => {
       onPhase(mapStageToPhase(stage));
     });
 

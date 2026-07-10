@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { createPatchJob, runPatchJob } from "@/lib/jobs/run-patch-job";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { enforcePayment } from "@/lib/payment/x402";
+import { getJob } from "@/lib/jobs/job-store";
+import type { PatchJob } from "@/lib/jobs/types";
 import type { FindingsPayload } from "@/lib/findings/types";
 
 export const runtime = "nodejs";
@@ -50,13 +51,24 @@ export async function POST(request: Request) {
     enforcePayment(request, "patch_bundle", { free: isDemoRepoUrl(repoUrl) });
 
     const job = createPatchJob(repoUrl, branch, ownerKey, findings);
-    const selectedFindingIds = body.selectedFindingIds;
+    await runPatchJob(job.id, findings, body.selectedFindingIds);
 
-    after(async () => {
-      await runPatchJob(job.id, findings, selectedFindingIds);
+    const completed = getJob(job.id) as PatchJob | undefined;
+    if (!completed) {
+      return NextResponse.json({ success: false, error: "Job completed but not retrievable." }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: completed.status !== "failed",
+      jobId: completed.id,
+      status: completed.status,
+      stage: completed.stage,
+      progress: completed.progress,
+      isDemo: completed.isDemo,
+      patchValidation: completed.patchValidation,
+      result: completed.status === "complete" ? completed.result : undefined,
+      error: completed.error,
     });
-
-    return NextResponse.json({ success: true, jobId: job.id, status: job.status });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(

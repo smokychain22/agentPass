@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { createScanJob, runScanJob } from "@/lib/jobs/run-scan-job";
-import { getJob, assertJobOwner } from "@/lib/jobs/job-store";
+import { getJob } from "@/lib/jobs/job-store";
+import type { ScanJob } from "@/lib/jobs/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,12 +19,23 @@ export async function POST(request: Request) {
     }
 
     const job = createScanJob(body.repoUrl.trim(), body.branch?.trim(), ownerKey);
+    await runScanJob(job.id, job.repoUrl, job.branch, ownerKey);
 
-    after(async () => {
-      await runScanJob(job.id, job.repoUrl, job.branch, ownerKey);
+    const completed = getJob(job.id) as ScanJob | undefined;
+    if (!completed) {
+      return NextResponse.json({ success: false, error: "Job completed but not retrievable." }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: completed.status !== "failed",
+      jobId: completed.id,
+      status: completed.status,
+      stage: completed.stage,
+      progress: completed.progress,
+      isDemo: completed.isDemo,
+      result: completed.status === "complete" ? completed.result : undefined,
+      error: completed.error,
     });
-
-    return NextResponse.json({ success: true, jobId: job.id, status: job.status });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return NextResponse.json(

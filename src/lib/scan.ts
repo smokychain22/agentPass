@@ -1,7 +1,7 @@
 import type { ScanPhase } from "@/lib/scanner/types";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
-import { pollJob, startJob } from "@/lib/jobs/client";
+import { pollJob, startJobOrResult } from "@/lib/jobs/client";
 
 export type ScanResult = Omit<ScanPayload, "id">;
 
@@ -54,12 +54,17 @@ export async function runScan(
   onPhase("validating");
 
   try {
-    const jobId = await startJob("/api/jobs/scan", {
+    const started = await startJobOrResult<ScanPayload>("/api/jobs/scan", {
       repoUrl: repoUrl.trim(),
       branch: branch?.trim() || undefined,
     });
 
-    const scan = await pollJob<ScanPayload>("/api/jobs/scan", jobId, (stage) => {
+    if (started.result) {
+      onPhase("complete");
+      return started.result;
+    }
+
+    const scan = await pollJob<ScanPayload>("/api/jobs/scan", started.jobId, (stage) => {
       onPhase(mapStageToPhase(stage));
     });
 
