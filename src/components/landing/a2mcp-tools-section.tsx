@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { A2MCP_TOOLS } from "@/lib/marketing/content";
 import { getServerBaseUrl } from "@/lib/docs/base-url";
@@ -17,15 +16,18 @@ export function A2mcpToolsSection() {
 
   return (
     <div>
-      <p className="text-sm text-muted-foreground mb-4">
-        A2MCP-ready deterministic JSON endpoints — callable with a public GitHub repo URL. No browser
-        session required.
+      <p className="mb-4 text-sm text-secondary">
+        Deterministic JSON endpoints — callable with a public GitHub repo URL. No browser session
+        required.
       </p>
-      <div className="flex flex-wrap gap-2 mb-6">
+      <div className="mb-6 flex flex-wrap gap-2">
         {A2MCP_TOOLS.map((tool) => (
-          <Badge key={tool} variant="default" className="font-mono text-xs">
+          <span
+            key={tool}
+            className="rounded border mcc-border bg-[#0C1118] px-2 py-1 font-mono text-xs text-secondary"
+          >
             {tool}
-          </Badge>
+          </span>
         ))}
       </div>
       <div className="flex flex-wrap gap-2">

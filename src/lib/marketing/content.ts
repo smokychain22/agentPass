@@ -21,6 +21,16 @@ export const HERO = {
     "RepoDiet scans JavaScript and TypeScript codebases for duplicate logic, unused files, dependency drift, orphan modules, and AI-slop patterns — then generates a conservative cleanup bundle your team can review safely.",
 };
 
+export const SITE_TAGLINES = {
+  debt: "AI code creates cleanup debt. RepoDiet turns it into a review-ready patch bundle.",
+  positioning:
+    "Not auto-clean. Not a linter. A conservative cleanup workflow for AI-built repos.",
+  workflow: "Scan the repo. Map the risk. Generate the bundle. Verify before merging.",
+  safety:
+    "RepoDiet protects routes, configs, env files, lockfiles, and public assets by default.",
+  audience: "Built for teams and solo builders using AI coding tools every day.",
+};
+
 export const PROBLEM_SECTION = {
   eyebrow: "The cleanup debt",
   title: "AI helps you ship. It also leaves cleanup debt.",
@@ -28,22 +38,27 @@ export const PROBLEM_SECTION = {
 
 export const PROBLEM_CARDS = [
   {
+    category: "Debt",
     title: "Duplicate logic",
     description: "AI creates new files instead of refactoring old ones.",
   },
   {
+    category: "Debt",
     title: "Dead files",
     description: "Old screens, backup folders, and unused components stay behind.",
   },
   {
+    category: "Debt",
     title: "Dependency drift",
     description: "Packages get installed for experiments and never removed.",
   },
   {
+    category: "Debt",
     title: "Orphan modules",
     description: "Utilities and routes become disconnected from the real app flow.",
   },
   {
+    category: "Risk",
     title: "Fragile cleanup",
     description: "Deleting the wrong file can break routes, APIs, or builds.",
   },
@@ -52,38 +67,38 @@ export const PROBLEM_CARDS = [
 export const PIPELINE_STEPS = [
   {
     id: "messy",
-    title: "Messy AI Repo",
-    outputs: ["Duplicate components", "Unused experiments", "Dependency drift"],
+    title: "Messy Repo",
+    chips: ["Duplicates", "Dead files", "Drift"],
     accent: "muted" as const,
   },
   {
     id: "scan",
-    title: "RepoDiet Scan",
-    outputs: ["Framework detection", "Package manager", "File tree"],
+    title: "Scan",
+    chips: ["Framework", "Package mgr", "File tree"],
     accent: "electric" as const,
   },
   {
     id: "findings",
-    title: "Findings Engine",
-    outputs: ["Duplicate clusters", "Unused files", "AI-slop signals"],
+    title: "Findings",
+    chips: ["Duplicates", "Unused", "AI-slop"],
     accent: "electric" as const,
   },
   {
     id: "buckets",
     title: "Risk Buckets",
-    outputs: ["Safe candidate", "Review first", "Do not touch"],
+    chips: ["Safe", "Review", "Protected"],
     accent: "signal" as const,
   },
   {
     id: "bundle",
     title: "Patch Bundle",
-    outputs: ["Report", "Patch plan", "Package cleanup", "Cursor prompt"],
+    chips: ["Report", "Patch", "Cursor prompt"],
     accent: "signal" as const,
   },
   {
     id: "verify",
-    title: "Regression Checklist",
-    outputs: ["Build checks", "Lint", "Route & API checks"],
+    title: "Verify",
+    chips: ["Build", "Lint", "Routes"],
     accent: "electric" as const,
   },
 ];
@@ -92,6 +107,22 @@ export const TRANSFORMATION_SECTION = {
   eyebrow: "Transformation",
   title: "From scattered AI output to review-ready cleanup.",
 };
+
+export const BEFORE_DIFF_ITEMS = [
+  "ButtonFinal.tsx",
+  "ButtonCopy.tsx",
+  "OldDashboard.tsx",
+  "unused package: lodash",
+  "orphan route: app/api/old-execute",
+];
+
+export const AFTER_DIFF_ITEMS = [
+  { label: "SAFE CANDIDATE", detail: `${DEMO_SCAN_STATS.safeCandidates} files` },
+  { label: "REVIEW FIRST", detail: `${DEMO_SCAN_STATS.reviewFirst} items` },
+  { label: "DO NOT TOUCH", detail: `${DEMO_SCAN_STATS.doNotTouch} protected` },
+  { label: "PATCH BUNDLE", detail: "7 artifacts" },
+  { label: "REGRESSION CHECK", detail: "build · lint · routes" },
+];
 
 export const BEFORE_ITEMS = [
   "Duplicate components with unclear ownership",
@@ -139,9 +170,11 @@ export const ARTIFACT_PREVIEWS = [
     purpose: "Conservative patch plan using safe candidates only.",
     preview: `# RepoDiet cleanup patch
 # Safe delete commands — review before applying.
+# No automatic delete unless Safe Candidates exist.
 git rm archive/OldDashboard.tsx
 git rm backup/GeneratedCardCopy.tsx
-git rm tmp/temp-widget.tsx`,
+git rm tmp/temp-widget.tsx
+git rm old/UnusedLandingOld.tsx`,
   },
   {
     filename: "package-cleanup.md",
@@ -238,15 +271,17 @@ export const PRICING_SECTION = {
   eyebrow: "Plans",
   title: "Start free. Scale when you need full bundles.",
   description:
-    "Scan and preview on the public demo. Full patch bundles available when you need deliverable cleanup artifacts.",
+    "Scan and preview on the public demo. Full patch bundles when you need deliverable cleanup artifacts.",
+  note:
+    "Public demo endpoints are open for review. Paid gating can be added at the OKX listing layer.",
 };
 
 export const A2MCP_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
 
 export const PRICING_TIERS = [
   {
-    name: "Free Demo",
-    price: "0 USDT",
+    name: "Demo",
+    price: "Free",
     description: "Explore RepoDiet on the messy demo repo.",
     features: [
       "Demo repo scan",
@@ -289,7 +324,7 @@ export const PRICING_TIERS = [
     highlighted: true,
   },
   {
-    name: "Team Cleanup",
+    name: "A2A Cleanup",
     price: "Custom",
     description: "Guided cleanup delivery with human review gates.",
     features: [

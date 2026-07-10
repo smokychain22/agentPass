@@ -15,12 +15,13 @@ const config: Config = {
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+          elevated: "hsl(var(--card-elevated))",
         },
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
         },
-        border: "hsl(var(--border))",
+        border: "hsl(var(--border) / 0.12)",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         accent: {
@@ -28,14 +29,17 @@ const config: Config = {
           foreground: "hsl(var(--accent-foreground))",
         },
         electric: {
-          DEFAULT: "hsl(var(--electric))",
+          DEFAULT: "#18A8FF",
           muted: "hsl(var(--electric-muted))",
         },
         signal: {
-          DEFAULT: "hsl(var(--signal))",
+          DEFAULT: "#22E6A8",
           muted: "hsl(var(--signal-muted))",
         },
+        warning: "#F5B84B",
+        danger: "#F97070",
         panel: "hsl(var(--panel))",
+        secondary: "#9BAAC2",
       },
       fontFamily: {
         sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
@@ -48,12 +52,21 @@ const config: Config = {
       },
       animation: {
         "pulse-subtle": "pulse-subtle 2s ease-in-out infinite",
+        "cursor-blink": "cursor-blink 1s step-end infinite",
       },
       keyframes: {
         "pulse-subtle": {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.6" },
         },
+        "cursor-blink": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0" },
+        },
+      },
+      boxShadow: {
+        "mcc-glow": "0 0 32px rgba(24, 168, 255, 0.1)",
+        "artifact-hover": "0 0 24px rgba(24, 168, 255, 0.08)",
       },
     },
   },
