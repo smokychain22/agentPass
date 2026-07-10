@@ -4,16 +4,12 @@ function isInvalidGitHubProfileUrl(url: string): boolean {
   return url === "https://github.com/app" || /^https:\/\/github\.com\/app(?:\?|$)/.test(url);
 }
 
-function isValidInstallUrl(url: string): boolean {
+export function isValidPublicGitHubInstallUrl(url: string): boolean {
   return (
     url.startsWith("https://github.com/apps/") &&
     url.includes("/installations/new") &&
     !url.includes("github.com/settings/apps/")
   );
-}
-
-function isValidConfigureUrl(url: string): boolean {
-  return url.startsWith("https://github.com/settings/installations/");
 }
 
 export function assertClientGitHubInstallRedirectUrl(
@@ -30,29 +26,23 @@ export function assertClientGitHubInstallRedirectUrl(
     );
   }
 
-  if (isInvalidGitHubProfileUrl(url)) {
+  if (isInvalidGitHubProfileUrl(url) || url.startsWith("https://github.com/app?")) {
     throw new Error("Invalid GitHub installation URL. Refusing github.com/app redirect.");
   }
 
-  if (url.startsWith("https://github.com/app?")) {
-    throw new Error("Invalid GitHub installation URL. Refusing github.com/app redirect.");
-  }
-
-  if (flow === "configure") {
-    if (!isValidConfigureUrl(url)) {
-      throw new Error("Invalid GitHub configuration URL.");
+  // Configure and install flows both use the public installations/new URL.
+  if (flow === "configure" || flow === "install") {
+    if (!isValidPublicGitHubInstallUrl(url)) {
+      throw new Error(
+        flow === "configure"
+          ? "Invalid GitHub configuration URL."
+          : "Invalid GitHub installation URL."
+      );
     }
     return;
   }
 
-  if (flow === "install") {
-    if (!isValidInstallUrl(url)) {
-      throw new Error("Invalid GitHub installation URL.");
-    }
-    return;
-  }
-
-  if (!isValidInstallUrl(url) && !isValidConfigureUrl(url)) {
+  if (!isValidPublicGitHubInstallUrl(url)) {
     throw new Error("Invalid GitHub installation URL.");
   }
 }

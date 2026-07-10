@@ -1,4 +1,5 @@
 import type { FindingsPayload } from "@/lib/findings/types";
+import { assertClientGitHubInstallRedirectUrl } from "@/lib/github-app/install-redirect-client";
 import type { PatchKitPayload } from "./types";
 import { pollJob, startJobOrResult } from "@/lib/jobs/client";
 
@@ -126,9 +127,6 @@ export async function startGitHubGrantAccess(input: {
     throw new Error(json.error ?? "Could not start GitHub installation.");
   }
 
-  const { assertClientGitHubInstallRedirectUrl } = await import(
-    "@/lib/github-app/install-redirect-client"
-  );
   assertClientGitHubInstallRedirectUrl(redirectUrl, json.flow);
 
   window.location.assign(redirectUrl);

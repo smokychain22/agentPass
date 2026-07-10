@@ -113,6 +113,7 @@ export function RepoDietOperatorSection({
   const [loading, setLoading] = useState(false);
   const [loadingMode, setLoadingMode] = useState<CleanupPrMode | null>(null);
   const [grantLoading, setGrantLoading] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
   const [githubToken, setGithubToken] = useState("");
   const [showAdvancedToken, setShowAdvancedToken] = useState(false);
   const [githubStatus, setGithubStatus] = useState<GitHubConnectionStatus | null>(null);
@@ -208,6 +209,7 @@ export function RepoDietOperatorSection({
   const grantAccess = async () => {
     if (!repositoryFullName) return;
     setGrantLoading(true);
+    setGrantError(null);
     setError(null);
     try {
       await startGitHubGrantAccess({
@@ -217,7 +219,9 @@ export function RepoDietOperatorSection({
       });
     } catch (err) {
       setGrantLoading(false);
-      setError(err instanceof Error ? err.message : "Could not start GitHub access flow.");
+      const message =
+        err instanceof Error ? err.message : "Could not start GitHub access flow.";
+      setGrantError(message);
     }
   };
 
@@ -370,6 +374,12 @@ export function RepoDietOperatorSection({
                   </div>
                 )}
               </div>
+
+              {grantError && !repositoryReady && (
+                <div className="rounded-md border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+                  {grantError}
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2">
                 {!useDemoAuth && !repositoryReady && githubStatus?.configured !== false && (

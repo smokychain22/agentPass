@@ -25,7 +25,7 @@ import {
   installRedirectUrlHasState,
   resolveGitHubInstallRedirect,
 } from "../src/lib/github-app/install-redirect";
-import { assertClientGitHubInstallRedirectUrl } from "../src/lib/github-app/install-redirect-client";
+import { assertClientGitHubInstallRedirectUrl, isValidPublicGitHubInstallUrl } from "../src/lib/github-app/install-redirect-client";
 import {
   getAppBaseUrl,
   isGitHubWebsiteUrl,
@@ -340,6 +340,13 @@ async function run() {
         else process.env[key] = value;
       }
     }
+  });
+
+  await test("client accepts configure flow on public installations/new URL", () => {
+    const url =
+      "https://github.com/apps/repodiet-operator/installations/new?state=opaque-state";
+    assert.equal(isValidPublicGitHubInstallUrl(url), true);
+    assert.doesNotThrow(() => assertClientGitHubInstallRedirectUrl(url, "configure"));
   });
 
   await test("repository full name parser", () => {
