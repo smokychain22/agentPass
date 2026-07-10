@@ -154,6 +154,30 @@ function rebuildNamedImport(
   return `${indent}${prefix} { ${remaining.join(", ")} } from ${parsed.fromClause};`;
 }
 
+export function removeUnusedSymbolAtLine(
+  source: string,
+  lineNumber: number,
+  symbol: string
+): string | null {
+  const lines = source.split("\n");
+  const idx = lineNumber - 1;
+  if (idx < 0 || idx >= lines.length) return null;
+
+  let block = lines[idx];
+  let end = idx;
+  while (!block.includes(";") && end + 1 < lines.length) {
+    end += 1;
+    block += `\n${lines[end]}`;
+  }
+
+  const modifiedBlock = removeUnusedSymbolFromImport(block, block.trim(), symbol);
+  if (modifiedBlock === block) return null;
+
+  const next = [...lines.slice(0, idx), ...modifiedBlock.split("\n"), ...lines.slice(end + 1)];
+  const result = next.join("\n").replace(/\n{3,}/g, "\n\n");
+  return result === source ? null : result;
+}
+
 export function removeUnusedSymbolFromImport(
   source: string,
   importLine: string,

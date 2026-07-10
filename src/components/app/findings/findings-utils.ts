@@ -119,6 +119,7 @@ export function sourceLabel(source: Finding["source"]): string {
     jscpd: "jscpd · Native",
     madge: "Madge · Native",
     heuristic: "RepoDiet heuristic · Native",
+    repodiet_import: "RepoDiet import analyzer · Native",
     knip_fallback: "Internal import graph · Fallback",
     jscpd_fallback: "Internal duplicate detector · Fallback",
     madge_fallback: "Internal dependency graph · Fallback",

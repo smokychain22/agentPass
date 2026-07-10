@@ -76,15 +76,16 @@ function test(name: string, fn: () => void) {
 
 console.log("Repair engine tests");
 
-test("transformer compatible without dry-run is not actionable", () => {
-  const finding = sampleFinding();
-  assert.equal(isTransformerCompatible(finding), true);
+test("plugin registered without preflight is not eligible in strict mode", () => {
+  const finding = sampleFinding({ source: "repodiet_import" });
+  assert.equal(isTransformerCompatible(finding), false);
   assert.equal(isDryRunPassed(finding), false);
   assert.equal(isActionableFinding(finding), false);
 });
 
 test("dry-run passed finding is actionable", () => {
   const finding = sampleFinding({
+    source: "repodiet_import",
     evidence: {
       summary: "x",
       signals: [
@@ -119,6 +120,8 @@ test("blocker breakdown is explicit not generic skipped", () => {
       strategyIds: [],
       sourceFound: true,
       sourceHashMatched: true,
+      transformAttempted: true,
+      contentChanged: false,
       dryRunSucceeded: false,
       proposedSourceChanged: false,
       proposedDiffGenerated: false,
@@ -134,6 +137,8 @@ test("blocker breakdown is explicit not generic skipped", () => {
       strategyIds: [],
       sourceFound: true,
       sourceHashMatched: true,
+      transformAttempted: true,
+      contentChanged: true,
       dryRunSucceeded: true,
       proposedSourceChanged: true,
       proposedDiffGenerated: true,
@@ -144,9 +149,9 @@ test("blocker breakdown is explicit not generic skipped", () => {
     },
   ];
   const summary = formatBlockerBreakdown(audits);
-  assert.match(summary, /transformer-compatible/i);
-  assert.match(summary, /0 verified changes retained/i);
-  assert.match(summary, /transform noop/i);
+  assert.match(summary, /Eligible findings/i);
+  assert.match(summary, /Changes generated: 0/i);
+  assert.match(summary, /No-op: 1/i);
   const counts = summarizeBlockers(audits);
   assert.equal(counts.transform_noop, 1);
   assert.equal(counts.not_attempted, 1);
@@ -225,7 +230,7 @@ test("zero verified changes cannot unlock cleanup PR", () => {
     },
   });
   assert.equal(gates.cleanupPrAvailable, false);
-  assert.equal(gates.quickCleanupState, "blocked");
+  assert.equal(gates.quickCleanupState, "failed");
 });
 
 test("report-only patch with no ops is not applyable", () => {

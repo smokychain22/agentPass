@@ -4,6 +4,7 @@ import type { Finding } from "@/lib/findings/types";
 import {
   convertSymbolToTypeOnlyImport,
   removeUnusedSymbolFromImport,
+  removeUnusedSymbolAtLine,
 } from "@/lib/findings/unused-import-detector";
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
 import { resolvePhase1Plugin, resolvePhase1TransformPlugin, type Phase1PluginId } from "./fix-plugins/phase1-plugins";
@@ -47,13 +48,15 @@ export interface GeneratedChangePayload {
   deletions: number;
 }
 
-function importEvidence(finding: Finding): { importLine: string; symbol: string } {
+function importEvidence(finding: Finding): { importLine: string; symbol: string; lineNumber?: number } {
   const importLine =
-    finding.evidence.signals.find((s) => s.startsWith("importLine="))?.slice(11) ??
+    finding.evidence.signals.find((s) => s.startsWith("importLine="))?.slice("importLine=".length) ??
     finding.evidence.summary;
   const symbol =
-    finding.evidence.signals.find((s) => s.startsWith("symbol="))?.slice(7) ?? "";
-  return { importLine, symbol };
+    finding.evidence.signals.find((s) => s.startsWith("symbol="))?.slice("symbol=".length) ?? "";
+  const lineRaw = finding.evidence.signals.find((s) => s.startsWith("line="))?.slice("line=".length);
+  const lineNumber = lineRaw ? Number(lineRaw) : undefined;
+  return { importLine, symbol, lineNumber: Number.isFinite(lineNumber) ? lineNumber : undefined };
 }
 
 function dryRunUnusedImport(
@@ -61,23 +64,25 @@ function dryRunUnusedImport(
   finding: Finding,
   strategyId: string
 ): string | null {
-  const { importLine, symbol } = importEvidence(finding);
-  if (!importLine || !symbol) return null;
+  const { importLine, symbol, lineNumber } = importEvidence(finding);
+  if (!symbol) return null;
 
-  let modified: string;
+  let modified: string | null = null;
   switch (strategyId) {
     case "convert_to_type_only_import":
       modified = convertSymbolToTypeOnlyImport(source, importLine, symbol);
       break;
     case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free": {
       const partial = removeUnusedSymbolFromImport(source, importLine, symbol);
-      if (partial === source) return null;
-      modified = partial;
+      modified = partial === source ? null : partial;
       break;
     }
     case "remove_unused_named_specifier":
     default:
       modified = removeUnusedSymbolFromImport(source, importLine, symbol);
+      if (modified === source && lineNumber) {
+        modified = removeUnusedSymbolAtLine(source, lineNumber, symbol);
+      }
       break;
   }
 

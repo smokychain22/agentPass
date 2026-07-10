@@ -2,68 +2,82 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FindingsPayload } from "@/lib/findings/types";
-import { metricLabel } from "@/lib/findings/stats";
+import { availabilityLabel, unavailableMessage } from "@/lib/findings/analyzer-availability";
 
 interface SummaryMetric {
   key: string;
-  value: number;
+  value: number | string;
   title: string;
   subtitle: string;
   explanation: string;
 }
 
 function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
-  const { summary, rawToolReports } = payload;
-  const dup = metricLabel("duplicates", rawToolReports.jscpd);
-  const unused = metricLabel("unusedFiles", rawToolReports.knip);
-  const deps = metricLabel("dependencies", rawToolReports.knip);
-  const orphans = metricLabel("orphans", rawToolReports.madge);
-  const slop = metricLabel("slop");
+  const { summary, analyzerStates } = payload;
+  const jscpdState = analyzerStates?.jscpd;
+  const knipState = analyzerStates?.knip;
+  const madgeState = analyzerStates?.madge;
+
+  const dupAvailable = jscpdState?.status === "available";
+  const knipAvailable = knipState?.status === "available";
+  const madgeAvailable = madgeState?.status === "available";
 
   return [
     {
-      key: "total",
-      value: summary.totalFindings,
-      title: "Total Findings",
-      subtitle: "All normalized findings",
-      explanation: "Every finding across duplicates, unused code, orphans, and heuristics.",
+      key: "verified",
+      value: summary.verifiedFindings ?? summary.totalFindings,
+      title: "Verified findings",
+      subtitle: "Successful analyzers only",
+      explanation: "Counts only findings from analyzers that ran natively. Fallback estimates are excluded.",
     },
     {
       key: "duplicates",
-      value: summary.duplicateClusters,
-      title: dup.title,
-      subtitle: dup.subtitle,
-      explanation: "Repeated logic clusters flagged for review before merge.",
+      value: dupAvailable ? summary.duplicateClusters : "Unavailable",
+      title: "Duplicate analysis",
+      subtitle: dupAvailable
+        ? `jscpd${jscpdState?.version ? ` v${jscpdState.version}` : ""}`
+        : "Unavailable",
+      explanation: dupAvailable
+        ? "Duplicate clusters from native jscpd analysis."
+        : unavailableMessage("jscpd"),
     },
     {
-      key: "unusedFiles",
-      value: summary.unusedFiles,
-      title: unused.title,
-      subtitle: unused.subtitle,
-      explanation: rawToolReports.knip.sourceMode === "fallback"
-        ? "Files not reached by the fallback import graph — treat as estimates."
-        : "Files not referenced by import graph or framework entry points.",
-    },
-    {
-      key: "dependencies",
-      value: summary.unusedDependencies,
-      title: deps.title,
-      subtitle: deps.subtitle,
-      explanation: "Packages listed in package.json without detected imports.",
+      key: "unused",
+      value: knipAvailable ? summary.unusedFiles + summary.unusedDependencies + summary.unusedExports : "Unavailable",
+      title: "Unused-code analysis",
+      subtitle: knipAvailable
+        ? `Knip${knipState?.version ? ` v${knipState.version}` : ""}`
+        : "Unavailable",
+      explanation: knipAvailable
+        ? "Unused files, dependencies, exports, and imports from native Knip + RepoDiet import analyzer."
+        : unavailableMessage("knip"),
     },
     {
       key: "orphans",
-      value: summary.orphanPatterns,
-      title: orphans.title,
-      subtitle: orphans.subtitle,
-      explanation: "Modules with weak or missing inbound graph connections.",
+      value: madgeAvailable ? summary.orphanPatterns : "Unavailable",
+      title: "Dependency graph",
+      subtitle: madgeAvailable
+        ? `Madge${madgeState?.version ? ` v${madgeState.version}` : ""}`
+        : "Unavailable",
+      explanation: madgeAvailable
+        ? "Orphan modules from native Madge dependency graph."
+        : unavailableMessage("madge"),
     },
     {
       key: "slop",
       value: summary.slopSignals,
-      title: slop.title,
-      subtitle: slop.subtitle,
-      explanation: "Backup folders, versioned names, and iteration leftovers.",
+      title: "AI-slop signals",
+      subtitle: analyzerStates?.heuristics
+        ? availabilityLabel(analyzerStates.heuristics)
+        : "RepoDiet heuristics",
+      explanation: "Backup folders, versioned names, and iteration leftovers from RepoDiet heuristics.",
+    },
+    {
+      key: "eligible",
+      value: summary.eligibleFindings ?? summary.actionableFixes ?? 0,
+      title: "Cleanup-eligible",
+      subtitle: "Preflight-confirmed",
+      explanation: "Findings with native evidence and a transformer preflight that produced a real content change.",
     },
   ];
 }

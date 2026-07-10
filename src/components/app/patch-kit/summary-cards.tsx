@@ -2,20 +2,18 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { PatchKitSummary } from "@/lib/patch-kit/types";
-import { BUNDLE_FILE_COUNT } from "@/lib/patch-kit/bundle-manifest";
 
 const cards: {
   key: keyof PatchKitSummary | "lifecycle";
   title: string;
   explanation?: string;
-  footnote?: (s: PatchKitSummary) => string | null;
   getValue: (s: PatchKitSummary) => number | string;
 }[] = [
   {
     key: "verifiedChanges",
     title: "Verified changes",
-    explanation: "Changes retained after dry-run, diff generation, and validation.",
-    getValue: (s) => s.verifiedChanges ?? s.validatedChanges ?? 0,
+    explanation: "Changes retained after transformation, diff generation, and validation.",
+    getValue: (s) => s.verifiedChanges ?? 0,
   },
   {
     key: "validatedChanges",
@@ -30,38 +28,34 @@ const cards: {
     getValue: (s) => s.generatedChanges ?? 0,
   },
   {
-    key: "dryRunPassed",
-    title: "Dry-run successful",
-    explanation: "Transformer located source and produced a real modification at scan time.",
-    getValue: (s) => s.dryRunPassed ?? 0,
+    key: "attemptedTransformations",
+    title: "Attempted",
+    explanation: "Transformers invoked against exact scanned source files.",
+    getValue: (s) => s.attemptedTransformations ?? 0,
   },
   {
-    key: "transformerCompatible",
-    title: "Transformer-compatible",
-    explanation: "Findings with a registered fix plugin — not yet proven actionable.",
-    getValue: (s) => s.transformerCompatible ?? s.supportedFixesDetected ?? 0,
+    key: "noopTransformations",
+    title: "No-op",
+    explanation: "Transformer ran but output equals original — not counted as success.",
+    getValue: (s) => s.noopTransformations ?? 0,
   },
   {
-    key: "safeDeleteCandidates",
-    title: "File deletions",
-    explanation: "Conservative delete-only paths (archive/backup style).",
-    getValue: (s) => s.safeDeleteCandidates,
+    key: "failedTransformations",
+    title: "Failed",
+    explanation: "Transformer could not safely process the finding.",
+    getValue: (s) => s.failedTransformations ?? 0,
   },
   {
-    key: "reviewFirstItems",
-    title: "Unique review items",
-    explanation: "Deduplicated files/packages documented for cleanup review.",
-    footnote: (s) =>
-      s.rawReviewFindings > s.reviewFirstItems
-        ? `Raw review findings: ${s.rawReviewFindings}`
-        : null,
-    getValue: (s) => s.reviewFirstItems,
+    key: "eligibleFindings",
+    title: "Eligible findings",
+    explanation: "Findings that passed strict preflight with native analyzer evidence.",
+    getValue: (s) => s.eligibleFindings ?? s.transformerCompatible ?? 0,
   },
   {
-    key: "bundleFileCount",
-    title: "Bundle files",
-    explanation: "Artifacts included in the downloadable ZIP bundle.",
-    getValue: (s) => s.bundleFileCount ?? BUNDLE_FILE_COUNT,
+    key: "notAttempted",
+    title: "Not attempted",
+    explanation: "Eligible findings not processed within attempt limits.",
+    getValue: (s) => s.notAttempted ?? 0,
   },
 ];
 
@@ -70,7 +64,6 @@ export function PatchKitSummaryCards({ summary }: { summary: PatchKitSummary }) 
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {cards.map((card) => {
         const value = card.getValue(summary);
-        const footnote = card.footnote?.(summary);
         return (
           <Card key={String(card.key)} className="border-border/80 bg-card/60">
             <CardHeader className="pb-2 pt-4 px-4">
@@ -83,11 +76,6 @@ export function PatchKitSummaryCards({ summary }: { summary: PatchKitSummary }) 
               {card.explanation && (
                 <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
                   {card.explanation}
-                </p>
-              )}
-              {footnote && (
-                <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-electric/80">
-                  {footnote}
                 </p>
               )}
             </CardContent>

@@ -313,7 +313,7 @@ function buildSummary(
   ]);
 }
 
-function toToolReport<T>(result: AnalyzerRunResult<T>): ToolRunReport {
+function toToolReport<T>(result: AnalyzerRunResult<T>, command: string): ToolRunReport {
   return {
     status: result.status,
     source: result.source,
@@ -322,28 +322,28 @@ function toToolReport<T>(result: AnalyzerRunResult<T>): ToolRunReport {
     diagnosticId: result.error ? `diag_${result.source ?? "tool"}_${result.status}` : undefined,
     error: result.error,
     durationMs: result.durationMs,
+    command,
+    exitCode:
+      result.status === "ok" && result.sourceMode === "native"
+        ? 0
+        : result.status === "failed"
+          ? 1
+          : null,
   };
 }
 
 export function normalizeFindings(input: NormalizeInput): FindingsPayload {
-  const knipSource: FindingSource =
-    input.knipResult.status === "fallback" ? "knip_fallback" : "knip";
-  const jscpdSource: FindingSource =
-    input.jscpdResult.status === "fallback" ? "jscpd_fallback" : "jscpd";
-  const madgeSource: FindingSource =
-    input.madgeResult.status === "fallback" ? "madge_fallback" : "madge";
-
   const knipFindings =
-    input.knip && input.knipResult.status !== "failed"
-      ? fromKnip(input.knip, input.rootDir, knipSource)
+    input.knip && input.knipResult.status === "ok"
+      ? fromKnip(input.knip, input.rootDir, "knip")
       : { files: [], dependencies: [], exports: [] };
   const duplicates =
-    input.jscpd && input.jscpdResult.status !== "failed"
-      ? fromJscpd(input.jscpd, input.rootDir, jscpdSource)
+    input.jscpd && input.jscpdResult.status === "ok"
+      ? fromJscpd(input.jscpd, input.rootDir, "jscpd")
       : [];
   const orphans =
-    input.madge && input.madgeResult.status !== "failed"
-      ? fromMadge(input.madge, input.rootDir, madgeSource)
+    input.madge && input.madgeResult.status === "ok"
+      ? fromMadge(input.madge, input.rootDir, "madge")
       : [];
   const slopSignals = fromSlop(input.slop);
 
@@ -385,9 +385,9 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
     ]),
     artifacts: { findingsJson: true },
     rawToolReports: {
-      knip: toToolReport(input.knipResult),
-      jscpd: toToolReport(input.jscpdResult),
-      madge: toToolReport(input.madgeResult),
+      knip: toToolReport(input.knipResult, "node node_modules/knip/bin/knip.js --reporter json --no-progress"),
+      jscpd: toToolReport(input.jscpdResult, "node node_modules/jscpd/run-jscpd.js"),
+      madge: toToolReport(input.madgeResult, "node scripts/madge-scan.mjs"),
     },
   };
 

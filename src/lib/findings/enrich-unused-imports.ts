@@ -8,6 +8,7 @@ import {
   type UnusedImportCandidate,
 } from "@/lib/findings/unused-import-detector";
 import { clampConfidence, severityForAction } from "@/lib/findings/confidence";
+import { hashSource } from "@/lib/execution/transform-audit";
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -46,6 +47,18 @@ async function collectSourceFiles(rootDir: string): Promise<string[]> {
   return results.sort();
 }
 
+function parseImportKind(line: string): "named" | "default" | "namespace" {
+  const text = line.replace(/\s+/g, " ").trim();
+  if (/^import\s+\*\s+as\s+/.test(text)) return "namespace";
+  if (/^import\s+\w+\s+from/.test(text)) return "default";
+  return "named";
+}
+
+function parseImportSource(line: string): string | undefined {
+  const match = line.match(/from\s+(['"])([^'"]+)\1/);
+  return match?.[2];
+}
+
 export async function enrichFindingsWithUnusedImports(
   rootDir: string,
   existing: Finding[]
@@ -71,14 +84,18 @@ export async function enrichFindingsWithUnusedImports(
       const key = `${c.file}::${c.symbol}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      imports.push(unusedImportFinding(c));
+      imports.push(await unusedImportFinding(rootDir, c));
     }
   }
   return imports;
 }
 
-function unusedImportFinding(c: UnusedImportCandidate): Finding {
+async function unusedImportFinding(rootDir: string, c: UnusedImportCandidate): Promise<Finding> {
   const action = "safe_candidate" as const;
+  const full = path.join(rootDir, c.file);
+  const source = await fs.readFile(full, "utf8");
+  const importKind = parseImportKind(c.line);
+  const importSource = parseImportSource(c.line);
   return {
     id: `fnd_${nanoid(10)}`,
     type: "unused_import",
@@ -89,11 +106,19 @@ function unusedImportFinding(c: UnusedImportCandidate): Finding {
     severity: severityForAction(action),
     action,
     reason: `Import for "${c.symbol}" is not used in ${c.file}.`,
-    source: "heuristic",
-    sourceMode: "heuristic",
+    source: "repodiet_import",
+    sourceMode: "native",
     evidence: {
-      summary: "Deterministic unused import detection",
-      signals: [`symbol=${c.symbol}`, `importLine=${c.line}`, `line=${c.lineNumber}`],
+      summary: "RepoDiet import analyzer evidence",
+      signals: [
+        `symbol=${c.symbol}`,
+        `importLine=${c.line}`,
+        `line=${c.lineNumber}`,
+        `importKind=${importKind}`,
+        ...(importSource ? [`importSource=${importSource}`] : []),
+        `originalFileHash=${hashSource(source)}`,
+        "parserEvidence=repodiet_import_analyzer",
+      ],
     },
   };
 }

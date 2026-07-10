@@ -16,6 +16,7 @@ export type FindingSource =
   | "jscpd"
   | "madge"
   | "heuristic"
+  | "repodiet_import"
   | "knip_fallback"
   | "jscpd_fallback"
   | "madge_fallback";
@@ -41,6 +42,32 @@ export interface ToolRunReport {
   diagnosticId?: string;
   error?: string;
   durationMs: number;
+  command?: string;
+  exitCode?: number | null;
+}
+
+export type AnalyzerAvailabilityStatus = "available" | "unavailable" | "failed";
+
+export interface AnalyzerState {
+  status: AnalyzerAvailabilityStatus;
+  tool: "knip" | "jscpd" | "madge" | "repodiet_heuristics";
+  version?: string;
+  command?: string;
+  exitCode?: number | null;
+  durationMs: number;
+  errorSummary?: string;
+}
+
+export interface FindingsDiagnostics {
+  fallbackFindings: Finding[];
+  excludedCounts: {
+    duplicates: number;
+    unusedFiles: number;
+    unusedDependencies: number;
+    unusedExports: number;
+    orphans: number;
+  };
+  analyzerErrors: Partial<Record<"knip" | "jscpd" | "madge", string>>;
 }
 
 export interface AnalyzerRunResult<T> {
@@ -95,6 +122,8 @@ export interface Finding {
 
 export interface FindingsSummary {
   totalFindings: number;
+  /** Verified findings from successful analyzers only (strict mode). */
+  verifiedFindings?: number;
   duplicateClusters: number;
   unusedFiles: number;
   unusedDependencies: number;
@@ -106,9 +135,14 @@ export interface FindingsSummary {
   actionableFixes?: number;
   detectedFindings?: number;
   doNotTouch: number;
+  /** @deprecated Use eligibleFindings */
   supportedFixes?: number;
+  /** @deprecated Use eligibleFindings */
   transformerCompatible?: number;
+  /** @deprecated Use transformedFindings */
   dryRunPassed?: number;
+  eligibleFindings?: number;
+  transformedFindings?: number;
   reviewRequiredFindings?: number;
   protectedFindings?: number;
 }
@@ -152,6 +186,13 @@ export interface FindingsPayload {
     jscpd: ToolRunReport;
     madge: ToolRunReport;
   };
+  analyzerStates?: {
+    knip: AnalyzerState;
+    jscpd: AnalyzerState;
+    madge: AnalyzerState;
+    heuristics: AnalyzerState;
+  };
+  diagnostics?: FindingsDiagnostics;
 }
 
 export interface KnipRawReport {

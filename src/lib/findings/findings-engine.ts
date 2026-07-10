@@ -11,6 +11,7 @@ import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
 import { enrichFindingsWithPreflight } from "./enrich-preflight";
 import { countActionableFindings } from "./actionability-signals";
 import { enrichPayloadLifecycle } from "./enrich-lifecycle";
+import { applyStrictFindingsMode, isKnipAvailable } from "./strict-findings";
 import {
   deduplicateCanonicalFindings,
   filterFindingsToPrimaryRoot,
@@ -81,10 +82,9 @@ export async function runFindingsEngine(
       mode: isDemoRepoUrl(repoUrl) ? "demo" : "live",
     });
 
-    const importFindings = await enrichFindingsWithUnusedImports(
-      workspace.rootDir,
-      flattenPayloadFindings(payload)
-    );
+    const importFindings = isKnipAvailable(payload.rawToolReports)
+      ? await enrichFindingsWithUnusedImports(workspace.rootDir, flattenPayloadFindings(payload))
+      : [];
     if (importFindings.length > 0) {
       payload = {
         ...payload,
@@ -133,12 +133,15 @@ export async function runFindingsEngine(
     }
     payload = rebuildFindingsPayload(payload, canonicalFlat);
 
+    payload = applyStrictFindingsMode(payload);
     payload = enrichPayloadLifecycle(payload);
 
+    const verifiedFlat = flattenPayloadFindings(payload);
     payload.summary = {
-      ...buildSummaryFromFindings(flattenPayloadFindings(payload)),
-      actionableFixes: countActionableFindings(flattenPayloadFindings(payload)),
-      detectedFindings: flattenPayloadFindings(payload).length,
+      ...buildSummaryFromFindings(verifiedFlat),
+      verifiedFindings: verifiedFlat.length,
+      actionableFixes: countActionableFindings(verifiedFlat),
+      detectedFindings: verifiedFlat.length,
     };
 
     payload.repositoryModel = {

@@ -1,7 +1,7 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import {
-  countTransformerCompatible,
+  countEligibleFindings,
   isActionableFinding,
 } from "@/lib/findings/actionability-signals";
 import { flattenFindings } from "@/lib/findings/client";
@@ -10,6 +10,7 @@ export type QuickCleanupWorkflowState =
   | "inactive"
   | "running"
   | "blocked"
+  | "failed"
   | "complete";
 
 export interface WorkflowGates {
@@ -17,7 +18,11 @@ export interface WorkflowGates {
   projectRootConfirmed: boolean;
   findingsUnlocked: boolean;
   findingsReady: boolean;
+  eligibleFindingsCount: number;
+  transformedFindingsCount: number;
+  /** @deprecated */
   transformerCompatibleCount: number;
+  /** @deprecated */
   dryRunPassedCount: number;
   supportedFixCount: number;
   quickCleanupAvailable: boolean;
@@ -44,9 +49,9 @@ export function computeWorkflowGates(input: {
   const projectRootConfirmed = input.projectRootConfirmed ?? true;
 
   const flat = findings ? flattenFindings(findings) : [];
-  const transformerCompatibleCount =
-    findings?.summary.transformerCompatible ?? countTransformerCompatible(flat);
-  const dryRunPassedCount = findings?.summary.dryRunPassed ?? 0;
+  const eligibleFindingsCount =
+    findings?.summary.eligibleFindings ?? countEligibleFindings(flat);
+  const transformedFindingsCount = findings?.summary.transformedFindings ?? 0;
   const supportedFixCount = flat.filter(isActionableFinding).length;
   const findingsReady = Boolean(findings);
   const findingsUnlocked = input.scanComplete && projectRootConfirmed;
@@ -56,8 +61,6 @@ export function computeWorkflowGates(input: {
   const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const patchKitReady = Boolean(patchKit?.id);
-  const transformerCompatible =
-    patchKit?.summary.transformerCompatible ?? transformerCompatibleCount;
 
   let quickCleanupState: QuickCleanupWorkflowState = "inactive";
   if (input.quickCleanupRunning) {
@@ -65,8 +68,8 @@ export function computeWorkflowGates(input: {
   } else if (patchKitReady) {
     if (verifiedChanges > 0 && patchValidated) {
       quickCleanupState = "complete";
-    } else if (transformerCompatible > 0) {
-      quickCleanupState = "blocked";
+    } else if (generatedChanges === 0 && validatedChanges === 0) {
+      quickCleanupState = "failed";
     } else {
       quickCleanupState = "blocked";
     }
@@ -77,10 +80,12 @@ export function computeWorkflowGates(input: {
     projectRootConfirmed,
     findingsUnlocked,
     findingsReady,
-    transformerCompatibleCount,
-    dryRunPassedCount,
+    eligibleFindingsCount,
+    transformedFindingsCount,
+    transformerCompatibleCount: eligibleFindingsCount,
+    dryRunPassedCount: transformedFindingsCount,
     supportedFixCount,
-    quickCleanupAvailable: findingsReady && transformerCompatibleCount > 0,
+    quickCleanupAvailable: findingsReady && eligibleFindingsCount > 0,
     quickCleanupState,
     patchKitReady,
     generatedChanges,
@@ -91,8 +96,8 @@ export function computeWorkflowGates(input: {
     cleanupPrAvailable:
       patchKitReady &&
       patchValidated &&
-      (verifiedChanges > 0 || (patchKit?.summary.safeDeleteCandidates ?? 0) > 0) &&
-      (generatedChanges > 0 || validatedChanges > 0),
+      verifiedChanges > 0 &&
+      generatedChanges > 0,
     reportOnlyPrAvailable: findingsReady,
   };
 }

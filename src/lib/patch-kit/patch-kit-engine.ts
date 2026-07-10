@@ -6,13 +6,14 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 import type { Finding, FindingsPayload } from "@/lib/findings/types";
-import { isTransformerCompatible } from "@/lib/findings/actionability-signals";
+import { isEligibleFinding } from "@/lib/findings/actionability-signals";
 import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
 import { QUICK_CLEANUP_RETAINED_FIX_LIMIT } from "@/lib/execution/constants";
 import {
   auditTransformerCompatibleFindings,
   formatBlockerBreakdown,
   summarizeBlockers,
+  summarizeCleanupAttempts,
   type CandidateAuditRecord,
 } from "@/lib/execution/candidate-lifecycle";
 import { classifyFindingsForPatch } from "./safe-delete-classifier";
@@ -209,7 +210,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     await copyRepoBaseline(workspace.rootDir, baselineRoot);
 
     const flatFindings = flattenFindings(findings);
-    const compatibleFindings = flatFindings.filter(isTransformerCompatible);
+    const compatibleFindings = flatFindings.filter(isEligibleFinding);
 
     const { audits: preflightAudits } = await auditTransformerCompatibleFindings(
       workspace.rootDir,
@@ -217,7 +218,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
 
     const transformerCompatible = compatibleFindings.length;
-    const dryRunPassed = preflightAudits.filter((a) => a.dryRunSucceeded).length;
+    const dryRunPassed = preflightAudits.filter((a) => a.contentChanged).length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
       maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
@@ -317,12 +318,19 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
     const reportMd = generateReport(findings, buckets, context);
 
+    const attemptStats = summarizeCleanupAttempts(candidateAudits);
+
     const id = `patchkit_${nanoid(12)}`;
     const summary = {
       safeDeleteCandidates: safeDeleteCount,
       supportedFixesDetected: transformerCompatible,
       transformerCompatible,
       dryRunPassed,
+      eligibleFindings: attemptStats.eligible,
+      attemptedTransformations: attemptStats.attempted,
+      noopTransformations: attemptStats.noop,
+      failedTransformations: attemptStats.failed,
+      notAttempted: attemptStats.notAttempted,
       generatedChanges,
       validatedChanges,
       verifiedChanges,

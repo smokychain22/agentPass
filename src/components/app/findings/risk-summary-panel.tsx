@@ -7,22 +7,22 @@ import type { FindingsSummary } from "@/lib/findings/types";
 export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
   const rows = [
     {
-      label: "Detected",
-      value: summary.detectedFindings ?? summary.totalFindings,
+      label: "Verified findings",
+      value: summary.verifiedFindings ?? summary.totalFindings,
       level: "review" as const,
-      hint: "Signals from analyzers and heuristics — not yet transformed",
+      hint: "Only findings from successful native analyzers",
     },
     {
-      label: "Transformer-compatible",
-      value: summary.transformerCompatible ?? summary.supportedFixes ?? 0,
+      label: "Eligible for cleanup",
+      value: summary.eligibleFindings ?? summary.transformerCompatible ?? 0,
       level: "neutral" as const,
-      hint: "A fix plugin claims it understands this finding type",
+      hint: "Preflight confirmed: transformer produced a real content change",
     },
     {
-      label: "Dry-run successful",
-      value: summary.dryRunPassed ?? 0,
+      label: "Transformed",
+      value: summary.transformedFindings ?? summary.dryRunPassed ?? 0,
       level: "safe" as const,
-      hint: "Plugin produced a real source modification at the scanned commit",
+      hint: "Source modifications confirmed at scan time — not no-ops",
     },
     {
       label: "Review required",
@@ -40,7 +40,7 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
 
   return (
     <Panel variant="elevated" padding="md">
-      <p className="ds-label mb-3">Risk classification</p>
+      <p className="ds-label mb-3">Evidence classification</p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {rows.map((row) => (
           <div key={row.label} className="rounded border border-border/40 bg-card/40 p-3">
@@ -52,13 +52,6 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
           </div>
         ))}
       </div>
-      <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-        Lifecycle: detected ({summary.detectedFindings ?? summary.totalFindings}) →
-        transformer-compatible ({summary.transformerCompatible ?? summary.supportedFixes ?? 0}) →
-        dry-run ({summary.dryRunPassed ?? 0}) · review (
-        {summary.reviewRequiredFindings ?? summary.reviewRequired}) · protected (
-        {summary.protectedFindings ?? summary.doNotTouch})
-      </p>
     </Panel>
   );
 }

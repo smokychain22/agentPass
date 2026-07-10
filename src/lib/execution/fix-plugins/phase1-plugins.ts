@@ -88,9 +88,9 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
     supports(finding) {
       if (finding.type !== "unused_import") return false;
       if (!baseEligible(finding)) return false;
-      if (UNTRUSTED_SOURCE_MODES.has(finding.sourceMode) && !hasActionablePreflight(finding)) {
-        return false;
-      }
+      if (finding.sourceMode === "fallback") return false;
+      if (finding.source !== "knip" && finding.source !== "repodiet_import") return false;
+      if (!hasActionablePreflight(finding)) return false;
       const hasEvidence = finding.evidence.signals.some(
         (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
       );
@@ -137,13 +137,10 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
       if (isProtectedPath(file)) return false;
       if (finding.action !== "safe_candidate") return false;
       if (finding.confidence < MIN_CONFIDENCE) return false;
-      if (finding.sourceMode === "fallback") {
-        return isTempFilePath(file);
-      }
-      if (UNTRUSTED_SOURCE_MODES.has(finding.sourceMode) && finding.type !== "ai_slop_signal") {
-        return false;
-      }
-      return true;
+      if (finding.sourceMode === "fallback") return false;
+      if (finding.type === "unused_file" && finding.source !== "knip") return false;
+      if (finding.type === "ai_slop_signal") return hasActionablePreflight(finding);
+      return hasActionablePreflight(finding);
     },
     eligibilityReason(finding) {
       const file = finding.files[0];

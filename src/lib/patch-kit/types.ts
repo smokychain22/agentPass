@@ -27,10 +27,17 @@ export interface TransformerResult {
 
 export interface PatchKitSummary {
   safeDeleteCandidates: number;
-  /** @deprecated Use transformerCompatible */
+  /** @deprecated Use eligibleFindings */
   supportedFixesDetected?: number;
+  /** @deprecated Use eligibleFindings */
   transformerCompatible: number;
+  /** @deprecated Use transformedFindings */
   dryRunPassed: number;
+  eligibleFindings?: number;
+  attemptedTransformations?: number;
+  noopTransformations?: number;
+  failedTransformations?: number;
+  notAttempted?: number;
   generatedChanges: number;
   validatedChanges: number;
   verifiedChanges: number;

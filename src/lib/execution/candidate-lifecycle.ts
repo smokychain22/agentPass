@@ -3,7 +3,7 @@ import type { FixPreflightResult } from "./fix-preflight";
 import type { Phase1PluginId } from "./fix-plugins/phase1-plugins";
 import { isPhase1AutoFix } from "./fix-plugins/phase1-plugins";
 import { isActionablePreflight } from "./fix-preflight";
-import { isActionableFinding, isDryRunPassed, isTransformerCompatible } from "@/lib/findings/actionability-signals";
+import { isActionableFinding, isEligibleFinding, isTransformedFinding } from "@/lib/findings/actionability-signals";
 
 export type BlockerCode =
   | "source_not_found"
@@ -32,6 +32,11 @@ export interface CandidateAuditRecord {
   strategyIds: string[];
   sourceFound: boolean;
   sourceHashMatched: boolean;
+  /** Transformer was invoked against source. */
+  transformAttempted: boolean;
+  /** Modified content differs from original. */
+  contentChanged: boolean;
+  /** @deprecated Use transformAttempted */
   dryRunSucceeded: boolean;
   proposedSourceChanged: boolean;
   proposedDiffGenerated: boolean;
@@ -69,7 +74,8 @@ export function auditFromPreflight(
   preflight: FixPreflightResult,
   projectRoot?: string
 ): CandidateAuditRecord {
-  const dryRunSucceeded = isActionablePreflight(preflight);
+  const contentChanged = isActionablePreflight(preflight);
+  const transformAttempted = preflight.strategyAvailable && preflight.sourceLocated;
   return {
     findingId: finding.id,
     findingType: finding.type,
@@ -79,24 +85,32 @@ export function auditFromPreflight(
     strategyIds: preflight.strategyId ? [preflight.strategyId] : [],
     sourceFound: preflight.sourceLocated,
     sourceHashMatched: preflight.sourceHashMatches,
-    dryRunSucceeded,
+    transformAttempted,
+    contentChanged,
+    dryRunSucceeded: contentChanged,
     proposedSourceChanged: preflight.dryRunChangedSource,
     proposedDiffGenerated: preflight.diffGenerated,
     patchValidated: false,
     verificationSupported: preflight.requiredVerificationSupported,
     retained: false,
-    blockerCode: dryRunSucceeded ? undefined : blockerCodeFromPreflight(preflight),
+    blockerCode: contentChanged ? undefined : blockerCodeFromPreflight(preflight),
     blockerMessage: preflight.blocker,
   };
 }
 
 export function countLifecycleStages(findings: Finding[]): {
+  eligibleFindings: number;
+  transformedFindings: number;
   transformerCompatible: number;
   dryRunPassed: number;
 } {
+  const eligible = findings.filter(isEligibleFinding).length;
+  const transformed = findings.filter(isTransformedFinding).length;
   return {
-    transformerCompatible: findings.filter(isTransformerCompatible).length,
-    dryRunPassed: findings.filter(isDryRunPassed).length,
+    eligibleFindings: eligible,
+    transformedFindings: transformed,
+    transformerCompatible: eligible,
+    dryRunPassed: transformed,
   };
 }
 
@@ -109,24 +123,57 @@ export function summarizeBlockers(audits: CandidateAuditRecord[]): Record<Blocke
   return counts;
 }
 
+export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
+  eligible: number;
+  attempted: number;
+  generatedChanges: number;
+  noop: number;
+  failed: number;
+  notAttempted: number;
+  validated: number;
+  verified: number;
+} {
+  const eligible = audits.length;
+  const attempted = audits.filter((a) => a.transformAttempted).length;
+  const generatedChanges = audits.filter((a) => a.retained && a.contentChanged).length;
+  const noop = audits.filter(
+    (a) => a.transformAttempted && !a.contentChanged && a.blockerCode === "transform_noop"
+  ).length;
+  const failed = audits.filter(
+    (a) => a.transformAttempted && !a.contentChanged && a.blockerCode !== "transform_noop"
+  ).length;
+  const notAttempted = audits.filter((a) => !a.transformAttempted).length;
+  const validated = audits.filter((a) => a.retained && a.patchValidated).length;
+  return {
+    eligible,
+    attempted,
+    generatedChanges,
+    noop,
+    failed,
+    notAttempted,
+    validated,
+    verified: validated,
+  };
+}
+
 export function formatBlockerBreakdown(audits: CandidateAuditRecord[]): string {
-  const compatible = audits.length;
-  const dryRunOk = audits.filter((a) => a.dryRunSucceeded).length;
-  const retained = audits.filter((a) => a.retained).length;
+  const stats = summarizeCleanupAttempts(audits);
   const blockers = summarizeBlockers(audits);
   const parts: string[] = [
-    `${compatible} transformer-compatible finding(s)`,
-    `${dryRunOk} dry-run successful`,
-    `${retained} verified change(s) retained`,
+    `Eligible findings: ${stats.eligible}`,
+    `Attempted: ${stats.attempted}`,
+    `Changes generated: ${stats.generatedChanges}`,
+    `No-op: ${stats.noop}`,
+    `Failed: ${stats.failed}`,
+    `Not attempted: ${stats.notAttempted}`,
+    `Validated: ${stats.validated}`,
+    `Verified: ${stats.verified}`,
   ];
   const blockerParts = Object.entries(blockers)
     .filter(([, n]) => n > 0)
     .map(([code, n]) => `${n} ${code.replace(/_/g, " ")}`);
   if (blockerParts.length) {
     parts.push(blockerParts.join("; "));
-  }
-  if (retained === 0) {
-    parts.push("0 verified changes retained");
   }
   return parts.join(". ") + ".";
 }
@@ -141,7 +188,7 @@ export async function auditTransformerCompatibleFindings(
   const preflights = new Map<string, FixPreflightResult>();
   const audits: CandidateAuditRecord[] = [];
 
-  for (const finding of findings.filter(isTransformerCompatible)) {
+  for (const finding of findings.filter(isEligibleFinding)) {
     if (!isPhase1StructuralCandidate(finding)) {
       audits.push({
         findingId: finding.id,
@@ -152,6 +199,8 @@ export async function auditTransformerCompatibleFindings(
         strategyIds: [],
         sourceFound: false,
         sourceHashMatched: false,
+        transformAttempted: false,
+        contentChanged: false,
         dryRunSucceeded: false,
         proposedSourceChanged: false,
         proposedDiffGenerated: false,
@@ -173,4 +222,4 @@ export async function auditTransformerCompatibleFindings(
   return { audits, preflights };
 }
 
-export { isPhase1AutoFix, isTransformerCompatible, isDryRunPassed, isActionableFinding };
+export { isPhase1AutoFix, isEligibleFinding as isTransformerCompatible, isTransformedFinding as isDryRunPassed, isActionableFinding };

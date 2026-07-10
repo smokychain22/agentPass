@@ -208,7 +208,7 @@ export async function runFreeCleanupCore(
     selected = auto.length > 0 ? auto.slice(0, maxFixes) : picked.slice(0, maxFixes);
     mode = auto.length > 0 ? "auto_fix" : "review_plan";
   } else {
-    const compatiblePool = all.filter(isPhase1AutoFix);
+    const compatiblePool = all.filter(isActionableFinding);
     if (compatiblePool.length > 0) {
       selected = compatiblePool;
       mode = "auto_fix";
@@ -326,8 +326,7 @@ export async function runFreeCleanupCore(
       preflightPool
     );
     const actionableCandidates = repreflighted.filter(isActionableFinding);
-    const loopCandidates =
-      actionableCandidates.length > 0 ? actionableCandidates : repreflighted;
+    const loopCandidates = actionableCandidates;
 
     const attemptLimit = options?.quickPatchMode
       ? QUICK_CLEANUP_ATTEMPT_LIMIT
@@ -394,6 +393,8 @@ export async function runFreeCleanupCore(
           strategyIds: [],
           sourceFound: false,
           sourceHashMatched: false,
+          transformAttempted: false,
+          contentChanged: false,
           dryRunSucceeded: false,
           proposedSourceChanged: false,
           proposedDiffGenerated: false,
