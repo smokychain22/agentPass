@@ -201,11 +201,18 @@ function recordAttempt(
 export async function runOneFixAtATimeLoop(
   rootDir: string,
   findings: Finding[],
-  options?: { maxFixes?: number; maxAttempts?: number; stateMachine?: CleanupRunStateMachine }
+  options?: {
+    maxFixes?: number;
+    maxAttempts?: number;
+    stateMachine?: CleanupRunStateMachine;
+    /** Skip npm typecheck/lint/build — retain fixes after diff validation only. */
+    verificationLevel?: "full" | "diff_only";
+  }
 ): Promise<OneFixLoopResult> {
   const sm = options?.stateMachine ?? new CleanupRunStateMachine();
   const maxFixes = options?.maxFixes ?? FREE_RETAINED_FIX_LIMIT;
   const maxAttempts = options?.maxAttempts ?? FREE_CANDIDATE_ATTEMPT_LIMIT;
+  const diffOnly = options?.verificationLevel === "diff_only";
 
   sm.emit("modeling_repository");
   sm.emit("ranking_candidates");
@@ -293,8 +300,11 @@ export async function runOneFixAtATimeLoop(
       sm.emit("generating_change", `${plugin.id}:${strategy.id}`);
 
       try {
-        sm.emit("running_baseline", finding.id);
-        const baseline = await runProfiledBaselineChecks(rootDir, plugin.id, "baseline");
+        let baseline: Awaited<ReturnType<typeof runProfiledBaselineChecks>> | undefined;
+        if (!diffOnly) {
+          sm.emit("running_baseline", finding.id);
+          baseline = await runProfiledBaselineChecks(rootDir, plugin.id, "baseline");
+        }
 
         const applied = await applyPhase1Fix(rootDir, finding, strategy.id);
 
@@ -383,10 +393,37 @@ export async function runOneFixAtATimeLoop(
           continue;
         }
 
+        if (diffOnly) {
+          sm.emit("retaining_change", finding.id);
+          retainedDiffs.push(applied.unifiedDiff);
+          allChanged.push(...applied.changedPaths);
+          retainedCount += 1;
+          candidateSucceeded = true;
+          recordAttempt(decisions, attempts, attemptCount, {
+            finding,
+            status: "retained",
+            reason: "Fix retained after diff validation (quick patch mode).",
+            pluginId: plugin.id,
+            strategyId: strategy.id,
+            expectedFix: applied.expectedFix,
+            eligibilityReason,
+            unifiedDiff: applied.unifiedDiff,
+            changedPaths: applied.changedPaths,
+            originalSources: applied.originalSources,
+            modifiedSources: applied.modifiedSources,
+            patchValidation,
+            checks,
+            comparison: [],
+            rollbackStatus: "not_needed",
+          });
+          attemptCount += 1;
+          break;
+        }
+
         sm.emit("running_targeted_checks");
         sm.emit("running_repository_checks");
         const after = await runProfiledBaselineChecks(rootDir, plugin.id, "after");
-        const baselineReport = buildProfiledReport(baseline, after);
+        const baselineReport = buildProfiledReport(baseline!, after);
         const introduced = baselineReport.compared.filter(
           (c) => c.outcome === "new_failure_introduced"
         );

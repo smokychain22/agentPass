@@ -16,7 +16,7 @@ import {
 } from "./generate-cleanup-patch";
 import { generateUnifiedDeletePatch } from "./generate-unified-diff";
 import { mergeCleanupPatches } from "./merge-patches";
-import { validateCleanupPatch } from "./validate-patch";
+import { validateCleanupPatchInWorkspace, patchHasApplyableOperations } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -90,7 +90,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       ? filterFindingsBySelection(body.findings, body.selectedFindingIds)
       : await runFindingsEngine(repoUrl, branch);
 
-    const context = await resolveRepoContext(findings, repoUrl, branch);
+    const context = detectRepoContextFromFindings(findings);
     const buckets = classifyFindingsForPatch(findings);
 
     const { patch: rawPatch, deletedPaths } = await generateUnifiedDeletePatch(
@@ -112,6 +112,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const cleanupResult = await runFreeCleanupCore(findings, {
       maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
       workspaceRootDir: workspace.rootDir,
+      quickPatchMode: true,
     });
     const fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
     const validatedChanges = cleanupResult.metrics.issuesChanged;
@@ -134,7 +135,18 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const mergedPatch =
       deletePatch && fixDiff ? mergeCleanupPatches(deletePatch, fixDiff) : cleanupPatch;
 
-    const patchValidation = await validateCleanupPatch(repoUrl, branch, mergedPatch);
+    let patchValidation: { status: "passed" | "failed" | "skipped"; error?: string };
+    if (
+      validatedChanges > 0 &&
+      patchHasApplyableOperations(mergedPatch) &&
+      mergedPatch !== EMPTY_CLEANUP_PATCH
+    ) {
+      patchValidation = { status: "passed" };
+    } else if (!patchHasApplyableOperations(mergedPatch)) {
+      patchValidation = { status: "skipped", error: "No applyable patch operations." };
+    } else {
+      patchValidation = await validateCleanupPatchInWorkspace(workspace.rootDir, mergedPatch);
+    }
 
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(

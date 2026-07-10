@@ -175,7 +175,13 @@ function selectedPayload(payload: FindingsPayload, selected: Finding[]): Finding
 
 export async function runFreeCleanupCore(
   payload: FindingsPayload,
-  options?: { findingIds?: string[]; maxFixes?: number; workspaceRootDir?: string }
+  options?: {
+    findingIds?: string[];
+    maxFixes?: number;
+    workspaceRootDir?: string;
+    /** Fast path for Quick Cleanup: skip npm checks and redundant preflight. */
+    quickPatchMode?: boolean;
+  }
 ): Promise<FreeCleanupResult> {
   const maxFixes = options?.maxFixes ?? FREE_CLEANUP_LIMIT;
   const all = flattenAll(payload);
@@ -304,19 +310,39 @@ export async function runFreeCleanupCore(
       (f) => isPhase1StructuralCandidate(f) || isAutoFixEligible(f)
     );
     const preflightPool = structuralPool.length > 0 ? structuralPool : selected;
-    const { findings: repreflighted } = await enrichFindingsWithPreflight(
-      rootDir,
-      preflightPool
+    const alreadyPreflighted = preflightPool.every(
+      (f) =>
+        !isPhase1StructuralCandidate(f) ||
+        f.evidence.signals.some((s) => s.startsWith("classification="))
     );
-    const actionableCandidates = repreflighted.filter(isActionableFinding);
-    const loopCandidates =
-      actionableCandidates.length > 0 ? actionableCandidates : repreflighted;
+
+    let loopCandidates = preflightPool;
+    if (!options?.quickPatchMode || !alreadyPreflighted) {
+      const { findings: repreflighted } = await enrichFindingsWithPreflight(
+        rootDir,
+        preflightPool
+      );
+      const actionableCandidates = repreflighted.filter(isActionableFinding);
+      loopCandidates =
+        actionableCandidates.length > 0 ? actionableCandidates : repreflighted;
+    } else {
+      loopCandidates = preflightPool.filter(isActionableFinding);
+      if (loopCandidates.length === 0) {
+        loopCandidates = preflightPool;
+      }
+    }
 
     const loop = await runOneFixAtATimeLoop(rootDir, loopCandidates, {
       maxFixes,
       maxAttempts: FREE_CANDIDATE_ATTEMPT_LIMIT,
       stateMachine: sm,
+      verificationLevel: options?.quickPatchMode ? "diff_only" : "full",
     });
+    if (options?.quickPatchMode) {
+      limitations.push(
+        "Quick Cleanup used diff-only validation for speed. Run Verify for full typecheck/lint/build checks."
+      );
+    }
     const { added, removed } = countDiffLines(loop.unifiedDiff);
 
     const allChecks = loop.attempts.flatMap((a) => a.checks);
