@@ -273,8 +273,8 @@ function PanelCTA({
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-2">Deterministic cleanup available</p>
         <p className="mb-4 text-sm text-muted-foreground">
-          RepoDiet found {supportedCount} supported fix
-          {supportedCount === 1 ? "" : "es"} with registered transformers. Continue to Quick Cleanup
+          RepoDiet found {supportedCount} detected supported finding
+          {supportedCount === 1 ? "" : "s"} with registered transformers. Continue to Quick Cleanup
           to generate real repository-specific changes, validate the patch, and verify integrity.
         </p>
         <Button asChild>
