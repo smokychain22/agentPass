@@ -54,11 +54,11 @@ export function accessCopyForState(
       };
     case "wrong_account":
       return {
-        title: "Use the repository owner's GitHub account",
+        title: "Install RepoDiet on the repository owner account",
         body: ownerLogin
-          ? `This repository belongs to ${ownerLogin}. Install RepoDiet using that GitHub account.`
-          : "Install RepoDiet using the GitHub account that owns this repository.",
-        primaryAction: `Grant Access to ${repoName}`,
+          ? `This repository belongs to ${ownerLogin}. RepoDiet must be installed by that repository owner.`
+          : "RepoDiet must be installed by the GitHub account that owns this repository.",
+        primaryAction: ownerLogin ? `Install RepoDiet as ${ownerLogin}` : "Install RepoDiet",
       };
     case "state_expired":
       return {

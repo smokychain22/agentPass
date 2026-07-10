@@ -95,9 +95,23 @@ export async function startGitHubGrantAccess(input: {
     credentials: "include",
     body: JSON.stringify(input),
   });
-  const json = (await res.json()) as { ok: boolean; installUrl?: string; error?: string };
+  const json = (await res.json()) as {
+    ok: boolean;
+    installUrl?: string;
+    error?: string;
+    repositoryFullName?: string;
+    repositoryOwner?: string;
+    installationOwner?: string;
+    requiresRepositoryOwnerInstall?: boolean;
+  };
   if (!json.ok || !json.installUrl) {
     throw new Error(json.error ?? "Could not start GitHub installation.");
+  }
+  if (
+    json.installUrl.includes("github.com/settings/apps") ||
+    !json.installUrl.includes("/installations/new")
+  ) {
+    throw new Error("Invalid GitHub installation URL. Please refresh and try again.");
   }
   window.location.href = json.installUrl;
 }

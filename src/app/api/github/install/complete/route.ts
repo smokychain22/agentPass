@@ -15,6 +15,7 @@ import {
 } from "@/lib/github-app/installations";
 import { saveRepoInstallBinding } from "@/lib/github-app/install-flow-store";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
+import { githubOwnersMatch } from "@/lib/github-app/repository";
 
 export const runtime = "nodejs";
 
@@ -49,16 +50,22 @@ export async function GET(request: NextRequest) {
 
   try {
     const session = await fetchInstallationSession(installationId);
+    const ownerMatches = githubOwnersMatch(session.accountLogin, flow.owner);
     const hasAccess = await installationIncludesRepository(
       installationId,
       flow.owner,
       flow.repo
     );
 
+    const sessionKey = await buildSessionKey(request);
+
+    if (!ownerMatches) {
+      await consumeInstallFlowState(stateToken);
+      return redirectWithError("wrong_account", flow.returnPath, flow.scanId);
+    }
+
     await saveInstallationSession(session);
     await clearInstallSessionId();
-
-    const sessionKey = await buildSessionKey(request);
 
     if (!hasAccess) {
       await consumeInstallFlowState(stateToken);

@@ -26,6 +26,8 @@ export interface GitHubPreflightResult {
   appInstalled: boolean;
   installationId?: number;
   installationOwner?: string;
+  repositoryOwner: string;
+  requiresRepositoryOwnerInstall: boolean;
   repositoryAuthorized: boolean;
   permissionsVerified: boolean;
   repositoryAccessible: boolean;

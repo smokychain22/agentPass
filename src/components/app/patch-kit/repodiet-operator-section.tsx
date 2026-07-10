@@ -75,6 +75,12 @@ function githubErrorMessage(code: string | null, repoName: string): string | nul
       return accessCopyForState("repo_not_granted", repoName).body;
     case "state_expired":
       return accessCopyForState("state_expired", repoName).body;
+    case "wrong_account":
+      return accessCopyForState(
+        "wrong_account",
+        repoName,
+        repoName.includes("/") ? repoName.split("/")[0] : undefined
+      ).body;
     case "state_reused":
     case "invalid_state":
       return "Your GitHub connection request was invalid. Try again.";
@@ -248,6 +254,11 @@ export function RepoDietOperatorSection({
   const needsManualToken =
     !useDemoAuth && !repositoryReady && showAdvancedToken && githubToken.trim();
 
+  const repositoryOwner = preflight?.repositoryOwner ?? repositoryFullName.split("/")[0] ?? "";
+  const installationOwner = preflight?.installationOwner ?? githubStatus?.account?.login;
+  const requiresOwnerInstall = Boolean(preflight?.requiresRepositoryOwnerInstall);
+  const githubAppInstalled = Boolean(githubStatus?.connected && githubStatus?.account?.login);
+
   const accessMessages =
     preflight?.messages ??
     accessCopyForState(
@@ -321,10 +332,29 @@ export function RepoDietOperatorSection({
                   <div className="space-y-2">
                     <p className="text-sm font-medium">{accessMessages.title}</p>
                     <p className="text-sm text-muted-foreground">{accessMessages.body}</p>
-                    {githubAccountConnected && (
+                    <div className="rounded-md border border-border/70 bg-background/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                      <p>
+                        <span className="text-foreground">Target repository:</span>{" "}
+                        <span className="font-mono">{repositoryFullName}</span>
+                      </p>
+                      {githubAppInstalled && installationOwner && (
+                        <p>
+                          <span className="text-foreground">Current installation:</span>{" "}
+                          <span className="font-mono">{installationOwner}</span>
+                        </p>
+                      )}
+                      {requiresOwnerInstall && repositoryOwner && (
+                        <p>
+                          RepoDiet must be installed on{" "}
+                          <span className="font-mono text-foreground">{repositoryOwner}</span> to
+                          open pull requests for this repository.
+                        </p>
+                      )}
+                    </div>
+                    {githubAppInstalled && !requiresOwnerInstall && (
                       <p className="text-xs text-muted-foreground">
-                        GitHub account connected
-                        {githubStatus?.account?.login ? ` · ${githubStatus.account.login}` : ""}
+                        RepoDiet installed on{" "}
+                        <span className="font-mono">{installationOwner}</span>
                       </p>
                     )}
                   </div>

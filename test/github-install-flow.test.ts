@@ -8,10 +8,12 @@ import {
   consumeInstallFlowState,
   generateInstallStateToken,
   resolveInstallFlowState,
+  createInstallFlow,
 } from "../src/lib/github-app/install-flow";
+import { getGitHubAppInstallUrl } from "../src/lib/github-app/config";
 import { parseInstallCallbackParams } from "../src/lib/github-app/install-callback";
 import { accessCopyForState } from "../src/lib/github-app/access-states";
-import { parseRepositoryFullName } from "../src/lib/github-app/repository";
+import { parseRepositoryFullName, requiresRepositoryOwnerInstall } from "../src/lib/github-app/repository";
 import { setDurableRecord } from "../src/lib/store/durable-store";
 
 async function test(name: string, fn: () => void | Promise<void>) {
@@ -21,6 +23,33 @@ async function test(name: string, fn: () => void | Promise<void>) {
   } catch (err) {
     console.error(`  ✗ ${name}`);
     throw err;
+  }
+}
+
+async function withGitHubAppEnv<T>(fn: () => T | Promise<T>): Promise<T> {
+  const previous = {
+    GITHUB_APP_ID: process.env.GITHUB_APP_ID,
+    GITHUB_APP_CLIENT_ID: process.env.GITHUB_APP_CLIENT_ID,
+    GITHUB_APP_CLIENT_SECRET: process.env.GITHUB_APP_CLIENT_SECRET,
+    GITHUB_APP_PRIVATE_KEY_BASE64: process.env.GITHUB_APP_PRIVATE_KEY_BASE64,
+    GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG,
+  };
+
+  process.env.GITHUB_APP_ID = "12345";
+  process.env.GITHUB_APP_CLIENT_ID = "test-client-id";
+  process.env.GITHUB_APP_CLIENT_SECRET = "test-client-secret";
+  process.env.GITHUB_APP_PRIVATE_KEY_BASE64 = Buffer.from(
+    "-----BEGIN RSA PRIVATE KEY-----\nTEST\n-----END RSA PRIVATE KEY-----"
+  ).toString("base64");
+  process.env.GITHUB_APP_SLUG = "repodiet-operator";
+
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 }
 
@@ -84,6 +113,60 @@ async function run() {
     assert.match(copy.primaryAction ?? "", /Grant Access to Circle-Arc-Net/);
     assert.doesNotMatch(copy.body, /Settings/i);
     assert.doesNotMatch(copy.body, /Installed GitHub Apps/i);
+  });
+
+  await test("wrong_account copy directs repository owner install", () => {
+    const copy = accessCopyForState("wrong_account", "Circle-Arc-Net", "Ibrahimmovic");
+    assert.match(copy.body, /belongs to Ibrahimmovic/i);
+    assert.match(copy.primaryAction ?? "", /Install RepoDiet as Ibrahimmovic/);
+    assert.doesNotMatch(copy.primaryAction ?? "", /Grant Access/i);
+  });
+
+  await test("requiresRepositoryOwnerInstall detects owner mismatch", () => {
+    assert.equal(
+      requiresRepositoryOwnerInstall({
+        repositoryOwner: "Ibrahimmovic",
+        installationOwner: "smokychain22",
+      }),
+      true
+    );
+    assert.equal(
+      requiresRepositoryOwnerInstall({
+        repositoryOwner: "smokychain22",
+        installationOwner: "smokychain22",
+      }),
+      false
+    );
+    assert.equal(
+      requiresRepositoryOwnerInstall({
+        repositoryOwner: "Ibrahimmovic",
+      }),
+      false
+    );
+  });
+
+  await test("public install URL always uses installations/new", async () => {
+    await withGitHubAppEnv(() => {
+      const token = generateInstallStateToken();
+      const url = getGitHubAppInstallUrl(token);
+      assert.match(url, /\/installations\/new\?state=/);
+      assert.doesNotMatch(url, /settings\/apps/);
+      assert.doesNotMatch(url, /\/installations\/\d+$/);
+    });
+  });
+
+  await test("createInstallFlow never returns developer settings URL", async () => {
+    await withGitHubAppEnv(async () => {
+      const { installUrl } = await createInstallFlow({
+        sessionKey: "sess-dev",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        scanId: "scan_test",
+        returnPath: "/app?tab=patch",
+      });
+      assert.match(installUrl, /\/installations\/new\?state=/);
+      assert.doesNotMatch(installUrl, /settings\/apps/);
+      assert.doesNotMatch(installUrl, /\/installations\/\d+(\?|$)/);
+    });
   });
 
   await test("repository full name parser", () => {

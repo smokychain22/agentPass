@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
+import { accessCopyForState } from "@/lib/github-app/access-states";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
-import { createInstallFlow, getConfigureInstallationUrl } from "@/lib/github-app/install-flow";
-import { parseRepositoryFullName } from "@/lib/github-app/repository";
+import { createInstallFlow } from "@/lib/github-app/install-flow";
+import {
+  parseRepositoryFullName,
+  requiresRepositoryOwnerInstall,
+} from "@/lib/github-app/repository";
 import { readInstallationSession } from "@/lib/github-app/session";
 
 export const runtime = "nodejs";
@@ -28,8 +32,12 @@ export async function POST(request: Request) {
     );
   }
 
+  let repositoryOwner: string;
+  let repo: string;
   try {
-    parseRepositoryFullName(body.repositoryFullName);
+    const parsed = parseRepositoryFullName(body.repositoryFullName);
+    repositoryOwner = parsed.owner;
+    repo = parsed.repo;
   } catch (err) {
     return NextResponse.json(
       {
@@ -45,21 +53,31 @@ export async function POST(request: Request) {
     body.returnPath?.trim() ||
     `/app?tab=patch${body.scanId ? `&scanId=${encodeURIComponent(body.scanId)}` : ""}`;
 
+  const repositoryFullName = body.repositoryFullName.trim();
   const { installUrl, stateToken } = await createInstallFlow({
     sessionKey,
-    repositoryFullName: body.repositoryFullName.trim(),
+    repositoryFullName,
     scanId: body.scanId,
     returnPath,
   });
 
   const existing = await readInstallationSession();
-  const url =
-    existing && body.repositoryFullName
-      ? getConfigureInstallationUrl(existing.installationId, stateToken)
-      : installUrl;
+  const installationOwner = existing?.accountLogin;
+  const ownerMismatch = requiresRepositoryOwnerInstall({
+    repositoryOwner,
+    installationOwner,
+  });
+  const accessState = ownerMismatch ? "wrong_account" : existing ? "installed_repo_missing" : "not_installed";
+  const messages = accessCopyForState(accessState, repo, repositoryOwner);
 
   return NextResponse.json({
     ok: true,
-    installUrl: url,
+    installUrl,
+    stateToken,
+    repositoryFullName,
+    repositoryOwner,
+    installationOwner,
+    requiresRepositoryOwnerInstall: ownerMismatch,
+    messages,
   });
 }

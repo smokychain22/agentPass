@@ -9,7 +9,10 @@ import {
 import { isGitHubAppConfigured } from "./config";
 import { readInstallationSession } from "./session";
 import { readRepoInstallBinding } from "./install-flow-store";
-import { parseRepositoryFullName } from "./repository";
+import {
+  parseRepositoryFullName,
+  requiresRepositoryOwnerInstall,
+} from "./repository";
 
 export type { GitHubPreflightResult } from "./types";
 
@@ -127,14 +130,21 @@ export async function runGitHubPreflight(
     suspended,
   });
 
+  const ownerMismatch = requiresRepositoryOwnerInstall({
+    repositoryOwner: owner,
+    installationOwner,
+  });
+
   const { accessCopyForState } = await import("./access-states");
-  const messages = accessCopyForState(accessState, input.repositoryFullName, owner);
+  const messages = accessCopyForState(accessState, repo, owner);
 
   return {
     githubUserConnected: Boolean(session),
     appInstalled: Boolean(session),
     installationId: session?.installationId,
     installationOwner,
+    repositoryOwner: owner,
+    requiresRepositoryOwnerInstall: ownerMismatch,
     repositoryAuthorized: repositoryAccessible && permissionsVerified && !suspended,
     permissionsVerified,
     repositoryAccessible,

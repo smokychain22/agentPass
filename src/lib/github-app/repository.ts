@@ -20,3 +20,15 @@ export function repositoryFullNameFromUrl(repoUrl: string): string | null {
   if (!parsed) return null;
   return `${parsed.owner}/${parsed.repo}`;
 }
+
+export function githubOwnersMatch(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+export function requiresRepositoryOwnerInstall(input: {
+  repositoryOwner: string;
+  installationOwner?: string;
+}): boolean {
+  if (!input.installationOwner) return false;
+  return !githubOwnersMatch(input.repositoryOwner, input.installationOwner);
+}
