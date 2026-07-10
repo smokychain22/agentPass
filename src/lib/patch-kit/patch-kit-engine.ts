@@ -25,8 +25,8 @@ import {
   EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
 import { generateUnifiedDeletePatch, copyRepoBaseline } from "./generate-unified-diff";
-import { mergeCleanupPatches, ensurePatchTrailingNewline } from "./merge-patches";
-import { validateCleanupPatchInWorkspace, patchHasApplyableOperations } from "./validate-patch";
+import { mergeCleanupPatches, ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, dedupeConsolidatedEdits } from "./merge-patches";
+import { validateCleanupPatchInWorkspace, patchHasApplyableOperations, extractApplyablePatch } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -237,7 +237,6 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cleanupResult.candidateAudits
     );
 
-    const fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
     const retainedFixCount = cleanupResult.metrics.issuesChanged;
 
     const alreadyDeleted = new Set(
@@ -261,8 +260,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cleanupResult.fixLoop.attempts.filter(
         (a) => Object.keys(a.modifiedSources ?? {}).length > 0
       ).length + safeDeleteCount;
-    const validatedChanges = retainedFixCount + safeDeleteCount;
-    const verifiedChanges = validatedChanges;
+    let validatedChanges = retainedFixCount + safeDeleteCount;
+    let verifiedChanges = validatedChanges;
     const changedPaths = [
       ...cleanupResult.proof.changedFiles,
       ...deletedPaths.filter((p) => !cleanupResult.proof.changedFiles.includes(p)),
@@ -281,8 +280,22 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         validatedEdits.push({ path: rel, content });
       }
     }
+    const consolidatedEdits = dedupeConsolidatedEdits(validatedEdits);
 
     const deletePatch = safeDeleteCount > 0 ? rawPatch : "";
+    let fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
+
+    if (consolidatedEdits.length > 0) {
+      const consolidated = await buildConsolidatedPatchFromEdits(
+        baselineRoot,
+        consolidatedEdits,
+        workspace.workDir
+      );
+      if (consolidated.patch && consolidated.patch !== EMPTY_CLEANUP_PATCH) {
+        fixDiff = extractApplyablePatch(consolidated.patch);
+      }
+    }
+
     const cleanupPatch = finalizeCleanupPatch(
       safeDeleteCount,
       deletePatch,
@@ -307,6 +320,14 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       const validateRoot = path.join(workspace.workDir, "patch-validate");
       await copyRepoBaseline(baselineRoot, validateRoot);
       patchValidation = await validateCleanupPatchInWorkspace(validateRoot, mergedPatch);
+    }
+
+    if (patchValidation.status !== "passed") {
+      validatedChanges = 0;
+      verifiedChanges = 0;
+    } else if (consolidatedEdits.length > 0 || safeDeleteCount > 0) {
+      validatedChanges = retainedFixCount + safeDeleteCount;
+      verifiedChanges = validatedChanges;
     }
 
     const filesEdited = changedPaths.length;

@@ -11,14 +11,16 @@ const cards: {
 }[] = [
   {
     key: "verifiedChanges",
-    title: "Verified changes",
-    explanation: "Changes retained after transformation, diff generation, and validation.",
+    title: "Retained in workspace",
+    explanation:
+      "Individual fixes applied in RepoDiet's isolated copy. Your GitHub repository is unchanged until you create a cleanup PR.",
     getValue: (s) => s.verifiedChanges ?? 0,
   },
   {
     key: "validatedChanges",
-    title: "Validated changes",
-    explanation: "Source edits that passed patch validation against the scanned commit.",
+    title: "Patch-validated changes",
+    explanation:
+      "Combined cleanup patch passed git apply --check against the scanned commit. Required before Create Cleanup PR.",
     getValue: (s) => s.validatedChanges ?? 0,
   },
   {

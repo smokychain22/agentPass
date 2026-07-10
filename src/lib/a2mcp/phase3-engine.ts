@@ -440,7 +440,7 @@ export async function executeCreateCleanupPrPhase3(
   const cleanupProof =
     patchKit?.cleanupProof ??
     (patchKit?.summary
-      ? (await import("@/lib/execution/proof-ladder")).buildCleanupProof({
+      ? buildCleanupProof({
           findings,
           summary: patchKit.summary,
           verificationStatus:

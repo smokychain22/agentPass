@@ -234,12 +234,20 @@ export function PatchKitTab() {
               variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
               message={
                 patchKit.patchValidation.status === "passed"
-                  ? `Patch validated with git apply --check (${patchKit.summary.validatedChanges} change(s), ${patchKit.summary.safeDeleteCandidates} file deletion(s)).`
-                  : `Patch validation: ${patchKit.patchValidation.status}${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}`
+                  ? `Patch validated with git apply --check (${patchKit.summary.validatedChanges} change(s), ${patchKit.summary.safeDeleteCandidates} file deletion(s)). Click Create Cleanup PR to apply these edits on a review branch — your main branch is not modified until you merge.`
+                  : `Patch validation failed${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}. ${patchKit.summary.generatedChanges} source edit(s) were generated in an isolated workspace but the combined patch could not be applied safely. Click Regenerate Quick Cleanup to retry.`
               }
               dismissible={false}
             />
           )}
+          {patchKit.patchValidation?.status === "passed" &&
+            patchKit.summary.generatedChanges > 0 && (
+              <FeedbackBanner
+                variant="info"
+                message="Changes exist only in RepoDiet's isolated workspace until you create a cleanup pull request. No files on GitHub have been modified yet."
+                dismissible={false}
+              />
+            )}
           {patchKit.summary.generatedChanges === 0 && patchKit.summary.validatedChanges === 0 && (
               <FeedbackBanner
                 variant="warning"
