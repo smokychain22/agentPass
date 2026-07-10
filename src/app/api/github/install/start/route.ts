@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
 import { accessCopyForState } from "@/lib/github-app/access-states";
+import { resolveRepodietReturnUrl } from "@/lib/github-app/app-base-url";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { createInstallFlow } from "@/lib/github-app/install-flow";
 import {
@@ -68,9 +69,11 @@ export async function POST(request: Request) {
   }
 
   const sessionKey = await buildSessionKey(request);
-  const returnPath =
-    body.returnPath?.trim() ||
-    `/app?tab=patch${body.scanId ? `&scanId=${encodeURIComponent(body.scanId)}` : ""}`;
+  const defaultReturnPath = resolveRepodietReturnUrl(
+    "/app?tab=patch",
+    body.scanId
+  ).toString();
+  const returnPath = body.returnPath?.trim() || defaultReturnPath;
 
   const repositoryFullName = body.repositoryFullName.trim();
 

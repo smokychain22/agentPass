@@ -28,6 +28,7 @@ import {
   fetchGitHubConnectionStatus,
   fetchGitHubPreflight,
   runCreateCleanupPr,
+  repodietInstallReturnPath,
   startGitHubGrantAccess,
   repositoryFullNameFromRepoUrl,
   type CleanupPrMode,
@@ -83,7 +84,7 @@ function githubErrorMessage(code: string | null, repoName: string): string | nul
       ).body;
     case "state_reused":
     case "invalid_state":
-      return "Your GitHub connection request was invalid. Try again.";
+      return "GitHub finished installation, but RepoDiet could not verify the request. Click Install RepoDiet again. Use https://skillswap-skillswap7.vercel.app (not a preview URL) for the most reliable install flow.";
     case "invalid_setup_action":
     case "missing_setup_action":
       return "GitHub returned an unexpected installation action. Try again.";
@@ -197,13 +198,10 @@ export function RepoDietOperatorSection({
     setGrantLoading(true);
     setError(null);
     try {
-      const returnPath = `/app?tab=patch${
-        findings?.scanId ? `&scanId=${encodeURIComponent(findings.scanId)}` : ""
-      }`;
       await startGitHubGrantAccess({
         repositoryFullName,
         scanId: findings?.scanId,
-        returnPath,
+        returnPath: repodietInstallReturnPath(findings?.scanId),
       });
     } catch (err) {
       setGrantLoading(false);

@@ -6,10 +6,13 @@ import {
 } from "../src/lib/github-app/install-flow-store";
 import {
   consumeInstallFlowState,
-  generateInstallStateToken,
   resolveInstallFlowState,
   createInstallFlow,
 } from "../src/lib/github-app/install-flow";
+import {
+  createSignedInstallState,
+  verifySignedInstallState,
+} from "../src/lib/github-app/install-signed-state";
 import { parseInstallCallbackParams } from "../src/lib/github-app/install-callback";
 import { accessCopyForState } from "../src/lib/github-app/access-states";
 import { parseRepositoryFullName, requiresRepositoryOwnerInstall } from "../src/lib/github-app/repository";
@@ -76,22 +79,63 @@ async function run() {
     assert.notEqual(hashInstallState(token), hashInstallState("other"));
   });
 
-  await test("install flow record expires", () => {
-    const token = generateInstallStateToken();
-    const record = createInstallFlowRecord({
-      stateToken: token,
-      sessionKey: "sess",
-      repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-      owner: "Ibrahimmovic",
-      repo: "Circle-Arc-Net",
-      returnPath: "/app?tab=patch",
+  await test("signed install state round-trips without durable store", async () => {
+    await withGitHubAppEnv(() => {
+      const stateToken = createSignedInstallState({
+        sessionKey: "sess-signed",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        owner: "Ibrahimmovic",
+        repo: "Circle-Arc-Net",
+        scanId: "scan_signed",
+        returnPath: "https://skillswap-skillswap7.vercel.app/app?tab=patch&scanId=scan_signed",
+      });
+
+      const payload = verifySignedInstallState(stateToken);
+      assert.ok(payload);
+      assert.equal(payload?.repositoryFullName, "Ibrahimmovic/Circle-Arc-Net");
+      assert.equal(payload?.returnPath.includes("skillswap-skillswap7.vercel.app"), true);
     });
-    assert.equal(isInstallFlowExpired(record), false);
-    const expired = {
-      ...record,
-      expiresAt: new Date(Date.now() - 1000).toISOString(),
-    };
-    assert.equal(isInstallFlowExpired(expired), true);
+  });
+
+  await test("resolve install flow accepts signed state without durable record", async () => {
+    await withGitHubAppEnv(async () => {
+      const stateToken = createSignedInstallState({
+        sessionKey: "sess-signed-2",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        owner: "Ibrahimmovic",
+        repo: "Circle-Arc-Net",
+        returnPath: "https://skillswap-skillswap7.vercel.app/app?tab=patch",
+      });
+
+      const resolved = await resolveInstallFlowState(stateToken);
+      assert.equal(resolved.ok, true);
+    });
+  });
+
+  await test("install flow record expires", async () => {
+    await withGitHubAppEnv(() => {
+      const token = createSignedInstallState({
+        sessionKey: "sess",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        owner: "Ibrahimmovic",
+        repo: "Circle-Arc-Net",
+        returnPath: "/app?tab=patch",
+      });
+      const record = createInstallFlowRecord({
+        stateToken: token,
+        sessionKey: "sess",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        owner: "Ibrahimmovic",
+        repo: "Circle-Arc-Net",
+        returnPath: "/app?tab=patch",
+      });
+      assert.equal(isInstallFlowExpired(record), false);
+      const expired = {
+        ...record,
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      };
+      assert.equal(isInstallFlowExpired(expired), true);
+    });
   });
 
   await test("resolve install flow rejects invalid state", async () => {
@@ -101,24 +145,33 @@ async function run() {
   });
 
   await test("resolve install flow accepts valid state once", async () => {
-    const token = generateInstallStateToken();
-    const record = createInstallFlowRecord({
-      stateToken: token,
-      sessionKey: "sess-1",
-      repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-      owner: "Ibrahimmovic",
-      repo: "Circle-Arc-Net",
-      returnPath: "/app?tab=patch&scanId=scan_1",
+    await withGitHubAppEnv(async () => {
+      const token = createSignedInstallState({
+        sessionKey: "sess-1",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        owner: "Ibrahimmovic",
+        repo: "Circle-Arc-Net",
+        scanId: "scan_1",
+        returnPath: "/app?tab=patch&scanId=scan_1",
+      });
+      const record = createInstallFlowRecord({
+        stateToken: token,
+        sessionKey: "sess-1",
+        repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
+        owner: "Ibrahimmovic",
+        repo: "Circle-Arc-Net",
+        returnPath: "/app?tab=patch&scanId=scan_1",
+      });
+      await setDurableRecord("github_installations", `flow:${record.stateHash}`, record);
+
+      const first = await resolveInstallFlowState(token);
+      assert.equal(first.ok, true);
+
+      await consumeInstallFlowState(token);
+      const second = await resolveInstallFlowState(token);
+      assert.equal(second.ok, false);
+      if (!second.ok) assert.equal(second.reason, "reused");
     });
-    await setDurableRecord("github_installations", `flow:${record.stateHash}`, record);
-
-    const first = await resolveInstallFlowState(token);
-    assert.equal(first.ok, true);
-
-    await consumeInstallFlowState(token);
-    const second = await resolveInstallFlowState(token);
-    assert.equal(second.ok, false);
-    if (!second.ok) assert.equal(second.reason, "reused");
   });
 
   await test("installed_repo_missing copy is non-technical", () => {
@@ -213,7 +266,7 @@ async function run() {
   });
 
   await test("state is preserved for new installation flow", () => {
-    const stateToken = generateInstallStateToken();
+    const stateToken = "opaque-state-token";
     const url = buildNewInstallationUrl("repodiet-operator", stateToken);
     assert.equal(installRedirectUrlHasState(url, stateToken), true);
     assertValidGitHubInstallRedirectUrl(url, "install");

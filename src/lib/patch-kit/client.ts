@@ -59,6 +59,17 @@ export interface GitHubConnectionStatus {
 
 export type GitHubPreflightResult = import("@/lib/github-app/types").GitHubPreflightResult;
 
+const REPODIET_APP_FALLBACK = "https://skillswap-skillswap7.vercel.app";
+
+export function repodietInstallReturnPath(scanId?: string): string {
+  const origin =
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
+    (typeof window !== "undefined" ? window.location.origin : REPODIET_APP_FALLBACK);
+  const params = new URLSearchParams({ tab: "patch" });
+  if (scanId) params.set("scanId", scanId);
+  return `${origin}/app?${params.toString()}`;
+}
+
 export async function fetchGitHubConnectionStatus(): Promise<GitHubConnectionStatus> {
   const res = await fetch("/api/github/status", { credentials: "include" });
   const json = (await res.json()) as GitHubConnectionStatus;

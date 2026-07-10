@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import {
   createInstallFlowRecord,
   hashInstallState,
@@ -14,10 +13,12 @@ import {
   savePendingInstallCookie,
 } from "./install-flow-cookie";
 import { parseRepositoryFullName } from "./repository";
-
-export function generateInstallStateToken(): string {
-  return randomBytes(32).toString("base64url");
-}
+import {
+  createSignedInstallState,
+  installFlowRecordFromSignedState,
+  isSignedInstallStateToken,
+  verifySignedInstallState,
+} from "./install-signed-state";
 
 export async function createInstallFlow(input: {
   sessionKey: string;
@@ -26,7 +27,14 @@ export async function createInstallFlow(input: {
   returnPath: string;
 }): Promise<{ stateToken: string }> {
   const { owner, repo } = parseRepositoryFullName(input.repositoryFullName);
-  const stateToken = generateInstallStateToken();
+  const stateToken = createSignedInstallState({
+    sessionKey: input.sessionKey,
+    repositoryFullName: input.repositoryFullName,
+    owner,
+    repo,
+    scanId: input.scanId,
+    returnPath: input.returnPath,
+  });
   const record = createInstallFlowRecord({
     stateToken,
     sessionKey: input.sessionKey,
@@ -41,20 +49,35 @@ export async function createInstallFlow(input: {
   return { stateToken };
 }
 
+async function resolveFromLegacyStores(
+  stateToken: string
+): Promise<InstallFlowRecord | null> {
+  const stateHash = hashInstallState(stateToken);
+  const record = await readInstallFlow(stateHash);
+  if (record) return record;
+  return resolveInstallFlowFromCookie(stateToken);
+}
+
 export async function resolveInstallFlowState(
   stateToken: string
 ): Promise<
   | { ok: true; record: InstallFlowRecord }
   | { ok: false; reason: "invalid" | "expired" | "reused" }
 > {
-  const stateHash = hashInstallState(stateToken);
-  const record = await readInstallFlow(stateHash);
-  if (!record) {
-    const cookieRecord = await resolveInstallFlowFromCookie(stateToken);
-    if (!cookieRecord) return { ok: false, reason: "invalid" };
-    if (isInstallFlowExpired(cookieRecord)) return { ok: false, reason: "expired" };
-    return { ok: true, record: cookieRecord };
+  const signedPayload = verifySignedInstallState(stateToken);
+  if (signedPayload) {
+    const record = installFlowRecordFromSignedState(stateToken, signedPayload);
+    const durable = await readInstallFlow(record.stateHash);
+    if (durable?.usedAt) return { ok: false, reason: "reused" };
+    return { ok: true, record };
   }
+
+  if (isSignedInstallStateToken(stateToken)) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const record = await resolveFromLegacyStores(stateToken);
+  if (!record) return { ok: false, reason: "invalid" };
   if (record.usedAt) return { ok: false, reason: "reused" };
   if (isInstallFlowExpired(record)) return { ok: false, reason: "expired" };
   return { ok: true, record };
