@@ -6,10 +6,15 @@ export type JobStatus = "queued" | "running" | "complete" | "failed";
 
 export type ScanJobStage =
   | "queued"
-  | "fetching_repo"
-  | "extracting"
-  | "framework_detection"
-  | "file_tree"
+  | "validating_repository"
+  | "resolving_branch"
+  | "downloading_archive"
+  | "extracting_archive"
+  | "inventorying_files"
+  | "detecting_frameworks"
+  | "detecting_project_roots"
+  | "detecting_protected_paths"
+  | "persisting_scan"
   | "complete";
 
 export type FindingsJobStage =

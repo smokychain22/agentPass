@@ -13,6 +13,7 @@ import { fetchRepoZip, fetchBranchCommitSha, RepoFetchError } from "@/lib/github
 import { assertZipSize } from "@/lib/a2mcp/limits";
 import { unzipRepoToDir } from "@/lib/scanner/unzip-repo";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
+import type { ScanJobStage } from "@/lib/jobs/types";
 
 export interface RepoInfo {
   owner: string;
@@ -33,16 +34,20 @@ async function prepareFromGithubZip(
   owner: string,
   name: string,
   branchInput: string | undefined,
-  url: string
+  url: string,
+  onStage?: (stage: ScanJobStage) => void
 ): Promise<RepoWorkspace> {
   const workspace = await createScanWorkspace("repo");
 
   try {
+    onStage?.("resolving_branch");
     const { buffer, branch } = await fetchRepoZip(owner, name, branchInput);
+    onStage?.("downloading_archive");
     assertZipSize(buffer.byteLength);
     const commitSha = (await fetchBranchCommitSha(owner, name, branch)) ?? undefined;
 
     await fs.writeFile(workspace.archivePath, Buffer.from(buffer));
+    onStage?.("extracting_archive");
     const rootDir = await unzipRepoToDir(buffer, workspace.extractPath);
 
     const repo: RepoInfo = { owner, name, branch, url, commitSha };
@@ -100,7 +105,8 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
 
 export async function prepareRepoWorkspace(
   repoUrl: string,
-  branchInput?: string
+  branchInput?: string,
+  onStage?: (stage: ScanJobStage) => void
 ): Promise<RepoWorkspace> {
   if (isDemoRepoUrl(repoUrl)) {
     return prepareLocalDemoWorkspace();
@@ -119,6 +125,7 @@ export async function prepareRepoWorkspace(
     parsed.owner,
     parsed.repo,
     branchOverride,
-    buildRepoUrl(parsed.owner, parsed.repo)
+    buildRepoUrl(parsed.owner, parsed.repo),
+    onStage
   );
 }

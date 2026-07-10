@@ -26,13 +26,18 @@ import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState, classifyScanError } from "@/components/app/ui/error-state";
 import { ScanEmptyIllustration } from "@/components/app/ui/scan-empty-illustration";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
+import { ProjectRootSelectionPanel } from "@/components/app/scan/project-root-selection-panel";
 
 const LOADING_PHASES: ScanPhase[] = [
   "validating",
+  "resolving",
   "fetching",
   "unpacking",
+  "inventorying",
   "detecting",
-  "scanning",
+  "detecting_roots",
+  "detecting_protected",
+  "persisting",
   "pending",
 ];
 
@@ -45,7 +50,7 @@ function phaseIndex(phase: ScanPhase | "idle"): number {
 export function ScanTab() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { session, setScanComplete, resetSession } = useAppSession();
+  const { session, setScanComplete, setSelectedProjectRoot, resetSession } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [repoUrl, setRepoUrl] = useState(session.repoUrl || "");
   const [branch, setBranch] = useState(session.branch || "");
@@ -272,12 +277,18 @@ export function ScanTab() {
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button asChild>
-                  <Link href="/app?tab=findings">
-                    Review Findings
-                    <ArrowRight className="h-4 w-4" aria-hidden />
-                  </Link>
-                </Button>
+                {session.projectRootConfirmed ? (
+                  <Button asChild>
+                    <Link href="/app?tab=findings">
+                      Run Findings
+                      <ArrowRight className="h-4 w-4" aria-hidden />
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button disabled title="Select an application root below">
+                    Run Findings
+                  </Button>
+                )}
                 <Button variant="secondary" onClick={() => resetSession()}>
                   Run Another Scan
                 </Button>
@@ -306,6 +317,16 @@ export function ScanTab() {
               accent="neutral"
             />
           </div>
+
+          {displayResult.repositoryModel?.needsProjectRootSelection && (
+            <ProjectRootSelectionPanel
+              scan={displayResult}
+              selectedRoot={
+                session.projectRootConfirmed ? session.selectedProjectRoot : undefined
+              }
+              onSelect={setSelectedProjectRoot}
+            />
+          )}
 
           {displayResult.repositoryModel && (
             <Panel variant="elevated" padding="md">

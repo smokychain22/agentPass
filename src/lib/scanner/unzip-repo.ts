@@ -16,11 +16,21 @@ function resolveSafePath(destDir: string, relativePath: string): string | null {
   if (!isSafeRelativePath(relativePath)) return null;
   const resolved = path.resolve(destDir, relativePath);
   const destResolved = path.resolve(destDir);
+  const relative = path.relative(destResolved, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
   if (!resolved.startsWith(destResolved + path.sep) && resolved !== destResolved) {
     return null;
   }
   return resolved;
 }
+
+/** @internal Test hooks for ZIP path validation. */
+export const __zipSecurityTestHooks = {
+  isSafeRelativePath,
+  resolveSafePath,
+};
 
 export async function unzipRepoToDir(
   buffer: ArrayBuffer,

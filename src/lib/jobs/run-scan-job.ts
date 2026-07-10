@@ -9,19 +9,22 @@ export async function runScanJob(
   jobId: string,
   repoUrl: string,
   branch: string | undefined,
-  ownerKey: string
+  ownerKey: string,
+  options?: { selectedProjectRoot?: string }
 ): Promise<ScanJob> {
   const setStage = (stage: ScanJobStage) => {
     void updateJob(jobId, { status: "running", stage });
   };
 
   try {
-    setStage("fetching_repo");
-    setStage("extracting");
-    setStage("framework_detection");
-    setStage("file_tree");
+    setStage("validating_repository");
+    setStage("resolving_branch");
 
-    const scan = await runBasicScan(repoUrl, branch);
+    const scan = await runBasicScan(repoUrl, branch, setStage, {
+      selectedProjectRoot: options?.selectedProjectRoot,
+    });
+
+    setStage("persisting_scan");
     await storeAppScan(scan.id, { payload: scan, ownerKey });
 
     return (await updateJob(jobId, {

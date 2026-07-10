@@ -2,17 +2,22 @@ import type { ScanPhase } from "@/lib/scanner/types";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { pollJob, startJobOrResult } from "@/lib/jobs/client";
+import { STAGE_TO_PHASE } from "@/lib/scan-stage-map";
 
 export type ScanResult = Omit<ScanPayload, "id">;
 
 export type { ScanPhase, ScanPayload };
 
 export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
-  { phase: "validating", label: "Validating URL" },
-  { phase: "fetching", label: "Fetching repository" },
-  { phase: "unpacking", label: "Unpacking ZIP" },
-  { phase: "detecting", label: "Detecting framework" },
-  { phase: "scanning", label: "Scanning file tree" },
+  { phase: "validating", label: "Validating repository URL" },
+  { phase: "resolving", label: "Resolving branch and commit" },
+  { phase: "fetching", label: "Downloading repository archive" },
+  { phase: "unpacking", label: "Extracting archive safely" },
+  { phase: "inventorying", label: "Inventorying files" },
+  { phase: "detecting", label: "Detecting frameworks and package managers" },
+  { phase: "detecting_roots", label: "Detecting project roots" },
+  { phase: "detecting_protected", label: "Detecting protected paths" },
+  { phase: "persisting", label: "Persisting scan metadata" },
   { phase: "complete", label: "Complete" },
 ];
 
@@ -33,23 +38,17 @@ export function isValidGitHubUrl(input: string): boolean {
   }
 }
 
-const STAGE_TO_PHASE: Record<string, ScanPhase> = {
-  queued: "validating",
-  fetching_repo: "fetching",
-  extracting: "unpacking",
-  framework_detection: "detecting",
-  file_tree: "scanning",
-  complete: "complete",
-};
+const STAGE_TO_PHASE_CLIENT = STAGE_TO_PHASE;
 
 function mapStageToPhase(stage: string): ScanPhase | "idle" {
-  return STAGE_TO_PHASE[stage] ?? "scanning";
+  return STAGE_TO_PHASE_CLIENT[stage] ?? "inventorying";
 }
 
 export async function runScan(
   repoUrl: string,
   branch: string | undefined,
-  onPhase: (phase: ScanPhase | "idle") => void
+  onPhase: (phase: ScanPhase | "idle") => void,
+  options?: { selectedProjectRoot?: string }
 ): Promise<ScanPayload> {
   onPhase("validating");
 
@@ -57,6 +56,7 @@ export async function runScan(
     const started = await startJobOrResult<ScanPayload>("/api/jobs/scan", {
       repoUrl: repoUrl.trim(),
       branch: branch?.trim() || undefined,
+      selectedProjectRoot: options?.selectedProjectRoot,
     });
 
     if (started.result) {

@@ -41,7 +41,7 @@ export async function runFindingsEngine(
   repoUrl: string,
   branch?: string,
   onStage?: FindingsStageCallback,
-  options?: { scanId?: string }
+  options?: { scanId?: string; projectRoot?: string }
 ): Promise<FindingsPayload> {
   onStage?.("fetching_repo");
   const workspace = await prepareRepoWorkspace(repoUrl, branch);
@@ -118,7 +118,8 @@ export async function runFindingsEngine(
       flattenPayloadFindings(payload),
       repositoryModel
     );
-    const primaryRoot = selectPrimaryProjectRoot(repositoryModel);
+    const primaryRoot =
+      options?.projectRoot ?? selectPrimaryProjectRoot(repositoryModel);
     const mirrorPrefixes = projectRootPrefixes(repositoryModel);
     if (mirrorPrefixes.length > 0) {
       canonicalFlat = filterFindingsToPrimaryRoot(canonicalFlat, primaryRoot, mirrorPrefixes);

@@ -56,7 +56,8 @@ export async function runFindingsAnalysis(
   repoUrl: string,
   branch: string | undefined,
   onPhase: (phase: FindingsPhase) => void,
-  scanId?: string
+  scanId?: string,
+  projectRoot?: string
 ): Promise<FindingsPayload> {
   onPhase("preparing");
 
@@ -65,6 +66,7 @@ export async function runFindingsAnalysis(
       repoUrl: repoUrl.trim(),
       branch: branch?.trim() || undefined,
       scanId: scanId?.trim() || undefined,
+      projectRoot: projectRoot?.trim() || undefined,
     });
 
     if (started.result) {

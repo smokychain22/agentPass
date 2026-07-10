@@ -26,10 +26,11 @@ function AppWorkspace() {
     () =>
       computeWorkflowGates({
         scanComplete: session.scanComplete,
+        projectRootConfirmed: session.projectRootConfirmed,
         findings,
         patchKit,
       }),
-    [session.scanComplete, findings, patchKit]
+    [session.scanComplete, session.projectRootConfirmed, findings, patchKit]
   );
 
   const scanStatus = session.scanComplete ? "complete" : "idle";
@@ -40,6 +41,7 @@ function AppWorkspace() {
 
       <AppSidebar
         scanComplete={gates.scanComplete}
+        findingsUnlocked={gates.findingsUnlocked}
         findingsReady={gates.findingsReady}
         quickCleanupAvailable={gates.quickCleanupAvailable}
         patchKitReady={gates.patchKitReady}
@@ -62,6 +64,7 @@ function AppWorkspace() {
             <WorkflowRail
               activeStep={tab}
               scanComplete={gates.scanComplete}
+              findingsUnlocked={gates.findingsUnlocked}
               findingsReady={gates.findingsReady}
               quickCleanupAvailable={gates.quickCleanupAvailable}
               patchKitReady={gates.patchKitReady}

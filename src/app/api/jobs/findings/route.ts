@@ -13,13 +13,18 @@ export async function POST(request: Request) {
     const ownerKey = jobOwnerKey(request);
     await enforceRateLimit(ownerKey, "findings");
 
-    const body = (await request.json()) as { repoUrl?: string; branch?: string; scanId?: string };
+    const body = (await request.json()) as {
+      repoUrl?: string;
+      branch?: string;
+      scanId?: string;
+      projectRoot?: string;
+    };
     if (!body.repoUrl?.trim()) {
       return NextResponse.json({ success: false, error: "repoUrl is required." }, { status: 422 });
     }
 
     const job = await createFindingsJob(body.repoUrl.trim(), body.branch?.trim(), ownerKey);
-    await runFindingsJob(job.id, body.scanId?.trim());
+    await runFindingsJob(job.id, body.scanId?.trim(), body.projectRoot?.trim());
 
     const completed = (await getJob(job.id)) as FindingsJob | undefined;
     if (!completed) {

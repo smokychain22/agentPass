@@ -69,6 +69,7 @@ const secondaryNav = [
 
 interface AppSidebarProps {
   scanComplete?: boolean;
+  findingsUnlocked?: boolean;
   findingsReady?: boolean;
   quickCleanupAvailable?: boolean;
   patchKitReady?: boolean;
@@ -79,6 +80,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({
   scanComplete = false,
+  findingsUnlocked = false,
   findingsReady = false,
   quickCleanupAvailable = false,
   patchKitReady = false,
@@ -120,7 +122,12 @@ export function AppSidebar({
               let lockReason = item.lockReason;
 
               if (item.needsScan && !scanComplete) locked = true;
-              else if (item.needsFindings && !findingsReady) locked = true;
+              else if (item.needsFindings && !findingsUnlocked) {
+                locked = true;
+                lockReason = scanComplete
+                  ? "Select which application RepoDiet should analyze"
+                  : item.lockReason;
+              } else if (item.needsFindings && !findingsReady && item.tab === "patch") locked = true;
               else if (item.needsQuickCleanup && !quickCleanupAvailable) {
                 locked = true;
                 lockReason =

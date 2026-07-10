@@ -70,6 +70,7 @@ function minimalPatchKit(overrides?: Partial<PatchKitPayload>): PatchKitPayload 
 test("computeWorkflowGates locks quick cleanup without supported fixes", () => {
   const gates = computeWorkflowGates({
     scanComplete: true,
+    projectRootConfirmed: true,
     findings: minimalFindings({
       summary: {
         totalFindings: 2,
@@ -94,6 +95,7 @@ test("computeWorkflowGates locks quick cleanup without supported fixes", () => {
 test("computeWorkflowGates unlocks verify when patch validated with changes", () => {
   const gates = computeWorkflowGates({
     scanComplete: true,
+    projectRootConfirmed: true,
     findings: minimalFindings({
       unused: {
         files: [],
@@ -126,6 +128,7 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
 test("computeWorkflowGates blocks verify when patch validation failed", () => {
   const gates = computeWorkflowGates({
     scanComplete: true,
+    projectRootConfirmed: true,
     findings: minimalFindings(),
     patchKit: minimalPatchKit({
       patchValidation: { status: "failed", error: "apply failed" },

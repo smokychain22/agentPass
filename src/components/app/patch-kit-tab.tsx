@@ -93,10 +93,11 @@ export function PatchKitTab() {
     () =>
       computeWorkflowGates({
         scanComplete: session.scanComplete,
+        projectRootConfirmed: session.projectRootConfirmed,
         findings,
         patchKit,
       }),
-    [session.scanComplete, findings, patchKit]
+    [session.scanComplete, session.projectRootConfirmed, findings, patchKit]
   );
 
   const canContinueToVerify = gates.verifyUnlocked;

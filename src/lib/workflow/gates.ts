@@ -5,6 +5,8 @@ import { flattenFindings } from "@/lib/findings/client";
 
 export interface WorkflowGates {
   scanComplete: boolean;
+  projectRootConfirmed: boolean;
+  findingsUnlocked: boolean;
   findingsReady: boolean;
   supportedFixCount: number;
   quickCleanupAvailable: boolean;
@@ -17,15 +19,18 @@ export interface WorkflowGates {
 
 export function computeWorkflowGates(input: {
   scanComplete: boolean;
+  projectRootConfirmed?: boolean;
   findings: FindingsPayload | null;
   patchKit: PatchKitPayload | null;
 }): WorkflowGates {
   const findings = input.findings;
   const patchKit = input.patchKit;
+  const projectRootConfirmed = input.projectRootConfirmed ?? true;
 
   const flat = findings ? flattenFindings(findings) : [];
   const supportedFixCount = flat.filter(isActionableFinding).length;
   const findingsReady = Boolean(findings);
+  const findingsUnlocked = input.scanComplete && projectRootConfirmed;
 
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
@@ -34,6 +39,8 @@ export function computeWorkflowGates(input: {
 
   return {
     scanComplete: input.scanComplete,
+    projectRootConfirmed,
+    findingsUnlocked,
     findingsReady,
     supportedFixCount,
     quickCleanupAvailable: findingsReady && supportedFixCount > 0,

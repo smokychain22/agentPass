@@ -42,6 +42,8 @@ export interface ScanSession {
   scanResult: ScanPayload | null;
   scanComplete: boolean;
   scanRecordId?: string;
+  selectedProjectRoot?: string;
+  projectRootConfirmed: boolean;
 }
 
 interface AppSessionContextValue {
@@ -51,6 +53,7 @@ interface AppSessionContextValue {
   selectedFindingIds: string[];
   hydrating: boolean;
   setScanComplete: (repoUrl: string, branch: string, result: ScanPayload) => void;
+  setSelectedProjectRoot: (projectRoot: string) => void;
   setFindings: (findings: FindingsPayload | null) => void;
   setPatchKit: (patchKit: PatchKitPayload | null) => void;
   toggleFindingSelection: (findingId: string) => void;
@@ -63,6 +66,7 @@ const emptySession: ScanSession = {
   branch: "",
   scanResult: null,
   scanComplete: false,
+  projectRootConfirmed: false,
 };
 
 const AppSessionContext = createContext<AppSessionContextValue | null>(null);
@@ -81,6 +85,8 @@ function persist(
     scanComplete: session.scanComplete,
     selectedFindingIds,
     patchKitId: patchKit?.id,
+    selectedProjectRoot: session.selectedProjectRoot,
+    projectRootConfirmed: session.projectRootConfirmed,
   };
   savePersistedSession(data);
 }
@@ -107,6 +113,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       scanResult: null,
       scanComplete: stored.scanComplete,
       scanRecordId: stored.scanRecordId ?? stored.scanId,
+      selectedProjectRoot: stored.selectedProjectRoot,
+      projectRootConfirmed: stored.projectRootConfirmed ?? true,
     });
     setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
 
@@ -123,11 +131,18 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           }
         }
         if (scanPayload) {
+          const needsSelection = scanPayload.repositoryModel?.needsProjectRootSelection ?? false;
           setSession((prev) => ({
             ...prev,
             scanResult: scanPayload,
             scanComplete: true,
             scanRecordId: scanPayload.id,
+            selectedProjectRoot:
+              stored.selectedProjectRoot ??
+              scanPayload.repositoryModel?.primaryProjectRoot,
+            projectRootConfirmed:
+              stored.projectRootConfirmed ??
+              (!needsSelection || Boolean(stored.selectedProjectRoot)),
           }));
         }
         if (patchPayload) setPatchKit(patchPayload);
@@ -158,12 +173,15 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const setScanComplete = useCallback(
     (repoUrl: string, branch: string, result: ScanPayload) => {
+      const needsSelection = result.repositoryModel?.needsProjectRootSelection ?? false;
       const nextSession = {
         repoUrl,
         branch,
         scanResult: result,
         scanComplete: true,
         scanRecordId: result.id,
+        selectedProjectRoot: result.repositoryModel?.primaryProjectRoot,
+        projectRootConfirmed: !needsSelection,
       };
       setSession(nextSession);
       setFindings(null);
@@ -173,6 +191,31 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     },
     []
   );
+
+  const setSelectedProjectRoot = useCallback((projectRoot: string) => {
+    setSession((prev) => {
+      const updated = {
+        ...prev,
+        selectedProjectRoot: projectRoot,
+        projectRootConfirmed: true,
+        scanResult: prev.scanResult
+          ? {
+              ...prev.scanResult,
+              repositoryModel: prev.scanResult.repositoryModel
+                ? {
+                    ...prev.scanResult.repositoryModel,
+                    primaryProjectRoot: projectRoot,
+                  }
+                : prev.scanResult.repositoryModel,
+            }
+          : prev.scanResult,
+      };
+      persist(updated, findings, selectedFindingIds, patchKit);
+      return updated;
+    });
+    setFindings(null);
+    setPatchKit(null);
+  }, [findings, selectedFindingIds, patchKit]);
 
   const setPatchKitState = useCallback(
     (next: PatchKitPayload | null) => {
@@ -222,6 +265,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       selectedFindingIds,
       hydrating,
       setScanComplete,
+      setSelectedProjectRoot,
       setFindings: setFindingsState,
       setPatchKit: setPatchKitState,
       toggleFindingSelection,
@@ -235,6 +279,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       selectedFindingIds,
       hydrating,
       setScanComplete,
+      setSelectedProjectRoot,
       setFindingsState,
       setPatchKitState,
       toggleFindingSelection,

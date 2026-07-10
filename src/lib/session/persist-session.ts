@@ -9,6 +9,8 @@ export interface PersistedSession {
   selectedFindingIds: string[];
   patchKitId?: string;
   cleanupRunId?: string;
+  selectedProjectRoot?: string;
+  projectRootConfirmed?: boolean;
 }
 
 function readStorage(): Storage | null {

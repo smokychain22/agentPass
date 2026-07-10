@@ -19,6 +19,7 @@ interface WorkflowStep {
 interface WorkflowRailProps {
   activeStep: WorkflowStepId;
   scanComplete: boolean;
+  findingsUnlocked: boolean;
   findingsReady: boolean;
   quickCleanupAvailable: boolean;
   patchKitReady: boolean;
@@ -31,6 +32,7 @@ function resolveState(
   stepId: WorkflowStepId,
   activeStep: WorkflowStepId,
   scanComplete: boolean,
+  findingsUnlocked: boolean,
   findingsReady: boolean,
   quickCleanupAvailable: boolean,
   patchKitReady: boolean,
@@ -48,7 +50,14 @@ function resolveState(
     return { state: scanComplete ? "completed" : "inactive" };
   }
   if (stepId === "findings") {
-    if (!scanComplete) return { state: "locked", lockReason: "Complete repository scan first" };
+    if (!findingsUnlocked) {
+      return {
+        state: "locked",
+        lockReason: scanComplete
+          ? "Select which application RepoDiet should analyze"
+          : "Complete repository scan first",
+      };
+    }
     if (activeStep === "findings") return { state: findingsReady ? "completed" : "active" };
     return { state: findingsReady ? "completed" : "inactive" };
   }
@@ -82,6 +91,7 @@ function resolveState(
 export function WorkflowRail({
   activeStep,
   scanComplete,
+  findingsUnlocked,
   findingsReady,
   quickCleanupAvailable,
   patchKitReady,
@@ -98,6 +108,7 @@ export function WorkflowRail({
         "scan",
         activeStep,
         scanComplete,
+        findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
         patchKitReady,
@@ -113,6 +124,7 @@ export function WorkflowRail({
         "findings",
         activeStep,
         scanComplete,
+        findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
         patchKitReady,
@@ -128,6 +140,7 @@ export function WorkflowRail({
         "patch",
         activeStep,
         scanComplete,
+        findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
         patchKitReady,
@@ -143,6 +156,7 @@ export function WorkflowRail({
         "verify",
         activeStep,
         scanComplete,
+        findingsUnlocked,
         findingsReady,
         quickCleanupAvailable,
         patchKitReady,

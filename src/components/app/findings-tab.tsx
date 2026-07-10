@@ -70,7 +70,8 @@ export function FindingsTab() {
         session.repoUrl,
         session.branch || undefined,
         setPhase,
-        session.scanRecordId ?? session.scanResult?.id
+        session.scanRecordId ?? session.scanResult?.id,
+        session.selectedProjectRoot
       );
       setFindings(result);
       show("success", "Findings ready — review classification");
@@ -115,23 +116,29 @@ export function FindingsTab() {
     show("success", "findings.json downloaded");
   };
 
-  if (!session.scanComplete) {
+  const gates = computeWorkflowGates({
+    scanComplete: session.scanComplete,
+    projectRootConfirmed: session.projectRootConfirmed,
+    findings,
+    patchKit: null,
+  });
+
+  if (!gates.findingsUnlocked) {
     return (
       <LockedTab
         step="02"
         title="Findings Engine"
-        description="Available after repository scan. Complete a scan first to unlock findings analysis."
+        description={
+          session.scanComplete
+            ? "Select which application RepoDiet should analyze on the Scan tab before running findings."
+            : "Available after repository scan. Complete a scan first to unlock findings analysis."
+        }
       />
     );
   }
 
   const allFindings = findings ? flattenFindings(findings) : [];
   const supportedCount = allFindings.filter(isActionableFinding).length;
-  const gates = computeWorkflowGates({
-    scanComplete: session.scanComplete,
-    findings,
-    patchKit: null,
-  });
 
   return (
     <div className="space-y-6">

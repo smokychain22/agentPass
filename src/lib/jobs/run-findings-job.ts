@@ -26,7 +26,11 @@ export async function createFindingsJob(
   return (await saveJob(job)) as FindingsJob;
 }
 
-export async function runFindingsJob(jobId: string, scanId?: string): Promise<FindingsJob> {
+export async function runFindingsJob(
+  jobId: string,
+  scanId?: string,
+  projectRoot?: string
+): Promise<FindingsJob> {
   const job = (await updateJob(jobId, { status: "running", stage: "fetching_repo" })) as FindingsJob;
 
   try {
@@ -36,7 +40,7 @@ export async function runFindingsJob(jobId: string, scanId?: string): Promise<Fi
       (stage: FindingsJobStage) => {
         void updateJob(jobId, { status: "running", stage });
       },
-      { scanId }
+      { scanId, projectRoot }
     );
 
     await storeFindings(findings);
