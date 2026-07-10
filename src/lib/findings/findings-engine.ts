@@ -18,9 +18,9 @@ import {
 } from "./canonical-findings";
 import {
   classifyProjectRoots,
-  projectRootPrefixes,
   selectPrimaryProjectRoot,
 } from "@/lib/repository-model/primary-root";
+import { collectMirrorPrefixes } from "@/lib/repository-model/mirror-paths";
 import type { FindingsPayload, Finding } from "./types";
 import type { FindingsJobStage } from "@/lib/jobs/types";
 
@@ -120,9 +120,16 @@ export async function runFindingsEngine(
     );
     const primaryRoot =
       options?.projectRoot ?? selectPrimaryProjectRoot(repositoryModel);
-    const mirrorPrefixes = projectRootPrefixes(repositoryModel);
+    const mirrorPrefixes = await collectMirrorPrefixes(
+      repositoryModel,
+      workspace.rootDir
+    );
     if (mirrorPrefixes.length > 0) {
-      canonicalFlat = filterFindingsToPrimaryRoot(canonicalFlat, primaryRoot, mirrorPrefixes);
+      canonicalFlat = filterFindingsToPrimaryRoot(
+        canonicalFlat,
+        primaryRoot,
+        mirrorPrefixes
+      );
     }
     payload = rebuildFindingsPayload(payload, canonicalFlat);
 
@@ -146,6 +153,7 @@ export async function runFindingsEngine(
       workspaces: repositoryModel.workspaces,
       monorepoTool: repositoryModel.monorepoTool,
       primaryProjectRoot: primaryRoot || ".",
+      excludedProjectRoots: mirrorPrefixes,
     };
 
     onStage?.("complete");

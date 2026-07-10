@@ -5,29 +5,47 @@ import type { PatchKitSummary } from "@/lib/patch-kit/types";
 import { BUNDLE_FILE_COUNT } from "@/lib/patch-kit/bundle-manifest";
 
 const cards: {
-  key: keyof PatchKitSummary;
+  key: keyof PatchKitSummary | "detectedSupported";
   title: string;
   explanation?: string;
   footnote?: (s: PatchKitSummary) => string | null;
   getValue: (s: PatchKitSummary) => number;
 }[] = [
   {
-    key: "validatedChanges",
-    title: "Validated changes",
-    explanation: "Deterministic code edits that passed patch validation (imports, edits, deletions).",
-    getValue: (s) => s.validatedChanges ?? 0,
-  },
-  {
-    key: "supportedFixesDetected",
-    title: "Supported fixes",
-    explanation: "Findings with deterministic transformers available (before validation).",
+    key: "detectedSupported",
+    title: "Detected supported findings",
+    explanation: "Findings with registered transformers (not yet applied).",
     getValue: (s) => s.supportedFixesDetected ?? 0,
   },
   {
+    key: "generatedChanges",
+    title: "Generated changes",
+    explanation: "Patch diffs produced by transformers in this run.",
+    getValue: (s) => s.generatedChanges ?? 0,
+  },
+  {
+    key: "validatedChanges",
+    title: "Validated changes",
+    explanation: "Changes that passed git apply --check in an isolated workspace.",
+    getValue: (s) => s.validatedChanges ?? 0,
+  },
+  {
+    key: "verifiedChanges",
+    title: "Verified changes",
+    explanation: "Changes that passed server verification on the Verify tab.",
+    getValue: (s) => s.verifiedChanges ?? 0,
+  },
+  {
+    key: "filesEdited",
+    title: "Files edited",
+    explanation: "Source files modified by retained transformations.",
+    getValue: (s) => s.filesEdited ?? 0,
+  },
+  {
     key: "safeDeleteCandidates",
-    title: "File deletions",
+    title: "Files deleted",
     explanation: "Conservative delete-only paths (archive/backup style).",
-    getValue: (s) => s.safeDeleteCandidates,
+    getValue: (s) => s.filesDeleted ?? s.safeDeleteCandidates,
   },
   {
     key: "reviewFirstItems",
@@ -44,18 +62,6 @@ const cards: {
     title: "Do not touch",
     explanation: "Protected framework, config, route, and runtime files.",
     getValue: (s) => s.doNotTouchItems,
-  },
-  {
-    key: "packageSuggestions",
-    title: "Package suggestions",
-    explanation: "Unused dependency findings for manual review.",
-    getValue: (s) => s.packageSuggestions,
-  },
-  {
-    key: "regressionChecks",
-    title: "Regression checks",
-    explanation: "Build, route, and API checks in the regression checklist.",
-    getValue: (s) => s.regressionChecks,
   },
   {
     key: "bundleFileCount",

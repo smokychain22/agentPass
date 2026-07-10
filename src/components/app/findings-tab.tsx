@@ -30,6 +30,7 @@ import { FileSearch } from "lucide-react";
 import { Panel } from "@/components/design-system/panel";
 import { ProjectRootPanel } from "./findings/project-root-panel";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
+import { findingsAnalyzerWarning } from "@/lib/findings/analyzer-status";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 
 const LOADING: FindingsPhase[] = [
@@ -216,15 +217,12 @@ export function FindingsTab() {
 
       {findings && (
         <>
-          {(findings.rawToolReports.knip.status !== "ok" ||
-            findings.rawToolReports.jscpd.status !== "ok" ||
-            findings.rawToolReports.madge.status !== "ok") && (
-            <FeedbackBanner
-              variant="warning"
-              message="Native analyzers could not run on this runtime. Fallback findings are conservative estimates and are not eligible for automatic deletion without additional verification."
-              dismissible={false}
-            />
-          )}
+          {(() => {
+            const warning = findingsAnalyzerWarning(findings.rawToolReports);
+            return warning ? (
+              <FeedbackBanner variant="warning" message={warning} dismissible={false} />
+            ) : null;
+          })()}
 
           {findings.mode === "demo" && (
             <FeedbackBanner
@@ -241,6 +239,7 @@ export function FindingsTab() {
           <RepositoryMap findings={allFindings} />
           <FindingsWorkspace
             findings={allFindings}
+            rawToolReports={findings.rawToolReports}
             selectedForPatch={selectedFindingIds}
             onTogglePatchSelection={toggleFindingSelection}
           />

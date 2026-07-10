@@ -13,10 +13,10 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
       hint: "Signals from analyzers and heuristics — not yet transformed",
     },
     {
-      label: "Supported fixes",
+      label: "Detected supported findings",
       value: summary.supportedFixes ?? summary.actionableFixes ?? 0,
       level: "safe" as const,
-      hint: "Deterministic transformer available (detected → supported)",
+      hint: "Findings with a registered transformer — not yet generated or validated",
     },
     {
       label: "Review required",

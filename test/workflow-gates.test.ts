@@ -42,8 +42,13 @@ function minimalPatchKit(overrides?: Partial<PatchKitPayload>): PatchKitPayload 
     repo: { owner: "o", name: "r", branch: "main" },
     summary: {
       safeDeleteCandidates: 0,
-      validatedChanges: 1,
       supportedFixesDetected: 1,
+      generatedChanges: 1,
+      validatedChanges: 1,
+      verifiedChanges: 0,
+      filesEdited: 1,
+      filesDeleted: 0,
+      filesAdded: 0,
       rawReviewFindings: 0,
       reviewFirstItems: 0,
       doNotTouchItems: 0,
@@ -90,6 +95,7 @@ test("computeWorkflowGates locks quick cleanup without supported fixes", () => {
   });
   assert.equal(gates.quickCleanupAvailable, false);
   assert.equal(gates.verifyUnlocked, false);
+  assert.equal(gates.quickCleanupState, "inactive");
 });
 
 test("computeWorkflowGates unlocks verify when patch validated with changes", () => {
@@ -123,6 +129,7 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
   assert.equal(gates.quickCleanupAvailable, true);
   assert.equal(gates.verifyUnlocked, true);
   assert.equal(gates.cleanupPrAvailable, true);
+  assert.equal(gates.quickCleanupState, "complete");
 });
 
 test("computeWorkflowGates blocks verify when patch validation failed", () => {
@@ -134,9 +141,42 @@ test("computeWorkflowGates blocks verify when patch validation failed", () => {
       patchValidation: { status: "failed", error: "apply failed" },
       summary: {
         ...minimalPatchKit().summary,
+        generatedChanges: 1,
         validatedChanges: 0,
       },
     }),
   });
   assert.equal(gates.verifyUnlocked, false);
+  assert.equal(gates.cleanupPrAvailable, false);
+  assert.equal(gates.quickCleanupState, "blocked");
+});
+
+test("computeWorkflowGates marks quick cleanup blocked when supported but zero generated", () => {
+  const gates = computeWorkflowGates({
+    scanComplete: true,
+    projectRootConfirmed: true,
+    findings: minimalFindings(),
+    patchKit: minimalPatchKit({
+      patchValidation: { status: "not_generated", error: "No patch diff was generated." },
+      summary: {
+        ...minimalPatchKit().summary,
+        generatedChanges: 0,
+        validatedChanges: 0,
+      },
+    }),
+  });
+  assert.equal(gates.quickCleanupState, "blocked");
+  assert.equal(gates.cleanupPrAvailable, false);
+  assert.equal(gates.reportOnlyPrAvailable, true);
+});
+
+test("computeWorkflowGates enables report-only PR with findings only", () => {
+  const gates = computeWorkflowGates({
+    scanComplete: true,
+    projectRootConfirmed: true,
+    findings: minimalFindings(),
+    patchKit: null,
+  });
+  assert.equal(gates.reportOnlyPrAvailable, true);
+  assert.equal(gates.cleanupPrAvailable, false);
 });

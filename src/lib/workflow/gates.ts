@@ -3,6 +3,12 @@ import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { flattenFindings } from "@/lib/findings/client";
 
+export type QuickCleanupWorkflowState =
+  | "inactive"
+  | "running"
+  | "blocked"
+  | "complete";
+
 export interface WorkflowGates {
   scanComplete: boolean;
   projectRootConfirmed: boolean;
@@ -10,7 +16,11 @@ export interface WorkflowGates {
   findingsReady: boolean;
   supportedFixCount: number;
   quickCleanupAvailable: boolean;
+  quickCleanupState: QuickCleanupWorkflowState;
   patchKitReady: boolean;
+  generatedChanges: number;
+  validatedChanges: number;
+  verifiedChanges: number;
   patchValidated: boolean;
   verifyUnlocked: boolean;
   cleanupPrAvailable: boolean;
@@ -22,6 +32,7 @@ export function computeWorkflowGates(input: {
   projectRootConfirmed?: boolean;
   findings: FindingsPayload | null;
   patchKit: PatchKitPayload | null;
+  quickCleanupRunning?: boolean;
 }): WorkflowGates {
   const findings = input.findings;
   const patchKit = input.patchKit;
@@ -32,10 +43,28 @@ export function computeWorkflowGates(input: {
   const findingsReady = Boolean(findings);
   const findingsUnlocked = input.scanComplete && projectRootConfirmed;
 
+  const generatedChanges = patchKit?.summary.generatedChanges ?? 0;
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
+  const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const patchKitReady = Boolean(patchKit?.id);
-  const hasGeneratedChanges = validatedChanges > 0;
+  const detectedSupported =
+    patchKit?.summary.supportedFixesDetected ?? supportedFixCount;
+
+  let quickCleanupState: QuickCleanupWorkflowState = "inactive";
+  if (input.quickCleanupRunning) {
+    quickCleanupState = "running";
+  } else if (patchKitReady) {
+    if (generatedChanges > 0 && patchValidated) {
+      quickCleanupState = "complete";
+    } else if (detectedSupported > 0 && generatedChanges === 0) {
+      quickCleanupState = "blocked";
+    } else if (generatedChanges > 0) {
+      quickCleanupState = "blocked";
+    } else {
+      quickCleanupState = "blocked";
+    }
+  }
 
   return {
     scanComplete: input.scanComplete,
@@ -44,10 +73,18 @@ export function computeWorkflowGates(input: {
     findingsReady,
     supportedFixCount,
     quickCleanupAvailable: findingsReady && supportedFixCount > 0,
+    quickCleanupState,
     patchKitReady,
+    generatedChanges,
+    validatedChanges,
+    verifiedChanges,
     patchValidated,
-    verifyUnlocked: patchKitReady && patchValidated && hasGeneratedChanges,
-    cleanupPrAvailable: patchKitReady && patchValidated && hasGeneratedChanges,
-    reportOnlyPrAvailable: findingsReady && Boolean(patchKit?.artifacts?.reportMd),
+    verifyUnlocked: patchKitReady && patchValidated && validatedChanges > 0,
+    cleanupPrAvailable:
+      patchKitReady &&
+      generatedChanges > 0 &&
+      validatedChanges > 0 &&
+      patchValidated,
+    reportOnlyPrAvailable: findingsReady,
   };
 }

@@ -31,7 +31,10 @@ import type {
   PatchKitGenerateBody,
   PatchKitPayload,
   PatchKitRepoContext,
+  TransformerResult,
 } from "./types";
+import { createHash } from "node:crypto";
+import { supportedTransformerFor } from "@/lib/workflow/lifecycle";
 
 async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayload> {
   if (body.findings?.scanId && body.findings?.repo?.owner) {
@@ -66,6 +69,73 @@ async function resolveRepoContext(
 
 function mergeUnique(a: string[], b: string[]): string[] {
   return [...new Set([...a, ...b])].sort();
+}
+
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 12);
+}
+
+function buildTransformerResults(
+  supportedFindings: import("@/lib/findings/types").Finding[],
+  attempts: Array<{
+    findingId: string;
+    status: string;
+    displayReason: string;
+    pluginId: string;
+    changedPaths: string[];
+    originalSources: Record<string, string>;
+    modifiedSources: Record<string, string>;
+  }>
+): TransformerResult[] {
+  const byFindingId = new Map(attempts.map((a) => [a.findingId, a]));
+  return supportedFindings.map((finding) => {
+    const transformer = supportedTransformerFor(finding) ?? finding.supportedTransformer ?? "unknown";
+    const attempt = byFindingId.get(finding.id);
+    const filePath = finding.files[0];
+    if (!attempt) {
+      return {
+        findingId: finding.id,
+        transformer,
+        status: "skipped" as const,
+        reason: "Not attempted within Quick Cleanup fix limit.",
+        filePath,
+      };
+    }
+    const hasDiff = Object.keys(attempt.modifiedSources ?? {}).length > 0;
+    const original = filePath ? attempt.originalSources?.[filePath] : undefined;
+    const modified = filePath ? attempt.modifiedSources?.[filePath] : undefined;
+    if (attempt.status === "retained" && hasDiff) {
+      return {
+        findingId: finding.id,
+        transformer: attempt.pluginId || transformer,
+        status: "generated" as const,
+        reason: attempt.displayReason || "Change generated and retained.",
+        filePath,
+        originalHash: original ? hashContent(original) : undefined,
+        resultingDiff:
+          original && modified
+            ? `--- ${filePath}\n+++ ${filePath}\n(${original.length} → ${modified.length} bytes)`
+            : undefined,
+      };
+    }
+    if (hasDiff) {
+      return {
+        findingId: finding.id,
+        transformer: attempt.pluginId || transformer,
+        status: "failed" as const,
+        reason: attempt.displayReason || "Change generated but not retained after validation.",
+        filePath,
+        originalHash: original ? hashContent(original) : undefined,
+      };
+    }
+    return {
+      findingId: finding.id,
+      transformer: attempt.pluginId || transformer,
+      status: "skipped" as const,
+      reason: attempt.displayReason || "Transformer did not produce a patch for this finding.",
+      filePath,
+    };
+  });
 }
 
 function pageRoutesFromScan(topLevelFolders: string[]): string[] {
@@ -108,7 +178,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       ...findings.orphans,
       ...findings.slopSignals,
     ];
-    const supportedFixesDetected = flatFindings.filter(isAutoFixEligible).length;
+    const supportedFindings = flatFindings.filter(isAutoFixEligible);
+    const supportedFixesDetected = supportedFindings.length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
       maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
@@ -116,8 +187,15 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       quickPatchMode: true,
     });
     const fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
+    const generatedChanges = cleanupResult.fixLoop.attempts.filter(
+      (a) => Object.keys(a.modifiedSources ?? {}).length > 0
+    ).length;
     const validatedChanges = cleanupResult.metrics.issuesChanged;
     const changedPaths = cleanupResult.proof.changedFiles;
+    const transformerResults = buildTransformerResults(
+      supportedFindings,
+      cleanupResult.fixLoop.attempts
+    );
 
     const validatedEdits: Array<{ path: string; content: string }> = [];
     for (const attempt of cleanupResult.fixLoop.attempts) {
@@ -136,18 +214,22 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const mergedPatch =
       deletePatch && fixDiff ? mergeCleanupPatches(deletePatch, fixDiff) : cleanupPatch;
 
-    let patchValidation: { status: "passed" | "failed" | "skipped"; error?: string };
+    let patchValidation: { status: "passed" | "failed" | "skipped" | "not_generated"; error?: string };
     if (
-      validatedChanges > 0 &&
-      patchHasApplyableOperations(mergedPatch) &&
-      mergedPatch !== EMPTY_CLEANUP_PATCH
+      !patchHasApplyableOperations(mergedPatch) ||
+      mergedPatch === EMPTY_CLEANUP_PATCH
     ) {
-      patchValidation = { status: "passed" };
-    } else if (!patchHasApplyableOperations(mergedPatch)) {
-      patchValidation = { status: "skipped", error: "No applyable patch operations." };
+      patchValidation = {
+        status: "not_generated",
+        error: "No patch diff was generated.",
+      };
     } else {
       patchValidation = await validateCleanupPatchInWorkspace(workspace.rootDir, mergedPatch);
     }
+
+    const filesEdited = changedPaths.length;
+    const filesDeleted = deletedPaths.length;
+    const filesAdded = 0;
 
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
@@ -160,8 +242,13 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const id = `patchkit_${nanoid(12)}`;
     const summary = {
       safeDeleteCandidates: safeDeleteCount,
-      validatedChanges,
       supportedFixesDetected,
+      generatedChanges,
+      validatedChanges,
+      verifiedChanges: 0,
+      filesEdited,
+      filesDeleted,
+      filesAdded,
       rawReviewFindings: findings.summary.reviewRequired,
       reviewFirstItems: buckets.reviewFirst.length,
       doNotTouchItems: buckets.doNotTouch.length,
@@ -215,6 +302,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       },
       summary,
       patchValidation,
+      transformerResults,
       artifacts: {
         reportMd,
         cleanupPatch: mergedPatch,

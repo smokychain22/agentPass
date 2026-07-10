@@ -5,7 +5,7 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 
 export interface PatchValidationResult {
-  status: "passed" | "failed" | "skipped";
+  status: "passed" | "failed" | "skipped" | "not_generated";
   error?: string;
 }
 
@@ -52,7 +52,7 @@ export async function validateCleanupPatchInWorkspace(
   patch: string
 ): Promise<PatchValidationResult> {
   if (!patchHasApplyableOperations(patch)) {
-    return { status: "skipped", error: "No applyable patch operations." };
+    return { status: "not_generated", error: "No patch diff was generated." };
   }
 
   const applyable = extractApplyablePatch(patch);

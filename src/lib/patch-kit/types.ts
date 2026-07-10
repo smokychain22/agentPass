@@ -14,10 +14,26 @@ export interface PatchKitRepo {
   branch: string;
 }
 
+export interface TransformerResult {
+  findingId: string;
+  transformer: string;
+  status: "generated" | "skipped" | "failed";
+  reason: string;
+  filePath?: string;
+  originalHash?: string;
+  resultingDiff?: string;
+}
+
 export interface PatchKitSummary {
   safeDeleteCandidates: number;
-  validatedChanges: number;
+  /** Findings with a registered transformer (detected → supported). */
   supportedFixesDetected: number;
+  generatedChanges: number;
+  validatedChanges: number;
+  verifiedChanges: number;
+  filesEdited: number;
+  filesDeleted: number;
+  filesAdded: number;
   rawReviewFindings: number;
   reviewFirstItems: number;
   doNotTouchItems: number;
@@ -25,7 +41,7 @@ export interface PatchKitSummary {
   patchLines: number;
   regressionChecks: number;
   bundleFileCount: number;
-  patchValidationStatus?: "passed" | "failed" | "skipped";
+  patchValidationStatus?: "passed" | "failed" | "skipped" | "not_generated";
   deletedPaths?: string[];
   changedPaths?: string[];
 }
@@ -55,9 +71,10 @@ export interface PatchKitPayload {
   repo: PatchKitRepo;
   summary: PatchKitSummary;
   patchValidation?: {
-    status: "passed" | "failed" | "skipped";
+    status: "passed" | "failed" | "skipped" | "not_generated";
     error?: string;
   };
+  transformerResults?: TransformerResult[];
   artifacts: PatchKitArtifacts;
   downloadUrl: string;
   zipBase64?: string;

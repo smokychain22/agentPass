@@ -129,18 +129,21 @@ export function RepoDietOperatorSection({
   const [summaryCopied, setSummaryCopied] = useState(false);
 
   const safeCount = patchKit?.summary.safeDeleteCandidates ?? 0;
+  const generatedChanges = patchKit?.summary.generatedChanges ?? 0;
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
-  const locked = !findings || !patchKit;
+  const operatorLocked = !findings;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const githubAccountConnected = Boolean(githubStatus?.connected);
   const repositoryReady = Boolean(preflight?.repositoryAuthorized);
   const canCreateReportPr =
-    !locked &&
+    !operatorLocked &&
     repositoryReady &&
     Boolean(preflight?.canCreateBranch) &&
     Boolean(preflight?.canCreatePullRequest);
   const canCreateSafePr =
     canCreateReportPr &&
+    Boolean(patchKit) &&
+    generatedChanges > 0 &&
     validatedChanges > 0 &&
     patchValidated &&
     (!requireVerificationForCleanupPr || verificationStatus === "passed");
@@ -234,7 +237,8 @@ export function RepoDietOperatorSection({
   };
 
   const submit = async (mode: CleanupPrMode) => {
-    if (!findings || !patchKit) return;
+    if (!findings) return;
+    if (mode === "safe_only" && !patchKit) return;
 
     setLoading(true);
     setLoadingMode(mode);
@@ -248,7 +252,7 @@ export function RepoDietOperatorSection({
         demo: useDemoAuth,
         githubToken: showAdvancedToken && githubToken.trim() ? githubToken : undefined,
         findings,
-        patchKit,
+        patchKit: patchKit ?? undefined,
       });
       setResult(response);
     } catch (err) {
@@ -304,7 +308,7 @@ export function RepoDietOperatorSection({
             RepoDiet never pushes to main.
           </p>
         </div>
-        {locked && (
+        {operatorLocked && (
           <Badge variant="muted" className="gap-1.5 font-mono text-[10px]">
             <Lock className="h-3 w-3" />
             Locked
@@ -312,15 +316,15 @@ export function RepoDietOperatorSection({
         )}
       </div>
 
-      {locked ? (
+      {operatorLocked ? (
         <Card className="border-dashed border-border bg-card/30">
           <CardContent className="flex items-start gap-3 py-6">
             <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <div>
-              <p className="text-sm font-medium">Run Findings + Quick Cleanup first</p>
+              <p className="text-sm font-medium">Run Findings first</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Generate your cleanup bundle above. RepoDiet Operator unlocks after findings and
-                artifacts are ready.
+                Complete findings analysis to unlock RepoDiet Operator. Report-only PRs require
+                findings; cleanup PRs require validated changes from Quick Cleanup.
               </p>
             </div>
           </CardContent>
@@ -455,17 +459,20 @@ export function RepoDietOperatorSection({
 
             <InfoCard title="Validated Changes">
               <p className="font-mono text-2xl font-semibold text-signal">{validatedChanges}</p>
-              {validatedChanges > 0 && patchValidated ? (
+              <p className="font-mono text-xs text-muted-foreground">
+                Generated: {generatedChanges}
+              </p>
+              {canCreateSafePr ? (
                 <p className="text-signal">Ready to create cleanup PR.</p>
               ) : patchKit?.summary.supportedFixesDetected ? (
                 <p>
-                  {patchKit.summary.supportedFixesDetected} supported fix(es) detected;{" "}
+                  {patchKit.summary.supportedFixesDetected} supported finding(s) detected;{" "}
                   {validatedChanges > 0
                     ? "patch validation must pass before cleanup PR."
-                    : "none validated yet."}
+                    : "no validated changes yet."}
                 </p>
               ) : (
-                <p>Safe cleanup PR unavailable. Create a report-only PR instead.</p>
+                <p>Cleanup PR unavailable. Create a report-only PR instead.</p>
               )}
             </InfoCard>
 
@@ -521,8 +528,8 @@ export function RepoDietOperatorSection({
           {validatedChanges === 0 && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
               {patchKit?.summary.supportedFixesDetected
-                ? `RepoDiet detected ${patchKit.summary.supportedFixesDetected} supported fix(es), but none passed validation yet. You can create a report-only PR with cleanup artifacts.`
-                : "No validated code changes were generated. RepoDiet can create a report-only PR with cleanup artifacts instead."}
+                ? `RepoDiet detected ${patchKit.summary.supportedFixesDetected} supported finding(s), but none passed validation yet. You can create a report-only PR with cleanup artifacts.`
+                : "No validated code changes were generated. RepoDiet can create a report-only PR with findings and cleanup artifacts."}
             </div>
           )}
 
@@ -537,9 +544,11 @@ export function RepoDietOperatorSection({
               onClick={() => submit("safe_only")}
               disabled={loading || (!canCreateSafePr && !needsManualToken)}
               title={
-                requireVerificationForCleanupPr && verificationStatus !== "passed"
-                  ? "Run verification on the Verify tab first"
-                  : undefined
+                !canCreateSafePr
+                  ? "Requires generated and validated changes with passing patch validation"
+                  : requireVerificationForCleanupPr && verificationStatus !== "passed"
+                    ? "Run verification on the Verify tab first"
+                    : undefined
               }
             >
               {loading && loadingMode === "safe_only" ? (

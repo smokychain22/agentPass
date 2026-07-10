@@ -1,6 +1,11 @@
 import type { Finding, FindingsPayload } from "./types";
-import { projectRootPrefixes, selectPrimaryProjectRoot } from "@/lib/repository-model/primary-root";
+import { selectPrimaryProjectRoot } from "@/lib/repository-model/primary-root";
 import type { RepositoryModel } from "@/lib/repository-model/types";
+import {
+  isUnderMirrorPrefix,
+  normalizeProjectRoot,
+  stripMirrorPathsFromFindingFiles,
+} from "@/lib/repository-model/mirror-paths";
 
 function findingSymbol(finding: Finding): string {
   const symbol = finding.evidence.signals.find((s) => s.startsWith("symbol="));
@@ -32,14 +37,20 @@ export function canonicalFindingKey(
 
 export function deduplicateCanonicalFindings(
   findings: Finding[],
-  model?: RepositoryModel
+  model?: RepositoryModel,
+  mirrorPrefixes: string[] = []
 ): Finding[] {
-  const mirrorPrefixes = model ? projectRootPrefixes(model) : [];
-  const primaryRoot = model ? selectPrimaryProjectRoot(model) : "";
+  const prefixes =
+    mirrorPrefixes.length > 0
+      ? mirrorPrefixes
+      : model
+        ? model.projects.map((p) => p.relativePath).filter(Boolean)
+        : [];
+  const primaryRoot = model ? normalizeProjectRoot(selectPrimaryProjectRoot(model)) : "";
 
   const byKey = new Map<string, Finding>();
   for (const finding of findings) {
-    const key = canonicalFindingKey(finding, mirrorPrefixes);
+    const key = canonicalFindingKey(finding, prefixes);
     const existing = byKey.get(key);
     if (!existing) {
       byKey.set(key, finding);
@@ -50,8 +61,9 @@ export function deduplicateCanonicalFindings(
     const existingFile = existing.files[0] ?? "";
     const preferNew =
       (primaryRoot && file.startsWith(`${primaryRoot}/`)) ||
-      (!primaryRoot && !mirrorPrefixes.some((p) => file.startsWith(`${p}/`)) &&
-        mirrorPrefixes.some((p) => existingFile.startsWith(`${p}/`)));
+      (!primaryRoot &&
+        !prefixes.some((p) => file.startsWith(`${p}/`)) &&
+        prefixes.some((p) => existingFile.startsWith(`${p}/`)));
 
     if (preferNew) byKey.set(key, finding);
   }
@@ -59,20 +71,47 @@ export function deduplicateCanonicalFindings(
   return [...byKey.values()];
 }
 
+function findingTouchesMirror(finding: Finding, mirrorPrefixes: string[]): boolean {
+  return finding.files.some((file) => isUnderMirrorPrefix(file, mirrorPrefixes));
+}
+
 export function filterFindingsToPrimaryRoot(
   findings: Finding[],
-  primaryRoot: string,
+  primaryRootInput: string,
   mirrorPrefixes: string[]
 ): Finding[] {
-  if (!primaryRoot && mirrorPrefixes.length <= 1) return findings;
-  return findings.filter((f) => {
-    const file = f.files[0];
-    if (!file) return true;
-    if (!primaryRoot) {
-      return !mirrorPrefixes.some((p) => file.startsWith(`${p}/`));
-    }
-    return file.startsWith(`${primaryRoot}/`) || file === primaryRoot;
-  });
+  if (mirrorPrefixes.length === 0) return findings;
+
+  const primaryRoot = normalizeProjectRoot(primaryRootInput);
+
+  return findings
+    .filter((finding) => {
+      if (finding.type === "duplicate_code") {
+        const primaryFiles = stripMirrorPathsFromFindingFiles(finding.files, mirrorPrefixes);
+        return primaryFiles.length > 0;
+      }
+      return !findingTouchesMirror(finding, mirrorPrefixes);
+    })
+    .map((finding) => {
+      if (finding.type !== "duplicate_code") return finding;
+      const primaryFiles = stripMirrorPathsFromFindingFiles(finding.files, mirrorPrefixes);
+      if (primaryFiles.length === finding.files.length) return finding;
+      return {
+        ...finding,
+        files: primaryFiles,
+        reason: `${finding.reason} (mirror copy paths excluded from selected root)`,
+      };
+    })
+    .filter((finding) => {
+      if (!primaryRoot) {
+        return !findingTouchesMirror(finding, mirrorPrefixes);
+      }
+      if (finding.packageName) return true;
+      if (finding.files.length === 0) return true;
+      return finding.files.some(
+        (file) => file === primaryRoot || file.startsWith(`${primaryRoot}/`)
+      );
+    });
 }
 
 export function rebuildFindingsPayload(

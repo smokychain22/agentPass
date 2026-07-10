@@ -22,6 +22,7 @@ import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
 import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
 import { ChangeManifestTable } from "./patch-kit/change-manifest-table";
+import { TransformerResultsTable } from "./patch-kit/transformer-results-table";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
@@ -96,8 +97,9 @@ export function PatchKitTab() {
         projectRootConfirmed: session.projectRootConfirmed,
         findings,
         patchKit,
+        quickCleanupRunning: isLoading,
       }),
-    [session.scanComplete, session.projectRootConfirmed, findings, patchKit]
+    [session.scanComplete, session.projectRootConfirmed, findings, patchKit, isLoading]
   );
 
   const canContinueToVerify = gates.verifyUnlocked;
@@ -139,7 +141,7 @@ export function PatchKitTab() {
           supportedCount === 0
             ? "RepoDiet found review findings, but none are currently supported for deterministic cleanup."
             : patchKit?.summary.supportedFixesDetected
-              ? `${patchKit.summary.supportedFixesDetected} supported fix(es) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
+              ? `${patchKit.summary.supportedFixesDetected} supported finding(s) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
               : `${supportedCount} eligible finding(s) for deterministic cleanup.`
         }
         actions={
@@ -213,7 +215,7 @@ export function PatchKitTab() {
       {!patchKit && !isLoading && !error && supportedCount > 0 && (
         <EmptyState
           icon={Package}
-          title="Supported fixes ready"
+          title="Detected supported findings ready"
           description="RepoDiet will generate real repository-specific changes, validate the patch with git apply --check, and package deliverables for review."
           action={{ label: "Generate Cleanup Changes", onClick: generate }}
         />
@@ -226,17 +228,31 @@ export function PatchKitTab() {
               variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
               message={
                 patchKit.patchValidation.status === "passed"
-                  ? `Patch validated with git apply --check (${patchKit.summary.validatedChanges} change(s), ${patchKit.summary.safeDeleteCandidates} file deletion(s)).`
-                  : `Patch validation: ${patchKit.patchValidation.status}${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}`
+                  ? `Patch validated with git apply --check (${patchKit.summary.validatedChanges} validated change(s), ${patchKit.summary.generatedChanges} generated).`
+                  : patchKit.patchValidation.status === "not_generated"
+                    ? `Patch validation: not generated — ${patchKit.patchValidation.error ?? "No patch diff was produced."}`
+                    : `Patch validation: ${patchKit.patchValidation.status}${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}`
               }
               dismissible={false}
             />
           )}
-          {patchKit.summary.validatedChanges === 0 &&
+          {gates.quickCleanupState === "blocked" &&
             patchKit.summary.supportedFixesDetected > 0 && (
               <FeedbackBanner
                 variant="warning"
-                message={`${patchKit.summary.supportedFixesDetected} supported fix(es) were detected, but none were validated for this run. Review findings or retry Quick Cleanup.`}
+                message={`${patchKit.summary.supportedFixesDetected} supported finding(s) were detected, but change generation failed or produced no validated patch. Review transformer errors below or retry generation.`}
+                dismissible={false}
+              />
+            )}
+          {patchKit.transformerResults && patchKit.transformerResults.length > 0 && (
+            <TransformerResultsTable results={patchKit.transformerResults} />
+          )}
+          {patchKit.summary.validatedChanges === 0 &&
+            patchKit.summary.supportedFixesDetected > 0 &&
+            gates.quickCleanupState !== "blocked" && (
+              <FeedbackBanner
+                variant="warning"
+                message={`${patchKit.summary.supportedFixesDetected} supported finding(s) were detected, but none were validated for this run. Review findings or retry Quick Cleanup.`}
                 dismissible={false}
               />
             )}

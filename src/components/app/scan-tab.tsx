@@ -408,7 +408,7 @@ export function ScanTab() {
 
           <div className="flex flex-wrap gap-2">
             <RiskBadge level="cyan">Structure mapped</RiskBadge>
-            <RiskBadge level="safe">No repository mutation</RiskBadge>
+            <RiskBadge level="safe">No changes during scan</RiskBadge>
           </div>
         </div>
       )}
