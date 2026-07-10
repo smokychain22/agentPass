@@ -1,6 +1,6 @@
 # RepoDiet Product Capability Matrix
 
-**Branch audited:** `cursor/product-vision-pricing-39ce`  
+**Branch audited:** `main` (merged `cursor/product-vision-pricing-39ce`)  
 **Audit date:** 2026-07-10  
 **Phase:** 1 — Free Proof (one real safe fix in-product)
 
