@@ -96,24 +96,31 @@ export async function startGitHubGrantAccess(input: {
     body: JSON.stringify(input),
   });
   const json = (await res.json()) as {
-    ok: boolean;
+    ok?: boolean;
+    success?: boolean;
+    url?: string;
     installUrl?: string;
+    flow?: "install" | "configure";
     error?: string;
     repositoryFullName?: string;
     repositoryOwner?: string;
     installationOwner?: string;
     requiresRepositoryOwnerInstall?: boolean;
   };
-  if (!json.ok || !json.installUrl) {
+
+  const redirectUrl = json.url ?? json.installUrl;
+  const succeeded = json.success === true || json.ok === true;
+
+  if (!res.ok || !succeeded || !redirectUrl) {
     throw new Error(json.error ?? "Could not start GitHub installation.");
   }
-  if (
-    json.installUrl.includes("github.com/settings/apps") ||
-    !json.installUrl.includes("/installations/new")
-  ) {
-    throw new Error("Invalid GitHub installation URL. Please refresh and try again.");
-  }
-  window.location.href = json.installUrl;
+
+  const { assertClientGitHubInstallRedirectUrl } = await import(
+    "@/lib/github-app/install-redirect-client"
+  );
+  assertClientGitHubInstallRedirectUrl(redirectUrl, json.flow);
+
+  window.location.assign(redirectUrl);
 }
 
 export function startGitHubAppInstall(repoUrl?: string, scanId?: string): void {

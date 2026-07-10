@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { getGitHubAppInstallUrl } from "./config";
 import {
   createInstallFlowRecord,
   hashInstallState,
@@ -20,7 +19,7 @@ export async function createInstallFlow(input: {
   repositoryFullName: string;
   scanId?: string;
   returnPath: string;
-}): Promise<{ stateToken: string; installUrl: string }> {
+}): Promise<{ stateToken: string }> {
   const { owner, repo } = parseRepositoryFullName(input.repositoryFullName);
   const stateToken = generateInstallStateToken();
   const record = createInstallFlowRecord({
@@ -33,21 +32,7 @@ export async function createInstallFlow(input: {
     returnPath: input.returnPath,
   });
   await saveInstallFlow(record);
-  const installUrl = getGitHubAppInstallUrl(stateToken);
-  assertPublicGitHubInstallUrl(installUrl);
-  return {
-    stateToken,
-    installUrl,
-  };
-}
-
-export function assertPublicGitHubInstallUrl(url: string): void {
-  if (url.includes("github.com/settings/apps")) {
-    throw new Error("Install URL must not use GitHub developer settings.");
-  }
-  if (!url.includes("/installations/new")) {
-    throw new Error("Install URL must use the public GitHub App installation flow.");
-  }
+  return { stateToken };
 }
 
 export async function resolveInstallFlowState(

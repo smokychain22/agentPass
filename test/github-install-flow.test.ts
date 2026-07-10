@@ -10,10 +10,19 @@ import {
   resolveInstallFlowState,
   createInstallFlow,
 } from "../src/lib/github-app/install-flow";
-import { getGitHubAppInstallUrl } from "../src/lib/github-app/config";
 import { parseInstallCallbackParams } from "../src/lib/github-app/install-callback";
 import { accessCopyForState } from "../src/lib/github-app/access-states";
 import { parseRepositoryFullName, requiresRepositoryOwnerInstall } from "../src/lib/github-app/repository";
+import {
+  assertValidGitHubInstallRedirectUrl,
+  buildConfigureInstallationUrl,
+  buildNewInstallationUrl,
+  getGitHubAppSlugOrThrow,
+  GitHubAppSlugError,
+  installRedirectUrlHasState,
+  resolveGitHubInstallRedirect,
+} from "../src/lib/github-app/install-redirect";
+import { assertClientGitHubInstallRedirectUrl } from "../src/lib/github-app/install-redirect-client";
 import { setDurableRecord } from "../src/lib/store/durable-store";
 
 async function test(name: string, fn: () => void | Promise<void>) {
@@ -145,27 +154,96 @@ async function run() {
     );
   });
 
-  await test("public install URL always uses installations/new", async () => {
-    await withGitHubAppEnv(() => {
-      const token = generateInstallStateToken();
-      const url = getGitHubAppInstallUrl(token);
-      assert.match(url, /\/installations\/new\?state=/);
-      assert.doesNotMatch(url, /settings\/apps/);
-      assert.doesNotMatch(url, /\/installations\/\d+$/);
-    });
+  await test("new install URL begins with https://github.com/apps/", () => {
+    const url = buildNewInstallationUrl("repodiet-operator", "state-token");
+    assert.match(url, /^https:\/\/github\.com\/apps\//);
+    assert.match(url, /\/installations\/new\?state=/);
+    assert.doesNotMatch(url, /settings\/apps/);
+    assert.notEqual(url, "https://github.com/app");
   });
 
-  await test("createInstallFlow never returns developer settings URL", async () => {
+  await test("existing installation URL begins with https://github.com/settings/installations/", () => {
+    const url = buildConfigureInstallationUrl(12345, "state-token");
+    assert.match(url, /^https:\/\/github\.com\/settings\/installations\/12345/);
+    assert.match(url, /\?state=state-token$/);
+  });
+
+  await test("resolveGitHubInstallRedirect uses configure flow for same-owner missing repo", () => {
+    const stateToken = "opaque-state";
+    const resolved = resolveGitHubInstallRedirect({
+      slug: "repodiet-operator",
+      stateToken,
+      installationId: 99,
+      requiresRepositoryOwnerInstall: false,
+      hasRepositoryAccess: false,
+    });
+    assert.equal(resolved.flow, "configure");
+    assert.match(resolved.url, /^https:\/\/github\.com\/settings\/installations\/99/);
+    assert.equal(installRedirectUrlHasState(resolved.url, stateToken), true);
+  });
+
+  await test("resolveGitHubInstallRedirect uses install flow for owner mismatch", () => {
+    const stateToken = "opaque-state";
+    const resolved = resolveGitHubInstallRedirect({
+      slug: "repodiet-operator",
+      stateToken,
+      installationId: 99,
+      requiresRepositoryOwnerInstall: true,
+      hasRepositoryAccess: false,
+    });
+    assert.equal(resolved.flow, "install");
+    assert.match(resolved.url, /\/installations\/new\?state=/);
+  });
+
+  await test("URL never equals https://github.com/app", () => {
+    const bad = "https://github.com/app?tab=patch&scanId=scan_1";
+    assert.throws(
+      () => assertValidGitHubInstallRedirectUrl(bad, "install"),
+      /github\.com\/app/
+    );
+    assert.throws(
+      () => assertClientGitHubInstallRedirectUrl(bad, "install"),
+      /github\.com\/app/
+    );
+  });
+
+  await test("state is preserved for new installation flow", () => {
+    const stateToken = generateInstallStateToken();
+    const url = buildNewInstallationUrl("repodiet-operator", stateToken);
+    assert.equal(installRedirectUrlHasState(url, stateToken), true);
+    assertValidGitHubInstallRedirectUrl(url, "install");
+  });
+
+  await test("invalid or missing app slug returns controlled error", async () => {
+    const previous = process.env.GITHUB_APP_SLUG;
+    delete process.env.GITHUB_APP_SLUG;
+    try {
+      assert.throws(() => getGitHubAppSlugOrThrow(), GitHubAppSlugError);
+    } finally {
+      if (previous === undefined) delete process.env.GITHUB_APP_SLUG;
+      else process.env.GITHUB_APP_SLUG = previous;
+    }
+  });
+
+  await test("createInstallFlow persists state without relative redirect URLs", async () => {
     await withGitHubAppEnv(async () => {
-      const { installUrl } = await createInstallFlow({
+      const { stateToken } = await createInstallFlow({
         sessionKey: "sess-dev",
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
         scanId: "scan_test",
         returnPath: "/app?tab=patch",
       });
-      assert.match(installUrl, /\/installations\/new\?state=/);
-      assert.doesNotMatch(installUrl, /settings\/apps/);
-      assert.doesNotMatch(installUrl, /\/installations\/\d+(\?|$)/);
+
+      const resolved = resolveGitHubInstallRedirect({
+        slug: getGitHubAppSlugOrThrow(),
+        stateToken,
+        requiresRepositoryOwnerInstall: false,
+        hasRepositoryAccess: false,
+      });
+
+      assert.match(resolved.url, /^https:\/\/github\.com\//);
+      assert.notEqual(resolved.url, "https://github.com/app?tab=patch");
+      assert.doesNotMatch(resolved.url, /^\/app/);
     });
   });
 

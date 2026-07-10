@@ -1,3 +1,5 @@
+import { buildNewInstallationUrl, getGitHubAppSlugOrThrow } from "./install-redirect";
+
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value || undefined;
@@ -56,10 +58,8 @@ export function getGitHubAppConfig() {
 }
 
 export function getGitHubAppInstallUrl(state?: string): string {
-  const { slug } = getGitHubAppConfig();
-  const base = `https://github.com/apps/${slug}/installations/new`;
-  if (!state) return base;
-  return `${base}?state=${encodeURIComponent(state)}`;
+  const slug = getGitHubAppSlugOrThrow();
+  return buildNewInstallationUrl(slug, state);
 }
 
 export function getAppBaseUrl(): string {

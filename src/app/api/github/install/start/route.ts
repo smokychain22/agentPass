@@ -4,6 +4,13 @@ import { accessCopyForState } from "@/lib/github-app/access-states";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { createInstallFlow } from "@/lib/github-app/install-flow";
 import {
+  assertValidGitHubInstallRedirectUrl,
+  getGitHubAppSlugOrThrow,
+  GitHubAppSlugError,
+  resolveGitHubInstallRedirect,
+} from "@/lib/github-app/install-redirect";
+import { installationIncludesRepository } from "@/lib/github-app/installations";
+import {
   parseRepositoryFullName,
   requiresRepositoryOwnerInstall,
 } from "@/lib/github-app/repository";
@@ -14,9 +21,20 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   if (!isGitHubAppConfigured()) {
     return NextResponse.json(
-      { ok: false, error: "GitHub App is not configured on this deployment." },
+      { ok: false, success: false, error: "GitHub App is not configured on this deployment." },
       { status: 503 }
     );
+  }
+
+  let appSlug: string;
+  try {
+    appSlug = getGitHubAppSlugOrThrow();
+  } catch (err) {
+    const message =
+      err instanceof GitHubAppSlugError
+        ? err.message
+        : "GITHUB_APP_SLUG is not configured.";
+    return NextResponse.json({ ok: false, success: false, error: message }, { status: 503 });
   }
 
   const body = (await request.json()) as {
@@ -27,7 +45,7 @@ export async function POST(request: Request) {
 
   if (!body.repositoryFullName?.trim()) {
     return NextResponse.json(
-      { ok: false, error: "repositoryFullName is required." },
+      { ok: false, success: false, error: "repositoryFullName is required." },
       { status: 422 }
     );
   }
@@ -42,6 +60,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok: false,
+        success: false,
         error: err instanceof Error ? err.message : "Invalid repositoryFullName.",
       },
       { status: 422 }
@@ -54,30 +73,88 @@ export async function POST(request: Request) {
     `/app?tab=patch${body.scanId ? `&scanId=${encodeURIComponent(body.scanId)}` : ""}`;
 
   const repositoryFullName = body.repositoryFullName.trim();
-  const { installUrl, stateToken } = await createInstallFlow({
-    sessionKey,
-    repositoryFullName,
-    scanId: body.scanId,
-    returnPath,
-  });
 
-  const existing = await readInstallationSession();
-  const installationOwner = existing?.accountLogin;
-  const ownerMismatch = requiresRepositoryOwnerInstall({
-    repositoryOwner,
-    installationOwner,
-  });
-  const accessState = ownerMismatch ? "wrong_account" : existing ? "installed_repo_missing" : "not_installed";
-  const messages = accessCopyForState(accessState, repo, repositoryOwner);
+  try {
+    const { stateToken } = await createInstallFlow({
+      sessionKey,
+      repositoryFullName,
+      scanId: body.scanId,
+      returnPath,
+    });
 
-  return NextResponse.json({
-    ok: true,
-    installUrl,
-    stateToken,
-    repositoryFullName,
-    repositoryOwner,
-    installationOwner,
-    requiresRepositoryOwnerInstall: ownerMismatch,
-    messages,
-  });
+    const existing = await readInstallationSession();
+    const installationOwner = existing?.accountLogin;
+    const ownerMismatch = requiresRepositoryOwnerInstall({
+      repositoryOwner,
+      installationOwner,
+    });
+
+    let hasRepositoryAccess = false;
+    if (existing && !ownerMismatch) {
+      hasRepositoryAccess = await installationIncludesRepository(
+        existing.installationId,
+        repositoryOwner,
+        repo
+      );
+    }
+
+    const { url, flow } = resolveGitHubInstallRedirect({
+      slug: appSlug,
+      stateToken,
+      installationId: existing?.installationId,
+      requiresRepositoryOwnerInstall: ownerMismatch,
+      hasRepositoryAccess,
+    });
+
+    assertValidGitHubInstallRedirectUrl(url, flow);
+
+    console.info("[github-install-start]", {
+      appSlug,
+      flow,
+      hasExistingInstallation: Boolean(existing?.installationId),
+      targetOwner: repositoryOwner,
+      targetRepo: repo,
+    });
+
+    const accessState = ownerMismatch
+      ? "wrong_account"
+      : existing
+        ? hasRepositoryAccess
+          ? "repository_verified"
+          : "installed_repo_missing"
+        : "not_installed";
+    const messages = accessCopyForState(accessState, repo, repositoryOwner);
+
+    return NextResponse.json({
+      ok: true,
+      success: true,
+      url,
+      installUrl: url,
+      flow,
+      stateToken,
+      repositoryFullName,
+      repositoryOwner,
+      installationOwner,
+      requiresRepositoryOwnerInstall: ownerMismatch,
+      messages,
+    });
+  } catch (err) {
+    console.error("[github-install-start] failed", {
+      appSlug,
+      targetOwner: repositoryOwner,
+      targetRepo: repo,
+      error: err instanceof Error ? err.message : "unknown",
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        success: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Could not start GitHub App installation flow.",
+      },
+      { status: 500 }
+    );
+  }
 }
