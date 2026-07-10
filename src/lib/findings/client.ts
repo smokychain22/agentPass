@@ -1,4 +1,5 @@
 import type { FindingsPayload } from "./types";
+import { pollJob, startJob } from "@/lib/jobs/client";
 
 export type FindingsPhase =
   | "idle"
@@ -21,14 +22,35 @@ export const FINDINGS_STEPS: { phase: FindingsPhase; label: string }[] = [
   { phase: "complete", label: "Complete" },
 ];
 
-const PROGRESS: FindingsPhase[] = [
-  "preparing",
-  "duplicates",
-  "unused",
-  "graph",
-  "slop",
-  "normalizing",
-];
+const STAGE_TO_PHASE: Record<string, FindingsPhase> = {
+  queued: "preparing",
+  fetching_repo: "preparing",
+  extracting: "preparing",
+  framework_detection: "preparing",
+  jscpd: "duplicates",
+  knip: "unused",
+  madge: "graph",
+  heuristics: "slop",
+  normalizing: "normalizing",
+  complete: "complete",
+};
+
+function mapStageToPhase(stage: string): FindingsPhase {
+  return STAGE_TO_PHASE[stage] ?? "preparing";
+}
+
+export function analyzerStageLabel(report: FindingsPayload["rawToolReports"][keyof FindingsPayload["rawToolReports"]]): string {
+  if (report.status === "ok") {
+    return report.source === "knip" ? "Knip" : report.source === "jscpd" ? "jscpd" : "Madge";
+  }
+  if (report.status === "fallback") {
+    if (report.source === "internal_import_graph") return "Unused-code fallback";
+    if (report.source === "internal_duplicate_detector") return "Duplicate fallback";
+    if (report.source === "internal_dependency_graph") return "Dependency-graph fallback";
+    return "Fallback analyzer";
+  }
+  return "Analyzer failed";
+}
 
 export async function runFindingsAnalysis(
   repoUrl: string,
@@ -37,41 +59,21 @@ export async function runFindingsAnalysis(
 ): Promise<FindingsPayload> {
   onPhase("preparing");
 
-  let idx = 0;
-  const timer = setInterval(() => {
-    if (idx < PROGRESS.length - 1) {
-      idx += 1;
-      onPhase(PROGRESS[idx]);
-    }
-  }, 1200);
-
   try {
-    const res = await fetch("/api/findings/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        repoUrl: repoUrl.trim(),
-        branch: branch?.trim() || undefined,
-      }),
+    const jobId = await startJob("/api/jobs/findings", {
+      repoUrl: repoUrl.trim(),
+      branch: branch?.trim() || undefined,
     });
 
-    const json = (await res.json()) as {
-      success: boolean;
-      findings?: FindingsPayload;
-      error?: string;
-    };
-
-    if (!json.success || !json.findings) {
-      throw new Error(json.error ?? "Findings analysis failed.");
-    }
+    const findings = await pollJob<FindingsPayload>("/api/jobs/findings", jobId, (stage) => {
+      onPhase(mapStageToPhase(stage));
+    });
 
     onPhase("complete");
-    return json.findings;
+    return findings;
   } catch (err) {
     onPhase("failed");
     throw err;
-  } finally {
-    clearInterval(timer);
   }
 }
 
@@ -96,11 +98,16 @@ export function buildCleanupPrompt(payload: FindingsPayload): string {
       ? "Safe candidates are 0, so do not generate delete operations yet. Only propose a review plan and group findings by safest-first cleanup order."
       : "Start with safe candidates only, then review remaining items separately.";
 
+  const knipLabel = analyzerStageLabel(payload.rawToolReports.knip);
+  const jscpdLabel = analyzerStageLabel(payload.rawToolReports.jscpd);
+  const madgeLabel = analyzerStageLabel(payload.rawToolReports.madge);
+
   return `${CLEANUP_PROMPT_PREFIX}
 ${safeLine}
 
 Repository: ${payload.repo.owner}/${payload.repo.name} (${payload.repo.branch})
 Scan ID: ${payload.scanId}
+Mode: ${payload.mode}
 
 Summary:
 - Duplicate clusters: ${s.duplicateClusters}
@@ -110,7 +117,7 @@ Summary:
 - Orphan patterns: ${s.orphanPatterns}
 - AI-slop signals: ${s.slopSignals}
 - Raw review findings: ${s.reviewRequired}
-- Safe candidates: ${s.safeCandidates}
+- Candidates for developer review: ${s.safeCandidates}
 
-Tools: knip=${payload.rawToolReports.knip}, jscpd=${payload.rawToolReports.jscpd}, madge=${payload.rawToolReports.madge}`;
+Analyzers: ${jscpdLabel} (${payload.rawToolReports.jscpd.durationMs}ms), ${knipLabel} (${payload.rawToolReports.knip.durationMs}ms), ${madgeLabel} (${payload.rawToolReports.madge.durationMs}ms)`;
 }

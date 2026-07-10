@@ -9,6 +9,7 @@ import {
   Download,
   Loader2,
   RefreshCw,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
@@ -17,7 +18,7 @@ import { MetricCard } from "@/components/design-system/metric-card";
 import { useAppSession } from "@/components/app/app-session";
 import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
-import { copyText } from "@/lib/patch-kit/client";
+import { copyText, runVerification, type VerificationResult } from "@/lib/patch-kit/client";
 import { cn } from "@/lib/utils";
 
 type CheckState = "pending" | "ready" | "passed" | "failed" | "manual";
@@ -72,6 +73,9 @@ export function VerifyTab() {
   const { session, findings, patchKit } = useAppSession();
   const [checkStates, setCheckStates] = useState<Record<string, CheckState>>({});
   const [copied, setCopied] = useState(false);
+  const [verification, setVerification] = useState<VerificationResult | null>(null);
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const checks = useMemo(() => {
     if (!patchKit) return [];
@@ -107,14 +111,28 @@ export function VerifyTab() {
     URL.revokeObjectURL(url);
   };
 
+  const runServerVerification = async () => {
+    if (!patchKit) return;
+    setVerifyLoading(true);
+    setVerifyError(null);
+    try {
+      const result = await runVerification(patchKit.id);
+      setVerification(result);
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Verification failed.");
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
   if (!patchKit) {
     return (
       <LockedTab
         step="04"
-        title="Verify"
+        title="Verification Plan"
         description={
           findings
-            ? "Generate a patch bundle first. Verify unlocks after RepoDiet packages regression checks."
+            ? "Generate a patch bundle first. Automated verification unlocks after the bundle is ready."
             : "Available after findings and patch bundle are ready."
         }
       />
@@ -127,10 +145,20 @@ export function VerifyTab() {
   return (
     <WorkspaceSection
       label="Regression-first"
-      title="Verify before merging"
-      description="RepoDiet generates a regression checklist — it does not run builds on your repository. Mark checks as you complete local verification."
+      title="Verification plan"
+      description="RepoDiet generates a regression checklist and can run limited automated checks (git apply --check and allowlisted package scripts). Full build verification may still require local review."
       actions={
         <>
+          <Button variant="secondary" onClick={runServerVerification} disabled={verifyLoading}>
+            {verifyLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Running checks…
+              </>
+            ) : (
+              "Run automated checks"
+            )}
+          </Button>
           <Button variant="secondary" onClick={downloadChecklist}>
             <Download className="h-4 w-4" aria-hidden />
             Download Checklist
@@ -147,9 +175,51 @@ export function VerifyTab() {
     >
       <FeedbackBanner
         variant="info"
-        message="Recommended local verification — RepoDiet does not execute builds or tests on your repository."
+        message="Automated verification is limited on serverless infrastructure. Use the checklist for full local build, lint, and route testing."
         dismissible={false}
       />
+
+      {verifyError && (
+        <FeedbackBanner variant="error" message={verifyError} dismissible onDismiss={() => setVerifyError(null)} />
+      )}
+
+      {verification && (
+        <Panel variant="elevated" padding="md">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">Automated verification result</p>
+            <RiskBadge level={verification.status === "passed" ? "safe" : verification.status === "partial" ? "review" : "protected"}>
+              {verification.status}
+            </RiskBadge>
+          </div>
+          <ul className="mt-3 space-y-2 text-sm">
+            {verification.checks.map((check) => (
+              <li key={`${check.name}-${check.command}`} className="flex items-start gap-2 text-muted-foreground">
+                {check.status === "passed" ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-signal" aria-hidden />
+                ) : check.status === "failed" ? (
+                  <XCircle className="mt-0.5 h-4 w-4 text-red-400" aria-hidden />
+                ) : (
+                  <Circle className="mt-0.5 h-4 w-4" aria-hidden />
+                )}
+                <span>
+                  <span className="font-medium text-foreground">{check.name}</span>
+                  {check.command !== "n/a" && (
+                    <code className="mt-0.5 block font-mono text-[10px] text-electric">{check.command}</code>
+                  )}
+                  {check.stderrSummary && (
+                    <span className="mt-1 block text-[11px] text-red-300">{check.stderrSummary}</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {verification.limitations.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Limitations: {verification.limitations.join(" ")}
+            </p>
+          )}
+        </Panel>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="Readiness" value="Developer review" accent="amber" hint="Not auto-verified" />

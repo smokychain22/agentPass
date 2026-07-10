@@ -1,6 +1,8 @@
 import { nanoid } from "nanoid";
 import type {
+  AnalyzerRunResult,
   Finding,
+  FindingEvidence,
   FindingSource,
   FindingsPayload,
   FindingsSummary,
@@ -8,7 +10,8 @@ import type {
   KnipRawReport,
   MadgeRawReport,
   SlopRawSignal,
-  ToolStatus,
+  SourceMode,
+  ToolRunReport,
 } from "./types";
 import type { RepoInfo } from "@/lib/scanner/prepare-workspace";
 import {
@@ -25,17 +28,30 @@ interface NormalizeInput {
   repo: RepoInfo;
   rootDir: string;
   knip: KnipRawReport | null;
-  knipStatus: ToolStatus;
+  knipResult: AnalyzerRunResult<KnipRawReport>;
   jscpd: JscpdRawReport | null;
-  jscpdStatus: ToolStatus;
+  jscpdResult: AnalyzerRunResult<JscpdRawReport>;
   madge: MadgeRawReport | null;
-  madgeStatus: ToolStatus;
+  madgeResult: AnalyzerRunResult<MadgeRawReport>;
   slop: SlopRawSignal[];
+  mode: "demo" | "live";
+}
+
+function sourceModeForFinding(source: FindingSource): SourceMode {
+  if (source.endsWith("_fallback")) return "fallback";
+  if (source === "heuristic") return "heuristic";
+  return "native";
+}
+
+function makeEvidence(summary: string, signals: string[]): FindingEvidence {
+  return { summary, signals };
 }
 
 function makeFinding(
-  partial: Omit<Finding, "id" | "severity" | "action"> & {
+  partial: Omit<Finding, "id" | "severity" | "action" | "evidence" | "confidenceReason" | "sourceMode"> & {
     action?: Finding["action"];
+    evidence: FindingEvidence;
+    confidenceReason: string;
   }
 ): Finding {
   const files = partial.files.map((f) => f.replace(/\\/g, "/"));
@@ -45,6 +61,7 @@ function makeFinding(
     id: `fnd_${nanoid(10)}`,
     severity: severityForAction(action),
     action,
+    sourceMode: sourceModeForFinding(partial.source),
     ...partial,
     files,
     confidence: clampConfidence(partial.confidence),
@@ -64,22 +81,32 @@ function fromKnip(report: KnipRawReport | null, rootDir: string, source: Finding
       const rel = normalizeRepoPath(rootDir, f.name);
       if (!rel || seenFiles.has(rel) || isDoNotTouchPath(rel)) continue;
       seenFiles.add(rel);
-      const action = isRouteLikePath(rel)
-        ? "do_not_touch"
-        : classifyAction([rel], { type: "unused_file" });
+      const routeLike = isRouteLikePath(rel);
+      const action = routeLike ? "do_not_touch" : classifyAction([rel], { type: "unused_file" });
+      const inboundImports = 0;
+      const confidence = routeLike ? 0.45 : inboundImports === 0 ? 0.76 : 0.55;
       files.push(
         makeFinding({
           type: "unused_file",
           title: "Unused file",
           files: [rel],
-          confidence: isRouteLikePath(rel) ? 0.45 : 0.76,
+          confidence,
           action,
-          reason: isRouteLikePath(rel)
+          reason: routeLike
             ? "Framework route file — may be valid without direct imports."
             : source === "knip_fallback"
               ? "File not reached by internal import-graph fallback (conservative)."
               : "File is not referenced by import graph or framework entry points.",
           source,
+          confidenceReason: routeLike
+            ? "Route-like path protected from deletion."
+            : "No inbound imports detected and file is not a protected entry point.",
+          evidence: makeEvidence("Unused file candidate", [
+            `path=${rel}`,
+            `inboundImports=${inboundImports}`,
+            `routeLike=${routeLike}`,
+            `analyzer=${source}`,
+          ]),
         })
       );
     }
@@ -100,6 +127,12 @@ function fromKnip(report: KnipRawReport | null, rootDir: string, source: Finding
               ? "Package not found in import statements (import-graph fallback)."
               : "Package is listed in package.json but no usage was found.",
           source,
+          confidenceReason: "Package name not referenced in scanned import graph.",
+          evidence: makeEvidence("Unused dependency candidate", [
+            `package=${dep.name}`,
+            `declaredIn=${issue.file}`,
+            `analyzer=${source}`,
+          ]),
         })
       );
     }
@@ -117,6 +150,12 @@ function fromKnip(report: KnipRawReport | null, rootDir: string, source: Finding
           confidence: 0.7,
           reason: `Export "${exp.name}" appears unused in the module graph.`,
           source,
+          confidenceReason: "Export symbol not referenced by import graph scan.",
+          evidence: makeEvidence("Unused export candidate", [
+            `file=${rel}`,
+            `export=${exp.name}`,
+            `analyzer=${source}`,
+          ]),
         })
       );
     }
@@ -137,6 +176,9 @@ function fromJscpd(report: JscpdRawReport | null, rootDir: string, source: Findi
     if (seen.has(key)) continue;
     seen.add(key);
 
+    const dupLines = dup.lines ?? 4;
+    const confidence = clampConfidence(0.75 + Math.min(dupLines / 100, 0.2));
+
     findings.push(
       makeFinding({
         type: "duplicate_code",
@@ -145,13 +187,19 @@ function fromJscpd(report: JscpdRawReport | null, rootDir: string, source: Findi
         lines: dup.firstFile
           ? { start: dup.firstFile.start, end: dup.firstFile.end }
           : undefined,
-        confidence: clampConfidence(0.75 + Math.min((dup.lines ?? 4) / 100, 0.2)),
+        confidence,
         action: "review_first",
         reason:
           source === "jscpd_fallback"
             ? "Similar normalized line chunks detected (internal fallback detector)."
             : "Similar logic appears in multiple files.",
         source,
+        confidenceReason: `Duplicate similarity based on ${dupLines} matched lines across ${a} and ${b}.`,
+        evidence: makeEvidence("Duplicate code cluster", [
+          `files=${a},${b}`,
+          `matchedLines=${dupLines}`,
+          `analyzer=${source}`,
+        ]),
       })
     );
   }
@@ -178,6 +226,11 @@ function fromMadge(report: MadgeRawReport | null, rootDir: string, source: Findi
             ? "File not reached from entry points (import-graph fallback)."
             : "File is not reached from detected app entry points in the dependency graph.",
         source,
+        confidenceReason: "No inbound path from detected entry points.",
+        evidence: makeEvidence("Orphan module", [
+          `path=${rel}`,
+          `analyzer=${source}`,
+        ]),
       })
     );
   }
@@ -193,6 +246,11 @@ function fromMadge(report: MadgeRawReport | null, rootDir: string, source: Findi
         action: "review_first",
         reason: "Circular imports detected — refactor before deletion.",
         source,
+        confidenceReason: `Circular dependency chain length ${files.length}.`,
+        evidence: makeEvidence("Circular dependency cluster", [
+          `files=${files.join(",")}`,
+          `analyzer=${source}`,
+        ]),
       })
     );
   }
@@ -213,6 +271,11 @@ function fromSlop(signals: SlopRawSignal[]): Finding[] {
       }),
       reason: s.reason,
       source: "heuristic",
+      confidenceReason: s.reason,
+      evidence: makeEvidence("AI-slop heuristic signal", [
+        `title=${s.title}`,
+        `files=${s.files.join(",")}`,
+      ]),
     })
   );
 }
@@ -252,24 +315,34 @@ function buildSummary(
   };
 }
 
+function toToolReport<T>(result: AnalyzerRunResult<T>): ToolRunReport {
+  return {
+    status: result.status,
+    source: result.source,
+    sourceMode: result.sourceMode,
+    error: result.error,
+    durationMs: result.durationMs,
+  };
+}
+
 export function normalizeFindings(input: NormalizeInput): FindingsPayload {
   const knipSource: FindingSource =
-    input.knipStatus === "fallback" ? "knip_fallback" : "knip";
+    input.knipResult.status === "fallback" ? "knip_fallback" : "knip";
   const jscpdSource: FindingSource =
-    input.jscpdStatus === "fallback" ? "jscpd_fallback" : "jscpd";
+    input.jscpdResult.status === "fallback" ? "jscpd_fallback" : "jscpd";
   const madgeSource: FindingSource =
-    input.madgeStatus === "fallback" ? "madge_fallback" : "madge";
+    input.madgeResult.status === "fallback" ? "madge_fallback" : "madge";
 
   const knipFindings =
-    input.knip && input.knipStatus !== "failed"
+    input.knip && input.knipResult.status !== "failed"
       ? fromKnip(input.knip, input.rootDir, knipSource)
       : { files: [], dependencies: [], exports: [] };
   const duplicates =
-    input.jscpd && input.jscpdStatus !== "failed"
+    input.jscpd && input.jscpdResult.status !== "failed"
       ? fromJscpd(input.jscpd, input.rootDir, jscpdSource)
       : [];
   const orphans =
-    input.madge && input.madgeStatus !== "failed"
+    input.madge && input.madgeResult.status !== "failed"
       ? fromMadge(input.madge, input.rootDir, madgeSource)
       : [];
   const slopSignals = fromSlop(input.slop);
@@ -291,6 +364,7 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
       branch: input.repo.branch,
       url: input.repo.url,
     },
+    mode: input.mode,
     summary,
     duplicates,
     unused: {
@@ -310,9 +384,9 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
     ]),
     artifacts: { findingsJson: true },
     rawToolReports: {
-      knip: input.knipStatus,
-      jscpd: input.jscpdStatus,
-      madge: input.madgeStatus,
+      knip: toToolReport(input.knipResult),
+      jscpd: toToolReport(input.jscpdResult),
+      madge: toToolReport(input.madgeResult),
     },
   };
 }

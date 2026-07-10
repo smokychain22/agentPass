@@ -47,15 +47,15 @@ export function patchPreview(finding: Finding): string {
     return "No patch action — protected by RepoDiet policy.";
   }
   if (finding.type === "duplicate_code") {
-    return "Phase 3: propose merge/refactor patch after human review.";
+    return "Included in review-first recommendations; merge/refactor before deletion.";
   }
   if (finding.type === "unused_dependency") {
-    return "Phase 3: propose package.json dependency removal after verification.";
+    return "Package removal suggestion in package-cleanup.md after verification.";
   }
   if (finding.type === "unused_file" && finding.action === "safe_candidate") {
-    return "Phase 3: candidate for safe file removal in patch bundle.";
+    return "Candidate for developer review in cleanup patch bundle.";
   }
-  return "Phase 3: included in conservative cleanup patch after confirmation.";
+  return "Included in conservative cleanup recommendations after confirmation.";
 }
 
 export function sourceLabel(source: Finding["source"]): string {

@@ -16,12 +16,45 @@ const GITHUB_HEADERS = {
   Accept: "application/vnd.github+json",
 };
 
+const ALLOWED_HOSTS = new Set(["github.com", "codeload.github.com", "api.github.com"]);
+
+function assertAllowedUrl(url: string): URL {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new RepoFetchError("Only HTTPS GitHub URLs are allowed.");
+  }
+  const host = parsed.hostname.replace(/^www\./, "");
+  if (!ALLOWED_HOSTS.has(host)) {
+    throw new RepoFetchError("Only github.com repository URLs are supported.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new RepoFetchError("Credentials in repository URLs are not allowed.");
+  }
+  return parsed;
+}
+
 function zipUrl(owner: string, repo: string, branch: string): string {
   return `https://github.com/${owner}/${repo}/archive/refs/heads/${encodeURIComponent(branch)}.zip`;
 }
 
-async function tryFetch(url: string): Promise<Response> {
-  return fetch(url, { headers: GITHUB_HEADERS, redirect: "follow" });
+async function tryFetch(url: string, redirectCount = 0): Promise<Response> {
+  if (redirectCount > 5) {
+    throw new RepoFetchError("Too many redirects while fetching repository.");
+  }
+  assertAllowedUrl(url);
+  const res = await fetch(url, {
+    headers: GITHUB_HEADERS,
+    redirect: "manual",
+  });
+
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("location");
+    if (!location) throw new RepoFetchError(FETCH_ERROR);
+    const nextUrl = new URL(location, url).toString();
+    return tryFetch(nextUrl, redirectCount + 1);
+  }
+
+  return res;
 }
 
 export async function fetchDefaultBranch(

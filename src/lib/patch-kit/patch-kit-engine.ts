@@ -125,7 +125,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       findingsJson: findings,
       patchkitSummaryJson,
     },
-    downloadUrl: `/api/patch-kit/download/${id}`,
+    downloadUrl: `/api/patches/${id}/download`,
     zipBase64: bundle.zipBase64,
   };
 

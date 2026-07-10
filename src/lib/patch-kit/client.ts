@@ -1,5 +1,6 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "./types";
+import { pollJob, startJob } from "@/lib/jobs/client";
 
 export type CleanupPrMode = "safe_only" | "report_only";
 
@@ -122,14 +123,19 @@ export const PATCH_KIT_STEPS: { phase: PatchKitPhase; label: string }[] = [
   { phase: "complete", label: "Complete" },
 ];
 
-const PROGRESS: PatchKitPhase[] = [
-  "classifying",
-  "patch",
-  "package",
-  "regression",
-  "cursor",
-  "bundle",
-];
+const STAGE_TO_PHASE: Record<string, PatchKitPhase> = {
+  queued: "classifying",
+  loading_findings: "classifying",
+  classifying: "classifying",
+  generating_patch: "patch",
+  validating_patch: "patch",
+  building_bundle: "bundle",
+  complete: "complete",
+};
+
+function mapStageToPhase(stage: string): PatchKitPhase {
+  return STAGE_TO_PHASE[stage] ?? "classifying";
+}
 
 export async function runPatchKitGeneration(
   repoUrl: string,
@@ -139,42 +145,23 @@ export async function runPatchKitGeneration(
 ): Promise<PatchKitPayload> {
   onPhase("classifying");
 
-  let idx = 0;
-  const timer = setInterval(() => {
-    if (idx < PROGRESS.length - 1) {
-      idx += 1;
-      onPhase(PROGRESS[idx]);
-    }
-  }, 900);
-
   try {
-    const res = await fetch("/api/patch-kit/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        repoUrl: repoUrl.trim(),
-        branch: branch?.trim() || undefined,
-        findings,
-      }),
+    const jobId = await startJob("/api/jobs/patch", {
+      repoUrl: repoUrl.trim(),
+      branch: branch?.trim() || undefined,
+      findings,
+      scanId: findings.scanId,
     });
 
-    const json = (await res.json()) as {
-      success: boolean;
-      patchKit?: PatchKitPayload;
-      error?: string;
-    };
-
-    if (!json.success || !json.patchKit) {
-      throw new Error(json.error ?? "Patch kit generation failed.");
-    }
+    const patchKit = await pollJob<PatchKitPayload>("/api/jobs/patch", jobId, (stage) => {
+      onPhase(mapStageToPhase(stage));
+    });
 
     onPhase("complete");
-    return json.patchKit;
+    return patchKit;
   } catch (err) {
     onPhase("failed");
     throw err;
-  } finally {
-    clearInterval(timer);
   }
 }
 
@@ -200,7 +187,11 @@ export function downloadPatchKitZip(
     return;
   }
 
-  void fetch(patchKit.downloadUrl)
+  const downloadUrl = patchKit.downloadUrl.startsWith("/api/patches/")
+    ? patchKit.downloadUrl
+    : `/api/patches/${patchKit.id}/download`;
+
+  void fetch(downloadUrl)
     .then((res) => {
       if (!res.ok) throw new Error("ZIP download failed.");
       return res.blob();
@@ -227,4 +218,37 @@ export function downloadTextFile(content: string, filename: string, mime = "text
 
 export async function copyText(content: string): Promise<void> {
   await navigator.clipboard.writeText(content);
+}
+
+export interface VerificationResult {
+  status: "passed" | "failed" | "partial" | "not_run";
+  checks: Array<{
+    name: string;
+    command: string;
+    status: "passed" | "failed" | "not_run" | "skipped";
+    exitCode: number | null;
+    durationMs: number;
+    stdoutSummary: string;
+    stderrSummary: string;
+  }>;
+  limitations: string[];
+}
+
+export async function runVerification(patchId: string): Promise<VerificationResult> {
+  const res = await fetch("/api/verify/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ patchId }),
+  });
+
+  const json = (await res.json()) as VerificationResult & { success: boolean; error?: string };
+  if (!json.success) {
+    throw new Error(json.error ?? "Verification failed.");
+  }
+
+  return {
+    status: json.status,
+    checks: json.checks,
+    limitations: json.limitations,
+  };
 }

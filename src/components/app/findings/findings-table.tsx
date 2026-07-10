@@ -114,7 +114,7 @@ function FindingRow({ finding }: { finding: Finding }) {
               </div>
               <div className="sm:col-span-2">
                 <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
-                  Patch preview (Phase 3)
+                  Patch preview
                 </p>
                 <p className="text-muted-foreground font-mono text-xs">{patchPreview(finding)}</p>
               </div>

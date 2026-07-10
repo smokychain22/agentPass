@@ -6,6 +6,7 @@ import { TOOL_TIMEOUT_MS, type AnalyzerRunResult } from "./types";
 import { madgeScriptPath } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runMadgeFallback } from "./fallback/madge-fallback";
+import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
 
 async function resolveEntry(rootDir: string): Promise<string> {
   const candidates = [
@@ -29,6 +30,11 @@ async function resolveEntry(rootDir: string): Promise<string> {
 }
 
 export async function runMadge(rootDir: string): Promise<AnalyzerRunResult<MadgeRawReport>> {
+  return timedAnalyzer("madge", () => runMadgeInternal(rootDir));
+}
+
+async function runMadgeInternal(rootDir: string): Promise<AnalyzerRunResult<MadgeRawReport>> {
+  const started = Date.now();
   const scriptPath = madgeScriptPath();
   const entry = await resolveEntry(rootDir);
 
@@ -39,7 +45,7 @@ export async function runMadge(rootDir: string): Promise<AnalyzerRunResult<Madge
       scriptPath,
       error: err instanceof Error ? err.message : String(err),
     });
-    return runMadgeFallbackWrapped(rootDir, "Madge script not found.");
+    return runMadgeFallbackWrapped(rootDir, "Madge script not found.", started);
   }
 
   try {
@@ -61,7 +67,7 @@ export async function runMadge(rootDir: string): Promise<AnalyzerRunResult<Madge
     if (result.exitCode === 0 && result.stdout?.trim()) {
       try {
         const report = JSON.parse(result.stdout) as MadgeRawReport;
-        return { status: "ok", report };
+        return finalizeAnalyzerResult("madge", "ok", report, undefined, Date.now() - started);
       } catch (parseErr) {
         logAnalyzer("madge", "json_parse_error", {
           error: parseErr instanceof Error ? parseErr.message : String(parseErr),
@@ -77,18 +83,23 @@ export async function runMadge(rootDir: string): Promise<AnalyzerRunResult<Madge
       /* use stderr */
     }
 
-    return runMadgeFallbackWrapped(rootDir, errMsg);
+    return runMadgeFallbackWrapped(rootDir, errMsg, started);
   } catch (err) {
     logAnalyzer("madge", "cli_exception", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return runMadgeFallbackWrapped(rootDir, err instanceof Error ? err.message : "Madge failed.");
+    return runMadgeFallbackWrapped(
+      rootDir,
+      err instanceof Error ? err.message : "Madge failed.",
+      started
+    );
   }
 }
 
 async function runMadgeFallbackWrapped(
   rootDir: string,
-  reason: string
+  reason: string,
+  started: number
 ): Promise<AnalyzerRunResult<MadgeRawReport>> {
   try {
     logAnalyzer("madge", "fallback_start", { rootDir, reason });
@@ -97,15 +108,17 @@ async function runMadgeFallbackWrapped(
       orphans: report.orphans.length,
       circular: report.circular.length,
     });
-    return { status: "fallback", report, error: reason };
+    return finalizeAnalyzerResult("madge", "fallback", report, reason, Date.now() - started);
   } catch (err) {
     logAnalyzer("madge", "fallback_failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return {
-      status: "failed",
-      report: null,
-      error: err instanceof Error ? err.message : "Madge fallback failed.",
-    };
+    return finalizeAnalyzerResult<MadgeRawReport>(
+      "madge",
+      "failed",
+      null,
+      err instanceof Error ? err.message : "Madge fallback failed.",
+      started ? Date.now() - started : 0
+    );
   }
 }

@@ -8,7 +8,7 @@ export async function executeFindUnusedDependencies(body: unknown) {
   const warnings: string[] = [];
 
   const isFallback =
-    findings.rawToolReports.knip === "fallback" ||
+    findings.rawToolReports.knip.status === "fallback" ||
     findings.unused.dependencies.some((d) => d.source === "knip_fallback");
 
   if (isFallback) {

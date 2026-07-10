@@ -24,7 +24,7 @@ function uninstallCommand(manager: PackageManager, packageName: string): string 
 }
 
 function usesFallbackAnalysis(findings: FindingsPayload, dependencies: Finding[]): boolean {
-  if (findings.rawToolReports.knip === "fallback") return true;
+  if (findings.rawToolReports.knip.status === "fallback") return true;
   return dependencies.some((dep) => dep.source === "knip_fallback");
 }
 
@@ -66,7 +66,7 @@ export function generatePackageCleanup(
     if (!name) continue;
 
     const confidencePct = Math.round(dep.confidence * 100);
-    const fromFallback = dep.source === "knip_fallback" || findings.rawToolReports.knip === "fallback";
+    const fromFallback = dep.source === "knip_fallback" || findings.rawToolReports.knip.status === "fallback";
 
     lines.push(`- \`${name}\``);
     lines.push(`  - Reason: ${dep.reason}`);

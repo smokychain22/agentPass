@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowRight, Github, Loader2, Lock } from "lucide-react";
+import { ArrowRight, Github, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -191,13 +191,13 @@ export function ScanTab() {
           <div className="space-y-2">
             <Label>Scan mode</Label>
             <div className="flex flex-wrap gap-2">
-              <Badge variant="cyan">Quick</Badge>
-              <Badge variant="neutral" className="gap-1.5 opacity-70" title="Deep scan ships in Phase 3">
-                Deep <Lock className="h-3 w-3" aria-hidden />
+              <Badge variant="cyan">Structure scan</Badge>
+              <Badge variant="neutral" className="gap-1.5 opacity-70" title="Full analyzer pass runs on the Findings step">
+                Findings analyzers on next step
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              Deep scan with Knip integration ships in Phase 3.
+              This step indexes the repository structure. Knip, jscpd, and Madge run during Findings analysis.
             </p>
           </div>
 

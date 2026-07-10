@@ -1,6 +1,7 @@
 import type { ScanPhase } from "@/lib/scanner/types";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
+import { pollJob, startJob } from "@/lib/jobs/client";
 
 export type ScanResult = Omit<ScanPayload, "id">;
 
@@ -32,18 +33,17 @@ export function isValidGitHubUrl(input: string): boolean {
   }
 }
 
-const PROGRESS_PHASES: ScanPhase[] = [
-  "validating",
-  "fetching",
-  "unpacking",
-  "detecting",
-  "scanning",
-];
+const STAGE_TO_PHASE: Record<string, ScanPhase> = {
+  queued: "validating",
+  fetching_repo: "fetching",
+  extracting: "unpacking",
+  framework_detection: "detecting",
+  file_tree: "scanning",
+  complete: "complete",
+};
 
-interface RunScanResponse {
-  success: boolean;
-  scan?: ScanPayload;
-  error?: string;
+function mapStageToPhase(stage: string): ScanPhase | "idle" {
+  return STAGE_TO_PHASE[stage] ?? "scanning";
 }
 
 export async function runScan(
@@ -53,36 +53,44 @@ export async function runScan(
 ): Promise<ScanPayload> {
   onPhase("validating");
 
-  let phaseIdx = 0;
-  const timer = setInterval(() => {
-    if (phaseIdx < PROGRESS_PHASES.length - 1) {
-      phaseIdx += 1;
-      onPhase(PROGRESS_PHASES[phaseIdx]);
-    }
-  }, 700);
-
   try {
-    const res = await fetch("/api/scans/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        repoUrl: repoUrl.trim(),
-        branch: branch?.trim() || undefined,
-      }),
+    const jobId = await startJob("/api/jobs/scan", {
+      repoUrl: repoUrl.trim(),
+      branch: branch?.trim() || undefined,
     });
 
-    const json = (await res.json()) as RunScanResponse;
-
-    if (!json.success || !json.scan) {
-      throw new Error(json.error ?? "Scan failed.");
-    }
+    const scan = await pollJob<ScanPayload>("/api/jobs/scan", jobId, (stage) => {
+      onPhase(mapStageToPhase(stage));
+    });
 
     onPhase("complete");
-    return json.scan;
+    return scan;
   } catch (err) {
     onPhase("failed");
     throw err;
-  } finally {
-    clearInterval(timer);
   }
+}
+
+/** Legacy direct scan for backwards compatibility. */
+export async function runScanDirect(
+  repoUrl: string,
+  branch: string | undefined,
+  onPhase: (phase: ScanPhase | "idle") => void
+): Promise<ScanPayload> {
+  onPhase("fetching");
+  const res = await fetch("/api/scans/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      repoUrl: repoUrl.trim(),
+      branch: branch?.trim() || undefined,
+    }),
+  });
+  const json = (await res.json()) as { success: boolean; scan?: ScanPayload; error?: string };
+  if (!json.success || !json.scan) {
+    onPhase("failed");
+    throw new Error(json.error ?? "Scan failed.");
+  }
+  onPhase("complete");
+  return json.scan;
 }

@@ -4,7 +4,7 @@ import { ToolInputSchemas } from "@/lib/a2mcp/schemas";
 
 function duplicateSource(findings: Awaited<ReturnType<typeof runFindingsCategory>>): string {
   const first = findings.duplicates[0];
-  if (!first) return findings.rawToolReports.jscpd === "fallback" ? "jscpd_fallback" : "jscpd";
+  if (!first) return findings.rawToolReports.jscpd.status === "fallback" ? "jscpd_fallback" : "jscpd";
   return first.source;
 }
 

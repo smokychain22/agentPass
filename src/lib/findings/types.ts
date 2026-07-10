@@ -21,10 +21,37 @@ export type FindingSource =
 
 export type ToolStatus = "ok" | "fallback" | "failed";
 
+export type SourceMode = "native" | "fallback" | "heuristic";
+
+export type AnalyzerSource =
+  | "knip"
+  | "jscpd"
+  | "madge"
+  | "internal_import_graph"
+  | "internal_duplicate_detector"
+  | "internal_dependency_graph"
+  | null;
+
+export interface ToolRunReport {
+  status: ToolStatus;
+  source: AnalyzerSource;
+  sourceMode: SourceMode;
+  error?: string;
+  durationMs: number;
+}
+
 export interface AnalyzerRunResult<T> {
   status: ToolStatus;
+  source: AnalyzerSource;
+  sourceMode: SourceMode;
   report: T | null;
   error?: string;
+  durationMs: number;
+}
+
+export interface FindingEvidence {
+  summary: string;
+  signals: string[];
 }
 
 export interface Finding {
@@ -35,10 +62,13 @@ export interface Finding {
   packageName?: string;
   lines?: { start: number; end: number };
   confidence: number;
+  confidenceReason: string;
   severity: FindingSeverity;
   action: FindingAction;
   reason: string;
   source: FindingSource;
+  sourceMode: SourceMode;
+  evidence: FindingEvidence;
 }
 
 export interface FindingsSummary {
@@ -77,10 +107,11 @@ export interface FindingsPayload {
   artifacts: {
     findingsJson: boolean;
   };
+  mode: "demo" | "live";
   rawToolReports: {
-    knip: ToolStatus;
-    jscpd: ToolStatus;
-    madge: ToolStatus;
+    knip: ToolRunReport;
+    jscpd: ToolRunReport;
+    madge: ToolRunReport;
   };
 }
 

@@ -188,12 +188,20 @@ export function FindingsTab() {
 
       {findings && (
         <>
-          {(findings.rawToolReports.knip !== "ok" ||
-            findings.rawToolReports.jscpd !== "ok" ||
-            findings.rawToolReports.madge !== "ok") && (
+          {(findings.rawToolReports.knip.status !== "ok" ||
+            findings.rawToolReports.jscpd.status !== "ok" ||
+            findings.rawToolReports.madge.status !== "ok") && (
             <FeedbackBanner
               variant="warning"
               message="Some analyzers used fallback detectors on this runtime. Findings are real and marked by source."
+              dismissible={false}
+            />
+          )}
+
+          {findings.mode === "demo" && (
+            <FeedbackBanner
+              variant="info"
+              message="DEMO REPOSITORY — findings are from the seeded demo workspace."
               dismissible={false}
             />
           )}

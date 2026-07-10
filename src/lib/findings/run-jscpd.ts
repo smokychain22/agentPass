@@ -6,8 +6,14 @@ import { TOOL_TIMEOUT_MS, type AnalyzerRunResult } from "./types";
 import { jscpdCliPath } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runDuplicateFallback } from "./fallback/duplicate-detector";
+import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
 
 export async function runJscpd(rootDir: string): Promise<AnalyzerRunResult<JscpdRawReport>> {
+  return timedAnalyzer("jscpd", () => runJscpdInternal(rootDir));
+}
+
+async function runJscpdInternal(rootDir: string): Promise<AnalyzerRunResult<JscpdRawReport>> {
+  const started = Date.now();
   const outDir = path.join(rootDir, ".repodiet-jscpd");
   await fs.rm(outDir, { recursive: true, force: true }).catch(() => {});
 
@@ -19,7 +25,7 @@ export async function runJscpd(rootDir: string): Promise<AnalyzerRunResult<Jscpd
       cli,
       error: err instanceof Error ? err.message : String(err),
     });
-    return runJscpdFallbackWrapped(rootDir, "jscpd CLI not found in node_modules.");
+    return runJscpdFallbackWrapped(rootDir, "jscpd CLI not found in node_modules.", started);
   }
 
   try {
@@ -68,7 +74,7 @@ export async function runJscpd(rootDir: string): Promise<AnalyzerRunResult<Jscpd
         const raw = await fs.readFile(reportPath, "utf8");
         const report = JSON.parse(raw) as JscpdRawReport;
         await fs.rm(outDir, { recursive: true, force: true }).catch(() => {});
-        return { status: "ok", report };
+        return finalizeAnalyzerResult("jscpd", "ok", report, undefined, Date.now() - started);
       } catch {
         /* try next path */
       }
@@ -77,20 +83,26 @@ export async function runJscpd(rootDir: string): Promise<AnalyzerRunResult<Jscpd
     await fs.rm(outDir, { recursive: true, force: true }).catch(() => {});
     return runJscpdFallbackWrapped(
       rootDir,
-      result.stderr || `jscpd exited ${result.exitCode} without report.`
+      result.stderr || `jscpd exited ${result.exitCode} without report.`,
+      started
     );
   } catch (err) {
     await fs.rm(outDir, { recursive: true, force: true }).catch(() => {});
     logAnalyzer("jscpd", "cli_exception", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return runJscpdFallbackWrapped(rootDir, err instanceof Error ? err.message : "jscpd failed.");
+    return runJscpdFallbackWrapped(
+      rootDir,
+      err instanceof Error ? err.message : "jscpd failed.",
+      started
+    );
   }
 }
 
 async function runJscpdFallbackWrapped(
   rootDir: string,
-  reason: string
+  reason: string,
+  started: number
 ): Promise<AnalyzerRunResult<JscpdRawReport>> {
   try {
     logAnalyzer("jscpd", "fallback_start", { rootDir, reason });
@@ -98,15 +110,17 @@ async function runJscpdFallbackWrapped(
     logAnalyzer("jscpd", "fallback_ok", {
       duplicates: report.duplicates?.length ?? 0,
     });
-    return { status: "fallback", report, error: reason };
+    return finalizeAnalyzerResult("jscpd", "fallback", report, reason, Date.now() - started);
   } catch (err) {
     logAnalyzer("jscpd", "fallback_failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return {
-      status: "failed",
-      report: null,
-      error: err instanceof Error ? err.message : "jscpd fallback failed.",
-    };
+    return finalizeAnalyzerResult<JscpdRawReport>(
+      "jscpd",
+      "failed",
+      null,
+      err instanceof Error ? err.message : "jscpd fallback failed.",
+      Date.now() - started
+    );
   }
 }

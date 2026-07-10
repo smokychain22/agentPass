@@ -11,3 +11,4 @@ out/
 **/.jscpd-out/
 **/.repodiet-jscpd/
 data-test/
+tsconfig.tsbuildinfo

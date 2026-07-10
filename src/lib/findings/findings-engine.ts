@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { runKnip } from "./run-knip";
 import { runJscpd } from "./run-jscpd";
@@ -6,35 +7,53 @@ import { runMadge } from "./run-madge";
 import { runAiSlopHeuristics } from "./ai-slop-heuristics";
 import { normalizeFindings } from "./normalize-findings";
 import type { FindingsPayload } from "./types";
+import type { FindingsJobStage } from "@/lib/jobs/types";
+
+export type FindingsStageCallback = (stage: FindingsJobStage) => void;
 
 export async function runFindingsEngine(
   repoUrl: string,
-  branch?: string
+  branch?: string,
+  onStage?: FindingsStageCallback
 ): Promise<FindingsPayload> {
+  onStage?.("fetching_repo");
   const workspace = await prepareRepoWorkspace(repoUrl, branch);
 
   try {
+    onStage?.("extracting");
+    onStage?.("framework_detection");
+
     const scanId = `scan_${nanoid(12)}`;
 
-    const [knipResult, jscpdResult, madgeResult, slopSignals] = await Promise.all([
-      runKnip(workspace.rootDir),
-      runJscpd(workspace.rootDir),
-      runMadge(workspace.rootDir),
-      runAiSlopHeuristics(workspace.rootDir),
-    ]);
+    onStage?.("jscpd");
+    const jscpdResult = await runJscpd(workspace.rootDir);
 
-    return normalizeFindings({
+    onStage?.("knip");
+    const knipResult = await runKnip(workspace.rootDir);
+
+    onStage?.("madge");
+    const madgeResult = await runMadge(workspace.rootDir);
+
+    onStage?.("heuristics");
+    const slopSignals = await runAiSlopHeuristics(workspace.rootDir);
+
+    onStage?.("normalizing");
+    const payload = normalizeFindings({
       scanId,
       repo: workspace.repo,
       rootDir: workspace.rootDir,
       knip: knipResult.report,
-      knipStatus: knipResult.status,
+      knipResult,
       jscpd: jscpdResult.report,
-      jscpdStatus: jscpdResult.status,
+      jscpdResult,
       madge: madgeResult.report,
-      madgeStatus: madgeResult.status,
+      madgeResult,
       slop: slopSignals,
+      mode: isDemoRepoUrl(repoUrl) ? "demo" : "live",
     });
+
+    onStage?.("complete");
+    return payload;
   } finally {
     await workspace.cleanup();
   }

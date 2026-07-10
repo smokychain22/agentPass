@@ -6,8 +6,14 @@ import { TOOL_TIMEOUT_MS, type AnalyzerRunResult } from "./types";
 import { knipCliPath } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runKnipFallback } from "./fallback/knip-fallback";
+import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
 
 export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
+  return timedAnalyzer("knip", () => runKnipInternal(rootDir));
+}
+
+async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
+  const started = Date.now();
   const pkgPath = path.join(rootDir, "package.json");
   try {
     await fs.access(pkgPath);
@@ -15,13 +21,21 @@ export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRa
     logAnalyzer("knip", "skip_no_package_json", { rootDir });
     try {
       const report = await runKnipFallback(rootDir);
-      return { status: "fallback", report, error: "No package.json — used import-graph fallback." };
+      return finalizeAnalyzerResult(
+        "knip",
+        "fallback",
+        report,
+        "No package.json — used import-graph fallback.",
+        Date.now() - started
+      );
     } catch (err) {
-      return {
-        status: "failed",
-        report: null,
-        error: err instanceof Error ? err.message : "Knip fallback failed.",
-      };
+      return finalizeAnalyzerResult<KnipRawReport>(
+        "knip",
+        "failed",
+        null,
+        err instanceof Error ? err.message : "Knip fallback failed.",
+        Date.now() - started
+      );
     }
   }
 
@@ -33,7 +47,7 @@ export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRa
       cli,
       error: err instanceof Error ? err.message : String(err),
     });
-    return runKnipFallbackWrapped(rootDir, "Knip CLI not found in node_modules.");
+    return runKnipFallbackWrapped(rootDir, "Knip CLI not found in node_modules.", started);
   }
 
   try {
@@ -55,7 +69,7 @@ export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRa
     if (result.stdout?.trim()) {
       try {
         const report = JSON.parse(result.stdout) as KnipRawReport;
-        return { status: "ok", report };
+        return finalizeAnalyzerResult("knip", "ok", report, undefined, Date.now() - started);
       } catch (parseErr) {
         logAnalyzer("knip", "json_parse_error", {
           error: parseErr instanceof Error ? parseErr.message : String(parseErr),
@@ -66,20 +80,26 @@ export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRa
 
     return runKnipFallbackWrapped(
       rootDir,
-      result.stderr || `Knip exited ${result.exitCode} with no JSON output.`
+      result.stderr || `Knip exited ${result.exitCode} with no JSON output.`,
+      started
     );
   } catch (err) {
     logAnalyzer("knip", "cli_exception", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? truncateLog(err.stack, 400) : undefined,
     });
-    return runKnipFallbackWrapped(rootDir, err instanceof Error ? err.message : "Knip failed.");
+    return runKnipFallbackWrapped(
+      rootDir,
+      err instanceof Error ? err.message : "Knip failed.",
+      started
+    );
   }
 }
 
 async function runKnipFallbackWrapped(
   rootDir: string,
-  reason: string
+  reason: string,
+  started: number
 ): Promise<AnalyzerRunResult<KnipRawReport>> {
   try {
     logAnalyzer("knip", "fallback_start", { rootDir, reason });
@@ -87,15 +107,17 @@ async function runKnipFallbackWrapped(
     logAnalyzer("knip", "fallback_ok", {
       issues: report.issues?.length ?? 0,
     });
-    return { status: "fallback", report, error: reason };
+    return finalizeAnalyzerResult("knip", "fallback", report, reason, Date.now() - started);
   } catch (err) {
     logAnalyzer("knip", "fallback_failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return {
-      status: "failed",
-      report: null,
-      error: err instanceof Error ? err.message : "Knip fallback failed.",
-    };
+    return finalizeAnalyzerResult<KnipRawReport>(
+      "knip",
+      "failed",
+      null,
+      err instanceof Error ? err.message : "Knip fallback failed.",
+      Date.now() - started
+    );
   }
 }
