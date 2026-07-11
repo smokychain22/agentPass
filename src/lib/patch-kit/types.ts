@@ -65,7 +65,9 @@ export interface PatchKitSummary {
   patchLines: number;
   regressionChecks: number;
   bundleFileCount: number;
-  patchValidationStatus?: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
+  patchValidationStatus?: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
+  contentValidatedOperations?: number;
+  gitValidatedOperations?: number;
   deletedPaths?: string[];
   changedPaths?: string[];
   blockerBreakdown?: Partial<Record<BlockerCode, number>>;
@@ -99,9 +101,11 @@ export interface PatchKitPayload {
   repo: PatchKitRepo;
   summary: PatchKitSummary;
   patchValidation?: {
-    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
+    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
     error?: string;
     userMessage?: string;
+    executionPlane?: "docker_worker" | "vercel_serverless";
+    workerJobId?: string;
     baseCommitSha?: string;
     patchHash?: string;
     failingPath?: string;

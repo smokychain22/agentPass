@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Loader2, Package } from "lucide-react";
@@ -27,6 +27,7 @@ import { CandidateAuditTable } from "./patch-kit/candidate-audit-table";
 import { TransformerResultsTable } from "./patch-kit/transformer-results-table";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
+import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { flattenFindings } from "@/lib/findings/client";
 import { Panel } from "@/components/design-system/panel";
@@ -119,6 +120,65 @@ export function PatchKitTab() {
     downloadPatchKitZip(patchKit, patchKit.repo.name, patchKit.repo.branch);
     show("success", "Bundle download started");
   };
+
+  useEffect(() => {
+    const jobId = patchKit?.workerJobId;
+    if (!jobId) return;
+    const terminal = new Set(["delivered", "failed", "blocked", "timed_out", "ready_for_delivery"]);
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/repository-jobs/${jobId}`);
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          ok: boolean;
+          job?: { status: string; result?: PatchKitPayload["patchValidation"] };
+          terminal?: boolean;
+        };
+        if (!data.ok || cancelled) return;
+        if (data.terminal && patchKit) {
+          const result = data.job as { status: string; result?: { patchValidation?: PatchKitPayload["patchValidation"]; repositoryVerification?: PatchKitPayload["repositoryVerification"] } };
+          if (result?.result?.patchValidation || result?.result?.repositoryVerification) {
+            setPatchKit({
+              ...patchKit,
+              patchValidation: result.result.patchValidation ?? patchKit.patchValidation,
+              repositoryVerification: result.result.repositoryVerification ?? patchKit.repositoryVerification,
+              summary: {
+                ...patchKit.summary,
+                patchValidationStatus: result.result.patchValidation?.status ?? patchKit.summary.patchValidationStatus,
+                verifiedChanges:
+                  result.result.repositoryVerification?.status === "verified"
+                    ? patchKit.summary.generatedChanges
+                    : patchKit.summary.verifiedChanges,
+                verifiedFileOperations:
+                  result.result.repositoryVerification?.status === "verified"
+                    ? patchKit.summary.generatedChanges
+                    : patchKit.summary.verifiedFileOperations,
+                gitValidatedOperations:
+                  result.result.patchValidation?.status === "passed"
+                    ? patchKit.summary.generatedChanges
+                    : patchKit.summary.gitValidatedOperations,
+                validatedChanges:
+                  result.result.patchValidation?.status === "passed"
+                    ? patchKit.summary.generatedChanges
+                    : patchKit.summary.validatedChanges,
+              },
+            });
+          }
+        }
+      } catch {
+        /* polling is best-effort */
+      }
+    };
+
+    void poll();
+    const timer = setInterval(() => void poll(), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [patchKit?.workerJobId, patchKit, setPatchKit]);
 
   const safeDeleteRows = useMemo(
     () => (findings ? buildSafeDeleteRows(findings) : []),
@@ -251,14 +311,16 @@ export function PatchKitTab() {
           {verificationIssue && (
             <FeedbackBanner variant="warning" message={verificationIssue} dismissible={false} />
           )}
-          {patchKit.workerJobId && (
+          {patchKit.workerJobId && patchKit.patchValidation?.status === "pending_worker" && (
             <FeedbackBanner
               variant="info"
-              message={`Repository verification queued for Docker worker (job ${patchKit.workerJobId}). Git validation and install/build checks run outside Vercel.`}
+              message={`Real Git patch validation is queued on RepoDiet's isolated worker (job ${patchKit.workerJobId}). Waiting for worker…`}
               dismissible={false}
             />
           )}
-          {patchKit.patchValidation?.status === "blocked" && !verificationIssue && (
+          {patchKit.patchValidation?.status === "blocked" &&
+            patchKit.patchValidation.gitPatchValidation?.failureCode !== "WORKER_UNAVAILABLE" &&
+            !verificationIssue && (
             <FeedbackBanner
               variant="warning"
               message={

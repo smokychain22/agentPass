@@ -1,11 +1,11 @@
 import type { AspDeliveryResponse, AspJobRecord, AspVerificationResult } from "./types";
 
 function mapCheckStatus(
-  status?: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "not_run"
+  status?: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker" | "not_run"
 ): AspVerificationResult[keyof AspVerificationResult] {
   if (status === "passed") return "passed";
   if (status === "failed" || status === "blocked") return "failed";
-  if (status === "skipped" || status === "not_generated") return "skipped";
+  if (status === "skipped" || status === "not_generated" || status === "pending_worker") return "skipped";
   return "not_run";
 }
 

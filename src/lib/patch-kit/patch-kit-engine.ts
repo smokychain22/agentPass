@@ -22,7 +22,7 @@ import {
   type CandidateAuditRecord,
   isCleanupEligibleAudit,
 } from "@/lib/execution/candidate-lifecycle";
-import { classifyFindingsForPatchWithDiscovery } from "./safe-delete-discovery";
+import { classifyFindingsForPatchWithDiscovery, createBackupCandidateAudit, createBackupFileFinding } from "./safe-delete-discovery";
 import { filterFindingsBySelection } from "./filter-findings";
 import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
 import {
@@ -40,7 +40,7 @@ import {
 } from "./canonical-patch";
 import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
 import { isGitCliAvailable } from "./git-runtime";
-import { createRepositoryJob } from "@/lib/worker/repository-job-store";
+import { createRepositoryJob, WorkerUnavailableError } from "@/lib/worker/repository-job-store";
 import { runRepositoryVerification } from "./repository-verification";
 import type { RepositoryVerificationResult } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
@@ -170,7 +170,9 @@ function buildTransformerResults(
         findingId: finding.id,
         transformer: attempt.pluginId || transformer,
         status: "generated",
-        reason: attempt.displayReason || "Change generated and retained.",
+        reason:
+          attempt.displayReason ||
+          "Generated; pending Git validation and repository verification.",
         filePath,
         originalHash: original ? hashContent(original) : undefined,
         resultingDiff:
@@ -339,6 +341,38 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cleanupResult.candidateAudits
     );
 
+    const backupFindingsByPath = new Map<string, Finding>();
+    for (const proof of deletionProofs) {
+      const finding = createBackupFileFinding(proof);
+      backupFindingsByPath.set(proof.filePath, finding);
+      if (!candidateAudits.some((a) => a.findingId === finding.id)) {
+        candidateAudits.push(createBackupCandidateAudit(finding));
+      }
+    }
+
+    const findingIdsByPath = new Map<string, string[]>();
+    for (const audit of candidateAudits) {
+      if (!audit.filePath || !audit.retained) continue;
+      const rel = audit.filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+      const ids = findingIdsByPath.get(rel) ?? [];
+      if (!ids.includes(audit.findingId)) ids.push(audit.findingId);
+      findingIdsByPath.set(rel, ids);
+    }
+    for (const [filePath, finding] of backupFindingsByPath) {
+      const ids = findingIdsByPath.get(filePath) ?? [];
+      if (!ids.includes(finding.id)) ids.push(finding.id);
+      findingIdsByPath.set(filePath, ids);
+    }
+    for (const attempt of cleanupResult.fixLoop.attempts) {
+      if (attempt.status !== "retained") continue;
+      for (const p of attempt.changedPaths) {
+        const rel = p.replace(/\\/g, "/").replace(/^\.\//, "");
+        const ids = findingIdsByPath.get(rel) ?? [];
+        if (!ids.includes(attempt.findingId)) ids.push(attempt.findingId);
+        findingIdsByPath.set(rel, ids);
+      }
+    }
+
     const retainedFixCount = cleanupResult.metrics.issuesChanged;
 
     const alreadyDeleted = new Set(
@@ -415,7 +449,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const changeOperations: ChangeOperation[] = await buildChangeOperationsFromEdits(
       baselineRoot,
-      generatedEdits
+      generatedEdits,
+      { findingIdsByPath }
     );
 
     const generatedChanges = changeOperations.length;
@@ -483,10 +518,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     let validatedChanges = 0;
     let verifiedChanges = 0;
     let workerJobId: string | undefined;
+    let workerUnavailable = false;
 
     const contentIntegrityPassed =
       patchValidation?.contentIntegrityValidation?.status === "passed" ||
-      (patchValidation?.status === "blocked" && generatedChanges > 0);
+      (patchValidation?.status === "blocked" && generatedChanges > 0) ||
+      patchValidation?.status === "pending_worker";
     const gitValidationPassed = patchValidation?.status === "passed";
 
     if (contentIntegrityPassed && generatedEdits.length > 0) {
@@ -504,19 +541,54 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       };
 
       if (isServerlessRuntime() && contentIntegrityPassed && !gitValidationPassed && generatedChanges > 0) {
-        const job = await createRepositoryJob({
-          cleanupRunId,
-          scanId: findings.scanId,
-          repositoryOwner: findings.repo.owner,
-          repositoryName: findings.repo.name,
-          branch: findings.repo.branch,
-          baseCommitSha,
-          repoUrl: body.repoUrl,
-          edits: generatedEdits,
-          changeOperations,
-          patch: mergedPatch,
-        });
-        workerJobId = job.id;
+        try {
+          const job = await createRepositoryJob({
+            cleanupRunId,
+            scanId: findings.scanId,
+            repositoryOwner: findings.repo.owner,
+            repositoryName: findings.repo.name,
+            branch: findings.repo.branch,
+            baseCommitSha,
+            repoUrl: body.repoUrl,
+            edits: generatedEdits,
+            changeOperations,
+            patch: mergedPatch,
+          });
+          workerJobId = job.id;
+          if (patchValidation) {
+            patchValidation = {
+              ...patchValidation,
+              status: "pending_worker",
+              executionPlane: "docker_worker",
+              workerJobId: job.id,
+              userMessage:
+                "Real Git patch validation is queued on RepoDiet's isolated worker.",
+              gitPatchValidation: {
+                status: "pending_worker",
+              },
+              contentIntegrityValidation: patchValidation.contentIntegrityValidation ?? {
+                status: "passed",
+              },
+            };
+          }
+        } catch (err) {
+          if (err instanceof WorkerUnavailableError) {
+            workerUnavailable = true;
+            if (patchValidation) {
+              patchValidation = {
+                ...patchValidation,
+                userMessage: err.message,
+                gitPatchValidation: {
+                  status: "blocked",
+                  failureCode: "WORKER_UNAVAILABLE",
+                  error: err.message,
+                },
+              };
+            }
+          } else {
+            throw err;
+          }
+        }
         return notRun;
       }
 
@@ -567,8 +639,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       context.packageManager
     );
     const blockerSummary = deliveryReady
-      ? `${verifiedChanges} verified file operation(s) ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} patch-validated).`
-      : patchValidation?.status === "blocked"
+      ? `${verifiedChanges} verified file operation(s) ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} git-validated).`
+      : patchValidation?.status === "pending_worker"
+        ? `${generatedChanges} generated file operation(s); content validation passed — Git validation and repository verification queued on Docker worker.`
+        : workerUnavailable
+          ? `${generatedChanges} generated file operation(s); content validation passed but no Docker worker is online — deploy the worker and retry.`
+          : patchValidation?.status === "blocked"
         ? `${generatedChanges} generated file operation(s); content validation passed but git apply --check is blocked — ${patchValidation.error ?? "Git CLI unavailable"}.`
         : patchValidation?.status === "passed" && repositoryVerification.status === "blocked"
         ? `${generatedChanges} generated file operation(s); patch validation passed; repository verification blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
@@ -619,6 +695,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       generatedFileOperations: cleanupRunSummary.generatedOperations,
       validatedChanges: cleanupRunSummary.gitValidatedOperations,
       validatedFileOperations: cleanupRunSummary.gitValidatedOperations,
+      contentValidatedOperations: cleanupRunSummary.contentValidatedOperations,
+      gitValidatedOperations: cleanupRunSummary.gitValidatedOperations,
       verifiedChanges: cleanupRunSummary.verifiedOperations,
       verifiedFileOperations: cleanupRunSummary.verifiedOperations,
       deliveredFileOperations: cleanupRunSummary.deliveredOperations,
@@ -652,7 +730,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
               ? "failed"
               : workerJobId
                 ? "pending"
-                : "pending",
+                : workerUnavailable
+                  ? "partial"
+                  : "pending",
     });
 
     summary.proofLadder = {
@@ -710,8 +790,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       .filter((entry) => changedPaths.includes(entry.filePath));
     for (const rel of deletedPaths) {
       if (!changeManifest.some((e) => e.filePath === rel)) {
+        const backupFinding = backupFindingsByPath.get(rel);
         changeManifest.push({
-          findingId: "safe_delete",
+          findingId: backupFinding?.id ?? "safe_delete",
           transformationType: "file_deletion",
           filePath: rel,
           operation: "delete",

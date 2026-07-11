@@ -28,7 +28,8 @@ export type PersistentCollection =
   | "marketplace_deliveries"
   | "payment_entitlements"
   | "asp_jobs"
-  | "repository_jobs";
+  | "repository_jobs"
+  | "worker_instances";
 
 export type ArtifactCollection = "artifacts";
 
@@ -58,6 +59,7 @@ export interface DurableDb {
   payment_entitlements: Record<string, unknown>;
   asp_jobs: Record<string, unknown>;
   repository_jobs: Record<string, unknown>;
+  worker_instances: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -86,6 +88,7 @@ const DEFAULT_DB: DurableDb = {
   payment_entitlements: {},
   asp_jobs: {},
   repository_jobs: {},
+  worker_instances: {},
 };
 
 let redisClient: Redis | null = null;
@@ -148,6 +151,7 @@ function loadLocalDb(): DurableDb {
       payment_entitlements: parsed.payment_entitlements ?? {},
       asp_jobs: parsed.asp_jobs ?? {},
       repository_jobs: parsed.repository_jobs ?? {},
+      worker_instances: parsed.worker_instances ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);
@@ -266,4 +270,33 @@ export async function deletePersistentArtifact(id: string, ext = "zip"): Promise
 
   const fp = localArtifactPath(id, ext);
   if (fs.existsSync(fp)) fs.unlinkSync(fp);
+}
+
+const QUEUE_KEY = "repodiet:repository_jobs:queue";
+
+export async function enqueuePersistentJob(jobId: string): Promise<void> {
+  const client = redis();
+  if (client) {
+    await client.lpush(QUEUE_KEY, jobId);
+    return;
+  }
+  const queue = (await getPersistentRecord<string[]>("repository_jobs", "queue:list")) ?? [];
+  queue.unshift(jobId);
+  await setPersistentRecord("repository_jobs", "queue:list", queue);
+}
+
+export async function dequeuePersistentJob(): Promise<string | null> {
+  const client = redis();
+  if (client) {
+    const id = await client.rpop<string>(QUEUE_KEY);
+    return id ?? null;
+  }
+  const queue = (await getPersistentRecord<string[]>("repository_jobs", "queue:list")) ?? [];
+  const id = queue.pop() ?? null;
+  await setPersistentRecord("repository_jobs", "queue:list", queue);
+  return id;
+}
+
+export async function requeuePersistentJob(jobId: string): Promise<void> {
+  await enqueuePersistentJob(jobId);
 }
