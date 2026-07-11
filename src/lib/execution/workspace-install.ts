@@ -71,9 +71,14 @@ export function parseNpmDebugLog(raw: string): string[] {
     const trimmed = line.trim();
     if (!trimmed || isNpmLogNoiseLine(trimmed)) continue;
 
-    const levelMatch = trimmed.match(/^\d+\s+(error|warn)\s+(.+)$/i);
+    const levelMatch = trimmed.match(/^\d+\s+error\s+(.+)$/i);
     if (levelMatch) {
-      actionable.push(levelMatch[2]!.replace(/^npm error\s*/i, ""));
+      actionable.push(levelMatch[1]!.replace(/^npm error\s*/i, ""));
+      continue;
+    }
+
+    if (/^\d+\s+warn\s+.*\b(ENOSPC|EROFS|no space left)/i.test(trimmed)) {
+      actionable.push(trimmed.replace(/^\d+\s+warn\s+\S+\s+/, ""));
       continue;
     }
 
@@ -127,7 +132,19 @@ export function formatInstallFailureReason(stderr: string, stdout: string): stri
     return fallback.join(" ");
   }
 
-  return "Dependency install failed. Open Developer tools — dependency install for attempt details.";
+  return "Dependency install failed before repository checks could run.";
+}
+
+/** User-facing install failure — never expose npm silly/http debug lines. */
+export function humanizeInstallFailure(reason: string): string {
+  const clean = sanitizeInstallOutput(reason).replace(/\s+/g, " ").trim();
+  if (/\bENOSPC\b|no space left on device/i.test(clean)) {
+    return "Dependency install failed: server temporary storage is full (ENOSPC). RepoDiet freed workspace scratch data and uses a minimal verification install on serverless — click Regenerate Quick Cleanup after deploy.";
+  }
+  if (!clean || /^install failed$/i.test(clean)) {
+    return "Dependency install failed before repository checks could run.";
+  }
+  return clean.length > 400 ? `${clean.slice(0, 400)}…` : clean;
 }
 
 async function readLatestNpmLog(cacheDir: string): Promise<string | null> {
@@ -301,6 +318,29 @@ export function inferRequiredPackagesForScripts(
   return [...required];
 }
 
+/** Package@version specs for a minimal serverless verification install. */
+export async function packageSpecsForVerification(
+  rootDir: string,
+  requiredPackages: string[]
+): Promise<string[]> {
+  const raw = await fs.readFile(path.join(rootDir, "package.json"), "utf8");
+  const pkg = JSON.parse(raw) as {
+    scripts?: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const names = new Set(requiredPackages);
+  const scripts = pkg.scripts ?? {};
+  if (scripts.build?.toLowerCase().includes("next")) {
+    names.add("react");
+    names.add("react-dom");
+  }
+  return [...names].map((name) => {
+    const ver = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+    return ver ? `${name}@${ver}` : name;
+  });
+}
+
 export async function isPackageInstalled(
   rootDir: string,
   packageName: string
@@ -370,6 +410,32 @@ async function clearInstallArtifacts(rootDir: string): Promise<void> {
   await fs.rm(path.join(rootDir, "node_modules"), { recursive: true, force: true }).catch(() => {});
 }
 
+function resolveNpmCacheDir(cleanupRunId: string, rootDir: string): string {
+  if (isServerlessRuntime()) {
+    return path.join(rootDir, ".repodiet-npm-cache");
+  }
+  return perRunCacheDir(cleanupRunId);
+}
+
+async function prepareNpmCache(cacheDir: string, serverless: boolean): Promise<void> {
+  if (serverless) {
+    await fs.rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(cacheDir, { recursive: true });
+    return;
+  }
+  await recreateCacheDir(cacheDir);
+}
+
+async function buildServerlessVerificationVariants(
+  rootDir: string,
+  requiredPackages: string[],
+  cacheDir: string
+): Promise<string[][]> {
+  const specs = await packageSpecsForVerification(rootDir, requiredPackages);
+  const flags = ["--no-save", ...npmInstallBaseFlags(cacheDir)];
+  return [["npm", "install", ...flags, ...specs]];
+}
+
 function perRunCacheDir(cleanupRunId: string): string {
   const safe = cleanupRunId.replace(/[^a-zA-Z0-9_-]/g, "_");
   return path.join(os.tmpdir(), "repodiet-npm-cache", safe);
@@ -409,10 +475,11 @@ export async function ensureWorkspaceDependenciesWithCache(
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
   const hasLockfile = await lockfilePresent(rootDir);
-  const cacheDir = perRunCacheDir(cleanupRunId);
-  await recreateCacheDir(cacheDir);
+  const serverless = isServerlessRuntime();
+  const cacheDir = resolveNpmCacheDir(cleanupRunId, rootDir);
+  await prepareNpmCache(cacheDir, serverless);
 
-  const variants = installVariants(pm, hasLockfile, cacheDir);
+  const variants = installVariants(pm, hasLockfile, serverless ? undefined : cacheDir);
   let lastReason = "install failed";
   let lastCommand = variants[0]?.join(" ") ?? "npm install";
   let lastExitCode: number | null = null;
@@ -552,16 +619,20 @@ export async function ensureVerificationDependencies(
     };
   }
 
-  if (!options?.preserveExistingModules) {
+  const serverless = isServerlessRuntime();
+  if (!serverless && !options?.preserveExistingModules) {
     await clearInstallArtifacts(rootDir);
   }
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
   const hasLockfile = await lockfilePresent(rootDir);
-  const cacheDir = perRunCacheDir(cleanupRunId);
-  await recreateCacheDir(cacheDir);
+  const cacheDir = resolveNpmCacheDir(cleanupRunId, rootDir);
+  await prepareNpmCache(cacheDir, serverless);
 
-  const variants = verificationInstallVariants(pm, hasLockfile, cacheDir, { lockfilePatched });
+  const variants = serverless
+    ? await buildServerlessVerificationVariants(rootDir, requiredPackages, cacheDir)
+    : verificationInstallVariants(pm, hasLockfile, cacheDir, { lockfilePatched });
+  const maxAttempts = serverless ? 2 : MAX_ATTEMPTS;
   let lastReason = "install failed";
   let lastCommand = variants[0]?.join(" ") ?? "npm ci";
   let lastExitCode: number | null = null;
@@ -570,7 +641,7 @@ export async function ensureVerificationDependencies(
   let lastDurationMs = 0;
   let integrityRetries = 0;
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const command = variants[attempt % variants.length];
     lastCommand = command.join(" ");
     const t0 = Date.now();
@@ -619,13 +690,12 @@ export async function ensureVerificationDependencies(
       continue;
     }
 
-    const logReason = await readLatestNpmLog(
-      isServerlessRuntime() ? path.join(rootDir, ".repodiet-npm-cache") : cacheDir
-    );
-    lastReason =
+    const logReason = await readLatestNpmLog(cacheDir);
+    lastReason = humanizeInstallFailure(
       logReason ||
-      formatInstallFailureReason(stderr, stdout) ||
-      summarize(stderr || stdout || "install failed");
+        formatInstallFailureReason(stderr, stdout) ||
+        summarize(stderr || stdout || "install failed")
+    );
     lastExitCode = result.exitCode ?? null;
     lastStdout = stdout;
     lastStderr = stderr;
@@ -643,7 +713,8 @@ export async function ensureVerificationDependencies(
     if (
       pm === "npm" &&
       (isIntegrityError(stderr, stdout) || isDiskSpaceError(stderr, stdout)) &&
-      integrityRetries < CACHE_RETRY_MAX
+      integrityRetries < CACHE_RETRY_MAX &&
+      !serverless
     ) {
       integrityRetries += 1;
       await recreateCacheDir(cacheDir);
@@ -656,7 +727,7 @@ export async function ensureVerificationDependencies(
       continue;
     }
 
-    if (!options?.preserveExistingModules) {
+    if (!serverless && !options?.preserveExistingModules) {
       await clearInstallArtifacts(rootDir);
     }
   }

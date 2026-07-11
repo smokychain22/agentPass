@@ -13,6 +13,8 @@ import {
   ensureWorkspaceDependenciesWithCache,
   inferRequiredPackagesForScripts,
 } from "@/lib/execution/workspace-install";
+import { isServerlessRuntime } from "@/lib/server/runtime-env";
+import { trimWorkspaceBeforeVerification } from "./trim-verification-workspace";
 import {
   auditTransformerCompatibleFindings,
   formatBlockerBreakdown,
@@ -486,15 +488,19 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     }
 
     if (patchValidation?.status === "passed") {
-      try {
-        const pkgRaw = await fs.readFile(path.join(workspace.rootDir, "package.json"), "utf8");
-        const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-        const requiredPackages = inferRequiredPackagesForScripts(pkg.scripts ?? {});
-        if (!(await areRequiredPackagesInstalled(workspace.rootDir, requiredPackages))) {
-          await ensureWorkspaceDependenciesWithCache(workspace.rootDir, cleanupRunId);
+      if (isServerlessRuntime()) {
+        await trimWorkspaceBeforeVerification(workspace.workDir, workspace.rootDir);
+      } else {
+        try {
+          const pkgRaw = await fs.readFile(path.join(workspace.rootDir, "package.json"), "utf8");
+          const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
+          const requiredPackages = inferRequiredPackagesForScripts(pkg.scripts ?? {});
+          if (!(await areRequiredPackagesInstalled(workspace.rootDir, requiredPackages))) {
+            await ensureWorkspaceDependenciesWithCache(workspace.rootDir, cleanupRunId);
+          }
+        } catch {
+          /* no package.json — verification will skip install */
         }
-      } catch {
-        /* no package.json — verification will skip install */
       }
     }
 

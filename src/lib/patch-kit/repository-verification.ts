@@ -9,6 +9,7 @@ import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches"
 import {
   ensureVerificationDependencies,
   formatInstallFailureReason,
+  humanizeInstallFailure,
   inferRequiredPackagesForScripts,
   type InstallAttemptRecord,
 } from "@/lib/execution/workspace-install";
@@ -225,9 +226,10 @@ export async function runRepositoryVerification(input: {
       }
     );
     installAttempts = installResult.attempts;
-    const installDetail =
+    const installDetail = humanizeInstallFailure(
       installResult.reason ??
-      formatInstallFailureReason(installResult.stderr ?? "", installResult.stdout ?? "");
+        formatInstallFailureReason(installResult.stderr ?? "", installResult.stdout ?? "")
+    );
     checks.push({
       name: "dependency install",
       command: installResult.command ?? "npm ci",

@@ -342,6 +342,38 @@ async function run() {
     assert.ok(!reason.includes("silly tar"));
   });
 
+  await test("humanizeInstallFailure maps ENOSPC to a clear serverless message", async () => {
+    const { humanizeInstallFailure } = await import("../src/lib/execution/workspace-install");
+    const msg = humanizeInstallFailure(
+      "52 warn tar TAR_ENTRY_ERROR ENOSPC: no space left on device, write"
+    );
+    assert.ok(msg.includes("ENOSPC"));
+    assert.ok(!msg.includes("silly"));
+  });
+
+  await test("packageSpecsForVerification includes react for next build", async () => {
+    const { packageSpecsForVerification } = await import("../src/lib/execution/workspace-install");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-specs-"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        {
+          scripts: { build: "next build", typecheck: "tsc --noEmit" },
+          dependencies: { next: "15.5.20", react: "18.3.1", "react-dom": "18.3.1" },
+          devDependencies: { typescript: "5.6.3" },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const specs = await packageSpecsForVerification(root, ["typescript", "next"]);
+    assert.ok(specs.includes("typescript@5.6.3"));
+    assert.ok(specs.includes("next@15.5.20"));
+    assert.ok(specs.includes("react@18.3.1"));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
   await test("parseNpmDebugLog extracts numbered error lines", () => {
     const parsed = parseNpmDebugLog("999 error code ERESOLVE\n50 silly tar <Buffer 00>");
     assert.deepEqual(parsed, ["code ERESOLVE"]);
