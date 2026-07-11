@@ -8,7 +8,7 @@ import {
 } from "./installations";
 import { isGitHubAppConfigured } from "./config";
 import { readInstallationSession } from "./session";
-import { resolveRepoInstallBinding } from "./install-flow-store";
+import { resolveRepoInstallBinding, saveRepoInstallBinding } from "./install-flow-store";
 import { isRecentRepoInstallBinding } from "./binding-trust";
 import {
   parseRepositoryFullName,
@@ -145,6 +145,18 @@ export async function runGitHubPreflight(
         }
       } catch {
         branchExists = false;
+      }
+
+      if (input.sessionKey) {
+        await saveRepoInstallBinding({
+          sessionKey: input.sessionKey,
+          installationId: session.installationId,
+          installationOwner: installationOwner ?? session.accountLogin,
+          installationOwnerType: session.accountType,
+          repositoryFullName: input.repositoryFullName,
+          setupAction: binding?.setupAction,
+          authorizedAt: binding?.authorizedAt ?? new Date().toISOString(),
+        });
       }
     }
   }

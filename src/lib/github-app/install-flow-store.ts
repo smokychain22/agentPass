@@ -38,6 +38,10 @@ function bindingKeyByInstallation(installationId: number, repositoryFullName: st
   return `binding:install:${installationId}:${repositoryFullName}`;
 }
 
+function bindingKeyByBrowserId(browserSessionId: string, repositoryFullName: string): string {
+  return `binding:browser-id:${browserSessionId}:${repositoryFullName}`;
+}
+
 export function hashInstallState(stateToken: string): string {
   return createHash("sha256").update(stateToken, "utf8").digest("hex");
 }
@@ -97,6 +101,14 @@ export async function saveRepoInstallBinding(binding: RepoInstallBinding): Promi
     bindingKeyByInstallation(binding.installationId, binding.repositoryFullName),
     binding
   );
+  const browserId = browserSessionFromKey(binding.sessionKey);
+  if (browserId) {
+    await setDurableRecord(
+      "github_installations",
+      bindingKeyByBrowserId(browserId, binding.repositoryFullName),
+      binding
+    );
+  }
 }
 
 export async function readRepoInstallBinding(
@@ -109,21 +121,37 @@ export async function readRepoInstallBinding(
   );
 }
 
+export function browserSessionFromKey(sessionKey?: string): string | undefined {
+  if (!sessionKey) return undefined;
+  if (sessionKey.startsWith("browser:")) return sessionKey.slice("browser:".length);
+  const colon = sessionKey.lastIndexOf(":");
+  return colon > 0 ? sessionKey.slice(colon + 1) : undefined;
+}
+
 export async function resolveRepoInstallBinding(input: {
   sessionKey?: string;
   installationId: number;
   repositoryFullName: string;
 }): Promise<RepoInstallBinding | undefined> {
-  if (input.sessionKey) {
-    const sessionBinding = await readRepoInstallBinding(
-      input.sessionKey,
-      input.repositoryFullName
-    );
-    if (
-      sessionBinding &&
-      sessionBinding.installationId === input.installationId
-    ) {
+  const keysToTry = new Set<string>();
+  if (input.sessionKey) keysToTry.add(input.sessionKey);
+  const browserId = browserSessionFromKey(input.sessionKey);
+  if (browserId) keysToTry.add(`browser:${browserId}`);
+
+  for (const sessionKey of keysToTry) {
+    const sessionBinding = await readRepoInstallBinding(sessionKey, input.repositoryFullName);
+    if (sessionBinding && sessionBinding.installationId === input.installationId) {
       return sessionBinding;
+    }
+  }
+
+  if (browserId) {
+    const browserBinding = await getDurableRecord<RepoInstallBinding>(
+      "github_installations",
+      bindingKeyByBrowserId(browserId, input.repositoryFullName)
+    );
+    if (browserBinding && browserBinding.installationId === input.installationId) {
+      return browserBinding;
     }
   }
 

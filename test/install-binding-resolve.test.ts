@@ -35,6 +35,27 @@ void test("falls back to installation-scoped binding when session key differs", 
 
   assert.equal(resolved?.installationId, 42);
   assert.equal(resolved?.repositoryFullName, "velz-cmd/Meridian");
-}).then(() => {
-  console.log("install-binding-resolve: all passed");
-});
+})
+  .then(() =>
+    test("resolves legacy ip-prefixed binding via browser session id", async () => {
+      await saveRepoInstallBinding({
+        sessionKey: "198.51.100.2:legacy-browser-id",
+        installationId: 77,
+        installationOwner: "velz-cmd",
+        installationOwnerType: "User",
+        repositoryFullName: "velz-cmd/Meridian",
+        authorizedAt: new Date().toISOString(),
+      });
+
+      const resolved = await resolveRepoInstallBinding({
+        sessionKey: "browser:legacy-browser-id",
+        installationId: 77,
+        repositoryFullName: "velz-cmd/Meridian",
+      });
+
+      assert.equal(resolved?.installationId, 77);
+    })
+  )
+  .then(() => {
+    console.log("install-binding-resolve: all passed");
+  });

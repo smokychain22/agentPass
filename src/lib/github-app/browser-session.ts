@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
-import { jobOwnerKey } from "@/lib/jobs/types";
 
 export const BROWSER_SESSION_COOKIE = "repodiet_browser_session";
 const MAX_AGE = 60 * 60 * 24 * 365;
@@ -29,7 +28,8 @@ export async function readBrowserSessionId(): Promise<string | null> {
   return jar.get(BROWSER_SESSION_COOKIE)?.value ?? null;
 }
 
-export async function buildSessionKey(request: Request): Promise<string> {
+export async function buildSessionKey(_request?: Request): Promise<string> {
   const browserSessionId = await ensureBrowserSessionId();
-  return `${jobOwnerKey(request)}:${browserSessionId}`;
+  // Stable per browser — do not include client IP (Vercel/CDN forwarded-for can drift between requests).
+  return `browser:${browserSessionId}`;
 }

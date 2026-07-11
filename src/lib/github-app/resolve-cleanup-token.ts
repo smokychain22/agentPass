@@ -4,11 +4,15 @@ import { GitHubClient } from "@/lib/github/github-client";
 import { isRecentRepoInstallBinding } from "@/lib/github-app/binding-trust";
 import {
   createInstallationAccessToken,
+  getInstallationDetails,
   installationHasRepoAccess,
   installationIncludesRepositoryWithRetry,
 } from "@/lib/github-app/installations";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
-import { resolveRepoInstallBinding } from "@/lib/github-app/install-flow-store";
+import {
+  resolveRepoInstallBinding,
+  saveRepoInstallBinding,
+} from "@/lib/github-app/install-flow-store";
 import { readInstallationSession } from "@/lib/github-app/session";
 import { requiresRepositoryOwnerInstall } from "@/lib/github-app/repository";
 
@@ -19,6 +23,19 @@ export interface ResolveCleanupGitHubTokenInput {
   repo: string;
   githubToken?: string;
   sessionKey?: string;
+}
+
+function permissionsAreSufficient(permissions?: {
+  contents: string;
+  pullRequests: string;
+  metadata: string;
+}): boolean {
+  if (!permissions) return false;
+  return (
+    permissions.contents === "write" &&
+    permissions.pullRequests === "write" &&
+    (permissions.metadata === "read" || permissions.metadata === "write")
+  );
 }
 
 async function probeRepositoryWithInstallationToken(
@@ -36,12 +53,31 @@ async function probeRepositoryWithInstallationToken(
   }
 }
 
+async function persistBindingIfPossible(input: {
+  sessionKey?: string;
+  installationId: number;
+  installationOwner: string;
+  installationOwnerType: string;
+  repositoryFullName: string;
+}): Promise<void> {
+  if (!input.sessionKey) return;
+  await saveRepoInstallBinding({
+    sessionKey: input.sessionKey,
+    installationId: input.installationId,
+    installationOwner: input.installationOwner,
+    installationOwnerType: input.installationOwnerType,
+    repositoryFullName: input.repositoryFullName,
+    authorizedAt: new Date().toISOString(),
+  });
+}
+
 async function assertInstallationRepositoryAccess(input: {
   installationId: number;
   owner: string;
   repo: string;
   sessionKey?: string;
   installationOwner?: string;
+  installationOwnerType?: string;
 }): Promise<void> {
   const repositoryFullName = `${input.owner}/${input.repo}`;
   const binding = await resolveRepoInstallBinding({
@@ -51,11 +87,20 @@ async function assertInstallationRepositoryAccess(input: {
   });
   const bindingTrusted = isRecentRepoInstallBinding(binding, input.installationId);
 
-  const quickAttempts = bindingTrusted ? 4 : 3;
-  const quickDelayMs = bindingTrusted ? 800 : 1000;
+  if (bindingTrusted) return;
+
+  const quickAttempts = 4;
+  const quickDelayMs = 800;
 
   for (let attempt = 1; attempt <= quickAttempts; attempt += 1) {
     if (await installationHasRepoAccess(input.installationId, input.owner, input.repo)) {
+      await persistBindingIfPossible({
+        sessionKey: input.sessionKey,
+        installationId: input.installationId,
+        installationOwner: input.installationOwner ?? "unknown",
+        installationOwnerType: input.installationOwnerType ?? "User",
+        repositoryFullName,
+      });
       return;
     }
     if (attempt < quickAttempts) {
@@ -67,15 +112,28 @@ async function assertInstallationRepositoryAccess(input: {
     input.installationId,
     input.owner,
     input.repo,
-    {
-      attempts: bindingTrusted ? 4 : 3,
-      delayMs: bindingTrusted ? 1000 : 1000,
-    }
+    { attempts: 4, delayMs: 1000 }
   );
 
-  if (access.granted) return;
+  if (access.granted) {
+    await persistBindingIfPossible({
+      sessionKey: input.sessionKey,
+      installationId: input.installationId,
+      installationOwner: input.installationOwner ?? "unknown",
+      installationOwnerType: input.installationOwnerType ?? "User",
+      repositoryFullName,
+    });
+    return;
+  }
 
   if (await probeRepositoryWithInstallationToken(input.installationId, input.owner, input.repo)) {
+    await persistBindingIfPossible({
+      sessionKey: input.sessionKey,
+      installationId: input.installationId,
+      installationOwner: input.installationOwner ?? "unknown",
+      installationOwnerType: input.installationOwnerType ?? "User",
+      repositoryFullName,
+    });
     return;
   }
 
@@ -95,11 +153,9 @@ async function assertInstallationRepositoryAccess(input: {
   const sample = access.accessibleRepos.slice(0, 5).join(", ");
   throw new ToolExecutionError(
     "GITHUB_PERMISSION_DENIED",
-    bindingTrusted
-      ? `RepoDiet saved your grant for ${repositoryFullName}, but GitHub has not confirmed repository access yet. Open GitHub → Settings → Applications → RepoDiet → Configure, ensure ${repositoryFullName} is selected, click Save, then use “I granted access — sync now” on the Patch tab.`
-      : sample
-        ? `RepoDiet needs access to ${repositoryFullName}. Grant access from the Patch tab, ensure the repository is selected on GitHub, then try again.`
-        : "RepoDiet needs access to this repository. Grant access from the Patch tab and try again.",
+    sample
+      ? `RepoDiet needs access to ${repositoryFullName}. Open GitHub → Settings → Applications → RepoDiet → Configure, select ${repositoryFullName}, click Save, then use “I granted access — sync now” on the Patch tab.`
+      : `RepoDiet needs access to ${repositoryFullName}. Grant access from the Patch tab, ensure the repository is selected on GitHub, then try again.`,
     403
   );
 }
@@ -147,12 +203,41 @@ export async function resolveCleanupGitHubToken(
     );
   }
 
+  const repositoryFullName = `${opts.owner}/${opts.repo}`;
+  const binding = await resolveRepoInstallBinding({
+    sessionKey: opts.sessionKey,
+    installationId: session.installationId,
+    repositoryFullName,
+  });
+  const bindingTrusted = isRecentRepoInstallBinding(binding, session.installationId);
+
+  const details = await getInstallationDetails(session.installationId);
+  const permissionsVerified = permissionsAreSufficient(details?.permissions);
+
+  if (bindingTrusted && permissionsVerified) {
+    const installationToken = await createInstallationAccessToken(session.installationId);
+    return installationToken.token;
+  }
+
+  if (permissionsVerified && (await probeRepositoryWithInstallationToken(session.installationId, opts.owner, opts.repo))) {
+    await persistBindingIfPossible({
+      sessionKey: opts.sessionKey,
+      installationId: session.installationId,
+      installationOwner: details?.accountLogin ?? session.accountLogin,
+      installationOwnerType: details?.accountType ?? session.accountType,
+      repositoryFullName,
+    });
+    const installationToken = await createInstallationAccessToken(session.installationId);
+    return installationToken.token;
+  }
+
   await assertInstallationRepositoryAccess({
     installationId: session.installationId,
     owner: opts.owner,
     repo: opts.repo,
     sessionKey: opts.sessionKey,
     installationOwner: session.accountLogin,
+    installationOwnerType: session.accountType,
   });
 
   const installationToken = await createInstallationAccessToken(session.installationId);
