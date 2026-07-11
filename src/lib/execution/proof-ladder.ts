@@ -6,6 +6,7 @@ import type { FindingsPayload } from "@/lib/findings/types";
 export type ProofLadderStage =
   | "detected"
   | "eligible"
+  | "executed"
   | "attempted"
   | "generated"
   | "validated"
@@ -15,6 +16,8 @@ export type ProofLadderStage =
 export interface ProofLadderCounts {
   detected: number;
   eligible: number;
+  executed?: number;
+  /** @deprecated Use executed */
   attempted: number;
   generated: number;
   validated: number;
@@ -60,7 +63,9 @@ export function buildProofLadderCounts(input: {
     0;
 
   const eligible = input.summary.eligibleFindings ?? input.summary.transformerCompatible ?? 0;
-  const attempted = input.summary.attemptedTransformations ?? 0;
+  const executed =
+    input.summary.executedFindings ?? input.summary.attemptedTransformations ?? 0;
+  const attempted = executed;
   const generated = input.summary.generatedChanges ?? 0;
   const validated = input.summary.validatedChanges ?? 0;
   const verified = input.summary.verifiedChanges ?? 0;
@@ -79,6 +84,7 @@ export function buildProofLadderCounts(input: {
   return {
     detected,
     eligible,
+    executed,
     attempted,
     generated,
     validated,
@@ -228,14 +234,15 @@ export function buildCleanupProofFromRun(input: {
 }
 
 export function formatProofLadderSummary(ladder: ProofLadderCounts): string {
+  const executed = ladder.executed ?? ladder.attempted;
   return [
-    `${ladder.detected} signals detected`,
-    `${ladder.eligible} eligible transformations`,
-    `${ladder.attempted} transformer attempts`,
-    `${ladder.generated} changes generated`,
-    `${ladder.validated} patches validated`,
-    `${ladder.verified} changes verified`,
-    ladder.delivered > 0 ? `${ladder.delivered} delivered via PR` : null,
+    `${ladder.detected} detected findings`,
+    `${ladder.eligible} eligible findings`,
+    `${executed} executed findings`,
+    `${ladder.generated} generated file operations`,
+    `${ladder.validated} validated file operations`,
+    `${ladder.verified} verified file operations`,
+    ladder.delivered > 0 ? `${ladder.delivered} delivered file operations` : null,
     ladder.noop > 0 ? `${ladder.noop} no-op` : null,
     ladder.failed > 0 ? `${ladder.failed} failed` : null,
     ladder.notAttempted > 0 ? `${ladder.notAttempted} not attempted (limit)` : null,

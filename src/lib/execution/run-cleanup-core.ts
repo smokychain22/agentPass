@@ -40,6 +40,7 @@ import {
   isPhase1AutoFix,
 } from "@/lib/execution/fix-plugins/phase1-plugins";
 import { enrichFindingsWithPreflight, isActionableFinding } from "@/lib/findings/enrich-preflight";
+import { isActionablePreflight } from "./fix-preflight";
 import {
   type CandidateAuditRecord,
   auditFromPreflight,
@@ -325,18 +326,24 @@ export async function runFreeCleanupCore(
       preflightPool
     );
     const repreflightActionable = repreflighted.filter(isActionableFinding);
-    const structuralActionable = preflightPool.filter(
-      (f) =>
-        isPhase1StructuralCandidate(f) &&
+    const preflightEligible = preflightPool.filter((f) => {
+      const preflight = preflights.get(f.id);
+      return (
+        preflight &&
+        isActionablePreflight(preflight) &&
         resolvePhase1Plugin(f).id !== "review_only" &&
         !f.protected &&
         f.action !== "do_not_touch"
-    );
+      );
+    });
     const loopCandidates =
       repreflightActionable.length > 0
-        ? repreflightActionable
+        ? repreflightActionable.filter((f) => {
+            const preflight = preflights.get(f.id);
+            return preflight ? isActionablePreflight(preflight) : false;
+          })
         : options?.quickPatchMode
-          ? structuralActionable
+          ? preflightEligible
           : [];
 
     const attemptLimit = options?.quickPatchMode

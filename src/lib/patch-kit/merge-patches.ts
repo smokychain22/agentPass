@@ -236,36 +236,18 @@ export async function buildPatchFromWorkspaceDelta(
     return { patch: EMPTY_CLEANUP_PATCH, changedPaths: [], edits: [] };
   }
 
+  const { buildCanonicalRepositoryPatch } = await import("./canonical-patch");
+  const canonical = await buildCanonicalRepositoryPatch(baselineRoot, edits, workDir);
+  if (patchHasApplyableOperations(canonical.patch)) {
+    return { patch: canonical.patch, changedPaths: canonical.changedPaths, edits };
+  }
+
   const gitPatch = await buildConsolidatedPatchFromEdits(baselineRoot, edits, workDir);
   if (patchHasApplyableOperations(gitPatch.patch)) {
     return { ...gitPatch, edits };
   }
 
-  const noIndexSections: string[] = [];
-  const changedPaths: string[] = [];
-  for (const edit of edits) {
-    const section = await diffPathsWithNoIndex(baselineRoot, modifiedRoot, edit.path);
-    if (!section || !section.includes("diff --git")) continue;
-    noIndexSections.push(section);
-    changedPaths.push(edit.path);
-  }
-
-  if (noIndexSections.length > 0) {
-    const header = [
-      "# RepoDiet cleanup patch",
-      "# Consolidated unified diff — apply with: git apply repodiet-cleanup.patch",
-      `# Edited paths: ${changedPaths.length}`,
-      "",
-    ].join("\n");
-    return {
-      patch: ensurePatchTrailingNewline(`${header}\n${noIndexSections.join("\n\n")}`),
-      changedPaths,
-      edits,
-    };
-  }
-
-  const manual = await buildManualPatchFromEdits(baselineRoot, edits);
-  return { ...manual, edits };
+  return { patch: EMPTY_CLEANUP_PATCH, changedPaths: [], edits };
 }
 
 /** Fallback when workspace walk misses retained in-memory edits. */
@@ -355,10 +337,25 @@ export async function buildConsolidatedPatchFromEdits(
     return { patch: EMPTY_CLEANUP_PATCH, changedPaths: [] };
   }
 
-  const diff = await execa("git", ["diff", "--no-color", "HEAD", "--", ...changedPaths], {
-    cwd: scratchRoot,
-    reject: false,
-  });
+  const diff = await execa(
+    "git",
+    [
+      "diff",
+      "--binary",
+      "--full-index",
+      "--no-ext-diff",
+      "--no-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "HEAD",
+      "--",
+      ".",
+    ],
+    {
+      cwd: scratchRoot,
+      reject: false,
+    }
+  );
 
   await fs.rm(scratchRoot, { recursive: true, force: true }).catch(() => {});
 

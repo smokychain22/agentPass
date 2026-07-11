@@ -5,7 +5,11 @@ import type { RepositoryVerificationResult } from "./repository-verification";
 
 export interface CleanupRunSummary {
   detected: number;
+  preflightChecked?: number;
   eligible: number;
+  ineligible?: number;
+  executed: number;
+  /** @deprecated Use executed */
   attempted: number;
   generated: number;
   validated: number;
@@ -35,7 +39,10 @@ export function buildCleanupRunSummary(input: {
     input.summary.eligibleFindings ??
     input.candidateAudits?.filter((a) => a.scanEligible).length ??
     0;
-  const attempted = input.summary.attemptedTransformations ?? 0;
+  const ineligible = input.summary.ineligibleFindings ?? Math.max(0, detected - eligible);
+  const executed =
+    input.summary.executedFindings ?? input.summary.attemptedTransformations ?? 0;
+  const attempted = executed;
   const generated = input.summary.generatedChanges ?? 0;
   const validated =
     input.summary.patchValidationStatus === "passed" ? input.summary.validatedChanges ?? 0 : 0;
@@ -61,7 +68,10 @@ export function buildCleanupRunSummary(input: {
 
   return {
     detected,
+    preflightChecked: input.summary.preflightCheckedFindings ?? detected,
     eligible,
+    ineligible,
+    executed,
     attempted,
     generated,
     validated,

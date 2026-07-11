@@ -5,10 +5,21 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
+import {
+  validateCanonicalPatch,
+  type CanonicalPatchValidationResult,
+  type PatchValidationAttempt,
+} from "./canonical-patch";
 
-export interface PatchValidationResult {
-  status: "passed" | "failed" | "skipped" | "not_generated";
-  error?: string;
+export type PatchValidationResult = CanonicalPatchValidationResult;
+
+export interface ValidateGeneratedPatchOptions {
+  cleanupRunId?: string;
+  repository?: string;
+  baseCommitSha?: string;
+  workDir?: string;
+  expectedOperations?: import("./canonical-patch").ChangeOperation[];
+  protectedPaths?: string[];
 }
 
 const DELETE_MARKERS = [/^deleted file mode /m];
@@ -49,25 +60,30 @@ async function gitBaseline(rootDir: string): Promise<void> {
   );
 }
 
-/** Patch validation only — git apply --check on the combined patch. Never installs dependencies. */
+/** Patch validation only — git apply --check --index --verbose on a clean workspace. Never installs dependencies. */
 export async function validateGeneratedPatchOnly(
   baselineRoot: string,
-  patch: string
+  patch: string,
+  options?: ValidateGeneratedPatchOptions
 ): Promise<PatchValidationResult> {
   if (!patchHasApplyableOperations(patch)) {
     return { status: "not_generated", error: "No patch diff was generated." };
   }
 
-  const validateRoot = path.join(
-    path.dirname(baselineRoot),
-    `patch-validate-${Date.now()}`
-  );
-  try {
-    await copyRepoBaseline(baselineRoot, validateRoot);
-    return await validateCleanupPatchInWorkspace(validateRoot, patch);
-  } finally {
-    await fs.rm(validateRoot, { recursive: true, force: true }).catch(() => {});
-  }
+  const workDir =
+    options?.workDir ?? path.join(path.dirname(baselineRoot), "patch-validation-work");
+  await fs.mkdir(workDir, { recursive: true }).catch(() => {});
+
+  return validateCanonicalPatch({
+    baselineRoot,
+    patch,
+    cleanupRunId: options?.cleanupRunId ?? `validate_${Date.now()}`,
+    repository: options?.repository ?? "unknown",
+    baseCommitSha: options?.baseCommitSha ?? "workspace-baseline",
+    workDir,
+    expectedOperations: options?.expectedOperations,
+    protectedPaths: options?.protectedPaths,
+  });
 }
 
 /**
@@ -93,18 +109,22 @@ export async function validateEditsForDelivery(
 
   try {
     await copyRepoBaseline(baselineRoot, validateRoot);
-    const { buildConsolidatedPatchFromEdits } = await import("./merge-patches");
+    const { buildCanonicalRepositoryPatch } = await import("./canonical-patch");
     const workDir = path.join(workspace.artifactsPath, "work");
     await fs.mkdir(workDir, { recursive: true });
-    const consolidated = await buildConsolidatedPatchFromEdits(
-      baselineRoot,
-      deduped,
-      workDir
-    );
+    const consolidated = await buildCanonicalRepositoryPatch(baselineRoot, deduped, workDir);
     if (!consolidated.patch.trim()) {
       return { status: "not_generated", error: "No patch diff was generated." };
     }
-    return await validateCleanupPatchInWorkspace(validateRoot, consolidated.patch);
+    return await validateCanonicalPatch({
+      baselineRoot,
+      patch: consolidated.patch,
+      cleanupRunId: `delivery_${Date.now()}`,
+      repository: "unknown",
+      baseCommitSha: "workspace-baseline",
+      workDir,
+      expectedOperations: consolidated.operations,
+    });
   } catch (err) {
     return {
       status: "failed",
@@ -200,15 +220,7 @@ export async function validateConsolidatedEditsInWorkspace(
 
   try {
     await copyRepoBaseline(baselineRoot, validateRoot);
-    for (const edit of deduped) {
-      const full = path.join(validateRoot, edit.path);
-      if (edit.content === "") {
-        await fs.rm(full, { force: true }).catch(() => {});
-        continue;
-      }
-      await fs.mkdir(path.dirname(full), { recursive: true });
-      await fs.writeFile(full, edit.content, "utf8");
-    }
+    await applyConsolidatedEdits(validateRoot, deduped);
     return { status: "passed" };
   } catch (err) {
     return {
@@ -222,42 +234,24 @@ export async function validateConsolidatedEditsInWorkspace(
 
 export async function validateCleanupPatchInWorkspace(
   rootDir: string,
-  patch: string
+  patch: string,
+  options?: ValidateGeneratedPatchOptions
 ): Promise<PatchValidationResult> {
   if (!patchHasApplyableOperations(patch)) {
     return { status: "not_generated", error: "No patch diff was generated." };
   }
 
-  const applyable = extractApplyablePatch(patch);
-  const workspace = await createScanWorkspace("validate");
-  const patchFile = path.join(workspace.artifactsPath, "repodiet-cleanup.patch");
-
-  try {
-    await fs.writeFile(patchFile, applyable, "utf8");
-    await gitBaseline(rootDir);
-
-    const check = await execa("git", ["apply", "--check", patchFile], {
-      cwd: rootDir,
-      reject: false,
-      timeout: 60_000,
-    });
-
-    if (check.exitCode === 0) {
-      return { status: "passed" };
-    }
-
-    return {
-      status: "failed",
-      error: (check.stderr || check.stdout || "git apply --check failed.").trim(),
-    };
-  } catch (err) {
-    return {
-      status: "failed",
-      error: err instanceof Error ? err.message : "Patch validation failed.",
-    };
-  } finally {
-    await removeWorkspace(workspace.root).catch(() => {});
-  }
+  const workDir = options?.workDir ?? path.dirname(rootDir);
+  return validateCanonicalPatch({
+    baselineRoot: rootDir,
+    patch,
+    cleanupRunId: options?.cleanupRunId ?? `workspace_${Date.now()}`,
+    repository: options?.repository ?? "unknown",
+    baseCommitSha: options?.baseCommitSha ?? "workspace-baseline",
+    workDir,
+    expectedOperations: options?.expectedOperations,
+    protectedPaths: options?.protectedPaths,
+  });
 }
 
 export async function validateCleanupPatch(
@@ -272,3 +266,5 @@ export async function validateCleanupPatch(
     await workspace.cleanup();
   }
 }
+
+export type { PatchValidationAttempt };

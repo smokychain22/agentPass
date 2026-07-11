@@ -33,14 +33,26 @@ export interface PatchKitSummary {
   transformerCompatible: number;
   /** @deprecated Use transformedFindings */
   dryRunPassed: number;
+  detectedFindings?: number;
+  preflightCheckedFindings?: number;
   eligibleFindings?: number;
+  ineligibleFindings?: number;
+  executedFindings?: number;
+  /** @deprecated Use executedFindings */
   attemptedTransformations?: number;
   noopTransformations?: number;
   failedTransformations?: number;
+  failedExecutions?: number;
   notAttempted?: number;
+  /** File-level operations (edit/delete/add), not finding count */
   generatedChanges: number;
+  generatedFileOperations?: number;
+  noOpExecutions?: number;
   validatedChanges: number;
+  validatedFileOperations?: number;
   verifiedChanges: number;
+  verifiedFileOperations?: number;
+  deliveredFileOperations?: number;
   /** Retained transformer attempts before per-file consolidation for patch delivery */
   retainedFixAttempts?: number;
   filesEdited: number;
@@ -89,7 +101,21 @@ export interface PatchKitPayload {
   patchValidation?: {
     status: "passed" | "failed" | "skipped" | "not_generated";
     error?: string;
+    userMessage?: string;
+    baseCommitSha?: string;
+    patchHash?: string;
+    failingPath?: string;
+    failingHunk?: string;
+    gitStderr?: string;
+    attempt?: import("./canonical-patch").PatchValidationAttempt;
+    validatedPaths?: string[];
+    unexpectedPaths?: string[];
+    missingPaths?: string[];
+    protectedPaths?: string[];
+    appliedTreeHash?: string;
+    persistedPatchPath?: string;
   };
+  changeOperations?: import("./canonical-patch").ChangeOperation[];
   transformerResults?: TransformerResult[];
   candidateAudits?: CandidateAuditRecord[];
   artifacts: PatchKitArtifacts;

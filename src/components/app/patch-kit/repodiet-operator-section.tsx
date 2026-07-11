@@ -663,7 +663,8 @@ export function RepoDietOperatorSection({
               ) : (patchKit?.summary.eligibleFindings ?? patchKit?.summary.transformerCompatible) ? (
                 <p>
                   {patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible}{" "}
-                  eligible; {patchKit.summary.attemptedTransformations ?? 0} attempted;{" "}
+                  eligible findings; {patchKit.summary.executedFindings ?? patchKit.summary.attemptedTransformations ?? 0} executed;{" "}
+                  {patchKit.summary.generatedFileOperations ?? patchKit.summary.generatedChanges} generated file operations;{" "}
                   {patchKit.summary.generatedChanges ?? 0} generated;{" "}
                   {validatedChanges > 0
                     ? "patch validation must pass before cleanup PR."
@@ -734,7 +735,7 @@ export function RepoDietOperatorSection({
               {patchKit?.summary.blockerSummary
                 ? patchKit.summary.blockerSummary
                 : (patchKit?.summary.eligibleFindings ?? patchKit?.summary.transformerCompatible ?? 0) > 0
-                  ? `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible finding(s); ${patchKit.summary.attemptedTransformations ?? 0} attempted; ${patchKit.summary.generatedChanges ?? 0} generated; 0 verified changes retained. You can create a report-only PR with cleanup artifacts.`
+                  ? `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible finding(s); ${patchKit.summary.executedFindings ?? patchKit.summary.attemptedTransformations ?? 0} executed; ${patchKit.summary.generatedFileOperations ?? patchKit.summary.generatedChanges} generated file operations; 0 verified file operations. You can create a report-only PR with cleanup artifacts.`
                   : "No validated code changes were generated. RepoDiet can create a report-only PR with cleanup artifacts instead."}
             </div>
           )}

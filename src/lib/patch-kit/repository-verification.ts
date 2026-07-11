@@ -91,7 +91,7 @@ async function applyPatch(rootDir: string, patch: string): Promise<boolean> {
     ],
     { cwd: rootDir, reject: false }
   );
-  const apply = await execa("git", ["apply", patchFile], {
+  const apply = await execa("git", ["apply", "--index", patchFile], {
     cwd: rootDir,
     reject: false,
     timeout: 60_000,
