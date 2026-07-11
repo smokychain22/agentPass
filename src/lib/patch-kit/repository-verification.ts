@@ -8,6 +8,7 @@ import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
 import {
   ensureVerificationDependencies,
+  formatInstallFailureReason,
   inferRequiredPackagesForScripts,
   type InstallAttemptRecord,
 } from "@/lib/execution/workspace-install";
@@ -170,20 +171,25 @@ export async function runRepositoryVerification(input: {
   edits: ConsolidatedEdit[];
   cleanupRunId: string;
   patch?: string;
+  /** Already-patched cleanup workspace — avoids a second copy + full reinstall on serverless. */
+  patchedRoot?: string;
 }): Promise<RepositoryVerificationResult> {
   const deduped = dedupeConsolidatedEdits(input.edits);
   if (deduped.length === 0) {
     return { status: "not_run", installAttempts: [], checks: [] };
   }
 
-  const workspace = await createScanWorkspace("repo-verify");
-  const verifyRoot = path.join(workspace.artifactsPath, "root");
+  const reusePatchedRoot = Boolean(input.patchedRoot);
+  const workspace = reusePatchedRoot ? null : await createScanWorkspace("repo-verify");
+  const verifyRoot = input.patchedRoot ?? path.join(workspace!.artifactsPath, "root");
   const checks: VerifyCheckResult[] = [];
   let installAttempts: InstallAttemptRecord[] = [];
 
   try {
-    await copyRepoBaseline(input.baselineRoot, verifyRoot);
-    await applyPatchOrEdits(verifyRoot, input.patch, deduped);
+    if (!reusePatchedRoot) {
+      await copyRepoBaseline(input.baselineRoot, verifyRoot);
+      await applyPatchOrEdits(verifyRoot, input.patch, deduped);
+    }
 
     const pkgPath = path.join(verifyRoot, "package.json");
     const hasPackageJson = await fs.access(pkgPath).then(() => true).catch(() => false);
@@ -212,9 +218,16 @@ export async function runRepositoryVerification(input: {
     const installResult = await ensureVerificationDependencies(
       verifyRoot,
       input.cleanupRunId,
-      { requiredPackages, patchedPaths }
+      {
+        requiredPackages,
+        patchedPaths,
+        preserveExistingModules: reusePatchedRoot,
+      }
     );
     installAttempts = installResult.attempts;
+    const installDetail =
+      installResult.reason ??
+      formatInstallFailureReason(installResult.stderr ?? "", installResult.stdout ?? "");
     checks.push({
       name: "dependency install",
       command: installResult.command ?? "npm ci",
@@ -222,14 +235,14 @@ export async function runRepositoryVerification(input: {
       exitCode: installResult.exitCode ?? null,
       durationMs: installResult.durationMs ?? 0,
       stdoutSummary: summarize(installResult.stdout ?? ""),
-      stderrSummary: summarize(installResult.stderr ?? installResult.reason ?? ""),
+      stderrSummary: summarize(installDetail),
     });
 
     if (!installResult.installed) {
       return {
         status: "blocked",
         failureCode: "DEPENDENCY_INSTALL_FAILED",
-        error: installResult.reason ?? "Could not install repository dependencies.",
+        error: installDetail || "Could not install repository dependencies.",
         installAttempts,
         checks,
       };
@@ -312,6 +325,8 @@ export async function runRepositoryVerification(input: {
       checks,
     };
   } finally {
-    await removeWorkspace(workspace.root).catch(() => {});
+    if (workspace) {
+      await removeWorkspace(workspace.root).catch(() => {});
+    }
   }
 }

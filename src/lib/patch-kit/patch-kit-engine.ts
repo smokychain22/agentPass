@@ -9,6 +9,11 @@ import type { Finding, FindingsPayload } from "@/lib/findings/types";
 import { isEligibleFinding } from "@/lib/findings/actionability-signals";
 import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
 import {
+  areRequiredPackagesInstalled,
+  ensureWorkspaceDependenciesWithCache,
+  inferRequiredPackagesForScripts,
+} from "@/lib/execution/workspace-install";
+import {
   auditTransformerCompatibleFindings,
   formatBlockerBreakdown,
   summarizeBlockers,
@@ -480,6 +485,19 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       validatedChanges = generatedEdits.length;
     }
 
+    if (patchValidation?.status === "passed") {
+      try {
+        const pkgRaw = await fs.readFile(path.join(workspace.rootDir, "package.json"), "utf8");
+        const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
+        const requiredPackages = inferRequiredPackagesForScripts(pkg.scripts ?? {});
+        if (!(await areRequiredPackagesInstalled(workspace.rootDir, requiredPackages))) {
+          await ensureWorkspaceDependenciesWithCache(workspace.rootDir, cleanupRunId);
+        }
+      } catch {
+        /* no package.json — verification will skip install */
+      }
+    }
+
     const repositoryVerification =
       patchValidation?.status === "passed"
         ? await runRepositoryVerification({
@@ -487,6 +505,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
             cleanupRunId,
             patch: mergedPatch,
+            patchedRoot: workspace.rootDir,
           })
         : {
             status: "not_run" as const,

@@ -4,6 +4,7 @@ import os from "node:os";
 import { execa } from "execa";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
+import { isServerlessRuntime } from "@/lib/server/runtime-env";
 
 const INSTALL_TIMEOUT_MS = 180_000;
 const MAX_ATTEMPTS = 4;
@@ -30,7 +31,8 @@ export interface InstallAttemptRecord {
 }
 
 function summarize(text: string, max = 280): string {
-  const trimmed = text.trim();
+  const sanitized = sanitizeInstallOutput(text);
+  const trimmed = sanitized.trim();
   if (!trimmed) return "";
   const withoutWarnings = trimmed
     .split("\n")
@@ -41,37 +43,91 @@ function summarize(text: string, max = 280): string {
   return source.length > max ? `${source.slice(0, max)}…` : source;
 }
 
-/** Extract actionable npm failure text — not just the debug log path line. */
-export function formatInstallFailureReason(stderr: string, stdout: string): string {
-  const lines = `${stderr}\n${stdout}`
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter(
-      (line) =>
-        !line.startsWith("npm error A complete log of this run can be found in:") &&
-        !line.startsWith("npm notice")
-    );
+/** Drop npm debug noise and binary buffer dumps — never show these in the UI. */
+export function isNpmLogNoiseLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+  if (/<Buffer[\s\S]*>/i.test(trimmed)) return true;
+  if (/\.\.\.\s*\d+\s+more bytes>/i.test(trimmed)) return true;
+  if (/^\d+\s+(silly|http|verbose|timing|info)\b/i.test(trimmed)) return true;
+  if (/^\d+\s+silly tar\b/i.test(trimmed)) return true;
+  if (/^[0-9a-f]{2}(\s+[0-9a-f]{2}){12,}/i.test(trimmed)) return true;
+  if (trimmed.startsWith("npm error A complete log of this run can be found in:")) return true;
+  if (trimmed.startsWith("npm notice")) return true;
+  return false;
+}
 
-  const errors = lines.filter(
+export function sanitizeInstallOutput(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !isNpmLogNoiseLine(line))
+    .join("\n");
+}
+
+/** Parse numbered npm debug log lines (`1234 error …`) into human-readable messages. */
+export function parseNpmDebugLog(raw: string): string[] {
+  const actionable: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || isNpmLogNoiseLine(trimmed)) continue;
+
+    const levelMatch = trimmed.match(/^\d+\s+(error|warn)\s+(.+)$/i);
+    if (levelMatch) {
+      actionable.push(levelMatch[2]!.replace(/^npm error\s*/i, ""));
+      continue;
+    }
+
+    if (trimmed.startsWith("npm error")) {
+      actionable.push(trimmed.replace(/^npm error\s*/i, ""));
+      continue;
+    }
+
+    if (
+      /\b(ENOSPC|EROFS|ECONN|ETIMEDOUT|EUSAGE|ERESOLVE|EINTEGRITY|ENOENT)\b/i.test(trimmed) ||
+      /no space left on device/i.test(trimmed) ||
+      /lock file/i.test(trimmed) ||
+      /package-lock/i.test(trimmed)
+    ) {
+      actionable.push(trimmed.replace(/^\d+\s+\w+\s+/, ""));
+    }
+  }
+  return [...new Set(actionable.map((line) => line.trim()).filter(Boolean))];
+}
+
+/** Extract actionable npm failure text — not debug log path lines or binary buffer dumps. */
+export function formatInstallFailureReason(stderr: string, stdout: string): string {
+  const streamLines = `${stderr}\n${stdout}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !isNpmLogNoiseLine(line));
+
+  const streamErrors = streamLines.filter(
     (line) =>
       line.startsWith("npm error") ||
-      line.includes("ERESOLVE") ||
-      line.includes("EUSAGE") ||
-      line.includes("ENOTFOUND") ||
-      line.includes("ETIMEDOUT") ||
-      line.includes("lock file") ||
-      line.includes("package-lock")
+      /\b(ERESOLVE|EUSAGE|ENOTFOUND|ETIMEDOUT|ENOSPC|EROFS|EINTEGRITY)\b/i.test(line) ||
+      /lock file/i.test(line) ||
+      /package-lock/i.test(line) ||
+      /no space left on device/i.test(line)
   );
 
-  if (errors.length > 0) {
-    return errors
+  if (streamErrors.length > 0) {
+    return streamErrors
       .map((line) => line.replace(/^npm error\s*/i, ""))
       .slice(0, 4)
       .join(" ");
   }
 
-  return lines.slice(-4).join(" ") || "npm install failed";
+  const logErrors = parseNpmDebugLog(`${stderr}\n${stdout}`);
+  if (logErrors.length > 0) {
+    return logErrors.slice(0, 4).join(" ");
+  }
+
+  const fallback = streamLines.filter((line) => !/^\d+\s/.test(line)).slice(-3);
+  if (fallback.length > 0) {
+    return fallback.join(" ");
+  }
+
+  return "Dependency install failed. Open Developer tools — dependency install for attempt details.";
 }
 
 async function readLatestNpmLog(cacheDir: string): Promise<string | null> {
@@ -81,7 +137,8 @@ async function readLatestNpmLog(cacheDir: string): Promise<string | null> {
     const latest = files.at(-1);
     if (!latest) return null;
     const raw = await fs.readFile(path.join(logsDir, latest), "utf8");
-    return formatInstallFailureReason(raw, "");
+    const parsed = parseNpmDebugLog(raw);
+    return parsed.length > 0 ? parsed.slice(0, 4).join(" ") : null;
   } catch {
     return null;
   }
@@ -118,8 +175,13 @@ function isIntegrityError(stderr: string, stdout: string): boolean {
   );
 }
 
-function installEnv(cacheDir?: string): NodeJS.ProcessEnv {
-  return {
+function isDiskSpaceError(stderr: string, stdout: string): boolean {
+  const text = `${stderr}\n${stdout}`.toLowerCase();
+  return text.includes("enospc") || text.includes("no space left on device") || text.includes("erofs");
+}
+
+function installEnv(cacheDir: string | undefined, rootDir: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     CI: "true",
     FORCE_COLOR: "0",
@@ -130,36 +192,36 @@ function installEnv(cacheDir?: string): NodeJS.ProcessEnv {
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000",
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000",
     NPM_CONFIG_PROGRESS: "false",
-    ...(cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {}),
+    NPM_CONFIG_LOGLEVEL: "warn",
+    NPM_CONFIG_OPTIONAL: "false",
   };
+
+  if (cacheDir) {
+    env.NPM_CONFIG_CACHE = isServerlessRuntime()
+      ? path.join(rootDir, ".repodiet-npm-cache")
+      : cacheDir;
+  }
+
+  return env;
+}
+
+function npmInstallBaseFlags(cacheDir?: string): string[] {
+  const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
+  return [
+    "--ignore-scripts",
+    "--omit=optional",
+    "--no-audit",
+    "--no-fund",
+    ...cacheFlag,
+  ];
 }
 
 function npmInstallVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
-  const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
+  const flags = npmInstallBaseFlags(cacheDir);
   if (lockfilePresent) {
-    return [
-      [
-        "npm",
-        "ci",
-        "--prefer-online",
-        "--no-audit",
-        "--no-fund",
-        "--ignore-scripts",
-        ...cacheFlag,
-      ],
-    ];
+    return [["npm", "ci", ...flags]];
   }
-  return [
-    [
-      "npm",
-      "install",
-      "--prefer-online",
-      "--no-audit",
-      "--no-fund",
-      "--ignore-scripts",
-      ...cacheFlag,
-    ],
-  ];
+  return [["npm", "install", ...flags]];
 }
 
 function installVariants(pm: PackageManager, lockfilePresent: boolean, cacheDir?: string): string[][] {
@@ -267,17 +329,17 @@ function npmVerificationVariants(
   cacheDir?: string,
   options?: { preferInstall?: boolean }
 ): string[][] {
-  const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
+  const flags = npmInstallBaseFlags(cacheDir);
   if (options?.preferInstall || !lockfilePresent) {
     return [
-      ["npm", "install", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
-      ["npm", "install", "--no-audit", "--no-fund", ...cacheFlag],
+      ["npm", "install", ...flags],
+      ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--omit=optional", ...(cacheDir ? ["--cache", cacheDir] : [])],
     ];
   }
   return [
-    ["npm", "ci", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
-    ["npm", "install", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
-    ["npm", "install", "--no-audit", "--no-fund", ...cacheFlag],
+    ["npm", "ci", ...flags],
+    ["npm", "install", ...flags],
+    ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--omit=optional", ...(cacheDir ? ["--cache", cacheDir] : [])],
   ];
 }
 
@@ -367,7 +429,7 @@ export async function ensureWorkspaceDependenciesWithCache(
       cwd: rootDir,
       timeout: INSTALL_TIMEOUT_MS,
       reject: false,
-      env: installEnv(cacheDir),
+      env: installEnv(cacheDir, rootDir),
     });
     const durationMs = Date.now() - t0;
     const stdout = result.stdout ?? "";
@@ -378,7 +440,10 @@ export async function ensureWorkspaceDependenciesWithCache(
       attempt: attempt + 1,
       exitCode: result.exitCode ?? null,
       stdout: summarize(stdout, 2000),
-      stderr: summarize(stderr, 2000),
+      stderr: summarize(
+        formatInstallFailureReason(stderr, stdout) || stderr,
+        2000
+      ),
       durationMs,
     });
 
@@ -449,7 +514,12 @@ export async function ensureWorkspaceDependenciesWithCache(
 export async function ensureVerificationDependencies(
   rootDir: string,
   cleanupRunId: string,
-  options?: { requiredPackages?: string[]; lockfilePatched?: boolean; patchedPaths?: string[] }
+  options?: {
+    requiredPackages?: string[];
+    lockfilePatched?: boolean;
+    patchedPaths?: string[];
+    preserveExistingModules?: boolean;
+  }
 ): Promise<WorkspaceInstallResult & { attempts: InstallAttemptRecord[] }> {
   const attempts: InstallAttemptRecord[] = [];
   const requiredPackages = options?.requiredPackages ?? [];
@@ -467,7 +537,24 @@ export async function ensureVerificationDependencies(
     };
   }
 
-  await clearInstallArtifacts(rootDir);
+  if (
+    options?.preserveExistingModules &&
+    (await areRequiredPackagesInstalled(rootDir, requiredPackages))
+  ) {
+    return {
+      installed: true,
+      command: "reuse existing node_modules",
+      exitCode: 0,
+      durationMs: 0,
+      stdout: "Reused node_modules from cleanup workspace.",
+      stderr: "",
+      attempts,
+    };
+  }
+
+  if (!options?.preserveExistingModules) {
+    await clearInstallArtifacts(rootDir);
+  }
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
   const hasLockfile = await lockfilePresent(rootDir);
@@ -491,7 +578,7 @@ export async function ensureVerificationDependencies(
       cwd: rootDir,
       timeout: INSTALL_TIMEOUT_MS,
       reject: false,
-      env: installEnv(cacheDir),
+      env: installEnv(cacheDir, rootDir),
     });
     const durationMs = Date.now() - t0;
     const stdout = result.stdout ?? "";
@@ -502,7 +589,10 @@ export async function ensureVerificationDependencies(
       attempt: attempt + 1,
       exitCode: result.exitCode ?? null,
       stdout: summarize(stdout, 2000),
-      stderr: summarize(stderr, 2000),
+      stderr: summarize(
+        formatInstallFailureReason(stderr, stdout) || stderr,
+        2000
+      ),
       durationMs,
     });
 
@@ -529,7 +619,9 @@ export async function ensureVerificationDependencies(
       continue;
     }
 
-    const logReason = await readLatestNpmLog(cacheDir);
+    const logReason = await readLatestNpmLog(
+      isServerlessRuntime() ? path.join(rootDir, ".repodiet-npm-cache") : cacheDir
+    );
     lastReason =
       logReason ||
       formatInstallFailureReason(stderr, stdout) ||
@@ -550,16 +642,23 @@ export async function ensureVerificationDependencies(
 
     if (
       pm === "npm" &&
-      isIntegrityError(stderr, stdout) &&
+      (isIntegrityError(stderr, stdout) || isDiskSpaceError(stderr, stdout)) &&
       integrityRetries < CACHE_RETRY_MAX
     ) {
       integrityRetries += 1;
       await recreateCacheDir(cacheDir);
-      await clearInstallArtifacts(rootDir);
+      await fs
+        .rm(path.join(rootDir, ".repodiet-npm-cache"), { recursive: true, force: true })
+        .catch(() => {});
+      if (!options?.preserveExistingModules) {
+        await clearInstallArtifacts(rootDir);
+      }
       continue;
     }
 
-    await clearInstallArtifacts(rootDir);
+    if (!options?.preserveExistingModules) {
+      await clearInstallArtifacts(rootDir);
+    }
   }
 
   return {

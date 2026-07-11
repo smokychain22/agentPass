@@ -16,6 +16,7 @@ import {
   formatInstallFailureReason,
   inferRequiredPackagesForScripts,
   lockfileWasPatched,
+  parseNpmDebugLog,
 } from "../src/lib/execution/workspace-install";
 import { resolveDependencyEntry } from "../src/lib/execution/fix-preflight";
 import { applyRepositoryIdentity } from "../src/lib/github/refresh-repo-identity";
@@ -326,6 +327,26 @@ async function run() {
     assert.ok(!reason.includes("complete log of this run"));
   });
 
+  await test("formatInstallFailureReason ignores silly tar buffer dumps", () => {
+    const noisyLog = [
+      "50 silly tar <Buffer 84 04 22 00 00 4c 89 34 24 ... 16334 more bytes>",
+      "51 silly tar <Buffer 28 04 24 0f 28 4c 24 10 ... 16334 more bytes>",
+      "1234 error code ENOSPC",
+      "1235 error syscall write",
+      "1236 error errno -28",
+      "1237 error nospc ENOSPC: no space left on device, write",
+    ].join("\n");
+    const reason = formatInstallFailureReason("", noisyLog);
+    assert.ok(reason.includes("ENOSPC") || reason.includes("no space left"));
+    assert.ok(!reason.includes("<Buffer"));
+    assert.ok(!reason.includes("silly tar"));
+  });
+
+  await test("parseNpmDebugLog extracts numbered error lines", () => {
+    const parsed = parseNpmDebugLog("999 error code ERESOLVE\n50 silly tar <Buffer 00>");
+    assert.deepEqual(parsed, ["code ERESOLVE"]);
+  });
+
   await test("lockfileWasPatched detects package manifest edits", () => {
     assert.equal(lockfileWasPatched(["package.json", "src/index.ts"]), true);
     assert.equal(lockfileWasPatched(["src/index.ts"]), false);
@@ -370,7 +391,7 @@ async function run() {
     });
     assert.equal(install.installed, true, install.reason);
     assert.ok(
-      install.attempts.some((a) => a.command.startsWith("npm install")),
+      install.attempts.some((a) => a.command.includes("npm install")),
       "expected npm install attempt when lockfile was patched"
     );
     await fs.rm(root, { recursive: true, force: true });
