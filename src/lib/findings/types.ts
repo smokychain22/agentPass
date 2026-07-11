@@ -98,6 +98,84 @@ export type FindingLifecycleState =
 
 export type EvidenceGrade = "strong" | "moderate" | "weak";
 
+export type FusionEvidenceGrade =
+  | "strong"
+  | "moderate"
+  | "weak"
+  | "contradictory"
+  | "insufficient";
+
+export type ClassificationState =
+  | "signal"
+  | "candidate"
+  | "corroborated"
+  | "supported"
+  | "review_required"
+  | "protected"
+  | "insufficient_evidence";
+
+export type ClassificationLabel =
+  | "potentially_unreferenced"
+  | "confirmed_unused"
+  | "eligible_for_removal"
+  | "potential_orphan"
+  | "exact_duplicate"
+  | "structural_duplicate"
+  | "near_duplicate"
+  | "unused_import_confirmed"
+  | "unused_dependency_suspected"
+  | "backup_archive_candidate"
+  | "stale_looking"
+  | "possible_issue"
+  | "protected"
+  | "review_required";
+
+export interface EvidenceItem {
+  channel: string;
+  source: string;
+  summary: string;
+  strength: "supporting" | "contradicting" | "neutral";
+}
+
+export interface EvidenceBundle {
+  analyzerEvidence: EvidenceItem[];
+  graphEvidence: EvidenceItem[];
+  frameworkEvidence: EvidenceItem[];
+  configurationEvidence: EvidenceItem[];
+  scriptEvidence: EvidenceItem[];
+  runtimeEvidence: EvidenceItem[];
+  gitEvidence: EvidenceItem[];
+  counterEvidence: EvidenceItem[];
+  unresolvedRisks: string[];
+  grade: FusionEvidenceGrade;
+  classificationState: ClassificationState;
+  classificationLabel: ClassificationLabel;
+  decisionReason: string;
+  autoFixAllowed: boolean;
+}
+
+export interface DeletionProof {
+  findingId: string;
+  filePath: string;
+  commitSha?: string;
+  whyBelievedUnnecessary: string;
+  analyzersAgreeing: string[];
+  entryPointsChecked: string[];
+  importsChecked: boolean;
+  dynamicReferencesChecked: boolean;
+  configsChecked: boolean;
+  scriptsChecked: boolean;
+  packageExportsChecked: boolean;
+  frameworkConventionsChecked: boolean;
+  protected: boolean;
+  protectionReason?: string;
+  gitHistoryNote?: string;
+  behaviorDependency?: string;
+  verificationRequired: string[];
+  evidenceGrade: FusionEvidenceGrade;
+  approvedForAutomaticDeletion: boolean;
+}
+
 export interface Finding {
   id: string;
   type: FindingType;
@@ -115,6 +193,10 @@ export interface Finding {
   evidence: FindingEvidence;
   lifecycleState?: FindingLifecycleState;
   evidenceGrade?: EvidenceGrade;
+  evidenceBundle?: EvidenceBundle;
+  deletionProof?: DeletionProof;
+  classificationState?: ClassificationState;
+  classificationLabel?: ClassificationLabel;
   supportedTransformer?: string | null;
   protected?: boolean;
   protectionReason?: string;
