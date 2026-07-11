@@ -8,9 +8,12 @@ import {
 } from "./git-runner";
 import { postCallback } from "./callback";
 
-const WORKER_ID = process.env.WORKER_ID ?? `worker_${process.pid}`;
-
-export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiKey: string): Promise<void> {
+export async function runRepositoryJob(
+  job: RepositoryJob,
+  apiBase: string,
+  apiKey: string,
+  workerId: string
+): Promise<void> {
   const logs: string[] = [];
   const workRoot = workspaceLayout(job.cleanupRunId);
   const log = (line: string) => {
@@ -20,7 +23,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
 
   try {
     await postCallback(apiBase, apiKey, job.id, "progress", {
-      workerId: WORKER_ID,
+      workerId,
       status: "cloning",
       progress: "Cloning exact commit",
     });
@@ -36,7 +39,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
     log(`Cloned ${job.payload.baseCommitSha}`);
 
     await postCallback(apiBase, apiKey, job.id, "progress", {
-      workerId: WORKER_ID,
+      workerId,
       status: "transforming",
       progress: "Applying deterministic changes",
     });
@@ -49,7 +52,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
     log(`Generated patch for ${changedPaths.join(", ")}`);
 
     await postCallback(apiBase, apiKey, job.id, "progress", {
-      workerId: WORKER_ID,
+      workerId,
       status: "validating_patch",
       progress: "Running git apply --check",
     });
@@ -87,7 +90,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
 
     if (gitValidation.status !== "passed") {
       await postCallback(apiBase, apiKey, job.id, "fail", {
-        workerId: WORKER_ID,
+        workerId,
         failureCode: "GIT_PATCH_INVALID",
         failureMessage: gitValidation.stderr || "git apply --check failed",
       });
@@ -95,7 +98,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
     }
 
     await postCallback(apiBase, apiKey, job.id, "progress", {
-      workerId: WORKER_ID,
+      workerId,
       status: "baseline_verify",
       progress: "Running baseline verification",
     });
@@ -122,7 +125,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
       repositoryVerification.status === "verified" ? "ready_for_delivery" : "blocked";
 
     await postCallback(apiBase, apiKey, job.id, "complete", {
-      workerId: WORKER_ID,
+      workerId,
       status: finalStatus,
       result,
     });
@@ -130,7 +133,7 @@ export async function runRepositoryJob(job: RepositoryJob, apiBase: string, apiK
     const message = err instanceof Error ? err.message : "Worker job failed";
     log(message);
     await postCallback(apiBase, apiKey, job.id, "fail", {
-      workerId: WORKER_ID,
+      workerId,
       failureCode: message.includes("BASE_COMMIT_MISMATCH") ? "BASE_COMMIT_MISMATCH" : "WORKER_EXECUTION_FAILED",
       failureMessage: message,
     });

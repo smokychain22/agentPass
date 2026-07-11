@@ -3,6 +3,7 @@
 export type ProductOutcome =
   | "verified_fix"
   | "verified_and_retained"
+  | "generated_pending"
   | "review_ready_change"
   | "rolled_back_regression"
   | "rolled_back_new_regression"
@@ -29,6 +30,7 @@ export type RunFinalStatus =
 export const PRODUCT_OUTCOME_LABELS: Record<ProductOutcome, string> = {
   verified_fix: "Verified and retained",
   verified_and_retained: "Verified fix retained",
+  generated_pending: "Generated; pending Git validation and repository verification",
   review_ready_change: "Needs review",
   rolled_back_regression: "Rolled back: introduced regression",
   rolled_back_new_regression: "Change rolled back: introduced regression",
@@ -65,7 +67,7 @@ export function deriveAttemptProductOutcome(input: {
   pluginId: string;
   comparison?: Array<{ name: string; outcome: string }>;
 }): ProductOutcome {
-  if (input.internalStatus === "retained") return "verified_fix";
+  if (input.internalStatus === "retained") return "generated_pending";
 
   const reason = input.reason.toLowerCase();
 

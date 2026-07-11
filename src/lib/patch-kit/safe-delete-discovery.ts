@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { nanoid } from "nanoid";
 import { hashSource } from "@/lib/execution/transform-audit";
 import { countInboundReferences } from "@/lib/execution/reference-graph";
 import {
@@ -7,7 +9,8 @@ import {
   isRouteLikePath,
   isSafeCandidatePath,
 } from "@/lib/findings/confidence-path-rules";
-import type { FindingsPayload } from "@/lib/findings/types";
+import type { Finding, FindingsPayload } from "@/lib/findings/types";
+import type { CandidateAuditRecord } from "@/lib/execution/candidate-lifecycle";
 import { classifyFindingsForPatch } from "./safe-delete-classifier";
 import type { ClassifiedBuckets, ClassifiedItem } from "./types";
 
@@ -91,6 +94,51 @@ export async function evaluateBackupFileDeletion(
   };
 }
 
+export function createBackupFileFinding(proof: SafeDeleteProof): Finding {
+  const id = `finding_backup_${createHash("sha256").update(proof.filePath).digest("hex").slice(0, 10)}`;
+  return {
+    id,
+    type: "unused_file",
+    title: "Backup/archive file",
+    files: [proof.filePath],
+    confidence: 0.95,
+    confidenceReason: "Backup path pattern with zero inbound references and baseline hash match.",
+    severity: "low",
+    action: "safe_candidate",
+    reason: "Backup/archive file with no inbound references and exact baseline hash match.",
+    source: "heuristic",
+    sourceMode: "heuristic",
+    evidence: {
+      summary: "repodiet_backup_analyzer: pattern matched, zero references",
+      signals: ["backup_file", "archive_path", "zero_references", "base_hash_matched"],
+    },
+    lifecycleState: "generated",
+    classificationLabel: "backup_archive_candidate",
+    supportedTransformer: "remove_temp_backup_file",
+  };
+}
+
+export function createBackupCandidateAudit(finding: Finding): CandidateAuditRecord {
+  return {
+    findingId: finding.id,
+    findingType: "unused_file",
+    filePath: finding.files[0],
+    pluginId: "remove_temp_file",
+    strategyIds: ["delete_backup_file"],
+    sourceFound: true,
+    sourceHashMatched: true,
+    scanEligible: true,
+    transformAttempted: true,
+    contentChanged: true,
+    dryRunSucceeded: true,
+    proposedSourceChanged: true,
+    proposedDiffGenerated: true,
+    patchValidated: false,
+    verificationSupported: true,
+    retained: true,
+  };
+}
+
 /** Discover backup/archive files eligible for safe deletion even without analyzer findings. */
 export async function discoverFilesystemSafeDeletes(
   rootDir: string,
@@ -116,6 +164,7 @@ export async function discoverFilesystemSafeDeletes(
       path: rel,
       reason: "Backup/archive file with no inbound references and exact baseline hash match.",
       findingType: "unused_file",
+      findingId: `finding_backup_${createHash("sha256").update(rel).digest("hex").slice(0, 10)}`,
     });
     proofs.push(proof);
     existing.add(rel);

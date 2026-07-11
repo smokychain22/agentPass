@@ -11,10 +11,13 @@ RUN npm ci --include=dev --include=optional --no-audit --no-fund
 
 COPY . .
 
+RUN npm run build:worker
+
 RUN useradd -m -u 10001 repodiet
 USER repodiet
 
 ENV NODE_ENV=production
 ENV WORKER_POLL_MS=5000
+ENV WORKER_HEARTBEAT_MS=10000
 
-CMD ["npx", "tsx", "worker/src/index.ts"]
+CMD ["node", "worker/dist/index.js"]

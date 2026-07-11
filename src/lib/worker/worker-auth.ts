@@ -35,7 +35,19 @@ export function validateWorkerCallbackSecret(header: string | null): boolean {
 
 export function assertWorkerAuthorized(request: Request): void {
   const auth = request.headers.get("authorization");
+  if (!auth) {
+    throw new WorkerAuthError("WORKER_AUTH_MISSING", "Missing Authorization header.");
+  }
   if (!validateWorkerApiKey(auth)) {
-    throw new Error("Unauthorized worker request.");
+    throw new WorkerAuthError("WORKER_AUTH_INVALID", "Invalid worker API key.");
+  }
+}
+
+export class WorkerAuthError extends Error {
+  constructor(
+    public readonly code: "WORKER_AUTH_MISSING" | "WORKER_AUTH_INVALID",
+    message: string
+  ) {
+    super(message);
   }
 }

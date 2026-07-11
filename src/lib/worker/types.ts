@@ -6,11 +6,14 @@ export type RepositoryJobStatus =
   | "queued"
   | "claimed"
   | "cloning"
+  | "baseline_verification"
   | "baseline_install"
   | "baseline_verify"
   | "transforming"
   | "generating_patch"
+  | "git_validation"
   | "validating_patch"
+  | "patched_verification"
   | "patched_install"
   | "patched_verify"
   | "ready_for_delivery"
@@ -19,6 +22,23 @@ export type RepositoryJobStatus =
   | "failed"
   | "blocked"
   | "timed_out";
+
+export type WorkerInstanceStatus = "starting" | "online" | "busy" | "degraded" | "offline";
+
+export interface WorkerInstance {
+  id: string;
+  version: string;
+  hostname: string;
+  status: WorkerInstanceStatus;
+  gitVersion?: string;
+  nodeVersion?: string;
+  npmVersion?: string;
+  startedAt: string;
+  heartbeatAt: string;
+  currentJobId?: string;
+  completedJobs: number;
+  failedJobs: number;
+}
 
 export interface RepositoryJobPayload {
   cleanupRunId: string;
@@ -52,6 +72,8 @@ export interface RepositoryJob {
   claimedBy?: string;
   claimedAt?: string;
   heartbeatAt?: string;
+  leaseExpiresAt?: string;
+  attemptCount?: number;
   startedAt?: string;
   completedAt?: string;
   failureCode?: string;
@@ -59,8 +81,13 @@ export interface RepositoryJob {
   payload: RepositoryJobPayload;
   result?: RepositoryJobResult;
   progress?: string;
+  statusHistory?: Array<{ status: RepositoryJobStatus; at: string; detail?: string }>;
   createdAt: string;
   updatedAt: string;
 }
 
-export const STALE_JOB_MS = 10 * 60 * 1000;
+export const STALE_JOB_MS = 60 * 1000;
+export const WORKER_HEARTBEAT_INTERVAL_MS = 10 * 1000;
+export const WORKER_AVAILABILITY_WINDOW_MS = 30 * 1000;
+export const MAX_JOB_ATTEMPTS = 2;
+export const JOB_LEASE_MS = 60 * 1000;

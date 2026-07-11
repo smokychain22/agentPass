@@ -68,6 +68,20 @@ export async function POST(request: Request) {
 
     if (
       body.mode !== "report_only" &&
+      patchKit.patchValidation?.status === "pending_worker"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "WORKER_JOB_PENDING",
+          error: "Waiting for repository verification on the Docker worker.",
+        },
+        { status: 422 }
+      );
+    }
+
+    if (
+      body.mode !== "report_only" &&
       patchKit.patchValidation?.status === "blocked"
     ) {
       return NextResponse.json(

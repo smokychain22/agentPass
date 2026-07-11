@@ -99,7 +99,7 @@ export function buildAuthoritativeCleanupRunSummary(input: {
 
   const patchStatus = input.patchValidationStatus ?? input.summary.patchValidationStatus;
   const contentValidatedOperations =
-    patchStatus === "passed" || patchStatus === "blocked"
+    patchStatus === "passed" || patchStatus === "blocked" || patchStatus === "pending_worker"
       ? generatedOperations
       : 0;
   const gitValidatedOperations = patchStatus === "passed" ? generatedOperations : 0;

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { PatchKitSummary } from "@/lib/patch-kit/types";
 
 const cards: {
-  key: keyof PatchKitSummary | "lifecycle";
+  key: string;
   title: string;
   explanation?: string;
   getValue: (s: PatchKitSummary) => number | string;
@@ -22,11 +22,16 @@ const cards: {
     getValue: (s) => s.verifiedFileOperations ?? s.verifiedChanges ?? 0,
   },
   {
-    key: "validatedFileOperations",
-    title: "Validated file operations",
-    explanation:
-      "Combined cleanup patch passed git apply --check --index when Git CLI is available.",
-    getValue: (s) => s.validatedFileOperations ?? s.validatedChanges ?? 0,
+    key: "gitValidatedOperations",
+    title: "Git-validated file operations",
+    explanation: "Operations that passed real git apply --check on the worker.",
+    getValue: (s) => s.gitValidatedOperations ?? s.validatedFileOperations ?? s.validatedChanges ?? 0,
+  },
+  {
+    key: "contentValidatedOperations",
+    title: "Content-validated file operations",
+    explanation: "Operations whose before/after content integrity passed preflight.",
+    getValue: (s) => s.contentValidatedOperations ?? s.generatedFileOperations ?? s.generatedChanges ?? 0,
   },
   {
     key: "generatedFileOperations",
@@ -52,12 +57,6 @@ const cards: {
     explanation: "Evidence-backed signals from native analyzers.",
     getValue: (s) => s.detectedFindings ?? 0,
   },
-  {
-    key: "noopTransformations",
-    title: "No-op executions",
-    explanation: "Transformer ran but output equals original — not counted as generated.",
-    getValue: (s) => s.noOpExecutions ?? s.noopTransformations ?? 0,
-  },
 ];
 
 export function PatchKitSummaryCards({ summary }: { summary: PatchKitSummary }) {
@@ -66,7 +65,7 @@ export function PatchKitSummaryCards({ summary }: { summary: PatchKitSummary }) 
       {cards.map((card) => {
         const value = card.getValue(summary);
         return (
-          <Card key={String(card.key)} className="border-border/80 bg-card/60">
+          <Card key={card.key} className="border-border/80 bg-card/60">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 {card.title}

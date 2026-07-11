@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { claimNextRepositoryJob } from "@/lib/worker/repository-job-store";
-import { assertWorkerAuthorized } from "@/lib/worker/worker-auth";
+import { assertWorkerAuthorized, WorkerAuthError } from "@/lib/worker/worker-auth";
+import { setWorkerStatus } from "@/lib/worker/worker-instance-store";
 
 export const runtime = "nodejs";
 
@@ -13,12 +14,13 @@ export async function POST(request: Request) {
     if (!job) {
       return NextResponse.json({ ok: true, job: null });
     }
+    await setWorkerStatus(workerId, "busy", job.id);
     return NextResponse.json({ ok: true, job });
   } catch (err) {
+    if (err instanceof WorkerAuthError) {
+      return NextResponse.json({ ok: false, code: err.code, error: err.message }, { status: 401 });
+    }
     const message = err instanceof Error ? err.message : "Claim failed.";
-    return NextResponse.json(
-      { ok: false, error: message },
-      { status: message.includes("Unauthorized") ? 401 : 500 }
-    );
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

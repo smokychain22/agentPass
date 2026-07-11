@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { buildAuthoritativeCleanupRunSummary } from "../src/lib/patch-kit/cleanup-summary";
+import { createBackupCandidateAudit, createBackupFileFinding } from "../src/lib/patch-kit/safe-delete-discovery";
 import type { ChangeOperation } from "../src/lib/patch-kit/canonical-patch";
 import type { FindingsPayload } from "../src/lib/findings/types";
 import { isFrameworkProtectedDependency } from "../src/lib/findings/framework-protected";
-import { validateWorkerApiKey } from "../src/lib/worker/worker-auth";
+import { validateWorkerApiKey, WorkerAuthError } from "../src/lib/worker/worker-auth";
+import { isWorkerRecentlyOnline } from "../src/lib/worker/worker-instance-store";
+import type { WorkerInstance } from "../src/lib/worker/types";
+import { deriveAttemptProductOutcome } from "../src/lib/execution/outcomes";
+import { computeWorkflowGates } from "../src/lib/workflow/gates";
 
 function test(name: string, fn: () => void | Promise<void>) {
   return (async () => {
@@ -19,7 +24,7 @@ async function run() {
     const ops: ChangeOperation[] = [
       {
         id: "1",
-        findingIds: [],
+        findingIds: ["f1"],
         transformerId: "t",
         type: "edit",
         filePath: "src/a.ts",
@@ -32,7 +37,7 @@ async function run() {
       },
       {
         id: "2",
-        findingIds: [],
+        findingIds: ["f2"],
         transformerId: "t",
         type: "delete",
         filePath: "src/b.ts",
@@ -45,7 +50,7 @@ async function run() {
       },
       {
         id: "3",
-        findingIds: [],
+        findingIds: ["f3"],
         transformerId: "t",
         type: "delete",
         filePath: "src/c.ts",
@@ -64,7 +69,7 @@ async function run() {
 
     const summary = buildAuthoritativeCleanupRunSummary({
       findings,
-      summary: { patchValidationStatus: "blocked" } as never,
+      summary: { patchValidationStatus: "pending_worker" } as never,
       changeOperations: ops,
       verification: { status: "not_run", installAttempts: [], checks: [] },
     });
@@ -74,6 +79,48 @@ async function run() {
     assert.equal(summary.gitValidatedOperations, 0);
     assert.equal(summary.verifiedOperations, 0);
     assert.equal(summary.reviewRequiredFindings, 1);
+  });
+
+  await test("pending_worker keeps git validation at zero while content validation passes", () => {
+    const summary = buildAuthoritativeCleanupRunSummary({
+      findings: { summary: {}, riskBuckets: { reviewFirst: [], doNotTouch: [], safeDelete: [] } } as never,
+      summary: { patchValidationStatus: "pending_worker" } as never,
+      changeOperations: [
+        {
+          id: "1",
+          findingIds: ["f1"],
+          transformerId: "t",
+          type: "delete",
+          filePath: "src/archive/OldDashboard.backup.tsx",
+          baseBlobSha: null,
+          baseContentHash: null,
+          beforeContent: "x",
+          afterContent: null,
+          linesAdded: 0,
+          linesRemoved: 1,
+        },
+      ],
+      verification: { status: "not_run", installAttempts: [], checks: [] },
+    });
+    assert.equal(summary.contentValidatedOperations, 1);
+    assert.equal(summary.gitValidatedOperations, 0);
+  });
+
+  await test("backup deletion creates persisted finding and audit", () => {
+    const proof = {
+      filePath: "src/archive/OldDashboard.backup.tsx",
+      baselineHash: "abc",
+      operation: "delete" as const,
+      inboundRefs: 0,
+      protected: false,
+      approved: true,
+    };
+    const finding = createBackupFileFinding(proof);
+    const audit = createBackupCandidateAudit(finding);
+    assert.equal(finding.files[0], proof.filePath);
+    assert.equal(audit.findingId, finding.id);
+    assert.equal(audit.retained, true);
+    assert.equal(audit.transformAttempted, true);
   });
 
   await test("left-pad is not framework protected; react-dom is", () => {
@@ -86,6 +133,65 @@ async function run() {
     assert.equal(validateWorkerApiKey("Bearer test-secret-key-12345"), true);
     assert.equal(validateWorkerApiKey("Bearer wrong"), false);
     delete process.env.WORKER_API_KEY;
+  });
+
+  await test("worker auth error exposes stable codes", () => {
+    const err = new WorkerAuthError("WORKER_AUTH_INVALID", "bad key");
+    assert.equal(err.code, "WORKER_AUTH_INVALID");
+  });
+
+  await test("worker recently online requires heartbeat within 30s", () => {
+    const online: WorkerInstance = {
+      id: "w1",
+      version: "1",
+      hostname: "h",
+      status: "online",
+      startedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      completedJobs: 0,
+      failedJobs: 0,
+    };
+    assert.equal(isWorkerRecentlyOnline(online), true);
+    const stale: WorkerInstance = {
+      ...online,
+      heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    assert.equal(isWorkerRecentlyOnline(stale), false);
+  });
+
+  await test("retained transformer outcome is generated_pending before verification", () => {
+    const outcome = deriveAttemptProductOutcome({
+      internalStatus: "retained",
+      reason: "ok",
+      pluginId: "remove_unused_import",
+    });
+    assert.equal(outcome, "generated_pending");
+  });
+
+  await test("cleanup PR disabled while worker job is pending", () => {
+    const gates = computeWorkflowGates({
+      scanComplete: true,
+      findings: {
+        duplicates: [],
+        unused: { files: [], dependencies: [], exports: [] },
+        orphans: [],
+        slopSignals: [],
+        summary: { eligibleFindings: 3, reviewRequired: 0, doNotTouch: 0 },
+        riskBuckets: { reviewFirst: [], doNotTouch: [], safeDelete: [] },
+      } as never,
+      patchKit: {
+        id: "run1",
+        summary: {
+          generatedChanges: 3,
+          validatedChanges: 0,
+          verifiedChanges: 0,
+        },
+        patchValidation: { status: "pending_worker" },
+      } as never,
+      verificationStatus: "not_run",
+    });
+    assert.equal(gates.cleanupPrAvailable, false);
+    assert.equal(gates.quickCleanupState, "running");
   });
 
   console.log("worker-execution: all passed");
