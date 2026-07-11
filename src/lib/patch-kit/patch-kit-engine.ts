@@ -40,7 +40,9 @@ import {
 } from "./canonical-patch";
 import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
 import { isGitCliAvailable } from "./git-runtime";
+import { createRepositoryJob } from "@/lib/worker/repository-job-store";
 import { runRepositoryVerification } from "./repository-verification";
+import type { RepositoryVerificationResult } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
 import { refreshRepositoryIdentityFromUrl, applyRepositoryIdentity } from "@/lib/github/refresh-repo-identity";
 import { fetchBranchCommitSha } from "@/lib/github/fetch-repo-zip";
@@ -416,8 +418,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       generatedEdits
     );
 
-    const generatedChanges = generatedEdits.length;
-    const changedPaths = generatedEdits.map((e) => e.path);
+    const generatedChanges = changeOperations.length;
+    const changedPaths = changeOperations.map((op) => op.filePath);
     let mergedPatch =
       patchBundle.patch && patchBundle.patch !== EMPTY_CLEANUP_PATCH
         ? ensurePatchTrailingNewline(patchBundle.patch)
@@ -480,13 +482,48 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     let validatedEdits: typeof generatedEdits = [];
     let validatedChanges = 0;
     let verifiedChanges = 0;
+    let workerJobId: string | undefined;
 
-    if (patchValidation?.status === "passed" && generatedEdits.length > 0) {
+    const contentIntegrityPassed =
+      patchValidation?.contentIntegrityValidation?.status === "passed" ||
+      (patchValidation?.status === "blocked" && generatedChanges > 0);
+    const gitValidationPassed = patchValidation?.status === "passed";
+
+    if (contentIntegrityPassed && generatedEdits.length > 0) {
       validatedEdits = generatedEdits;
-      validatedChanges = generatedEdits.length;
+    }
+    if (gitValidationPassed && generatedChanges > 0) {
+      validatedChanges = generatedChanges;
     }
 
-    if (patchValidation?.status === "passed") {
+    const repositoryVerification: RepositoryVerificationResult = await (async () => {
+      const notRun: RepositoryVerificationResult = {
+        status: "not_run",
+        installAttempts: [],
+        checks: [],
+      };
+
+      if (isServerlessRuntime() && contentIntegrityPassed && !gitValidationPassed && generatedChanges > 0) {
+        const job = await createRepositoryJob({
+          cleanupRunId,
+          scanId: findings.scanId,
+          repositoryOwner: findings.repo.owner,
+          repositoryName: findings.repo.name,
+          branch: findings.repo.branch,
+          baseCommitSha,
+          repoUrl: body.repoUrl,
+          edits: generatedEdits,
+          changeOperations,
+          patch: mergedPatch,
+        });
+        workerJobId = job.id;
+        return notRun;
+      }
+
+      if (!gitValidationPassed) {
+        return notRun;
+      }
+
       if (!isServerlessRuntime()) {
         try {
           const pkgRaw = await fs.readFile(path.join(workspace.rootDir, "package.json"), "utf8");
@@ -496,24 +533,17 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             await ensureWorkspaceDependenciesWithCache(workspace.rootDir, cleanupRunId);
           }
         } catch {
-          /* no package.json — verification will skip install */
+          /* no package.json */
         }
       }
-    }
 
-    const repositoryVerification =
-      patchValidation?.status === "passed"
-        ? await runRepositoryVerification({
-            baselineRoot,
-            edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
-            cleanupRunId,
-            patch: mergedPatch,
-          })
-        : {
-            status: "not_run" as const,
-            installAttempts: [],
-            checks: [],
-          };
+      return runRepositoryVerification({
+        baselineRoot,
+        edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
+        cleanupRunId,
+        patch: mergedPatch,
+      });
+    })();
 
     if (repositoryVerification.status === "verified" && validatedChanges > 0) {
       verifiedChanges = validatedChanges;
@@ -549,29 +579,49 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
           formatBlockerBreakdown(candidateAudits);
 
     const id = cleanupRunId;
+    const cleanupRunSummary = buildCleanupRunSummary({
+      findings,
+      summary: {
+        eligibleFindings: attemptStats.eligible,
+        executedFindings: attemptStats.executed,
+        noopTransformations: attemptStats.noop,
+        failedExecutions: attemptStats.failedExecutions,
+        notAttempted: attemptStats.notAttempted,
+        patchValidationStatus: patchValidation?.status,
+        preflightCheckedFindings: attemptStats.preflightChecked || flatFindings.length,
+        ineligibleFindings: attemptStats.ineligible,
+        generatedChanges,
+        validatedChanges,
+        verifiedChanges,
+      } as PatchKitSummary,
+      candidateAudits,
+      changeOperations,
+      verification: repositoryVerification,
+    });
+
     const summary: PatchKitSummary = {
       safeDeleteCandidates: safeDeleteCount,
       supportedFixesDetected: transformerCompatible,
       transformerCompatible,
       dryRunPassed,
       detectedFindings,
-      preflightCheckedFindings: attemptStats.preflightChecked || flatFindings.length,
-      eligibleFindings: attemptStats.eligible,
-      ineligibleFindings: attemptStats.ineligible,
-      executedFindings: attemptStats.executed,
-      attemptedTransformations: attemptStats.executed,
-      noopTransformations: attemptStats.noop,
-      noOpExecutions: attemptStats.noop,
-      failedTransformations: attemptStats.failed,
-      failedExecutions: attemptStats.failedExecutions,
-      notAttempted: attemptStats.notAttempted,
-      generatedChanges,
-      generatedFileOperations: generatedChanges,
-      validatedChanges,
-      validatedFileOperations: validatedChanges,
-      verifiedChanges,
-      verifiedFileOperations: verifiedChanges,
-      deliveredFileOperations: 0,
+      preflightCheckedFindings: cleanupRunSummary.preflightCheckedFindings,
+      eligibleFindings: cleanupRunSummary.eligibleFindings,
+      ineligibleFindings: cleanupRunSummary.ineligibleFindings,
+      executedFindings: cleanupRunSummary.executedFindings,
+      attemptedTransformations: cleanupRunSummary.executedFindings,
+      noopTransformations: cleanupRunSummary.noChangeExecutions,
+      noOpExecutions: cleanupRunSummary.noChangeExecutions,
+      failedTransformations: cleanupRunSummary.failedExecutions,
+      failedExecutions: cleanupRunSummary.failedExecutions,
+      notAttempted: cleanupRunSummary.notAttempted,
+      generatedChanges: cleanupRunSummary.generatedOperations,
+      generatedFileOperations: cleanupRunSummary.generatedOperations,
+      validatedChanges: cleanupRunSummary.gitValidatedOperations,
+      validatedFileOperations: cleanupRunSummary.gitValidatedOperations,
+      verifiedChanges: cleanupRunSummary.verifiedOperations,
+      verifiedFileOperations: cleanupRunSummary.verifiedOperations,
+      deliveredFileOperations: cleanupRunSummary.deliveredOperations,
       retainedFixAttempts: retainedFixCount,
       filesEdited,
       filesDeleted,
@@ -600,28 +650,25 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             ? "partial"
             : repositoryVerification.status === "failed"
               ? "failed"
-              : "pending",
+              : workerJobId
+                ? "pending"
+                : "pending",
     });
 
-    const cleanupRunSummary = buildCleanupRunSummary({
-      findings,
-      summary,
-      candidateAudits,
-      verification: repositoryVerification,
-    });
     summary.proofLadder = {
       ...summary.proofLadder,
-      eligible: cleanupRunSummary.eligible,
-      executed: cleanupRunSummary.executed,
-      attempted: cleanupRunSummary.executed,
-      generated: cleanupRunSummary.generated,
-      validated: cleanupRunSummary.validated,
-      verified: cleanupRunSummary.verified,
-      delivered: cleanupRunSummary.delivered,
-      noop: cleanupRunSummary.noOp,
-      failed: cleanupRunSummary.failed,
+      eligible: cleanupRunSummary.eligibleFindings,
+      executed: cleanupRunSummary.executedFindings,
+      attempted: cleanupRunSummary.executedFindings,
+      generated: cleanupRunSummary.generatedOperations,
+      validated: cleanupRunSummary.gitValidatedOperations,
+      verified: cleanupRunSummary.verifiedOperations,
+      delivered: cleanupRunSummary.deliveredOperations,
+      noop: cleanupRunSummary.noChangeExecutions,
+      failed: cleanupRunSummary.failedExecutions,
       notAttempted: cleanupRunSummary.notAttempted,
-      rejectedForSafety: cleanupRunSummary.reviewRequired + cleanupRunSummary.protected,
+      rejectedForSafety:
+        cleanupRunSummary.reviewRequiredFindings + cleanupRunSummary.protectedFindings,
     };
 
     const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
@@ -723,6 +770,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       },
       cleanupRunSummary,
       deletionProofs,
+      workerJobId,
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);

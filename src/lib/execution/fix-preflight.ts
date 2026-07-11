@@ -62,6 +62,10 @@ export interface DependencyPreflightEvidence {
   analyzerEvidence: string;
 }
 
+export function isTransactionalDependencyRemovalSupported(): boolean {
+  return process.env.REPODIET_DEPENDENCY_TRANSACTIONS === "1";
+}
+
 const DEPENDENCY_SECTIONS: DependencySection[] = [
   "dependencies",
   "devDependencies",
@@ -385,6 +389,15 @@ export async function runFixPreflight(
         blockerCode: "protected_path",
       };
     }
+    if (!isTransactionalDependencyRemovalSupported()) {
+      const blocker =
+        "Transactional dependency removal is not enabled — review package.json changes manually (LOCKFILE_UPDATE_UNSUPPORTED).";
+      return {
+        ...base,
+        blocker,
+        blockerCode: "plugin_not_implemented",
+      };
+    }
     const resolved = await resolveDependencyEntry(rootDir, finding);
     if ("eligible" in resolved && resolved.eligible === false) {
       const blocker = resolved.reason;
@@ -392,7 +405,7 @@ export async function runFixPreflight(
         ...base,
         strategyAvailable: false,
         blocker,
-        blockerCode: "transform_noop",
+        blockerCode: "plugin_not_implemented",
       };
     }
     const dep = resolved as DependencyPreflightEvidence;

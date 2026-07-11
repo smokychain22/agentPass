@@ -32,6 +32,9 @@ export function generateReport(
     findings.repo.url ??
     `https://github.com/${findings.repo.owner}/${findings.repo.name}`;
 
+  const rawReview = findings.summary.reviewRequired ?? 0;
+  const reviewCount = Math.min(rawReview, buckets.reviewFirst.length);
+
   return `# RepoDiet Cleanup Report
 
 ## Repository
@@ -50,8 +53,9 @@ export function generateReport(
 - Orphan patterns: ${findings.summary.orphanPatterns}
 - AI-slop signals: ${findings.summary.slopSignals}
 - Safe candidates: ${buckets.safeDelete.length}
-- Raw review findings: ${findings.summary.reviewRequired}
-- Unique review items: ${buckets.reviewFirst.length}
+${buckets.safeDelete.length > 0 ? `\n### Retained safe deletions\n\n${buckets.safeDelete.map((i) => `- \`${i.path}\` — ${i.reason}`).join("\n")}\n` : ""}
+- Raw review findings: ${rawReview}
+- Unique review items: ${reviewCount}
 - Do not touch protected items: ${buckets.doNotTouch.length}
 
 ## Count semantics

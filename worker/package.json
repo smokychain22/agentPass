@@ -1,0 +1,8 @@
+{
+  "name": "repodiet-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  }
+}

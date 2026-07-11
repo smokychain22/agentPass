@@ -251,6 +251,13 @@ export function PatchKitTab() {
           {verificationIssue && (
             <FeedbackBanner variant="warning" message={verificationIssue} dismissible={false} />
           )}
+          {patchKit.workerJobId && (
+            <FeedbackBanner
+              variant="info"
+              message={`Repository verification queued for Docker worker (job ${patchKit.workerJobId}). Git validation and install/build checks run outside Vercel.`}
+              dismissible={false}
+            />
+          )}
           {patchKit.patchValidation?.status === "blocked" && !verificationIssue && (
             <FeedbackBanner
               variant="warning"
@@ -376,7 +383,10 @@ export function PatchKitTab() {
           )}
           <PatchKitSummaryCards summary={patchKit.summary} />
           {patchKit.candidateAudits && patchKit.candidateAudits.length > 0 && (
-            <CandidateAuditTable audits={patchKit.candidateAudits} />
+            <CandidateAuditTable
+              audits={patchKit.candidateAudits}
+              repositoryVerified={patchKit.repositoryVerification?.status === "verified"}
+            />
           )}
           {patchKit.transformerResults && patchKit.transformerResults.length > 0 && (
             <TransformerResultsTable results={patchKit.transformerResults} />

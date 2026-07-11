@@ -141,6 +141,7 @@ export interface PatchKitPayload {
   };
   cleanupRunSummary?: import("./cleanup-summary").CleanupRunSummary;
   deletionProofs?: import("./safe-delete-discovery").SafeDeleteProof[];
+  workerJobId?: string;
 }
 
 export interface PatchKitRepoContext {

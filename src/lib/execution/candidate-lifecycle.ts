@@ -203,6 +203,7 @@ export function isCleanupEligibleAudit(audit: CandidateAuditRecord): boolean {
   return (
     audit.scanEligible &&
     audit.blockerCode !== "transform_noop" &&
+    audit.blockerCode !== "plugin_not_implemented" &&
     audit.blockerMessage !== "Dependency entry was not found in the selected manifest."
   );
 }
@@ -253,7 +254,7 @@ export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
     failedExecutions: failed,
     notAttempted,
     validated,
-    verified: validated,
+    verified: 0,
   };
 }
 

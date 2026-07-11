@@ -5,8 +5,11 @@ import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
 import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 
-function executionLabel(row: CandidateAuditRecord): { level: "safe" | "review" | "neutral"; text: string } {
-  if (row.retained && row.patchValidated) return { level: "safe", text: "verified" };
+function executionLabel(
+  row: CandidateAuditRecord,
+  repositoryVerified: boolean
+): { level: "safe" | "review" | "neutral"; text: string } {
+  if (row.retained && repositoryVerified) return { level: "safe", text: "verified" };
   if (row.retained || row.contentChanged || row.proposedSourceChanged || row.proposedDiffGenerated) {
     return { level: "safe", text: "generated" };
   }
@@ -20,7 +23,13 @@ function executionLabel(row: CandidateAuditRecord): { level: "safe" | "review" |
   return { level: "review", text: "ineligible" };
 }
 
-export function CandidateAuditTable({ audits }: { audits: CandidateAuditRecord[] }) {
+export function CandidateAuditTable({
+  audits,
+  repositoryVerified = false,
+}: {
+  audits: CandidateAuditRecord[];
+  repositoryVerified?: boolean;
+}) {
   if (!audits.length) return null;
 
   return (
@@ -43,7 +52,7 @@ export function CandidateAuditTable({ audits }: { audits: CandidateAuditRecord[]
             items={audits}
             rowKey={(row) => row.findingId}
             renderRow={(row) => {
-              const execution = executionLabel(row);
+              const execution = executionLabel(row, repositoryVerified);
               return (
                 <>
                   <td className="px-2 py-2 font-mono text-xs align-top">
@@ -63,8 +72,8 @@ export function CandidateAuditTable({ audits }: { audits: CandidateAuditRecord[]
                     <RiskBadge level={execution.level}>{execution.text}</RiskBadge>
                   </td>
                   <td className="px-2 py-2 align-top">
-                    <RiskBadge level={row.retained ? "safe" : "neutral"}>
-                      {row.retained ? "yes" : "no"}
+                    <RiskBadge level={row.retained ? (repositoryVerified ? "safe" : "neutral") : "neutral"}>
+                      {row.retained ? (repositoryVerified ? "yes" : "pending verification") : "no"}
                     </RiskBadge>
                   </td>
                   <td className="px-2 py-2 text-xs text-muted-foreground align-top">

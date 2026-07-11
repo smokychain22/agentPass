@@ -68,6 +68,21 @@ export async function POST(request: Request) {
 
     if (
       body.mode !== "report_only" &&
+      patchKit.patchValidation?.status === "blocked"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "GIT_PATCH_VALIDATION_REQUIRED",
+          error:
+            "Real Git patch validation must pass before PR delivery. A Docker worker must complete git apply --check and repository verification.",
+        },
+        { status: 422 }
+      );
+    }
+
+    if (
+      body.mode !== "report_only" &&
       patchKit.patchValidation?.status !== "passed"
     ) {
       return NextResponse.json(
