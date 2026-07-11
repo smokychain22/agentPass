@@ -4,6 +4,13 @@ import { execa } from "execa";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
+import {
+  ensureWorkspaceDependencies,
+  nodeModulesPresent,
+} from "@/lib/execution/workspace-install";
+
+export { ensureWorkspaceDependencies } from "@/lib/execution/workspace-install";
+export type { WorkspaceInstallResult } from "@/lib/execution/workspace-install";
 
 const COMMAND_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 120_000;
@@ -191,53 +198,6 @@ async function runPackageIntegrity(
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
   return runNamedCheck(rootDir, "package integrity", installCommand(pm), phase, INSTALL_TIMEOUT_MS);
-}
-
-async function nodeModulesPresent(rootDir: string): Promise<boolean> {
-  try {
-    await fs.access(path.join(rootDir, "node_modules"));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function ensureWorkspaceDependencies(
-  rootDir: string
-): Promise<{ installed: boolean; reason?: string }> {
-  try {
-    await fs.access(path.join(rootDir, "package.json"));
-  } catch {
-    return { installed: false, reason: "No package.json in workspace." };
-  }
-
-  if (await nodeModulesPresent(rootDir)) {
-    return { installed: true };
-  }
-
-  const pm = (await detectPackageManager(rootDir)).packageManager;
-  const command = installCommand(pm);
-  let lastReason = "install failed";
-
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const result = await execa(command[0], command.slice(1), {
-      cwd: rootDir,
-      timeout: INSTALL_TIMEOUT_MS,
-      reject: false,
-      env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "development" },
-    });
-
-    if (result.exitCode === 0) {
-      return { installed: true };
-    }
-
-    lastReason = summarize(result.stderr || result.stdout || "install failed");
-    if (attempt < 2) {
-      await fs.rm(path.join(rootDir, "node_modules"), { recursive: true, force: true }).catch(() => {});
-    }
-  }
-
-  return { installed: false, reason: lastReason };
 }
 
 export interface RunFullBaselineChecksOptions {

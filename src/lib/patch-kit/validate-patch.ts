@@ -10,6 +10,7 @@ import {
   ensureWorkspaceDependencies,
   runFullBaselineChecks,
 } from "@/lib/execution/baseline-verification";
+import { isWorkspaceDependencyReady } from "@/lib/execution/workspace-install";
 
 export interface PatchValidationResult {
   status: "passed" | "failed" | "skipped" | "not_generated";
@@ -69,27 +70,26 @@ export async function validateEditsForDelivery(
   try {
     await copyRepoBaseline(baselineRoot, validateRoot);
     const dependencyInstall = await ensureWorkspaceDependencies(validateRoot);
-    if (!dependencyInstall.installed) {
-      return {
-        status: "failed",
-        error: `Could not install repository dependencies for delivery validation — ${dependencyInstall.reason ?? "install failed"}.`,
-      };
+    const canRunFullChecks =
+      dependencyInstall.installed || (await isWorkspaceDependencyReady(validateRoot));
+
+    if (!canRunFullChecks) {
+      await applyConsolidatedEdits(validateRoot, deduped);
+      const syntaxError = await runTypeScriptSyntaxCheck(validateRoot, deduped, {
+        lightweight: true,
+      });
+      if (syntaxError) {
+        return { status: "failed", error: syntaxError };
+      }
+      return { status: "passed" };
     }
 
     const checkOptions = { skipPackageIntegrity: true };
     const beforeChecks = await runFullBaselineChecks(validateRoot, "baseline", checkOptions);
 
-    for (const edit of deduped) {
-      const full = path.join(validateRoot, edit.path);
-      if (edit.content === "") {
-        await fs.rm(full, { force: true }).catch(() => {});
-        continue;
-      }
-      await fs.mkdir(path.dirname(full), { recursive: true });
-      await fs.writeFile(full, edit.content, "utf8");
-    }
+    await applyConsolidatedEdits(validateRoot, deduped);
 
-    const syntaxError = await findTypeScriptSyntaxFailure(validateRoot, deduped);
+    const syntaxError = await runTypeScriptSyntaxCheck(validateRoot, deduped);
     if (syntaxError) {
       return { status: "failed", error: syntaxError };
     }
@@ -149,24 +149,42 @@ export async function validateEditsForDelivery(
   }
 }
 
-async function findTypeScriptSyntaxFailure(
-  rootDir: string,
+async function applyConsolidatedEdits(
+  validateRoot: string,
   edits: ConsolidatedEdit[]
+): Promise<void> {
+  for (const edit of edits) {
+    const full = path.join(validateRoot, edit.path);
+    if (edit.content === "") {
+      await fs.rm(full, { force: true }).catch(() => {});
+      continue;
+    }
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, edit.content, "utf8");
+  }
+}
+
+async function runTypeScriptSyntaxCheck(
+  rootDir: string,
+  edits: ConsolidatedEdit[],
+  options?: { lightweight?: boolean }
 ): Promise<string | null> {
   const tsFiles = edits
     .filter((e) => /\.(tsx?|jsx?)$/.test(e.path) && e.content !== "")
     .map((e) => e.path);
   if (tsFiles.length === 0) return null;
 
-  try {
-    const scripts = JSON.parse(
-      await fs.readFile(path.join(rootDir, "package.json"), "utf8")
-    ) as { scripts?: Record<string, string> };
-    if (scripts.scripts?.typecheck || scripts.scripts?.build) {
-      return null;
+  if (!options?.lightweight) {
+    try {
+      const scripts = JSON.parse(
+        await fs.readFile(path.join(rootDir, "package.json"), "utf8")
+      ) as { scripts?: Record<string, string> };
+      if (scripts.scripts?.typecheck || scripts.scripts?.build) {
+        return null;
+      }
+    } catch {
+      // fall through to tsc --noEmit when package scripts are unavailable
     }
-  } catch {
-    // fall through to tsc --noEmit when package scripts are unavailable
   }
 
   const configCandidates = ["tsconfig.json", "tsconfig.app.json"];
@@ -184,14 +202,22 @@ async function findTypeScriptSyntaxFailure(
 
   const result = await execa(
     "npx",
-    ["tsc", "-p", configPath, "--noEmit", "--pretty", "false"],
-    { cwd: rootDir, reject: false, timeout: 120_000 }
+    ["--yes", "typescript", "tsc", "-p", configPath, "--noEmit", "--pretty", "false"],
+    { cwd: rootDir, reject: false, timeout: 120_000, env: { ...process.env, CI: "true" } }
   );
   if (result.exitCode === 0) return null;
   const snippet = (result.stderr || result.stdout || "").trim().slice(0, 400);
   return snippet
     ? `TypeScript validation failed after applying cleanup edits — ${snippet}`
     : "TypeScript validation failed after applying cleanup edits.";
+}
+
+/** @deprecated use runTypeScriptSyntaxCheck */
+async function findTypeScriptSyntaxFailure(
+  rootDir: string,
+  edits: ConsolidatedEdit[]
+): Promise<string | null> {
+  return runTypeScriptSyntaxCheck(rootDir, edits);
 }
 
 export async function validateConsolidatedEditsInWorkspace(

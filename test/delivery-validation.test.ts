@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { compareBaselineToAfter, runFullBaselineChecks } from "../src/lib/execution/baseline-verification";
+import { isWorkspaceDependencyReady } from "../src/lib/execution/workspace-install";
 import { validateEditsForDelivery } from "../src/lib/patch-kit/validate-patch";
 
 function test(name: string, fn: () => void | Promise<void>) {
@@ -99,6 +100,55 @@ async function run() {
       "utf8"
     );
     await fs.writeFile(path.join(root, "src", "unused.ts"), "export const unused = true;\n", "utf8");
+
+    const result = await validateEditsForDelivery(root, [
+      {
+        path: "src/index.ts",
+        content: "export const value = 1;\n",
+      },
+    ]);
+
+    assert.equal(result.status, "passed", result.error);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  await test("validateEditsForDelivery uses lightweight path when dependencies are unavailable", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-light-"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        {
+          name: "fixture",
+          scripts: { build: "next build", typecheck: "tsc --noEmit" },
+        },
+        null,
+        2
+      )
+    );
+    await fs.writeFile(
+      path.join(root, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2020",
+            module: "ESNext",
+            strict: true,
+            skipLibCheck: true,
+          },
+          include: ["src"],
+        },
+        null,
+        2
+      )
+    );
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(root, "src", "index.ts"),
+      'import { unused } from "./unused";\nexport const value = 1;\n',
+      "utf8"
+    );
+
+    assert.equal(await isWorkspaceDependencyReady(root), false);
 
     const result = await validateEditsForDelivery(root, [
       {
