@@ -26,7 +26,8 @@ export type PersistentCollection =
   | "a2a_tasks"
   | "okx_orders"
   | "marketplace_deliveries"
-  | "payment_entitlements";
+  | "payment_entitlements"
+  | "asp_jobs";
 
 export type ArtifactCollection = "artifacts";
 
@@ -54,6 +55,7 @@ export interface DurableDb {
   okx_orders: Record<string, unknown>;
   marketplace_deliveries: Record<string, unknown>;
   payment_entitlements: Record<string, unknown>;
+  asp_jobs: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -80,6 +82,7 @@ const DEFAULT_DB: DurableDb = {
   okx_orders: {},
   marketplace_deliveries: {},
   payment_entitlements: {},
+  asp_jobs: {},
 };
 
 let redisClient: Redis | null = null;
@@ -140,6 +143,7 @@ function loadLocalDb(): DurableDb {
       okx_orders: parsed.okx_orders ?? {},
       marketplace_deliveries: parsed.marketplace_deliveries ?? {},
       payment_entitlements: parsed.payment_entitlements ?? {},
+      asp_jobs: parsed.asp_jobs ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);

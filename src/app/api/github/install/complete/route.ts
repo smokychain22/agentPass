@@ -224,6 +224,17 @@ export async function GET(request: NextRequest) {
     await consumeInstallFlowState(stateToken);
     await clearPendingInstallCookie();
 
+    const { parseAspJobIdFromReturnPath } = await import("@/lib/asp/install-callback");
+    const { recordAspInstallBinding } = await import("@/lib/asp/job-service");
+    const aspJobId = parseAspJobIdFromReturnPath(flow.returnPath);
+    if (aspJobId) {
+      await recordAspInstallBinding({
+        jobId: aspJobId,
+        installationId,
+        repositoryFullName: flow.repositoryFullName,
+      }).catch(() => undefined);
+    }
+
     const successParams: Record<string, string> = {
       github: "connected",
       setup_action: setupAction,

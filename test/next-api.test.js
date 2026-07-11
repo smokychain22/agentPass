@@ -63,6 +63,10 @@ async function run() {
       "src/app/api/jobs/patch/route.ts",
       "src/app/api/patches/generate/route.ts",
       "src/app/api/verify/run/route.ts",
+      "src/app/api/asp/jobs/route.ts",
+      "src/app/api/asp/jobs/[jobId]/route.ts",
+      "src/app/api/asp/jobs/[jobId]/run/route.ts",
+      "src/app/api/asp/jobs/[jobId]/delivery/route.ts",
     ];
     for (const route of routes) {
       assert.ok(fs.existsSync(path.join(ROOT, route)), `missing ${route}`);

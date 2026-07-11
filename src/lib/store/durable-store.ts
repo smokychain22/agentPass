@@ -73,6 +73,7 @@ export async function withDurableDb<T>(
       okx_orders: {},
       marketplace_deliveries: {},
       payment_entitlements: {},
+      asp_jobs: {},
     };
     return fn(db);
   });
