@@ -54,6 +54,28 @@ export function measurableEvidenceLines(finding: Finding): string[] {
   const grade = evidenceStrengthForFinding(finding);
   lines.push(evidenceStrengthLabel(grade));
 
+  if (finding.classificationLabel) {
+    const label = finding.classificationLabel.replace(/_/g, " ");
+    lines.push(`Classification: ${label}`);
+  }
+  if (finding.classificationState) {
+    lines.push(`Lifecycle state: ${finding.classificationState.replace(/_/g, " ")}`);
+  }
+  if (finding.evidenceBundle?.decisionReason) {
+    lines.push(finding.evidenceBundle.decisionReason);
+  }
+  if (finding.evidenceBundle?.counterEvidence.length) {
+    lines.push(
+      `Counter-evidence checked: ${finding.evidenceBundle.counterEvidence.length} item(s)`
+    );
+    for (const item of finding.evidenceBundle.counterEvidence.slice(0, 3)) {
+      lines.push(`  · ${item.summary}`);
+    }
+  }
+  if (finding.evidenceBundle?.unresolvedRisks.length) {
+    lines.push(`Unresolved risks: ${finding.evidenceBundle.unresolvedRisks.join(", ")}`);
+  }
+
   const { name, mode } = findingAnalyzerLabel(finding);
   lines.push(
     `Analyzer: ${name} · ${mode === "native" ? "Native" : mode === "fallback" ? "Fallback" : "Failed"}`

@@ -11,6 +11,7 @@ import { enrichFindingsWithUnusedImports } from "./enrich-unused-imports";
 import { enrichExactDuplicateFindings } from "./enrich-exact-duplicates";
 import { enrichFileHygieneFindings } from "./enrich-file-hygiene";
 import { enrichFindingsWithPreflight } from "./enrich-preflight";
+import { enrichFindingsWithEvidence } from "./enrich-evidence";
 import { countActionableFindings } from "./actionability-signals";
 import { enrichPayloadLifecycle } from "./enrich-lifecycle";
 import { applyStrictFindingsMode, isKnipAvailable } from "./strict-findings";
@@ -165,6 +166,13 @@ export async function runFindingsEngine(
     payload = rebuildFindingsPayload(payload, canonicalFlat);
 
     payload = applyStrictFindingsMode(payload);
+
+    payload = await enrichFindingsWithEvidence({
+      rootDir: workspace.rootDir,
+      payload,
+      repositoryModel,
+    });
+
     payload = enrichPayloadLifecycle(payload);
 
     const verifiedFlat = flattenPayloadFindings(payload);
