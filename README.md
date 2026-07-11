@@ -1,97 +1,73 @@
-# AgentPass
+# RepoDiet
 
-**OPC spend passport & finance control plane for OKX.AI**
+**Cut AI code bloat before your app collapses.**
 
-> Not another swap/yield agent. The control plane every autonomous agent assumes you already have.
+> OKX.AI Genesis Hackathon · Software Utility · A2MCP + A2A
 
-AgentPass lets a one-person company (OPC) set spend policy, authorize every agent payment *before* it signs an x402 transfer, settle with receipts, and export books. Built for the [OKX.AI Genesis Hackathon](https://web3.okx.com/xlayer/build-x-hackathon) — Finance Copilot / Software Utility / Revenue Rocket / Best Product.
+AI built your app fast. RepoDiet keeps the codebase alive — scan duplicate components, dead files, unused dependencies, and orphan routes, then generate a **Patch Bundle** and **Regression Contract**.
 
-## Why this lane
+## One-liner
 
-| Lane | Status on OKX / X Layer |
-|------|-------------------------|
-| DeFi execution agents | Saturated — Otto X, Leigent, YieldMax, Mollie… |
-| V4 launchpads | Hatch AI and others |
-| Trust / attestation | Built, ~0 sold (AttestVerify, Internet Court…) |
-| Info report tools | Hundreds, mostly 0 sold |
-| **OPC spend policy + ledger** | **Thin — OKX’s own thesis is “one person, $1M/year” but no ASP owns the finance passport** |
+RepoDiet scans AI-built JavaScript/TypeScript apps, finds duplicate and dead code, and generates a safe cleanup patch with a regression checklist.
 
-Novelty claim: **not** “nobody ever thought of budgets.” Claim: **no polished OKX.AI ASP ships policy → authorize → settle → books as a pay-per-call service agents actually call before spending.** That is the product.
+## OKX fit
 
-## Product loop
-
-```
-Founder sets policy (caps, categories, approval threshold)
-        ↓
-Agent wants to pay an ASP via x402
-        ↓
-agentpass_authorize  →  allow | deny | needs_approval
-        ↓
-Agent pays ASP (only if allowed)
-        ↓
-agentpass_settle  →  receipt on OPC ledger
-        ↓
-Export CSV / snapshot for tax & Revenue Rocket metrics
-```
+| | |
+|---|---|
+| **Category** | Software Utility |
+| **A2MCP** | `scan_repo_bloat`, `detect_duplicate_code`, `find_dead_files`, `find_unused_dependencies`, `generate_cleanup_patch`, `generate_regression_checklist` |
+| **A2A** | RepoDiet — Clean my AI-built app repo |
+| **Pricing** | Quick scan $0.05 · Deep scan $0.15 · Patch bundle $0.25 USDT (x402 on X Layer) |
 
 ## Quick start
 
 ```bash
 npm install
-npm start
-# → http://localhost:8787
-npm test
+npm run dev        # Next.js UI → http://localhost:3000
+npm run api        # Express API (Phase 2+) → http://localhost:8788
+npm run build      # Production build
+npm test           # API smoke tests
 ```
 
-Demo console: open the site → **Launch demo OPC** → authorize spends, approve pending, export CSV.
+**Phase 2:** structure scan via `POST /api/scans/run` · findings via `POST /api/findings/run`
 
-## HTTP ASP
+Open `/app` → paste a repo URL or **Try Demo Repo** → view framework, package manager, and file tree metadata.
 
-| Method | Path | x402 | Purpose |
-|--------|------|------|---------|
-| POST | `/api/company` | free | Create OPC |
-| POST | `/api/company/:id/agents` | free | Register agent |
-| POST | `/api/company/:id/policy` | free | Update policy |
-| POST | `/api/company/:id/authorize` | $0.005 | Authorize spend |
-| POST | `/api/company/:id/approve` | free | Founder approve/deny |
-| POST | `/api/company/:id/settle` | $0.002 | Settle + receipt |
-| GET | `/api/company/:id/snapshot` | $0.01 | Budget + ledger |
-| GET | `/api/company/:id/export.csv` | $0.025 | Books export |
-| GET | `/api/catalog` | free | ASP catalog |
+## Product concepts
 
-Paid routes return standard **HTTP 402** with x402 `accepts` on X Layer (`eip155:196`, USDT0 / USDG). Local/demo mode accepts `X-AgentPass-Demo-Pay`. Set `REQUIRE_REAL_X402=1` and wire the OKX facilitator for mainnet.
+- **AI Slop Fingerprint** — ComponentFinal, Button2, backup folders, orphan utils
+- **Delete Confidence Engine** — SAFE DELETE / REVIEW FIRST / DO NOT TOUCH
+- **Patch Bundle** — `repodiet-cleanup.patch`, report, regression checklist, Cursor prompt
+- **Regression Contract** — routes/APIs that must still work before merge
 
-## MCP tools
+## API
 
-```bash
-npm run mcp
-# AGENTPASS_URL=http://127.0.0.1:8787
-```
+| Method | Path | x402 |
+|--------|------|------|
+| POST | `/api/scans/demo` | free |
+| POST | `/api/scans/create` + `/api/scans/run` | free |
+| GET | `/api/scans/:id/findings` | free |
+| POST | `/api/scans/:id/generate-patch` | free (listing demo) |
+| POST | `/api/tools/scan_repo_bloat` | $0.05 |
+| POST | `/api/tools/generate_cleanup_patch` | $0.15 |
+| POST | `/api/tools/generate_regression_checklist` | $0.25 |
 
-Tools: `agentpass_create_company`, `agentpass_register_agent`, `agentpass_authorize`, `agentpass_settle`, `agentpass_approve`, `agentpass_budget`, `agentpass_set_policy`, `agentpass_export`.
+Demo payment: header `X-RepoDiet-Demo-Pay: 1`
 
-Compatible with Claude Code, Codex, OpenClaw, Hermes (stdio JSON-RPC).
+## Hackathon checklist
 
-## Hackathon positioning
-
-- **ASP type:** ready-to-use tool + always-on service + crypto finance use case
-- **Integration depth:** x402 payment gate, X Layer network ids, MCP for Onchain OS clients, CSV books for OPC ops
-- **Usage metric:** every authorize/settle is a countable marketplace call (Revenue Rocket / activity)
-- **Honest risk:** OKX may ship native wallet spend limits later — AgentPass wins by being the *OPC books + multi-agent policy + approval workflow* layer on top, not a duplicate of a single allowlist filter
-
-## Repo layout
-
-```
-server.js          Express ASP + static console
-lib/policy.js      Spend policy engine
-lib/company.js     OPC, agents, authorize, settle, export
-lib/x402.js        402 gate + demo payment
-lib/money.js       USDT micro-units
-mcp/server.js      MCP tool bridge
-public/            Founder console UI
-test/smoke.js      Unit + HTTP smoke tests
-```
+1. List on OKX.AI as Software Utility ASP
+2. Post on X with #OKXAI + 90s demo (demo repo scan → patch → receipt)
+3. Submit form before **Jul 17, 23:59 UTC**
 
 ## License
 
 MIT
+
+## Monorepo
+
+| Path | ASP |
+|------|-----|
+| `/` (this app) | **RepoDiet** — deployed to Vercel |
+| `agentpass/` | AgentPass — OPC spend passport |
+| `rogue/` | Rogue — adversarial red-team for AI agents |

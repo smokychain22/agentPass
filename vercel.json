@@ -1,0 +1,17 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/jobs/findings/**": {
+      "maxDuration": 300
+    },
+    "src/app/api/findings/**": {
+      "maxDuration": 300
+    },
+    "src/app/api/tools/run_quick_cleanup/**": {
+      "maxDuration": 300
+    },
+    "src/app/api/tools/run_cleanup/**": {
+      "maxDuration": 300
+    }
+  }
+}

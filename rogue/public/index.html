@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rogue — Adversarial red-team for AI agents</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◈ ROGUE</span>
+        <span class="tag">The agent that breaks other agents before attackers do.</span>
+      </div>
+      <a class="ghost-link" href="https://okx.ai" target="_blank" rel="noreferrer">Built for OKX.AI ASPs</a>
+    </header>
+
+    <main class="wrap">
+      <section class="panel setup">
+        <div class="panel-head">
+          <h2>Target</h2>
+          <span class="pill">simulated demo agent · pluggable</span>
+        </div>
+        <label class="field">
+          <span>Agent name</span>
+          <input id="targetName" type="text" value="FinScout — Finance ASP" />
+        </label>
+        <p class="hint">
+          The built-in target is a deterministic <b>simulated</b> finance agent (allowed:
+          market research, reports; blocked: moving funds, guaranteed-profit claims, leaking
+          context, obeying fake authority). Swap in a real LLM/MCP agent via the
+          <code>runTarget()</code> adapter — the engine is unchanged.
+        </p>
+        <div class="actions">
+          <button id="runBtn" class="btn primary">▶ Launch Gauntlet</button>
+          <button id="fixBtn" class="btn" disabled>🛡 Apply Guardrails &amp; Retest</button>
+          <button id="resetBtn" class="btn subtle" disabled>Reset</button>
+        </div>
+      </section>
+
+      <section id="scoreboard" class="panel score hidden">
+        <div class="gauge">
+          <div class="readiness" id="readiness">--</div>
+          <div class="readiness-label">Launch Readiness</div>
+        </div>
+        <div class="verdict-block">
+          <div id="verdict" class="verdict">—</div>
+          <div class="sev-row" id="sevRow"></div>
+          <div id="delta" class="delta hidden"></div>
+        </div>
+      </section>
+
+      <section id="results" class="results"></section>
+    </main>
+
+    <footer class="foot">
+      <span>Rogue MVP · zero-dependency · <code>node rogue/server.js</code></span>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "name": "agentpass",
+  "version": "1.0.0",
+  "description": "AgentPass — OPC spend passport & finance control plane for OKX.AI agents",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/smoke.js",
+    "mcp": "node mcp/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "okx",
+    "okx.ai",
+    "x402",
+    "asp",
+    "opc",
+    "agent",
+    "finance",
+    "policy"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

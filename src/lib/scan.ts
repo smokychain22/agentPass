@@ -1,0 +1,101 @@
+import type { ScanPhase } from "@/lib/scanner/types";
+import type { ScanPayload } from "@/lib/scanner/run-scan";
+import { isDemoRepoUrl } from "@/lib/demo/constants";
+import { pollJob, startJobOrResult } from "@/lib/jobs/client";
+import { STAGE_TO_PHASE } from "@/lib/scan-stage-map";
+
+export type ScanResult = Omit<ScanPayload, "id">;
+
+export type { ScanPhase, ScanPayload };
+
+export const SCAN_STEPS: { phase: ScanPhase; label: string }[] = [
+  { phase: "validating", label: "Validating repository URL" },
+  { phase: "resolving", label: "Resolving branch and commit" },
+  { phase: "fetching", label: "Downloading repository archive" },
+  { phase: "unpacking", label: "Extracting archive safely" },
+  { phase: "inventorying", label: "Inventorying files" },
+  { phase: "detecting", label: "Detecting frameworks and package managers" },
+  { phase: "detecting_roots", label: "Detecting project roots" },
+  { phase: "detecting_protected", label: "Detecting protected paths" },
+  { phase: "persisting", label: "Persisting scan metadata" },
+  { phase: "complete", label: "Complete" },
+];
+
+export { DEMO_REPO_URL as DEMO_REPO } from "@/lib/demo/constants";
+export { isDemoRepoUrl } from "@/lib/demo/constants";
+
+export function isValidGitHubUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed) return false;
+  if (isDemoRepoUrl(trimmed)) return true;
+  const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(normalized);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    return parsed.hostname.replace(/^www\./, "") === "github.com" && segments.length >= 2;
+  } catch {
+    return false;
+  }
+}
+
+const STAGE_TO_PHASE_CLIENT = STAGE_TO_PHASE;
+
+function mapStageToPhase(stage: string): ScanPhase | "idle" {
+  return STAGE_TO_PHASE_CLIENT[stage] ?? "inventorying";
+}
+
+export async function runScan(
+  repoUrl: string,
+  branch: string | undefined,
+  onPhase: (phase: ScanPhase | "idle") => void,
+  options?: { selectedProjectRoot?: string }
+): Promise<ScanPayload> {
+  onPhase("validating");
+
+  try {
+    const started = await startJobOrResult<ScanPayload>("/api/jobs/scan", {
+      repoUrl: repoUrl.trim(),
+      branch: branch?.trim() || undefined,
+      selectedProjectRoot: options?.selectedProjectRoot,
+    });
+
+    if (started.result) {
+      onPhase("complete");
+      return started.result;
+    }
+
+    const scan = await pollJob<ScanPayload>("/api/jobs/scan", started.jobId, (stage) => {
+      onPhase(mapStageToPhase(stage));
+    });
+
+    onPhase("complete");
+    return scan;
+  } catch (err) {
+    onPhase("failed");
+    throw err;
+  }
+}
+
+/** Legacy direct scan for backwards compatibility. */
+export async function runScanDirect(
+  repoUrl: string,
+  branch: string | undefined,
+  onPhase: (phase: ScanPhase | "idle") => void
+): Promise<ScanPayload> {
+  onPhase("fetching");
+  const res = await fetch("/api/scans/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      repoUrl: repoUrl.trim(),
+      branch: branch?.trim() || undefined,
+    }),
+  });
+  const json = (await res.json()) as { success: boolean; scan?: ScanPayload; error?: string };
+  if (!json.success || !json.scan) {
+    onPhase("failed");
+    throw new Error(json.error ?? "Scan failed.");
+  }
+  onPhase("complete");
+  return json.scan;
+}

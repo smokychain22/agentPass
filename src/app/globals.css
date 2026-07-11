@@ -1,0 +1,232 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 33% 3%;
+    --background-alt: 204 44% 7%;
+    --foreground: 216 33% 97%;
+    --card: 216 32% 7%;
+    --card-foreground: 216 33% 97%;
+    --card-elevated: 213 28% 10%;
+    --muted: 216 25% 9%;
+    --muted-foreground: 215 16% 52%;
+    --text-secondary: 214 20% 68%;
+    --border: 214 20% 65%;
+    --input: 216 28% 10%;
+    --ring: 198 100% 55%;
+    --accent: 216 28% 11%;
+    --accent-foreground: 216 33% 97%;
+    --electric: 198 100% 55%;
+    --electric-muted: 198 70% 35%;
+    --signal: 160 76% 52%;
+    --signal-muted: 160 50% 32%;
+    --violet: 252 100% 68%;
+    --warning: 38 90% 62%;
+    --danger: 351 100% 68%;
+    --panel: 216 32% 7%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    background-color: #05080d;
+    background-image:
+      radial-gradient(ellipse 90% 50% at 50% -12%, rgba(24, 191, 255, 0.07), transparent),
+      radial-gradient(ellipse 45% 30% at 100% 0%, rgba(32, 230, 168, 0.04), transparent);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .landing-grid {
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 15%, transparent 72%);
+  }
+
+  .landing-glow {
+    background: radial-gradient(
+      ellipse 55% 35% at 50% 0%,
+      rgba(24, 168, 255, 0.07),
+      transparent 68%
+    );
+  }
+
+  .mcc-panel {
+    background-color: #0b111a;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .mcc-panel-elevated {
+    background-color: #101923;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .ds-card {
+    @apply bg-card border border-border/60;
+  }
+
+  .ds-card-elevated {
+    background-color: #101923;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .ds-card-highlight {
+    background-color: #101923;
+  }
+
+  .ds-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground;
+  }
+
+  .ds-section-title {
+    @apply text-2xl font-semibold tracking-tight text-foreground sm:text-3xl;
+  }
+
+  .ds-hero-title {
+    @apply text-balance text-4xl font-semibold tracking-tight text-foreground sm:text-5xl lg:text-[3.15rem] lg:leading-[1.08];
+  }
+
+  .section-alt {
+    @apply border-y border-border/60 bg-[#07121A]/80;
+  }
+
+  .mcc-border {
+    border-color: rgba(148, 163, 184, 0.12);
+  }
+
+  .cta-gradient-border {
+    position: relative;
+    background: linear-gradient(#05070a, #05070a) padding-box,
+      linear-gradient(135deg, rgba(24, 168, 255, 0.55), rgba(34, 230, 168, 0.35)) border-box;
+    border: 1px solid transparent;
+  }
+
+  .artifact-glow {
+    @apply transition-all duration-300;
+  }
+
+  .artifact-glow:hover {
+    border-color: rgba(24, 168, 255, 0.28);
+    box-shadow: 0 0 24px rgba(24, 168, 255, 0.08);
+  }
+
+  .bento-glow {
+    @apply transition-all duration-300;
+  }
+
+  .bento-glow:hover {
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow: 0 0 20px rgba(24, 168, 255, 0.05);
+  }
+
+  .terminal-scanline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(24, 168, 255, 0.35),
+      transparent
+    );
+    animation: scanline 4s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .pipeline-connector {
+    background: linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.12),
+      rgba(24, 168, 255, 0.35),
+      rgba(34, 230, 168, 0.25)
+    );
+    background-size: 200% 100%;
+    animation: connector-flow 3s ease-in-out infinite;
+  }
+
+  .mono-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.18em] text-[#64748B];
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-secondary {
+    color: #9baac2;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(148, 163, 184, 0.2);
+    border-radius: 9999px;
+  }
+}
+
+@keyframes scanline {
+  0%,
+  100% {
+    top: 12%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.6;
+  }
+  50% {
+    top: 88%;
+    opacity: 0.4;
+  }
+  90% {
+    opacity: 0;
+  }
+}
+
+@keyframes connector-flow {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-scanline,
+  .pipeline-connector {
+    animation: none !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}

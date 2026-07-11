@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RepoDiet — Cut AI code bloat before your app collapses</title>
+  <meta name="description" content="Scan AI-built JS/TS repos for duplicate components, dead files, unused deps. Generate safe cleanup patch + regression checklist." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">
+      <span class="logo-mark" aria-hidden="true"></span>
+      <span class="brand-text">RepoDiet</span>
+    </a>
+    <nav class="nav">
+      <a href="#product">Product</a>
+      <a href="#demo">Demo</a>
+      <a href="/api/catalog" target="_blank" rel="noopener">OKX ASP</a>
+    </nav>
+    <button type="button" class="btn primary sm" id="btn-hero-scan">Run Scan</button>
+  </header>
+
+  <section class="hero" id="product">
+    <div class="hero-copy">
+      <p class="eyebrow">OKX.AI · Software Utility · A2MCP + A2A</p>
+      <h1>AI built your app fast.<br />RepoDiet keeps the codebase alive.</h1>
+      <p class="sub">Scan AI-built JavaScript and TypeScript repos for duplicate components, dead files, unused dependencies, and orphan routes — then generate a safe cleanup patch.</p>
+      <div class="hero-actions">
+        <button type="button" class="btn primary" id="btn-demo">Run Demo Repo</button>
+        <a class="btn ghost" href="/api/catalog" target="_blank" rel="noopener">ASP Catalog</a>
+      </div>
+    </div>
+    <div class="terminal" aria-label="Scan preview">
+      <div class="term-bar"><span></span><span></span><span></span></div>
+      <pre id="term-preview">$ repodiet scan demo://vibe-task-app
+
+Framework: Next.js
+Duplicate clusters: —
+Unused files: —
+Unused dependencies: —
+Safe patch: —
+Regression checklist: —</pre>
+    </div>
+  </section>
+
+  <main class="app" id="demo">
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" data-tab="scan">Scan</button>
+      <button type="button" class="tab" data-tab="findings">Findings</button>
+      <button type="button" class="tab" data-tab="patch">Patch Kit</button>
+      <button type="button" class="tab" data-tab="verify">Verify</button>
+    </div>
+
+    <section class="panel active" id="panel-scan" data-panel="scan">
+      <div class="grid-2">
+        <div class="card">
+          <h2>GitHub Repo</h2>
+          <label>Repo URL <input id="repo-url" type="url" placeholder="https://github.com/user/app" /></label>
+          <label>Branch <input id="repo-branch" type="text" value="main" /></label>
+          <label>Framework
+            <select id="framework">
+              <option value="auto">Auto detect</option>
+              <option value="next">Next.js</option>
+              <option value="react">React</option>
+              <option value="vite">Vite</option>
+            </select>
+          </label>
+          <label>Scan mode
+            <select id="scan-mode">
+              <option value="quick">Quick</option>
+              <option value="deep" selected>Deep (+ Knip)</option>
+            </select>
+          </label>
+          <div class="btn-row">
+            <button type="button" class="btn primary" id="btn-scan">Scan Repo</button>
+            <button type="button" class="btn ghost" id="btn-scan-demo">Run Demo Repo</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Scan status</h2>
+          <div id="scan-status" class="status muted">No scan yet.</div>
+          <div id="scan-metrics" class="metrics hidden"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-findings" data-panel="findings">
+      <div class="card">
+        <h2>AI Slop Fingerprint</h2>
+        <div id="findings-summary" class="chip-row"></div>
+      </div>
+      <div class="card">
+        <h2>Delete Confidence Engine</h2>
+        <div id="findings-list" class="findings-list"><p class="muted">Run a scan first.</p></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-patch" data-panel="patch">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Patch Bundle</h2>
+          <p class="muted">repodiet-cleanup.patch · regression-checklist.md · cursor-fix-prompt.md</p>
+          <button type="button" class="btn primary" id="btn-generate-patch" disabled>Generate Patch</button>
+          <div class="btn-row">
+            <button type="button" class="btn ghost" id="btn-download-patch" disabled>Download Patch</button>
+            <button type="button" class="btn ghost" id="btn-copy-cursor" disabled>Copy Cursor Prompt</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Patch preview</h2>
+          <pre id="patch-preview" class="code-preview muted">Generate a patch to preview.</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-verify" data-panel="verify">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Regression Contract</h2>
+          <pre id="regression-preview" class="code-preview muted">Generate patch to see checklist.</pre>
+          <button type="button" class="btn ghost" id="btn-download-regression" disabled>Download Checklist</button>
+        </div>
+        <div class="card">
+          <h2>Before / After Delta</h2>
+          <div id="delta-cards" class="delta-grid"></div>
+          <button type="button" class="btn primary" id="btn-export-okx" disabled>Export OKX Delivery</button>
+          <pre id="okx-delivery" class="code-preview hidden"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>RepoDiet · X Layer · #OKXAI</span>
+    <a href="https://www.okx.ai/" target="_blank" rel="noopener">OKX.AI</a>
+  </footer>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

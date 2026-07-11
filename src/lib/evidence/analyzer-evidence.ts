@@ -1,0 +1,110 @@
+import type { Finding } from "@/lib/findings/types";
+import type { EvidenceItem } from "./types";
+
+function signalValue(signals: string[], prefix: string): string | undefined {
+  const hit = signals.find((s) => s.startsWith(`${prefix}=`));
+  return hit?.slice(prefix.length + 1);
+}
+
+function signalBool(signals: string[], prefix: string): boolean {
+  return signalValue(signals, prefix) === "true";
+}
+
+/** Extract structured supporting evidence from finding signals and metadata. */
+export function extractAnalyzerEvidence(finding: Finding): EvidenceItem[] {
+  const items: EvidenceItem[] = [];
+  const signals = finding.evidence.signals;
+
+  items.push({
+    channel: "analyzer",
+    source: finding.source,
+    summary: finding.evidence.summary || finding.reason,
+    strength: finding.sourceMode === "fallback" ? "neutral" : "supporting",
+  });
+
+  if (finding.sourceMode === "fallback" || finding.source.endsWith("_fallback")) {
+    items.push({
+      channel: "analyzer",
+      source: finding.source,
+      summary: "Analyzer ran in fallback mode — not native evidence.",
+      strength: "contradicting",
+    });
+  }
+
+  const inbound = signalValue(signals, "inbound_refs");
+  if (inbound !== undefined) {
+    items.push({
+      channel: "graph",
+      source: "repodiet_reference_graph",
+      summary: `Inbound static import references: ${inbound}`,
+      strength: Number(inbound) > 0 ? "contradicting" : "supporting",
+    });
+  }
+
+  const dupInbound = signalValue(signals, "inbound_refs_duplicate");
+  if (dupInbound !== undefined) {
+    items.push({
+      channel: "graph",
+      source: "repodiet_reference_graph",
+      summary: `Inbound references to duplicate file: ${dupInbound}`,
+      strength: Number(dupInbound) > 0 ? "contradicting" : "supporting",
+    });
+  }
+
+  if (signalBool(signals, "empty_file")) {
+    items.push({
+      channel: "analyzer",
+      source: "repodiet_hygiene",
+      summary: "File is empty or whitespace-only.",
+      strength: "supporting",
+    });
+  }
+
+  if (signalBool(signals, "exact_duplicate")) {
+    items.push({
+      channel: "analyzer",
+      source: "repodiet_exact_dup",
+      summary: "Byte-identical duplicate detected.",
+      strength: "supporting",
+    });
+  }
+
+  const symbol = signalValue(signals, "symbol");
+  if (finding.type === "unused_import" && symbol) {
+    items.push({
+      channel: "analyzer",
+      source: finding.source,
+      summary: `Unused import symbol: ${symbol}`,
+      strength: "supporting",
+    });
+  }
+
+  const preflight = signalValue(signals, "preflight");
+  if (preflight === "actionable_candidate") {
+    items.push({
+      channel: "analyzer",
+      source: "repodiet_preflight",
+      summary: "Transformer preflight passed for exact source snapshot.",
+      strength: "supporting",
+    });
+  } else if (preflight === "detected_candidate") {
+    items.push({
+      channel: "analyzer",
+      source: "repodiet_preflight",
+      summary: "Preflight did not confirm actionable transformation.",
+      strength: "neutral",
+    });
+  }
+
+  const blocker = signalValue(signals, "blockerCode");
+  if (blocker) {
+    items.push({
+      channel: "analyzer",
+      source: "repodiet_preflight",
+      summary: `Preflight blocker: ${blocker}`,
+      strength: "contradicting",
+    });
+  }
+
+  return items;
+}

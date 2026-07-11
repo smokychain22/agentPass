@@ -1,0 +1,37 @@
+name: Sync E2E fixture to repodiet-e2e-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agentPass
+        uses: actions/checkout@v4
+
+      - name: Push fixture to repodiet-e2e-test
+        env:
+          E2E_DEPLOY_TOKEN: ${{ secrets.E2E_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${E2E_DEPLOY_TOKEN:-}" ]; then
+            echo "Missing secret E2E_DEPLOY_TOKEN on smokychain22/agentPass"
+            echo "Create a fine-grained PAT with Contents: Read and write on repodiet-e2e-test"
+            exit 1
+          fi
+          git clone "https://x-access-token:${E2E_DEPLOY_TOKEN}@github.com/smokychain22/repodiet-e2e-test.git" target
+          rsync -a --delete \
+            --exclude node_modules \
+            --exclude .next \
+            e2e-fixture/ target/
+          cd target
+          git config user.name "RepoDiet Sync"
+          git config user.email "repodiet-sync@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to push."
+            exit 0
+          fi
+          git commit -m "Sync controlled RepoDiet E2E test fixture from agentPass"
+          git push origin main
