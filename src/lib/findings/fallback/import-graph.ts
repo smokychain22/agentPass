@@ -5,6 +5,7 @@ import { IGNORED_DIRS } from "@/lib/scanner/types";
 import { SKIP_EXTENSIONS } from "../types";
 import {
   isConfigReferencedDependency,
+  isFrameworkProtectedDependency,
   isFrameworkProtectedPath,
   isToolingDependency,
 } from "../framework-protected";
@@ -275,11 +276,18 @@ async function detectUnusedDependencies(
     ...pkg.dependencies,
     ...pkg.devDependencies,
   };
+  const usesNext = Boolean(pkg.dependencies?.next ?? pkg.devDependencies?.next);
   const corpus = files.map((f) => f.content).join("\n");
   const unused: string[] = [];
 
   for (const dep of Object.keys(allDeps)) {
-    if (isToolingDependency(dep) || isConfigReferencedDependency(dep, pkg)) continue;
+    if (
+      isToolingDependency(dep) ||
+      isConfigReferencedDependency(dep, pkg) ||
+      isFrameworkProtectedDependency(dep, usesNext ? "next" : undefined)
+    ) {
+      continue;
+    }
     const patterns = [
       `from '${dep}'`,
       `from "${dep}"`,

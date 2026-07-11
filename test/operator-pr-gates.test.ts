@@ -31,7 +31,7 @@ test("enables cleanup PR when repo authorized with verified changes", () => {
     validatedEditCount: 22,
     safeDeleteCount: 0,
     requireVerificationForCleanupPr: true,
-    verificationStatus: "passed",
+    verificationStatus: "verified",
   });
   assert.equal(gates.canCreateSafePr, true);
   assert.equal(gates.canCreateReportPr, true);
@@ -78,7 +78,7 @@ test("blocks cleanup PR while preflight is loading", () => {
     validatedEditCount: 22,
     safeDeleteCount: 0,
     requireVerificationForCleanupPr: true,
-    verificationStatus: "passed",
+    verificationStatus: "verified",
   });
   assert.equal(gates.canCreateSafePr, false);
 });

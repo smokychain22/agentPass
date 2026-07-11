@@ -65,7 +65,7 @@ export interface PatchKitSummary {
   patchLines: number;
   regressionChecks: number;
   bundleFileCount: number;
-  patchValidationStatus?: "passed" | "failed" | "skipped" | "not_generated";
+  patchValidationStatus?: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
   deletedPaths?: string[];
   changedPaths?: string[];
   blockerBreakdown?: Partial<Record<BlockerCode, number>>;
@@ -99,7 +99,7 @@ export interface PatchKitPayload {
   repo: PatchKitRepo;
   summary: PatchKitSummary;
   patchValidation?: {
-    status: "passed" | "failed" | "skipped" | "not_generated";
+    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
     error?: string;
     userMessage?: string;
     baseCommitSha?: string;
@@ -109,7 +109,10 @@ export interface PatchKitPayload {
     gitStderr?: string;
     patchGenerationMethod?: "git-cli" | "pure-js";
     gitCliAvailable?: boolean;
+    contentIntegrityValidation?: { status: string; failureCode?: string; error?: string };
+    gitPatchValidation?: { status: string; failureCode?: string; error?: string };
     attempt?: import("./canonical-patch").PatchValidationAttempt;
+    contentIntegrityAttempt?: import("./canonical-patch").PatchValidationAttempt;
     validatedPaths?: string[];
     unexpectedPaths?: string[];
     missingPaths?: string[];
@@ -127,11 +130,14 @@ export interface PatchKitPayload {
   changeManifest?: ChangeManifestEntry[];
   cleanupProof?: import("@/lib/execution/proof-ladder").CleanupProof;
   repositoryVerification?: {
-    status: "verified" | "blocked" | "failed" | "not_run";
-    failureCode?: "DEPENDENCY_INSTALL_FAILED" | "CHECK_FAILED";
+    status: "verified" | "blocked" | "failed" | "not_run" | "regression_failed" | "baseline_blocked" | "improved_but_baseline_invalid";
+    outcome?: string;
+    failureCode?: string;
     error?: string;
     installAttempts?: import("@/lib/execution/workspace-install").InstallAttemptRecord[];
     checks?: import("@/lib/jobs/types").VerifyCheckResult[];
+    baseline?: unknown;
+    patched?: unknown;
   };
   cleanupRunSummary?: import("./cleanup-summary").CleanupRunSummary;
   deletionProofs?: import("./safe-delete-discovery").SafeDeleteProof[];

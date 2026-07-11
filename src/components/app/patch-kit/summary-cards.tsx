@@ -25,7 +25,7 @@ const cards: {
     key: "validatedFileOperations",
     title: "Validated file operations",
     explanation:
-      "Combined cleanup patch passed git apply --check --index against the scanned commit.",
+      "Combined cleanup patch passed git apply --check --index when Git CLI is available.",
     getValue: (s) => s.validatedFileOperations ?? s.validatedChanges ?? 0,
   },
   {

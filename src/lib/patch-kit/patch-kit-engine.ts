@@ -14,7 +14,6 @@ import {
   inferRequiredPackagesForScripts,
 } from "@/lib/execution/workspace-install";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
-import { trimWorkspaceBeforeVerification } from "./trim-verification-workspace";
 import {
   auditTransformerCompatibleFindings,
   formatBlockerBreakdown,
@@ -488,9 +487,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     }
 
     if (patchValidation?.status === "passed") {
-      if (isServerlessRuntime()) {
-        await trimWorkspaceBeforeVerification(workspace.workDir, workspace.rootDir);
-      } else {
+      if (!isServerlessRuntime()) {
         try {
           const pkgRaw = await fs.readFile(path.join(workspace.rootDir, "package.json"), "utf8");
           const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
@@ -511,7 +508,6 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
             cleanupRunId,
             patch: mergedPatch,
-            patchedRoot: workspace.rootDir,
           })
         : {
             status: "not_run" as const,
@@ -542,7 +538,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
     const blockerSummary = deliveryReady
       ? `${verifiedChanges} verified file operation(s) ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} patch-validated).`
-      : patchValidation?.status === "passed" && repositoryVerification.status === "blocked"
+      : patchValidation?.status === "blocked"
+        ? `${generatedChanges} generated file operation(s); content validation passed but git apply --check is blocked — ${patchValidation.error ?? "Git CLI unavailable"}.`
+        : patchValidation?.status === "passed" && repositoryVerification.status === "blocked"
         ? `${generatedChanges} generated file operation(s); patch validation passed; repository verification blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
         : patchValidation?.userMessage ??
           patchValidation?.error ??
@@ -715,10 +713,13 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       }),
       repositoryVerification: {
         status: repositoryVerification.status,
+        outcome: repositoryVerification.outcome,
         failureCode: repositoryVerification.failureCode,
         error: repositoryVerification.error,
         installAttempts: repositoryVerification.installAttempts,
         checks: repositoryVerification.checks,
+        baseline: repositoryVerification.baseline,
+        patched: repositoryVerification.patched,
       },
       cleanupRunSummary,
       deletionProofs,

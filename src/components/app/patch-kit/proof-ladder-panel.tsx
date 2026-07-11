@@ -14,7 +14,7 @@ const STAGES: {
   { key: "eligible", label: "Eligible", description: "Supported by a deterministic transformer" },
   { key: "executed", label: "Executed findings", description: "Eligible findings that entered transformer execution" },
   { key: "generated", label: "Generated file operations", description: "Non-empty source modifications produced" },
-  { key: "validated", label: "Validated file operations", description: "Patch passed git apply --check --index" },
+  { key: "validated", label: "Validated file operations", description: "Patch passed git apply --check --index when Git CLI is available; otherwise content integrity only (blocked for PR)." },
   { key: "verified", label: "Verified file operations", description: "Repository checks passed on patched copy" },
   { key: "delivered", label: "Delivered file operations", description: "Cleanup PR opened on review branch" },
 ];

@@ -251,7 +251,17 @@ export function PatchKitTab() {
           {verificationIssue && (
             <FeedbackBanner variant="warning" message={verificationIssue} dismissible={false} />
           )}
-          {patchKit.patchValidation && patchKit.patchValidation.status !== "passed" && !verificationIssue && (
+          {patchKit.patchValidation?.status === "blocked" && !verificationIssue && (
+            <FeedbackBanner
+              variant="warning"
+              message={
+                patchKit.patchValidation.error ??
+                "Content integrity passed but git apply --check is blocked because Git CLI is unavailable in this runtime."
+              }
+              dismissible={false}
+            />
+          )}
+          {patchKit.patchValidation && patchKit.patchValidation.status === "failed" && !verificationIssue && (
             <FeedbackBanner
               variant="warning"
               message={
@@ -312,6 +322,8 @@ export function PatchKitTab() {
               <pre className="max-h-64 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
                 {JSON.stringify(
                   {
+                    contentIntegrity: patchKit.patchValidation.contentIntegrityValidation,
+                    gitPatchValidation: patchKit.patchValidation.gitPatchValidation,
                     command: patchKit.patchValidation.attempt.command,
                     exitCode: patchKit.patchValidation.attempt.exitCode,
                     baseCommitSha: patchKit.patchValidation.baseCommitSha,
@@ -392,7 +404,7 @@ export function PatchKitTab() {
         findings={findings}
         patchKit={patchKit}
         demoMode={demoMode}
-        requireVerificationForCleanupPr={false}
+        requireVerificationForCleanupPr={true}
       />
     </div>
   );

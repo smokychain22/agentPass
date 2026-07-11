@@ -13,17 +13,36 @@ import {
   inferRequiredPackagesForScripts,
   type InstallAttemptRecord,
 } from "@/lib/execution/workspace-install";
+import {
+  runDependencyPreflight,
+  usesNextBuild,
+} from "@/lib/execution/dependency-preflight";
+import type {
+  RepositoryVerificationOutcome,
+  VerificationFailureCode,
+} from "@/lib/execution/verification-error-codes";
+import { humanizeVerificationFailure } from "@/lib/execution/verification-error-codes";
 import { extractApplyablePatch } from "./validate-patch";
 import { applyEditsToWorkspace } from "./canonical-patch";
 
-export type RepositoryVerificationStatus = "verified" | "blocked" | "failed" | "not_run";
+export type RepositoryVerificationStatus = RepositoryVerificationOutcome;
+
+export interface RepositoryVerificationPhaseResult {
+  phase: "baseline" | "patched";
+  installAttempts: InstallAttemptRecord[];
+  checks: VerifyCheckResult[];
+  preflight?: Awaited<ReturnType<typeof runDependencyPreflight>>;
+}
 
 export interface RepositoryVerificationResult {
   status: RepositoryVerificationStatus;
-  failureCode?: "DEPENDENCY_INSTALL_FAILED" | "CHECK_FAILED";
+  outcome?: RepositoryVerificationOutcome;
+  failureCode?: VerificationFailureCode;
   error?: string;
   installAttempts: InstallAttemptRecord[];
   checks: VerifyCheckResult[];
+  baseline?: RepositoryVerificationPhaseResult;
+  patched?: RepositoryVerificationPhaseResult;
 }
 
 const COMMAND_TIMEOUT_MS = 180_000;
@@ -168,36 +187,260 @@ async function applyPatchOrEdits(
   await applyEditsToWorkspace(rootDir, edits);
 }
 
+function fingerprintCheckFailure(check: VerifyCheckResult): string {
+  return `${check.name}:${check.exitCode ?? "null"}:${(check.stderrSummary || check.stdoutSummary).slice(0, 120)}`;
+}
+
+function phasePassed(checks: VerifyCheckResult[]): boolean {
+  const executed = checks.filter((c) => c.status === "passed" || c.status === "failed");
+  const required = executed.filter((c) => c.name === "typecheck" || c.name === "build");
+  if (required.length === 0) return executed.every((c) => c.status !== "failed");
+  return required.every((c) => c.status === "passed");
+}
+
+async function runVerificationPhase(input: {
+  rootDir: string;
+  cleanupRunId: string;
+  phase: "baseline" | "patched";
+  patchedPaths?: string[];
+}): Promise<RepositoryVerificationPhaseResult> {
+  const checks: VerifyCheckResult[] = [];
+  const scripts = await readScripts(input.rootDir);
+  const requiredPackages = inferRequiredPackagesForScripts(scripts);
+  const requireNextSwc = usesNextBuild(scripts);
+
+  const installResult = await ensureVerificationDependencies(input.rootDir, input.cleanupRunId, {
+    requiredPackages,
+    patchedPaths: input.patchedPaths,
+    cacheRole: input.phase === "baseline" ? "baseline" : "patched",
+  });
+
+  const installDetail = humanizeInstallFailure(
+    installResult.reason ??
+      formatInstallFailureReason(installResult.stderr ?? "", installResult.stdout ?? "")
+  );
+
+  checks.push({
+    name: "dependency install",
+    command: installResult.command ?? "npm ci",
+    status: installResult.installed ? "passed" : "failed",
+    exitCode: installResult.exitCode ?? null,
+    durationMs: installResult.durationMs ?? 0,
+    stdoutSummary: summarize(installResult.stdout ?? ""),
+    stderrSummary: summarize(installDetail),
+  });
+
+  if (!installResult.installed) {
+    return {
+      phase: input.phase,
+      installAttempts: installResult.attempts,
+      checks,
+    };
+  }
+
+  const preflight = await runDependencyPreflight(input.rootDir, {
+    frameworkPackages: requireNextSwc
+      ? ["next", "react", "react-dom"]
+      : ["next", "react", "react-dom"],
+    requireNextSwc,
+  });
+
+  checks.push({
+    name: "dependency preflight",
+    command: "npm ls + require.resolve",
+    status: preflight.passed ? "passed" : "failed",
+    exitCode: preflight.passed ? 0 : 1,
+    durationMs: 0,
+    stdoutSummary: summarize(preflight.npmLsOutput ?? ""),
+    stderrSummary: preflight.error ?? "",
+  });
+
+  if (!preflight.passed) {
+    return {
+      phase: input.phase,
+      installAttempts: installResult.attempts,
+      checks,
+      preflight,
+    };
+  }
+
+  const pm = (await detectPackageManager(input.rootDir)).packageManager;
+  for (const name of ALLOWED_SCRIPT_NAMES) {
+    const scriptCmd = scripts[name];
+    if (!scriptCmd) continue;
+
+    if (name === "typecheck" && !(await commandExists(input.rootDir, "tsc"))) {
+      checks.push({
+        name,
+        command: scriptCmd,
+        status: "failed",
+        exitCode: 1,
+        durationMs: 0,
+        stdoutSummary: "",
+        stderrSummary: "typescript is not installed in node_modules/.bin after install.",
+      });
+      continue;
+    }
+    if (name === "build" && scriptCmd.includes("next") && !(await commandExists(input.rootDir, "next"))) {
+      checks.push({
+        name,
+        command: scriptCmd,
+        status: "failed",
+        exitCode: 1,
+        durationMs: 0,
+        stdoutSummary: "",
+        stderrSummary: "next is not installed in node_modules/.bin after install.",
+      });
+      continue;
+    }
+
+    const t0 = Date.now();
+    const command = runScriptCommand(pm, name);
+    const result = await runVerificationScript(input.rootDir, pm, name, scriptCmd);
+    checks.push({
+      name,
+      command: command.join(" "),
+      status: result.exitCode === 0 ? "passed" : "failed",
+      exitCode: result.exitCode ?? null,
+      durationMs: Date.now() - t0,
+      stdoutSummary: summarize(result.stdout ?? ""),
+      stderrSummary: summarize(result.stderr ?? ""),
+    });
+  }
+
+  return {
+    phase: input.phase,
+    installAttempts: installResult.attempts,
+    checks,
+    preflight,
+  };
+}
+
+function resolveOutcome(
+  baseline: RepositoryVerificationPhaseResult,
+  patched: RepositoryVerificationPhaseResult
+): {
+  status: RepositoryVerificationStatus;
+  failureCode?: VerificationFailureCode;
+  error?: string;
+} {
+  const baselineOk = phasePassed(baseline.checks);
+  const patchedOk = phasePassed(patched.checks);
+
+  const baselineInstall = baseline.checks.find((c) => c.name === "dependency install");
+  const patchedInstall = patched.checks.find((c) => c.name === "dependency install");
+  const baselinePreflight = baseline.checks.find((c) => c.name === "dependency preflight");
+  const patchedPreflight = patched.checks.find((c) => c.name === "dependency preflight");
+
+  if (baselineInstall?.status === "failed") {
+    return {
+      status: "baseline_blocked",
+      failureCode: "BASELINE_BUILD_FAILED",
+      error: baselineInstall.stderrSummary || "Baseline dependency installation failed.",
+    };
+  }
+  if (baselinePreflight?.status === "failed") {
+    return {
+      status: "baseline_blocked",
+      failureCode: baseline.preflight?.failureCode ?? "DECLARED_DEPENDENCY_NOT_INSTALLED",
+      error:
+        baselinePreflight.stderrSummary ||
+        humanizeVerificationFailure(baseline.preflight?.failureCode ?? "DECLARED_DEPENDENCY_NOT_INSTALLED"),
+    };
+  }
+
+  if (patchedInstall?.status === "failed") {
+    return {
+      status: "blocked",
+      failureCode: "DEPENDENCY_INSTALL_FAILED",
+      error: patchedInstall.stderrSummary || "Patched dependency installation failed.",
+    };
+  }
+  if (patchedPreflight?.status === "failed") {
+    return {
+      status: "blocked",
+      failureCode: patched.preflight?.failureCode ?? "DECLARED_DEPENDENCY_NOT_INSTALLED",
+      error:
+        patchedPreflight.stderrSummary ||
+        humanizeVerificationFailure(patched.preflight?.failureCode ?? "DECLARED_DEPENDENCY_NOT_INSTALLED"),
+    };
+  }
+
+  if (baselineOk && patchedOk) {
+    return { status: "verified" };
+  }
+
+  if (baselineOk && !patchedOk) {
+    const failed = patched.checks.filter((c) => c.status === "failed");
+    const detail = failed.map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`).join("; ");
+    return {
+      status: "regression_failed",
+      failureCode: "PATCH_REGRESSION",
+      error: `Repository verification failed after cleanup — ${detail}`,
+    };
+  }
+
+  if (!baselineOk && !patchedOk) {
+    const baselineFailed = baseline.checks.filter((c) => c.status === "failed");
+    const patchedFailed = patched.checks.filter((c) => c.status === "failed");
+    const sameFingerprint =
+      baselineFailed.length > 0 &&
+      patchedFailed.length > 0 &&
+      fingerprintCheckFailure(baselineFailed[0]!) === fingerprintCheckFailure(patchedFailed[0]!);
+
+    if (sameFingerprint) {
+      const detail = baselineFailed
+        .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`)
+        .join("; ");
+      return {
+        status: "baseline_blocked",
+        failureCode: "BASELINE_BUILD_FAILED",
+        error: `Baseline repository already fails verification — ${detail}`,
+      };
+    }
+
+    const detail = patchedFailed
+      .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`)
+      .join("; ");
+    return {
+      status: "regression_failed",
+      failureCode: "PATCH_REGRESSION",
+      error: `Repository verification failed — ${detail}`,
+    };
+  }
+
+  return {
+    status: "improved_but_baseline_invalid",
+    failureCode: "BASELINE_BUILD_FAILED",
+    error: "Cleanup passed verification but the baseline repository was already invalid.",
+  };
+}
+
 export async function runRepositoryVerification(input: {
   baselineRoot: string;
   edits: ConsolidatedEdit[];
   cleanupRunId: string;
   patch?: string;
-  /** Already-patched cleanup workspace — avoids a second copy + full reinstall on serverless. */
-  patchedRoot?: string;
 }): Promise<RepositoryVerificationResult> {
   const deduped = dedupeConsolidatedEdits(input.edits);
   if (deduped.length === 0) {
     return { status: "not_run", installAttempts: [], checks: [] };
   }
 
-  const reusePatchedRoot = Boolean(input.patchedRoot);
-  const workspace = reusePatchedRoot ? null : await createScanWorkspace("repo-verify");
-  const verifyRoot = input.patchedRoot ?? path.join(workspace!.artifactsPath, "root");
-  const checks: VerifyCheckResult[] = [];
-  let installAttempts: InstallAttemptRecord[] = [];
+  const workspace = await createScanWorkspace("repo-verify");
+  const baselineRoot = path.join(workspace.artifactsPath, "baseline");
+  const patchedRoot = path.join(workspace.artifactsPath, "patched");
+  const patchedPaths = deduped.map((edit) => edit.path.replace(/\\/g, "/"));
 
   try {
-    if (!reusePatchedRoot) {
-      await copyRepoBaseline(input.baselineRoot, verifyRoot);
-      await applyPatchOrEdits(verifyRoot, input.patch, deduped);
-    }
+    await copyRepoBaseline(input.baselineRoot, baselineRoot);
 
-    const pkgPath = path.join(verifyRoot, "package.json");
+    const pkgPath = path.join(baselineRoot, "package.json");
     const hasPackageJson = await fs.access(pkgPath).then(() => true).catch(() => false);
     if (!hasPackageJson) {
       return {
         status: "verified",
+        outcome: "verified",
         installAttempts: [],
         checks: [
           {
@@ -213,123 +456,49 @@ export async function runRepositoryVerification(input: {
       };
     }
 
-    const scripts = await readScripts(verifyRoot);
-    const requiredPackages = inferRequiredPackagesForScripts(scripts);
-    const patchedPaths = deduped.map((edit) => edit.path.replace(/\\/g, "/"));
-
-    const installResult = await ensureVerificationDependencies(
-      verifyRoot,
-      input.cleanupRunId,
-      {
-        requiredPackages,
-        patchedPaths,
-        preserveExistingModules: reusePatchedRoot,
-      }
-    );
-    installAttempts = installResult.attempts;
-    const installDetail = humanizeInstallFailure(
-      installResult.reason ??
-        formatInstallFailureReason(installResult.stderr ?? "", installResult.stdout ?? "")
-    );
-    checks.push({
-      name: "dependency install",
-      command: installResult.command ?? "npm ci",
-      status: installResult.installed ? "passed" : "failed",
-      exitCode: installResult.exitCode ?? null,
-      durationMs: installResult.durationMs ?? 0,
-      stdoutSummary: summarize(installResult.stdout ?? ""),
-      stderrSummary: summarize(installDetail),
+    const baseline = await runVerificationPhase({
+      rootDir: baselineRoot,
+      cleanupRunId: input.cleanupRunId,
+      phase: "baseline",
     });
 
-    if (!installResult.installed) {
-      return {
-        status: "blocked",
-        failureCode: "DEPENDENCY_INSTALL_FAILED",
-        error: installDetail || "Could not install repository dependencies.",
-        installAttempts,
-        checks,
-      };
-    }
+    await copyRepoBaseline(input.baselineRoot, patchedRoot);
+    await applyPatchOrEdits(patchedRoot, input.patch, deduped);
 
-    const pm = (await detectPackageManager(verifyRoot)).packageManager;
-    for (const name of ALLOWED_SCRIPT_NAMES) {
-      const scriptCmd = scripts[name];
-      if (!scriptCmd) continue;
+    const patched = await runVerificationPhase({
+      rootDir: patchedRoot,
+      cleanupRunId: input.cleanupRunId,
+      phase: "patched",
+      patchedPaths,
+    });
 
-      if (name === "typecheck" && !(await commandExists(verifyRoot, "tsc"))) {
-        checks.push({
-          name,
-          command: scriptCmd,
-          status: "failed",
-          exitCode: 1,
-          durationMs: 0,
-          stdoutSummary: "",
-          stderrSummary: "typescript is not installed in node_modules/.bin after npm ci.",
-        });
-        continue;
-      }
-      if (name === "build" && scriptCmd.includes("next") && !(await commandExists(verifyRoot, "next"))) {
-        checks.push({
-          name,
-          command: scriptCmd,
-          status: "failed",
-          exitCode: 1,
-          durationMs: 0,
-          stdoutSummary: "",
-          stderrSummary: "next is not installed in node_modules/.bin after npm ci.",
-        });
-        continue;
-      }
+    const resolved = resolveOutcome(baseline, patched);
+    const installAttempts = [...baseline.installAttempts, ...patched.installAttempts];
+    const checks = [
+      ...baseline.checks.map((c) => ({ ...c, name: `baseline:${c.name}` })),
+      ...patched.checks.map((c) => ({ ...c, name: `patched:${c.name}` })),
+    ];
 
-      const t0 = Date.now();
-      const command = runScriptCommand(pm, name);
-      const result = await runVerificationScript(verifyRoot, pm, name, scriptCmd);
-      checks.push({
-        name,
-        command: command.join(" "),
-        status: result.exitCode === 0 ? "passed" : "failed",
-        exitCode: result.exitCode ?? null,
-        durationMs: Date.now() - t0,
-        stdoutSummary: summarize(result.stdout ?? ""),
-        stderrSummary: summarize(result.stderr ?? ""),
-      });
-    }
-
-    const executed = checks.filter((c) => c.status === "passed" || c.status === "failed");
-    const required = executed.filter((c) => c.name === "typecheck" || c.name === "build");
-    const requiredFailed = required.filter((c) => c.status === "failed");
-    if (requiredFailed.length > 0) {
-      const detail = requiredFailed
-        .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`)
-        .join("; ");
-      return {
-        status: "failed",
-        failureCode: "CHECK_FAILED",
-        error: `Repository verification failed — ${detail}`,
-        installAttempts,
-        checks,
-      };
-    }
-
-    const anyFailed = executed.some((c) => c.status === "failed");
     return {
-      status: anyFailed ? "failed" : "verified",
-      failureCode: anyFailed ? "CHECK_FAILED" : undefined,
-      error: anyFailed ? "One or more repository checks failed after applying cleanup." : undefined,
+      status: resolved.status,
+      outcome: resolved.status,
+      failureCode: resolved.failureCode,
+      error: resolved.error,
       installAttempts,
       checks,
+      baseline,
+      patched,
     };
   } catch (err) {
     return {
       status: "failed",
+      outcome: "failed",
       failureCode: "CHECK_FAILED",
       error: err instanceof Error ? err.message : "Repository verification failed.",
-      installAttempts,
-      checks,
+      installAttempts: [],
+      checks: [],
     };
   } finally {
-    if (workspace) {
-      await removeWorkspace(workspace.root).catch(() => {});
-    }
+    await removeWorkspace(workspace.root).catch(() => {});
   }
 }

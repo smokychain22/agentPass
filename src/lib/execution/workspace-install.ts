@@ -5,6 +5,15 @@ import { execa } from "execa";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
+import {
+  assertVerificationInstallCommand,
+  buildVerificationInstallCommands,
+  verificationInstallEnv,
+} from "@/lib/execution/package-manager-adapter";
+import {
+  prepareCleanInstallWorkspace,
+  prepareNpmCacheDir,
+} from "@/lib/execution/verification-workspace";
 
 const INSTALL_TIMEOUT_MS = 180_000;
 const MAX_ATTEMPTS = 4;
@@ -141,7 +150,7 @@ export function humanizeInstallFailure(reason: string): string {
     return "Dependency install failed: server temporary storage is full (ENOSPC). RepoDiet freed workspace scratch data and uses a minimal verification install on serverless — click Regenerate Quick Cleanup after deploy.";
   }
   if (/\bERESOLVE\b/i.test(clean)) {
-    return "Dependency install failed: npm could not resolve the dependency tree (ERESOLVE). RepoDiet installs with --legacy-peer-deps from the patched lockfile on serverless — click Regenerate Quick Cleanup after deploy.";
+    return "Dependency install failed: npm could not resolve the dependency tree (ERESOLVE). If the repository requires legacy-peer-deps, commit that setting in .npmrc.";
   }
   if (!clean || /^install failed$/i.test(clean)) {
     return "Dependency install failed before repository checks could run.";
@@ -205,11 +214,15 @@ function isDiskSpaceError(stderr: string, stdout: string): boolean {
 }
 
 function installEnv(cacheDir: string | undefined, rootDir: string, mode: "workspace" | "verify" = "workspace"): NodeJS.ProcessEnv {
+  if (mode === "verify") {
+    return verificationInstallEnv(cacheDir);
+  }
+
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     CI: "true",
     FORCE_COLOR: "0",
-    NODE_ENV: mode === "verify" ? "development" : "development",
+    NODE_ENV: "development",
     NPM_CONFIG_AUDIT: "false",
     NPM_CONFIG_FUND: "false",
     NPM_CONFIG_FETCH_RETRIES: "5",
@@ -217,12 +230,8 @@ function installEnv(cacheDir: string | undefined, rootDir: string, mode: "worksp
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000",
     NPM_CONFIG_PROGRESS: "false",
     NPM_CONFIG_LOGLEVEL: "warn",
-    NPM_CONFIG_LEGACY_PEER_DEPS: "true",
+    NPM_CONFIG_OPTIONAL: "false",
   };
-
-  if (mode === "workspace") {
-    env.NPM_CONFIG_OPTIONAL = "false";
-  }
 
   if (cacheDir) {
     env.NPM_CONFIG_CACHE = isServerlessRuntime()
@@ -233,32 +242,16 @@ function installEnv(cacheDir: string | undefined, rootDir: string, mode: "worksp
   return env;
 }
 
-function npmInstallBaseFlags(cacheDir?: string, options?: { legacyPeerDeps?: boolean; omitOptional?: boolean }): string[] {
+function workspaceNpmFlags(cacheDir?: string): string[] {
   const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
-  const flags = [
+  return [
     "--ignore-scripts",
-    ...(options?.omitOptional !== false ? ["--omit=optional"] : []),
+    "--omit=optional",
     "--no-audit",
     "--no-fund",
     ...cacheFlag,
+    "--legacy-peer-deps",
   ];
-  if (options?.legacyPeerDeps !== false) {
-    flags.push("--legacy-peer-deps");
-  }
-  return flags;
-}
-
-/** Verification installs must include optional deps (e.g. @next/swc-* platform binaries). */
-function verificationNpmFlags(cacheDir?: string): string[] {
-  return npmInstallBaseFlags(cacheDir, { legacyPeerDeps: true, omitOptional: false });
-}
-
-function npmInstallVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
-  const flags = npmInstallBaseFlags(cacheDir);
-  if (lockfilePresent) {
-    return [["npm", "ci", ...flags]];
-  }
-  return [["npm", "install", ...flags]];
 }
 
 function installVariants(pm: PackageManager, lockfilePresent: boolean, cacheDir?: string): string[][] {
@@ -278,6 +271,14 @@ function installVariants(pm: PackageManager, lockfilePresent: boolean, cacheDir?
     default:
       return npmInstallVariants(lockfilePresent, cacheDir);
   }
+}
+
+function npmInstallVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
+  const flags = workspaceNpmFlags(cacheDir);
+  if (lockfilePresent) {
+    return [["npm", "ci", ...flags]];
+  }
+  return [["npm", "install", ...flags]];
 }
 
 export async function nodeModulesPresent(rootDir: string): Promise<boolean> {
@@ -423,88 +424,16 @@ export async function areRequiredPackagesInstalled(
   return true;
 }
 
-function npmVerificationVariants(
-  lockfilePresent: boolean,
-  cacheDir?: string,
-  options?: { preferInstall?: boolean }
-): string[][] {
-  const flags = verificationNpmFlags(cacheDir);
-  if (options?.preferInstall || !lockfilePresent) {
-    return [
-      ["npm", "install", ...flags],
-      ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--legacy-peer-deps", ...(cacheDir ? ["--cache", cacheDir] : [])],
-    ];
+function resolveVerificationCacheDir(cleanupRunId: string, rootDir: string, role: "baseline" | "patched" = "patched"): string {
+  if (isServerlessRuntime()) {
+    return path.join(rootDir, role === "baseline" ? ".repodiet-npm-cache-baseline" : ".repodiet-npm-cache");
   }
-  return [
-    ["npm", "ci", ...flags],
-    ["npm", "install", ...flags],
-    ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--legacy-peer-deps", ...(cacheDir ? ["--cache", cacheDir] : [])],
-  ];
-}
-
-function verificationInstallVariants(
-  pm: PackageManager,
-  lockfilePresent: boolean,
-  cacheDir?: string,
-  options?: { lockfilePatched?: boolean }
-): string[][] {
-  switch (pm) {
-    case "pnpm":
-      return [
-        ["pnpm", "install", "--no-frozen-lockfile"],
-        ["pnpm", "install", "--no-frozen-lockfile", "--force"],
-      ];
-    case "yarn":
-      return [["yarn", "install"], ["yarn", "install", "--force"]];
-    case "bun":
-      return [["bun", "install"]];
-    default:
-      return npmVerificationVariants(lockfilePresent, cacheDir, {
-        preferInstall: options?.lockfilePatched,
-      });
-  }
+  const safe = cleanupRunId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(os.tmpdir(), "repodiet", safe, role === "baseline" ? "npm-cache-baseline" : "npm-cache-transformed");
 }
 
 async function clearInstallArtifacts(rootDir: string): Promise<void> {
-  await fs.rm(path.join(rootDir, "node_modules"), { recursive: true, force: true }).catch(() => {});
-}
-
-function resolveNpmCacheDir(cleanupRunId: string, rootDir: string): string {
-  if (isServerlessRuntime()) {
-    return path.join(rootDir, ".repodiet-npm-cache");
-  }
-  return perRunCacheDir(cleanupRunId);
-}
-
-async function prepareNpmCache(cacheDir: string, serverless: boolean): Promise<void> {
-  if (serverless) {
-    await fs.rm(cacheDir, { recursive: true, force: true }).catch(() => {});
-    await fs.mkdir(cacheDir, { recursive: true });
-    return;
-  }
-  await recreateCacheDir(cacheDir);
-}
-
-async function buildServerlessVerificationVariants(
-  rootDir: string,
-  cacheDir: string,
-  options: { lockfilePatched: boolean; hasLockfile: boolean }
-): Promise<string[][]> {
-  const flags = verificationNpmFlags(cacheDir);
-  if (options.hasLockfile && !options.lockfilePatched) {
-    return [
-      ["npm", "ci", ...flags],
-      ["npm", "install", ...flags],
-    ];
-  }
-  if (options.hasLockfile) {
-    return [
-      ["npm", "install", ...flags],
-      ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--legacy-peer-deps", ...(cacheDir ? ["--cache", cacheDir] : [])],
-    ];
-  }
-  const specs = await packageSpecsForVerification(rootDir, ["typescript", "next"]);
-  return [["npm", "install", "--no-save", ...flags, ...specs]];
+  await prepareCleanInstallWorkspace(rootDir);
 }
 
 /**
@@ -551,8 +480,18 @@ function perRunCacheDir(cleanupRunId: string): string {
 }
 
 async function recreateCacheDir(cacheDir: string): Promise<void> {
-  await fs.rm(cacheDir, { recursive: true, force: true }).catch(() => {});
-  await fs.mkdir(cacheDir, { recursive: true });
+  await prepareNpmCacheDir(cacheDir);
+}
+
+function resolveNpmCacheDir(cleanupRunId: string, rootDir: string): string {
+  if (isServerlessRuntime()) {
+    return path.join(rootDir, ".repodiet-npm-cache");
+  }
+  return perRunCacheDir(cleanupRunId);
+}
+
+async function prepareNpmCache(cacheDir: string, _serverless: boolean): Promise<void> {
+  await prepareNpmCacheDir(cacheDir);
 }
 
 export async function ensureWorkspaceDependencies(
@@ -684,8 +623,8 @@ export async function ensureWorkspaceDependenciesWithCache(
 }
 
 /**
- * Strict dependency install for repository verification — never treats partial
- * node_modules as success and runs npm ci without --ignore-scripts.
+ * Strict dependency install for repository verification — clean workspace, full optional deps,
+ * lifecycle scripts enabled, npm ci when lockfile is intact.
  */
 export async function ensureVerificationDependencies(
   rootDir: string,
@@ -694,7 +633,7 @@ export async function ensureVerificationDependencies(
     requiredPackages?: string[];
     lockfilePatched?: boolean;
     patchedPaths?: string[];
-    preserveExistingModules?: boolean;
+    cacheRole?: "baseline" | "patched";
   }
 ): Promise<WorkspaceInstallResult & { attempts: InstallAttemptRecord[] }> {
   const attempts: InstallAttemptRecord[] = [];
@@ -714,56 +653,36 @@ export async function ensureVerificationDependencies(
   }
 
   await ensureVerificationManifestIntegrity(rootDir);
-
-  if (
-    options?.preserveExistingModules &&
-    (await areRequiredPackagesInstalled(rootDir, requiredPackages))
-  ) {
-    return {
-      installed: true,
-      command: "reuse existing node_modules",
-      exitCode: 0,
-      durationMs: 0,
-      stdout: "Reused node_modules from cleanup workspace.",
-      stderr: "",
-      attempts,
-    };
-  }
-
-  const serverless = isServerlessRuntime();
-  if (!serverless && !options?.preserveExistingModules) {
-    await clearInstallArtifacts(rootDir);
-  }
+  await prepareCleanInstallWorkspace(rootDir);
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
-  const hasLockfile = await lockfilePresent(rootDir);
-  const cacheDir = resolveNpmCacheDir(cleanupRunId, rootDir);
-  await prepareNpmCache(cacheDir, serverless);
+  const cacheDir = resolveVerificationCacheDir(cleanupRunId, rootDir, options?.cacheRole ?? "patched");
+  await prepareNpmCacheDir(cacheDir);
 
-  const variants = serverless
-    ? await buildServerlessVerificationVariants(rootDir, cacheDir, {
-        lockfilePatched,
-        hasLockfile,
-      })
-    : verificationInstallVariants(pm, hasLockfile, cacheDir, { lockfilePatched });
-  const maxAttempts = serverless ? 3 : MAX_ATTEMPTS;
+  const installPlans = await buildVerificationInstallCommands(rootDir, pm, cacheDir, {
+    lockfilePatched,
+    preferInstall: lockfilePatched,
+  });
+
   let lastReason = "install failed";
-  let lastCommand = variants[0]?.join(" ") ?? "npm ci";
+  let lastCommand = installPlans[0]?.command.join(" ") ?? "npm ci";
   let lastExitCode: number | null = null;
   let lastStdout = "";
   let lastStderr = "";
   let lastDurationMs = 0;
   let integrityRetries = 0;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const command = variants[attempt % variants.length];
+  for (let attempt = 0; attempt < Math.min(MAX_ATTEMPTS, installPlans.length + 1); attempt += 1) {
+    const plan = installPlans[attempt % installPlans.length]!;
+    const command = plan.command;
+    assertVerificationInstallCommand(command);
     lastCommand = command.join(" ");
     const t0 = Date.now();
     const result = await execa(command[0], command.slice(1), {
       cwd: rootDir,
       timeout: INSTALL_TIMEOUT_MS,
       reject: false,
-      env: installEnv(cacheDir, rootDir, "verify"),
+      env: plan.env,
     });
     const durationMs = Date.now() - t0;
     const stdout = result.stdout ?? "";
@@ -774,10 +693,7 @@ export async function ensureVerificationDependencies(
       attempt: attempt + 1,
       exitCode: result.exitCode ?? null,
       stdout: summarize(stdout, 2000),
-      stderr: summarize(
-        formatInstallFailureReason(stderr, stdout) || stderr,
-        2000
-      ),
+      stderr: summarize(formatInstallFailureReason(stderr, stdout) || stderr, 2000),
       durationMs,
     });
 
@@ -817,33 +733,23 @@ export async function ensureVerificationDependencies(
 
     if (
       pm === "npm" &&
-      command[1] === "ci" &&
+      plan.mode === "ci" &&
       (isLockfileSyncError(stderr, stdout) || isPeerDependencyError(stderr, stdout)) &&
-      attempt + 1 < maxAttempts
+      attempt + 1 < MAX_ATTEMPTS
     ) {
       continue;
     }
 
-    if (
-      pm === "npm" &&
-      (isIntegrityError(stderr, stdout) || isDiskSpaceError(stderr, stdout)) &&
-      integrityRetries < CACHE_RETRY_MAX &&
-      !serverless
-    ) {
-      integrityRetries += 1;
-      await recreateCacheDir(cacheDir);
-      await fs
-        .rm(path.join(rootDir, ".repodiet-npm-cache"), { recursive: true, force: true })
-        .catch(() => {});
-      if (!options?.preserveExistingModules) {
+    if (pm === "npm" && (isIntegrityError(stderr, stdout) || isDiskSpaceError(stderr, stdout))) {
+      if (integrityRetries < CACHE_RETRY_MAX) {
+        integrityRetries += 1;
+        await prepareNpmCacheDir(cacheDir);
         await clearInstallArtifacts(rootDir);
+        continue;
       }
-      continue;
     }
 
-    if (!serverless && !options?.preserveExistingModules) {
-      await clearInstallArtifacts(rootDir);
-    }
+    await clearInstallArtifacts(rootDir);
   }
 
   return {

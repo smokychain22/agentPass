@@ -69,7 +69,7 @@ export interface AspJobRecord {
   filesDeleted?: number;
   linesAdded?: number;
   linesRemoved?: number;
-  patchValidationStatus?: "passed" | "failed" | "skipped" | "not_generated";
+  patchValidationStatus?: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
   verificationStatus?: AspVerificationResult;
   protectedFilesChanged?: number;
   defaultBranchChanged?: boolean;

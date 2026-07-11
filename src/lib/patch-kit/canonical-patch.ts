@@ -41,8 +41,14 @@ export interface PatchValidationAttempt {
   failingHunk?: string;
 }
 
+export interface PatchValidationLayer {
+  status: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
+  failureCode?: string;
+  error?: string;
+}
+
 export interface CanonicalPatchValidationResult {
-  status: "passed" | "failed" | "skipped" | "not_generated";
+  status: "passed" | "failed" | "blocked" | "skipped" | "not_generated";
   error?: string;
   userMessage?: string;
   baseCommitSha?: string;
@@ -51,6 +57,7 @@ export interface CanonicalPatchValidationResult {
   failingHunk?: string;
   gitStderr?: string;
   attempt?: PatchValidationAttempt;
+  contentIntegrityAttempt?: PatchValidationAttempt;
   validatedPaths?: string[];
   unexpectedPaths?: string[];
   missingPaths?: string[];
@@ -59,6 +66,8 @@ export interface CanonicalPatchValidationResult {
   persistedPatchPath?: string;
   patchGenerationMethod?: "git-cli" | "pure-js";
   gitCliAvailable?: boolean;
+  contentIntegrityValidation?: PatchValidationLayer;
+  gitPatchValidation?: PatchValidationLayer;
 }
 
 const PATCH_HEADER = [
@@ -326,7 +335,7 @@ async function validateOperationsDirectly(input: {
     }
 
     const t0 = Date.now();
-    const attempt: PatchValidationAttempt = {
+    const contentAttempt: PatchValidationAttempt = {
       cleanupRunId: input.cleanupRunId,
       repository: input.repository,
       baseCommitSha: input.baseCommitSha,
@@ -335,23 +344,31 @@ async function validateOperationsDirectly(input: {
       patchFileCount,
       command: ["content-integrity", "apply-change-operations"],
       exitCode: 0,
-      stdout: `Validated ${validatedPaths.length} path(s) via direct content apply (git CLI unavailable).`,
+      stdout: `Validated ${validatedPaths.length} path(s) via direct content apply.`,
       stderr: "",
       durationMs: Date.now() - t0,
     };
 
     return {
-      status: "passed",
+      status: "blocked",
+      error: "Git CLI is unavailable; content integrity passed but git apply --check did not run.",
       baseCommitSha: input.baseCommitSha,
       patchHash,
       validatedPaths,
       unexpectedPaths: [],
       missingPaths: [],
       protectedPaths: [],
-      attempt,
+      contentIntegrityAttempt: contentAttempt,
+      attempt: contentAttempt,
       persistedPatchPath,
       patchGenerationMethod: "pure-js",
       gitCliAvailable: false,
+      contentIntegrityValidation: { status: "passed" },
+      gitPatchValidation: {
+        status: "blocked",
+        failureCode: "GIT_CLI_UNAVAILABLE",
+        error: "Git CLI unavailable in this runtime.",
+      },
     };
   } catch (err) {
     return {
@@ -500,7 +517,7 @@ export async function validateCanonicalPatch(
     input.expectedOperations &&
     input.expectedOperations.length > 0
   ) {
-    return validateOperationsDirectly({
+    const direct = await validateOperationsDirectly({
       baselineRoot: input.baselineRoot,
       operations: input.expectedOperations,
       protectedPaths: input.protectedPaths,
@@ -510,6 +527,7 @@ export async function validateCanonicalPatch(
       patch: input.patch,
       workDir: input.workDir,
     });
+    return direct;
   }
 
   const patchHash = hashPatchContent(applyable);
@@ -593,29 +611,6 @@ export async function validateCanonicalPatch(
     };
 
     if (check.exitCode !== 0) {
-      if (input.expectedOperations?.length) {
-        const direct = await validateOperationsDirectly({
-          baselineRoot: input.baselineRoot,
-          operations: input.expectedOperations,
-          protectedPaths: input.protectedPaths,
-          cleanupRunId: input.cleanupRunId,
-          repository: input.repository,
-          baseCommitSha: input.baseCommitSha,
-          patch: input.patch,
-          workDir: input.workDir,
-        });
-        if (direct.status === "passed") {
-          return {
-            ...direct,
-            attempt: {
-              ...attempt,
-              stdout: `${attempt.stdout}\n${direct.attempt?.stdout ?? ""}`.trim(),
-              stderr: `git apply --check failed; content-integrity validation passed. Git: ${getGitVersion() ?? "unknown"}`,
-            },
-            gitCliAvailable,
-          };
-        }
-      }
       return {
         status: "failed",
         error: parsed.message || "git apply --check failed.",
@@ -632,6 +627,11 @@ export async function validateCanonicalPatch(
         attempt,
         persistedPatchPath,
         gitCliAvailable,
+        gitPatchValidation: {
+          status: "failed",
+          failureCode: "GIT_PATCH_INVALID",
+          error: parsed.message || "git apply --check failed.",
+        },
       };
     }
 
@@ -751,6 +751,8 @@ export async function validateCanonicalPatch(
       persistedPatchPath,
       patchGenerationMethod: "git-cli",
       gitCliAvailable: true,
+      gitPatchValidation: { status: "passed" },
+      contentIntegrityValidation: { status: "skipped" },
     };
   } catch (err) {
     return {

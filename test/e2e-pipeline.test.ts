@@ -134,11 +134,15 @@ async function run() {
       cleanupRunId: "test-blocked-install",
     });
     assert.ok(
-      verification.checks.some((c) => c.name === "dependency install"),
+      verification.checks.some((c) => c.name.includes("dependency install")),
       "repository verification runs dependency install as a separate stage"
     );
-    if (verification.status === "blocked") {
-      assert.equal(verification.failureCode, "DEPENDENCY_INSTALL_FAILED");
+    if (verification.status === "blocked" || verification.status === "baseline_blocked") {
+      assert.ok(
+        verification.failureCode === "DEPENDENCY_INSTALL_FAILED" ||
+          verification.failureCode === "BASELINE_BUILD_FAILED" ||
+          verification.failureCode === "DECLARED_DEPENDENCY_NOT_INSTALLED"
+      );
     }
     await fs.rm(root, { recursive: true, force: true });
   });
@@ -507,12 +511,16 @@ async function run() {
       "expected npm install attempt when lockfile was patched"
     );
     assert.ok(
-      install.attempts.some((a) => a.command.includes("--legacy-peer-deps")),
-      "expected legacy-peer-deps on verification install"
+      install.attempts.some((a) => a.command.includes("--include=optional")),
+      "verification install must include optional deps for Next.js swc binaries"
     );
     assert.ok(
       !install.attempts.some((a) => a.command.includes("--omit=optional")),
-      "verification install must include optional deps for Next.js swc binaries"
+      "verification install must not omit optional deps"
+    );
+    assert.ok(
+      !install.attempts.some((a) => a.command.includes("--ignore-scripts")),
+      "verification install must not ignore lifecycle scripts"
     );
     await fs.rm(root, { recursive: true, force: true });
   });
@@ -574,7 +582,7 @@ async function run() {
       validatedEditCount: 2,
       safeDeleteCount: 1,
       requireVerificationForCleanupPr: true,
-      verificationStatus: "passed",
+      verificationStatus: "verified",
     });
     assert.equal(gates.canCreateSafePr, true);
   });

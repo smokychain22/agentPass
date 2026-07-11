@@ -50,7 +50,7 @@ interface RepoDietOperatorSectionProps {
   patchKit: PatchKitPayload | null;
   demoMode: boolean;
   requireVerificationForCleanupPr?: boolean;
-  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | null;
+  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | "verified" | "blocked" | null;
 }
 
 function InfoCard({
@@ -178,7 +178,7 @@ export function RepoDietOperatorSection({
   const repoVerificationStatus =
     verificationStatus ??
     (patchKit?.repositoryVerification?.status === "verified"
-      ? "passed"
+      ? "verified"
       : patchKit?.repositoryVerification?.status ?? null);
   const githubAccountConnected = Boolean(githubStatus?.connected);
   const repositoryReady = Boolean(preflight?.repositoryAuthorized);
@@ -436,7 +436,7 @@ export function RepoDietOperatorSection({
     if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
       return "No validated source changes — generate repairs first.";
     }
-    if (requireVerificationForCleanupPr && verificationStatus !== "passed") {
+    if (requireVerificationForCleanupPr && verificationStatus !== "verified") {
       return "Run verification on the Verify tab first.";
     }
     if (!repositoryReady && !needsManualToken && !useDemoAuth) {
@@ -740,7 +740,7 @@ export function RepoDietOperatorSection({
             </div>
           )}
 
-          {requireVerificationForCleanupPr && validatedChanges > 0 && patchValidated && verificationStatus !== "passed" && (
+          {requireVerificationForCleanupPr && validatedChanges > 0 && patchValidated && verificationStatus !== "verified" && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
               Cleanup PR requires verification to pass on the Verify tab before code changes can be delivered.
             </div>
