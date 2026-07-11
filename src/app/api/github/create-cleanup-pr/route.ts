@@ -52,6 +52,32 @@ export async function POST(request: Request) {
 
     if (
       body.mode !== "report_only" &&
+      (patchKit.summary.verifiedChanges ?? 0) === 0
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            patchKit.repositoryVerification?.status === "blocked"
+              ? "Repository verification is blocked — cleanup PR cannot be created yet."
+              : "No verified source changes in cleanup run.",
+        },
+        { status: 422 }
+      );
+    }
+
+    if (
+      body.mode !== "report_only" &&
+      patchKit.patchValidation?.status !== "passed"
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "Patch validation must pass before creating a cleanup PR." },
+        { status: 422 }
+      );
+    }
+
+    if (
+      body.mode !== "report_only" &&
       (patchKit.summary.validatedChanges ?? 0) === 0 &&
       (patchKit.validatedEdits?.length ?? 0) === 0
     ) {

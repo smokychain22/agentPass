@@ -6,7 +6,10 @@ import { RiskBadge } from "@/components/design-system/risk-badge";
 import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 
 function executionLabel(row: CandidateAuditRecord): { level: "safe" | "review" | "neutral"; text: string } {
-  if (row.retained) return { level: "safe", text: "verified" };
+  if (row.retained && row.patchValidated) return { level: "safe", text: "verified" };
+  if (row.retained || row.contentChanged || row.proposedSourceChanged || row.proposedDiffGenerated) {
+    return { level: "safe", text: "generated" };
+  }
   if (row.transformAttempted) {
     if (row.blockerCode === "transform_noop") return { level: "review", text: "no-op" };
     if (row.blockerCode === "diff_generation_failed") return { level: "review", text: "diff failed" };

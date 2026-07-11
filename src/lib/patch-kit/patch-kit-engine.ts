@@ -15,7 +15,7 @@ import {
   summarizeCleanupAttempts,
   type CandidateAuditRecord,
 } from "@/lib/execution/candidate-lifecycle";
-import { classifyFindingsForPatch } from "./safe-delete-classifier";
+import { classifyFindingsForPatchWithDiscovery } from "./safe-delete-discovery";
 import { filterFindingsBySelection } from "./filter-findings";
 import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
 import {
@@ -24,7 +24,13 @@ import {
 } from "./generate-cleanup-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces, buildEditsFromRetainedAttempts } from "./merge-patches";
-import { validateCleanupPatchInWorkspace, validateEditsForDelivery, patchHasApplyableOperations } from "./validate-patch";
+import { validateGeneratedPatchOnly, patchHasApplyableOperations } from "./validate-patch";
+import { runRepositoryVerification } from "./repository-verification";
+import { buildCleanupRunSummary } from "./cleanup-summary";
+import {
+  refreshRepositoryIdentityFromUrl,
+  applyRepositoryIdentity,
+} from "@/lib/github/refresh-repo-identity";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -201,14 +207,23 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
   const branch = body.branch ?? body.findings?.repo.branch;
 
   const workspace = await prepareRepoWorkspace(repoUrl, branch);
+  const cleanupRunId = `patchkit_${nanoid(12)}`;
 
   try {
-    const findings = body.findings
+    let findings = body.findings
       ? filterFindingsBySelection(body.findings, body.selectedFindingIds)
       : await runFindingsEngine(repoUrl, branch);
 
+    const identity = await refreshRepositoryIdentityFromUrl(repoUrl, branch);
+    if (identity) {
+      findings = applyRepositoryIdentity(findings, identity);
+    }
+
     const context = detectRepoContextFromFindings(findings);
-    const buckets = classifyFindingsForPatch(findings);
+    const { buckets, deletionProofs } = await classifyFindingsForPatchWithDiscovery(
+      workspace.rootDir,
+      findings
+    );
 
     const baselineRoot = path.join(workspace.workDir, "patch-baseline");
     await copyRepoBaseline(workspace.rootDir, baselineRoot);
@@ -260,24 +275,23 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cleanupResult.fixLoop.attempts.filter(
         (a) => Object.keys(a.modifiedSources ?? {}).length > 0
       ).length + safeDeleteCount;
-    let validatedChanges = retainedFixCount + safeDeleteCount;
-    let verifiedChanges = validatedChanges;
+
     const workspaceDeltaEdits = await collectEditsBetweenWorkspaces(baselineRoot, workspace.rootDir);
-    let validatedEdits =
+    let generatedEdits =
       workspaceDeltaEdits.length > 0
         ? workspaceDeltaEdits
         : buildEditsFromRetainedAttempts(cleanupResult.fixLoop.attempts);
 
     for (const rel of deletedPaths) {
-      if (!validatedEdits.some((e) => e.path === rel)) {
-        validatedEdits.push({ path: rel, content: "" });
+      if (!generatedEdits.some((e) => e.path === rel)) {
+        generatedEdits.push({ path: rel, content: "" });
       }
     }
-    validatedEdits = validatedEdits.filter(
+    generatedEdits = generatedEdits.filter(
       (e, i, arr) => arr.findIndex((x) => x.path === e.path) === i
     );
 
-    const changedPaths = validatedEdits.map((e) => e.path);
+    const changedPaths = generatedEdits.map((e) => e.path);
 
     const transformerResults = buildTransformerResults(
       compatibleFindings,
@@ -287,10 +301,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     let mergedPatch = EMPTY_CLEANUP_PATCH;
 
-    if (validatedEdits.length > 0) {
+    if (generatedEdits.length > 0) {
       const consolidated = await buildConsolidatedPatchFromEdits(
         baselineRoot,
-        validatedEdits,
+        generatedEdits,
         workspace.workDir
       );
       if (consolidated.patch && consolidated.patch !== EMPTY_CLEANUP_PATCH) {
@@ -303,72 +317,75 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       error?: string;
     };
 
-    if (validatedEdits.length === 0 && retainedFixCount === 0 && safeDeleteCount === 0) {
+    if (generatedEdits.length === 0 && retainedFixCount === 0 && safeDeleteCount === 0) {
       patchValidation = {
         status: "not_generated",
         error:
           cleanupResult.blockerBreakdown ??
           "No patch diff was generated — no source modifications passed dry-run and validation.",
       };
-    } else if (validatedEdits.length > 0) {
-      const deliveryValidation = await validateEditsForDelivery(baselineRoot, validatedEdits);
-      if (deliveryValidation.status === "passed") {
-        if (patchHasApplyableOperations(mergedPatch) && mergedPatch !== EMPTY_CLEANUP_PATCH) {
-          const validateRoot = path.join(workspace.workDir, "patch-validate");
-          await copyRepoBaseline(baselineRoot, validateRoot);
-          const gitValidation = await validateCleanupPatchInWorkspace(validateRoot, mergedPatch);
-          patchValidation = gitValidation;
-        } else {
-          patchValidation = { status: "passed" };
-        }
-      } else {
-        patchValidation = deliveryValidation;
-      }
-    } else if (!patchHasApplyableOperations(mergedPatch) || mergedPatch === EMPTY_CLEANUP_PATCH) {
+    } else if (
+      patchHasApplyableOperations(mergedPatch) &&
+      mergedPatch !== EMPTY_CLEANUP_PATCH
+    ) {
+      patchValidation = await validateGeneratedPatchOnly(baselineRoot, mergedPatch);
+    } else if (generatedEdits.length > 0) {
+      patchValidation = {
+        status: "failed",
+        error: "Generated edits did not produce an applyable unified patch.",
+      };
+    } else {
       patchValidation = {
         status: "not_generated",
         error: cleanupResult.blockerBreakdown ?? "No applyable patch operations.",
       };
-    } else {
-      const validateRoot = path.join(workspace.workDir, "patch-validate");
-      await copyRepoBaseline(baselineRoot, validateRoot);
-      patchValidation = await validateCleanupPatchInWorkspace(validateRoot, mergedPatch);
+    }
+
+    let validatedEdits: typeof generatedEdits = [];
+    let validatedChanges = 0;
+    let verifiedChanges = 0;
+
+    if (patchValidation.status === "passed" && generatedEdits.length > 0) {
+      validatedEdits = generatedEdits;
+      validatedChanges = generatedEdits.length;
+    }
+
+    const repositoryVerification = await runRepositoryVerification({
+      baselineRoot,
+      edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
+      cleanupRunId,
+      patch: mergedPatch,
+    });
+
+    if (repositoryVerification.status === "verified" && validatedChanges > 0) {
+      verifiedChanges = validatedChanges;
     }
 
     const deliveryReady =
       patchValidation.status === "passed" &&
-      (validatedEdits.length > 0 || safeDeleteCount > 0 || retainedFixCount > 0);
+      validatedChanges > 0 &&
+      repositoryVerification.status === "verified";
 
-    if (!deliveryReady) {
-      validatedChanges = 0;
-      verifiedChanges = 0;
-    } else {
-      validatedChanges = validatedEdits.length;
-      verifiedChanges = validatedEdits.length;
-    }
-
-    const filesEdited = validatedEdits.filter((e) => e.content !== "").length;
+    const filesEdited = validatedEdits.filter((e) => e.content !== "").length || generatedEdits.filter((e) => e.content !== "").length;
     const filesDeleted = deletedPaths.length;
     const filesAdded = 0;
     const blockerBreakdown = summarizeBlockers(candidateAudits);
     const attemptStats = summarizeCleanupAttempts(candidateAudits);
-    const blockerSummary = deliveryReady
-      ? `${validatedChanges} file change(s) validated and ready for cleanup PR (${retainedFixCount} fix attempt(s) retained${attemptStats.noop > 0 ? `, ${attemptStats.noop} no-op` : ""}).`
-      : patchValidation.error ??
-        cleanupResult.blockerBreakdown ??
-        formatBlockerBreakdown(candidateAudits);
-
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
       context,
       context.packageManager
     );
-    const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
-    const reportMd = generateReport(findings, buckets, context);
+    const blockerSummary = deliveryReady
+      ? `${verifiedChanges} change(s) verified and ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} patch-validated).`
+      : patchValidation.status === "passed" && repositoryVerification.status === "blocked"
+        ? `${generatedChanges} generated change(s); patch validation passed; repository verification blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
+        : patchValidation.error ??
+          repositoryVerification.error ??
+          cleanupResult.blockerBreakdown ??
+          formatBlockerBreakdown(candidateAudits);
 
-    const { added: linesAdded, removed: linesRemoved } = countDiffLines(mergedPatch);
-
-    const id = `patchkit_${nanoid(12)}`;
+    const id = cleanupRunId;
     const summary: PatchKitSummary = {
       safeDeleteCandidates: safeDeleteCount,
       supportedFixesDetected: transformerCompatible,
@@ -401,7 +418,42 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       blockerSummary,
     };
 
-    summary.proofLadder = buildProofLadderCounts({ findings, summary });
+    summary.proofLadder = buildProofLadderCounts({
+      findings,
+      summary,
+      verificationStatus:
+        repositoryVerification.status === "verified"
+          ? "passed"
+          : repositoryVerification.status === "blocked"
+            ? "partial"
+            : repositoryVerification.status === "failed"
+              ? "failed"
+              : "pending",
+    });
+
+    const cleanupRunSummary = buildCleanupRunSummary({
+      findings,
+      summary,
+      candidateAudits,
+      verification: repositoryVerification,
+    });
+    summary.proofLadder = {
+      ...summary.proofLadder,
+      eligible: cleanupRunSummary.eligible,
+      generated: cleanupRunSummary.generated,
+      validated: cleanupRunSummary.validated,
+      verified: cleanupRunSummary.verified,
+      delivered: cleanupRunSummary.delivered,
+      noop: cleanupRunSummary.noOp,
+      failed: cleanupRunSummary.failed,
+      notAttempted: cleanupRunSummary.notAttempted,
+      rejectedForSafety: cleanupRunSummary.reviewRequired + cleanupRunSummary.protected,
+    };
+
+    const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
+    const reportMd = generateReport(findings, buckets, context);
+
+    const { added: linesAdded, removed: linesRemoved } = countDiffLines(mergedPatch);
 
     const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
 
@@ -475,8 +527,22 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         findings,
         summary,
         patchLines: { added: linesAdded, removed: linesRemoved },
-        verificationStatus: "pending",
+        verificationStatus:
+          repositoryVerification.status === "verified"
+            ? "passed"
+            : repositoryVerification.status === "blocked"
+              ? "partial"
+              : repositoryVerification.status === "failed"
+                ? "failed"
+                : "pending",
       }),
+      repositoryVerification: {
+        status: repositoryVerification.status,
+        failureCode: repositoryVerification.failureCode,
+        error: repositoryVerification.error,
+      },
+      cleanupRunSummary,
+      deletionProofs,
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);

@@ -6,21 +6,27 @@ export interface OperatorPrGateInput {
   permissionsVerified: boolean;
   canCreateBranch: boolean;
   canCreatePullRequest: boolean;
+  canWriteContents?: boolean;
+  canWritePullRequests?: boolean;
   useDemoAuth: boolean;
   manualTokenReady: boolean;
   patchValidated: boolean;
+  generatedChanges: number;
   validatedChanges: number;
+  verifiedChanges: number;
   validatedEditCount: number;
   safeDeleteCount: number;
-  requireVerificationForCleanupPr: boolean;
-  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | null;
+  requireVerificationForCleanupPr?: boolean;
+  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | "verified" | "blocked" | null;
 }
 
 export function computeOperatorPrGates(input: OperatorPrGateInput) {
   const githubPrPermissionsReady =
     input.repositoryAuthorized &&
     (input.canCreateBranch !== false || input.permissionsVerified) &&
-    (input.canCreatePullRequest !== false || input.permissionsVerified);
+    (input.canCreatePullRequest !== false || input.permissionsVerified) &&
+    (input.canWriteContents !== false) &&
+    (input.canWritePullRequests !== false);
 
   const canCreateReportPr =
     !input.locked &&
@@ -28,14 +34,22 @@ export function computeOperatorPrGates(input: OperatorPrGateInput) {
     !input.preflightLoading &&
     !input.statusLoading;
 
-  const hasValidatedWork =
-    input.validatedChanges > 0 || input.validatedEditCount > 0 || input.safeDeleteCount > 0;
+  const verificationReady =
+    input.verificationStatus === "passed" ||
+    input.verificationStatus === "verified" ||
+    (!input.requireVerificationForCleanupPr && input.verifiedChanges > 0);
+
+  const hasVerifiedWork = input.verifiedChanges > 0;
+  const hasGeneratedWork = input.generatedChanges > 0;
 
   const canCreateSafePr =
     canCreateReportPr &&
-    hasValidatedWork &&
+    hasGeneratedWork &&
     input.patchValidated &&
-    (!input.requireVerificationForCleanupPr || input.verificationStatus === "passed");
+    input.validatedChanges > 0 &&
+    hasVerifiedWork &&
+    verificationReady &&
+    githubPrPermissionsReady;
 
   return { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr };
 }

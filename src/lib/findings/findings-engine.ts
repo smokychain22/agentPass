@@ -27,6 +27,10 @@ import {
 import { collectMirrorPrefixes } from "@/lib/repository-model/mirror-paths";
 import type { FindingsPayload, Finding } from "./types";
 import type { FindingsJobStage } from "@/lib/jobs/types";
+import {
+  refreshRepositoryIdentityFromUrl,
+  applyRepositoryIdentity,
+} from "@/lib/github/refresh-repo-identity";
 
 export type FindingsStageCallback = (stage: FindingsJobStage) => void;
 
@@ -197,6 +201,11 @@ export async function runFindingsEngine(
       primaryProjectRoot: primaryRoot || ".",
       excludedProjectRoots: mirrorPrefixes,
     };
+
+    const identity = await refreshRepositoryIdentityFromUrl(repoUrl, branch ?? workspace.repo.branch);
+    if (identity) {
+      payload = applyRepositoryIdentity(payload, identity);
+    }
 
     onStage?.("complete");
     return payload;

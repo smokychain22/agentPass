@@ -170,9 +170,16 @@ export function RepoDietOperatorSection({
   }, [router]);
 
   const safeCount = patchKit?.summary.safeDeleteCandidates ?? 0;
+  const generatedChanges = patchKit?.summary.generatedChanges ?? 0;
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
+  const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const locked = !findings || !patchKit;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
+  const repoVerificationStatus =
+    verificationStatus ??
+    (patchKit?.repositoryVerification?.status === "verified"
+      ? "passed"
+      : patchKit?.repositoryVerification?.status ?? null);
   const githubAccountConnected = Boolean(githubStatus?.connected);
   const repositoryReady = Boolean(preflight?.repositoryAuthorized);
   const accessSyncing =
@@ -188,14 +195,20 @@ export function RepoDietOperatorSection({
     permissionsVerified: Boolean(preflight?.permissionsVerified),
     canCreateBranch: preflight?.canCreateBranch ?? false,
     canCreatePullRequest: preflight?.canCreatePullRequest ?? false,
+    canWriteContents:
+      preflight?.developer?.contentsPermission === "write" || preflight?.permissionsVerified,
+    canWritePullRequests:
+      preflight?.developer?.pullRequestsPermission === "write" || preflight?.permissionsVerified,
     useDemoAuth,
     manualTokenReady,
     patchValidated,
+    generatedChanges,
     validatedChanges,
+    verifiedChanges,
     validatedEditCount: patchKit?.validatedEdits?.length ?? 0,
     safeDeleteCount: safeCount,
-    requireVerificationForCleanupPr,
-    verificationStatus,
+    requireVerificationForCleanupPr: true,
+    verificationStatus: repoVerificationStatus,
   });
   const { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr } = operatorGates;
 

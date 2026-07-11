@@ -6,11 +6,26 @@ import type { PackageManager } from "@/lib/scanner/types";
 
 const INSTALL_TIMEOUT_MS = 180_000;
 const MAX_ATTEMPTS = 4;
+const CACHE_RETRY_MAX = 2;
 
 export interface WorkspaceInstallResult {
   installed: boolean;
   partial?: boolean;
   reason?: string;
+  command?: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface InstallAttemptRecord {
+  command: string;
+  attempt: number;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
 }
 
 function summarize(text: string, max = 280): string {
@@ -25,7 +40,17 @@ function summarize(text: string, max = 280): string {
   return source.length > max ? `${source.slice(0, max)}…` : source;
 }
 
-function installEnv(): NodeJS.ProcessEnv {
+function isIntegrityError(stderr: string, stdout: string): boolean {
+  const text = `${stderr}\n${stdout}`.toLowerCase();
+  return (
+    text.includes("eintegrity") ||
+    text.includes("tarball") ||
+    text.includes("checksum") ||
+    text.includes("corrupt")
+  );
+}
+
+function installEnv(cacheDir?: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     CI: "true",
@@ -37,26 +62,39 @@ function installEnv(): NodeJS.ProcessEnv {
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000",
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000",
     NPM_CONFIG_PROGRESS: "false",
+    ...(cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {}),
   };
 }
 
-function npmInstallVariants(lockfilePresent: boolean): string[][] {
-  const base = [
-    "install",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--legacy-peer-deps",
-  ];
-  const variants: string[][] = [["npm", ...base]];
+function npmInstallVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
+  const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
   if (lockfilePresent) {
-    variants.push(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--legacy-peer-deps"]);
+    return [
+      [
+        "npm",
+        "ci",
+        "--prefer-online",
+        "--no-audit",
+        "--no-fund",
+        "--ignore-scripts",
+        ...cacheFlag,
+      ],
+    ];
   }
-  variants.push(["npm", ...base, "--force"]);
-  return variants;
+  return [
+    [
+      "npm",
+      "install",
+      "--prefer-online",
+      "--no-audit",
+      "--no-fund",
+      "--ignore-scripts",
+      ...cacheFlag,
+    ],
+  ];
 }
 
-function installVariants(pm: PackageManager, lockfilePresent: boolean): string[][] {
+function installVariants(pm: PackageManager, lockfilePresent: boolean, cacheDir?: string): string[][] {
   switch (pm) {
     case "pnpm":
       return [
@@ -69,11 +107,9 @@ function installVariants(pm: PackageManager, lockfilePresent: boolean): string[]
         ["yarn", "install", "--ignore-scripts", "--force"],
       ];
     case "bun":
-      return [
-        ["bun", "install", "--ignore-scripts"],
-      ];
+      return [["bun", "install", "--ignore-scripts"]];
     default:
-      return npmInstallVariants(lockfilePresent);
+      return npmInstallVariants(lockfilePresent, cacheDir);
   }
 }
 
@@ -109,52 +145,151 @@ async function lockfilePresent(rootDir: string): Promise<boolean> {
   return false;
 }
 
+async function hasNpmLockfile(rootDir: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(rootDir, "package-lock.json"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function clearInstallArtifacts(rootDir: string): Promise<void> {
   await fs.rm(path.join(rootDir, "node_modules"), { recursive: true, force: true }).catch(() => {});
+}
+
+function perRunCacheDir(cleanupRunId: string): string {
+  const safe = cleanupRunId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join("/tmp/repodiet-npm-cache", safe);
+}
+
+async function recreateCacheDir(cacheDir: string): Promise<void> {
+  await fs.rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  await fs.mkdir(cacheDir, { recursive: true });
 }
 
 export async function ensureWorkspaceDependencies(
   rootDir: string
 ): Promise<WorkspaceInstallResult> {
+  const result = await ensureWorkspaceDependenciesWithCache(rootDir, "default");
+  return result;
+}
+
+export async function ensureWorkspaceDependenciesWithCache(
+  rootDir: string,
+  cleanupRunId: string
+): Promise<WorkspaceInstallResult & { attempts: InstallAttemptRecord[] }> {
+  const attempts: InstallAttemptRecord[] = [];
+
   try {
     await fs.access(path.join(rootDir, "package.json"));
   } catch {
-    return { installed: false, reason: "No package.json in workspace." };
+    return {
+      installed: false,
+      reason: "No package.json in workspace.",
+      attempts,
+    };
   }
 
   if (await isWorkspaceDependencyReady(rootDir)) {
-    return { installed: true };
+    return { installed: true, attempts };
   }
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
   const hasLockfile = await lockfilePresent(rootDir);
-  const variants = installVariants(pm, hasLockfile);
+  const cacheDir = perRunCacheDir(cleanupRunId);
+  await recreateCacheDir(cacheDir);
+
+  const variants = installVariants(pm, hasLockfile, cacheDir);
   let lastReason = "install failed";
+  let lastCommand = variants[0]?.join(" ") ?? "npm install";
+  let lastExitCode: number | null = null;
+  let lastStdout = "";
+  let lastStderr = "";
+  let lastDurationMs = 0;
+  let integrityRetries = 0;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const command = variants[attempt % variants.length];
+    lastCommand = command.join(" ");
+    const t0 = Date.now();
     const result = await execa(command[0], command.slice(1), {
       cwd: rootDir,
       timeout: INSTALL_TIMEOUT_MS,
       reject: false,
-      env: installEnv(),
+      env: installEnv(cacheDir),
+    });
+    const durationMs = Date.now() - t0;
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+
+    attempts.push({
+      command: lastCommand,
+      attempt: attempt + 1,
+      exitCode: result.exitCode ?? null,
+      stdout: summarize(stdout, 2000),
+      stderr: summarize(stderr, 2000),
+      durationMs,
     });
 
     if (result.exitCode === 0 || (await isWorkspaceDependencyReady(rootDir))) {
       return {
         installed: true,
         partial: result.exitCode !== 0,
-        reason: result.exitCode !== 0 ? summarize(result.stderr || result.stdout || "") : undefined,
+        reason: result.exitCode !== 0 ? summarize(stderr || stdout || "") : undefined,
+        command: lastCommand,
+        exitCode: result.exitCode ?? 0,
+        durationMs,
+        stdout,
+        stderr,
+        attempts,
       };
     }
 
-    lastReason = summarize(result.stderr || result.stdout || "install failed");
+    lastReason = summarize(stderr || stdout || "install failed");
+    lastExitCode = result.exitCode ?? null;
+    lastStdout = stdout;
+    lastStderr = stderr;
+    lastDurationMs = durationMs;
+
+    if (
+      pm === "npm" &&
+      isIntegrityError(stderr, stdout) &&
+      integrityRetries < CACHE_RETRY_MAX
+    ) {
+      integrityRetries += 1;
+      await recreateCacheDir(cacheDir);
+      await clearInstallArtifacts(rootDir);
+      continue;
+    }
+
     await clearInstallArtifacts(rootDir);
   }
 
   if (await isWorkspaceDependencyReady(rootDir)) {
-    return { installed: true, partial: true, reason: lastReason };
+    return {
+      installed: true,
+      partial: true,
+      reason: lastReason,
+      command: lastCommand,
+      exitCode: lastExitCode,
+      durationMs: lastDurationMs,
+      stdout: lastStdout,
+      stderr: lastStderr,
+      attempts,
+    };
   }
 
-  return { installed: false, reason: lastReason };
+  return {
+    installed: false,
+    reason: lastReason,
+    command: lastCommand,
+    exitCode: lastExitCode,
+    durationMs: lastDurationMs,
+    stdout: lastStdout,
+    stderr: lastStderr,
+    attempts,
+  };
 }
+
+export { hasNpmLockfile };
