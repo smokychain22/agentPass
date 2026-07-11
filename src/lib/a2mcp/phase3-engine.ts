@@ -4,11 +4,15 @@ import {
   createExecutionReceipt,
   executeFreeProof,
   executeQuickCleanup,
-  runQuickCleanup,
   scanRepository,
   selectSafeFixes,
   verifyChanges,
 } from "@/lib/execution";
+import {
+  buildCleanupProof,
+  buildCleanupProofFromRun,
+  formatProofLadderSummary,
+} from "@/lib/execution/proof-ladder";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { phase1EligibilityReason, resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
@@ -274,18 +278,24 @@ export async function executeRunFreeSafeFix(
   }
   limitations.push("GitHub repository was not modified — isolated workspace only.");
 
+  const cleanupProof = buildCleanupProofFromRun({ findings, cleanup });
+
   return completeTask(
     taskId,
     "run_free_safe_fix",
     findings,
     {
       scanId: findings.scanId,
+      commitSha: findings.repo.commitSha ?? null,
       cleanupRunId: cleanup.id,
       finalDecision: cleanup.proof.finalDecision,
       changedFiles: cleanup.proof.changedFiles,
       unifiedDiff: cleanup.unifiedDiff,
       fixLoop: cleanup.fixLoop,
       stateTransitions: cleanup.stateTransitions,
+      cleanupProof,
+      proofLadder: cleanupProof.ladder,
+      outcomeSummary: formatProofLadderSummary(cleanupProof.ladder),
     },
     limitations,
     cleanup.signedReceipt ?? cleanup.receipt
@@ -301,7 +311,7 @@ export async function executeRunQuickCleanup(
   const cleanup = await executeQuickCleanup(findings, { findingIds: input.findingIds });
 
   const limitations = [
-    "Quick Cleanup uses the same verified fix engine as free proof (up to five retained fixes).",
+    "Quick Cleanup runs every eligible transformer, validates a consolidated patch, and prepares a review-ready PR.",
     "GitHub repository was not modified — isolated workspace only.",
   ];
   if (!input.quoteId) {
@@ -312,6 +322,7 @@ export async function executeRunQuickCleanup(
   }
 
   const signed = createExecutionReceipt(cleanup.receipt);
+  const cleanupProof = buildCleanupProofFromRun({ findings, cleanup });
 
   return completeTask(
     taskId,
@@ -319,6 +330,7 @@ export async function executeRunQuickCleanup(
     findings,
     {
       scanId: findings.scanId,
+      commitSha: findings.repo.commitSha ?? null,
       cleanupRunId: cleanup.id,
       finalDecision: cleanup.proof.finalDecision,
       changedFiles: cleanup.proof.changedFiles,
@@ -326,6 +338,9 @@ export async function executeRunQuickCleanup(
       fixLoop: cleanup.fixLoop,
       healthImpact: cleanup.healthImpact,
       stateTransitions: cleanup.stateTransitions,
+      cleanupProof,
+      proofLadder: cleanupProof.ladder,
+      outcomeSummary: formatProofLadderSummary(cleanupProof.ladder),
     },
     limitations,
     signed
@@ -420,6 +435,20 @@ export async function executeCreateCleanupPrPhase3(
     githubToken: input.githubToken,
   });
 
+  const pullRequestUrl = pr.data.pullRequest.url;
+  const patchKit = input.patchKit as import("@/lib/patch-kit/types").PatchKitPayload | undefined;
+  const cleanupProof =
+    patchKit?.cleanupProof ??
+    (patchKit?.summary
+      ? buildCleanupProof({
+          findings,
+          summary: patchKit.summary,
+          verificationStatus:
+            patchKit.patchValidation?.status === "passed" ? "passed" : "partial",
+          pullRequestUrl,
+        })
+      : undefined);
+
   const receipt = createExecutionReceipt({
     taskId,
     repository: `${findings.repo.owner}/${findings.repo.name}`,
@@ -427,7 +456,7 @@ export async function executeCreateCleanupPrPhase3(
     findingIds: [],
     patchHash: "sha256:pr",
     verificationHash: "sha256:pr",
-    status: "partial",
+    status: pullRequestUrl ? "verified" : "partial",
     timestamp: new Date().toISOString(),
   });
 
@@ -436,10 +465,18 @@ export async function executeCreateCleanupPrPhase3(
     "create_cleanup_pr",
     findings,
     {
+      scanId: findings.scanId,
+      commitSha: findings.repo.commitSha ?? null,
       pullRequest: pr.data.pullRequest,
+      pullRequestUrl,
       repo: pr.data.repo,
       actionSummary: pr.data.actionSummary,
       policy: pr.data.policy,
+      cleanupProof: cleanupProof
+        ? { ...cleanupProof, pullRequestUrl, verificationStatus: "passed" as const }
+        : undefined,
+      proofLadder: cleanupProof?.ladder,
+      outcomeSummary: cleanupProof ? formatProofLadderSummary(cleanupProof.ladder) : undefined,
     },
     pr.warnings ?? ["Requires GitHub App installation or token for live PR creation."],
     receipt

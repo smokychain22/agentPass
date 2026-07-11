@@ -59,70 +59,72 @@ async function resolvePatchKit(
   });
 }
 
-const PR_TITLE = "RepoDiet: review-first cleanup bundle";
+const PR_TITLE_PREFIX = "RepoDiet: repair";
 
 function buildCleanupBranchName(): string {
   const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   return `repodiet/cleanup-${ymd}-${nanoid(6)}`;
 }
 
+function buildPrTitle(validatedEdits: number, filesDeleted: number): string {
+  const total = validatedEdits + filesDeleted;
+  if (total <= 0) return `${PR_TITLE_PREFIX} cleanup bundle`;
+  return `${PR_TITLE_PREFIX} ${total} verified repository issue${total === 1 ? "" : "s"}`;
+}
+
 function buildPrBody(
   mode: CleanupPrMode,
   safePaths: string[],
   findings: FindingsPayload,
-  buckets: ClassifiedBuckets
+  buckets: ClassifiedBuckets,
+  patchKit: PatchKitPayload,
+  validatedEditPaths: string[]
 ): string {
   const s = findings.summary;
+  const pk = patchKit.summary;
   const lines = [
-    "## RepoDiet Operator cleanup PR",
+    "## RepoDiet cleanup pull request",
     "",
-    "This pull request was opened by [RepoDiet Operator](https://github.com/smokychain22/agentPass).",
+    "This pull request contains **real source edits and/or deletions** produced by RepoDiet's deterministic repair engine.",
     "",
-    "> **RepoDiet did not push to main or merge this PR.** You review and merge.",
+    "> RepoDiet did not push to main or merge this PR. You review and merge.",
     "",
-    "### Findings summary",
-    `- Duplicate clusters: **${s.duplicateClusters ?? 0}**`,
-    `- Unused files: **${s.unusedFiles ?? 0}**`,
-    `- Safe candidates: **${buckets.safeDelete.length}**`,
-    `- Review-first items: **${buckets.reviewFirst.length}**`,
-    `- Do-not-touch protected: **${buckets.doNotTouch.length}**`,
+    "### Scanned repository",
+    `- Commit: \`${findings.repo.commitSha ?? "unknown"}\``,
+    `- Branch: \`${findings.repo.branch}\``,
+    `- Project root: \`${findings.repositoryModel?.primaryProjectRoot ?? "."}\``,
     "",
-    "### Mode",
-    `- \`${mode}\``,
-    "",
-    "### Action summary",
-    `- Safe candidates applied: **${mode === "safe_only" ? safePaths.length : 0}**`,
-    `- Review-first items skipped: **${buckets.reviewFirst.length}**`,
-    `- Do-not-touch items protected: **${buckets.doNotTouch.length}**`,
-    "",
-    "### Regression checklist",
-    "Run every check in `repodiet/regression-checklist.md` before merging.",
-    "",
-    "### Safety policy",
-    "- No direct pushes to the default branch",
-    "- Human merge required — RepoDiet never merges PRs",
-    "- Review-first and do-not-touch findings were not deleted",
-    "- Routes, configs, env files, lockfiles, workflows, and public assets remain protected",
-    "",
-    "### Artifacts added",
-    "- `repodiet/repodiet-report.md`",
-    "- `repodiet/regression-checklist.md`",
-    "- `repodiet/cursor-prompt.md`",
-    "- `repodiet/findings.json`",
-    "- `repodiet/patchkit-summary.json`",
+    "### Changes applied",
+    `- Files edited: **${pk.filesEdited ?? validatedEditPaths.length}**`,
+    `- Files deleted: **${pk.filesDeleted ?? safePaths.length}**`,
+    `- Lines added: **${pk.patchLines ? "see patch" : "—"}**`,
+    `- Patch validation: **${patchKit.patchValidation?.status ?? pk.patchValidationStatus ?? "unknown"}**`,
     "",
   ];
 
+  if (validatedEditPaths.length > 0) {
+    lines.push("### Edited files", "", ...validatedEditPaths.map((p) => `- \`${p}\``), "");
+  }
+
   if (mode === "safe_only" && safePaths.length > 0) {
-    lines.push("### Safe deletions", "", ...safePaths.map((p) => `- \`${p}\``), "");
+    lines.push("### Deleted files", "", ...safePaths.map((p) => `- \`${p}\``), "");
   }
 
   lines.push(
-    "### Before merging",
+    "### Findings summary",
+    `- Duplicate clusters: **${s.duplicateClusters ?? 0}**`,
+    `- Unused files: **${s.unusedFiles ?? 0}**`,
+    `- Review-first items (not auto-applied): **${buckets.reviewFirst.length}**`,
+    `- Protected items: **${buckets.doNotTouch.length}**`,
     "",
-    "1. Review every deleted file",
-    "2. Run the regression checklist in `repodiet/regression-checklist.md`",
-    "3. Merge only after build, lint, and route checks pass"
+    "### Safety policy",
+    "- No direct pushes to the default branch",
+    "- Human merge required",
+    "- Protected paths were not modified",
+    "",
+    "### Artifacts",
+    "Supporting cleanup artifacts are included under `repodiet/`.",
+    ""
   );
 
   return lines.join("\n");
@@ -164,10 +166,18 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const validatedChanges = patchKit.summary.validatedChanges ?? 0;
   const validatedEdits = patchKit.validatedEdits ?? [];
 
-  if (mode === "safe_only" && validatedChanges === 0 && safePaths.length === 0) {
+  if (mode === "safe_only" && validatedChanges === 0 && validatedEdits.length === 0 && safePaths.length === 0) {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
-      "No validated cleanup changes to apply. Use report_only mode to create an audit PR.",
+      "No validated cleanup changes to apply. Generate repairs in Quick Cleanup first, or use report_only mode for an audit PR.",
+      422
+    );
+  }
+
+  if (mode === "safe_only" && patchKit.patchValidation?.status !== "passed") {
+    throw new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      "Cleanup patch did not pass validation. Regenerate repairs before creating a cleanup PR.",
       422
     );
   }
@@ -246,13 +256,16 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     }
   }
 
+  const validatedEditPaths = validatedEdits.map((e) => e.path);
+  const prTitle = buildPrTitle(validatedEdits.length, safePaths.length);
+
   const pr = await client.createPullRequest(
     parsed.owner,
     parsed.repo,
-    PR_TITLE,
+    prTitle,
     cleanupBranch,
     baseBranch,
-    buildPrBody(mode, safePaths, findings, buckets)
+    buildPrBody(mode, safePaths, findings, buckets, patchKit, validatedEditPaths)
   );
 
   return {
@@ -267,7 +280,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       pullRequest: {
         url: pr.url,
         number: pr.number,
-        title: PR_TITLE,
+        title: prTitle,
       },
       actionSummary: {
         mode,

@@ -69,7 +69,7 @@ function resolveState(
     if (!quickCleanupAvailable) {
       return {
         state: "locked",
-        lockReason: "No supported deterministic fixes — review findings or create report-only PR",
+        lockReason: "No auto-fixable findings — duplicates and orphans need review; try report-only PR",
       };
     }
     if (quickCleanupState === "running") {
@@ -159,7 +159,7 @@ export function WorkflowRail({
     },
     {
       id: "patch",
-      label: "Quick Cleanup",
+      label: "Fix & PR",
       href: "/app?tab=patch",
       ...resolveState(
         "patch",

@@ -142,7 +142,7 @@ export function ScanTab() {
       <WorkspaceSection
         label="Repository connection"
         title="Scan a public repository"
-        description="RepoDiet downloads the archive ZIP and inspects structure — no clone, no mutation."
+        description="RepoDiet downloads the archive ZIP and maps structure (read-only). Quick Cleanup applies verified file edits and deletions in an isolated workspace, then opens a PR."
       />
 
       <Panel variant="elevated" padding="lg">
@@ -203,7 +203,8 @@ export function ScanTab() {
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              This step indexes the repository structure. Knip, jscpd, and Madge run during Findings analysis.
+              This step indexes the repository. Knip, jscpd, and Madge run on Findings; Quick Cleanup
+              applies fixes and opens a cleanup PR.
             </p>
           </div>
 

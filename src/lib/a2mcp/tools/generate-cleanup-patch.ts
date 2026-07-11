@@ -2,6 +2,7 @@ import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
 import { PATCH_TOOL_POLICY } from "@/lib/a2mcp/constants";
 import { ToolInputSchemas } from "@/lib/a2mcp/schemas";
 import { buildRepoUrl } from "@/lib/github/parse-github-url";
+import { formatProofLadderSummary } from "@/lib/execution/proof-ladder";
 
 export async function executeGenerateCleanupPatch(body: unknown) {
   const input = ToolInputSchemas.generateCleanupPatch(body);
@@ -11,10 +12,13 @@ export async function executeGenerateCleanupPatch(body: unknown) {
   });
 
   const warnings: string[] = [];
-  if (patchKit.summary.safeDeleteCandidates === 0) {
+  if (patchKit.summary.generatedChanges === 0) {
     warnings.push(
-      "No safe delete candidates were found. cleanup.patch contains no automatic delete operations."
+      "No supported source changes were generated. Review proof ladder and blocker summary before opening a cleanup PR."
     );
+  }
+  if (patchKit.summary.safeDeleteCandidates === 0 && patchKit.summary.generatedChanges === 0) {
+    warnings.push("cleanup.patch contains no automatic delete or edit operations.");
   }
 
   return {
@@ -24,15 +28,28 @@ export async function executeGenerateCleanupPatch(body: unknown) {
         name: patchKit.repo.name,
         branch: patchKit.repo.branch,
         url: buildRepoUrl(patchKit.repo.owner, patchKit.repo.name),
+        commitSha: patchKit.artifacts.findingsJson.repo.commitSha ?? null,
       },
+      scanId: patchKit.scanId,
+      patchKitId: patchKit.id,
+      cleanupProof: patchKit.cleanupProof,
+      proofLadder: patchKit.summary.proofLadder,
+      outcomeSummary: patchKit.cleanupProof
+        ? formatProofLadderSummary(patchKit.cleanupProof.ladder)
+        : undefined,
       summary: {
+        detectedSignals: patchKit.summary.detectedSignals,
+        eligibleTransformations: patchKit.summary.eligibleFindings,
+        attemptedTransformations: patchKit.summary.attemptedTransformations,
+        generatedChanges: patchKit.summary.generatedChanges,
+        validatedChanges: patchKit.summary.validatedChanges,
+        verifiedChanges: patchKit.summary.verifiedChanges,
+        filesEdited: patchKit.summary.filesEdited,
+        filesDeleted: patchKit.summary.filesDeleted,
+        patchValidationStatus: patchKit.summary.patchValidationStatus,
         safeCandidates: patchKit.summary.safeDeleteCandidates,
-        rawReviewFindings: patchKit.summary.rawReviewFindings,
-        uniqueReviewItems: patchKit.summary.reviewFirstItems,
         reviewFirst: patchKit.summary.reviewFirstItems,
         doNotTouch: patchKit.summary.doNotTouchItems,
-        packageSuggestions: patchKit.summary.packageSuggestions,
-        bundleFiles: patchKit.summary.bundleFileCount,
       },
       artifacts: {
         repodietReportMd: patchKit.artifacts.reportMd,

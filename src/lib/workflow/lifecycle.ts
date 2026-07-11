@@ -24,6 +24,11 @@ export interface FindingLifecycleMeta {
 }
 
 export function evidenceGradeForFinding(finding: Finding): EvidenceGrade {
+  if (finding.evidenceBundle?.grade) {
+    const g = finding.evidenceBundle.grade;
+    if (g === "strong" || g === "moderate" || g === "weak") return g;
+    return "weak";
+  }
   if (finding.sourceMode === "native" && isActionableFinding(finding)) return "strong";
   if (finding.type === "unused_import" && finding.evidence.signals.some((s) => s.startsWith("symbol="))) {
     return finding.sourceMode === "heuristic" ? "moderate" : "strong";

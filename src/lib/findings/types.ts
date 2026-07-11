@@ -16,6 +16,9 @@ export type FindingSource =
   | "jscpd"
   | "madge"
   | "heuristic"
+  | "repodiet_import"
+  | "repodiet_exact_dup"
+  | "repodiet_hygiene"
   | "knip_fallback"
   | "jscpd_fallback"
   | "madge_fallback";
@@ -41,6 +44,32 @@ export interface ToolRunReport {
   diagnosticId?: string;
   error?: string;
   durationMs: number;
+  command?: string;
+  exitCode?: number | null;
+}
+
+export type AnalyzerAvailabilityStatus = "available" | "unavailable" | "failed";
+
+export interface AnalyzerState {
+  status: AnalyzerAvailabilityStatus;
+  tool: "knip" | "jscpd" | "madge" | "repodiet_heuristics";
+  version?: string;
+  command?: string;
+  exitCode?: number | null;
+  durationMs: number;
+  errorSummary?: string;
+}
+
+export interface FindingsDiagnostics {
+  fallbackFindings: Finding[];
+  excludedCounts: {
+    duplicates: number;
+    unusedFiles: number;
+    unusedDependencies: number;
+    unusedExports: number;
+    orphans: number;
+  };
+  analyzerErrors: Partial<Record<"knip" | "jscpd" | "madge", string>>;
 }
 
 export interface AnalyzerRunResult<T> {
@@ -69,6 +98,84 @@ export type FindingLifecycleState =
 
 export type EvidenceGrade = "strong" | "moderate" | "weak";
 
+export type FusionEvidenceGrade =
+  | "strong"
+  | "moderate"
+  | "weak"
+  | "contradictory"
+  | "insufficient";
+
+export type ClassificationState =
+  | "signal"
+  | "candidate"
+  | "corroborated"
+  | "supported"
+  | "review_required"
+  | "protected"
+  | "insufficient_evidence";
+
+export type ClassificationLabel =
+  | "potentially_unreferenced"
+  | "confirmed_unused"
+  | "eligible_for_removal"
+  | "potential_orphan"
+  | "exact_duplicate"
+  | "structural_duplicate"
+  | "near_duplicate"
+  | "unused_import_confirmed"
+  | "unused_dependency_suspected"
+  | "backup_archive_candidate"
+  | "stale_looking"
+  | "possible_issue"
+  | "protected"
+  | "review_required";
+
+export interface EvidenceItem {
+  channel: string;
+  source: string;
+  summary: string;
+  strength: "supporting" | "contradicting" | "neutral";
+}
+
+export interface EvidenceBundle {
+  analyzerEvidence: EvidenceItem[];
+  graphEvidence: EvidenceItem[];
+  frameworkEvidence: EvidenceItem[];
+  configurationEvidence: EvidenceItem[];
+  scriptEvidence: EvidenceItem[];
+  runtimeEvidence: EvidenceItem[];
+  gitEvidence: EvidenceItem[];
+  counterEvidence: EvidenceItem[];
+  unresolvedRisks: string[];
+  grade: FusionEvidenceGrade;
+  classificationState: ClassificationState;
+  classificationLabel: ClassificationLabel;
+  decisionReason: string;
+  autoFixAllowed: boolean;
+}
+
+export interface DeletionProof {
+  findingId: string;
+  filePath: string;
+  commitSha?: string;
+  whyBelievedUnnecessary: string;
+  analyzersAgreeing: string[];
+  entryPointsChecked: string[];
+  importsChecked: boolean;
+  dynamicReferencesChecked: boolean;
+  configsChecked: boolean;
+  scriptsChecked: boolean;
+  packageExportsChecked: boolean;
+  frameworkConventionsChecked: boolean;
+  protected: boolean;
+  protectionReason?: string;
+  gitHistoryNote?: string;
+  behaviorDependency?: string;
+  verificationRequired: string[];
+  evidenceGrade: FusionEvidenceGrade;
+  approvedForAutomaticDeletion: boolean;
+}
+
 export interface Finding {
   id: string;
   type: FindingType;
@@ -86,6 +193,10 @@ export interface Finding {
   evidence: FindingEvidence;
   lifecycleState?: FindingLifecycleState;
   evidenceGrade?: EvidenceGrade;
+  evidenceBundle?: EvidenceBundle;
+  deletionProof?: DeletionProof;
+  classificationState?: ClassificationState;
+  classificationLabel?: ClassificationLabel;
   supportedTransformer?: string | null;
   protected?: boolean;
   protectionReason?: string;
@@ -95,6 +206,8 @@ export interface Finding {
 
 export interface FindingsSummary {
   totalFindings: number;
+  /** Verified findings from successful analyzers only (strict mode). */
+  verifiedFindings?: number;
   duplicateClusters: number;
   unusedFiles: number;
   unusedDependencies: number;
@@ -106,7 +219,14 @@ export interface FindingsSummary {
   actionableFixes?: number;
   detectedFindings?: number;
   doNotTouch: number;
+  /** @deprecated Use eligibleFindings */
   supportedFixes?: number;
+  /** @deprecated Use eligibleFindings */
+  transformerCompatible?: number;
+  /** @deprecated Use transformedFindings */
+  dryRunPassed?: number;
+  eligibleFindings?: number;
+  transformedFindings?: number;
   reviewRequiredFindings?: number;
   protectedFindings?: number;
 }
@@ -150,6 +270,13 @@ export interface FindingsPayload {
     jscpd: ToolRunReport;
     madge: ToolRunReport;
   };
+  analyzerStates?: {
+    knip: AnalyzerState;
+    jscpd: AnalyzerState;
+    madge: AnalyzerState;
+    heuristics: AnalyzerState;
+  };
+  diagnostics?: FindingsDiagnostics;
 }
 
 export interface KnipRawReport {

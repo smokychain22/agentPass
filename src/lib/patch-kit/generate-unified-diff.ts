@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { nanoid } from "nanoid";
 import { execa } from "execa";
 import type { ClassifiedItem } from "./types";
 import { EMPTY_CLEANUP_PATCH } from "./generate-cleanup-patch";
@@ -89,4 +90,27 @@ export async function generateUnifiedDeletePatch(
     patch: `${header}\n${patch}\n`,
     deletedPaths,
   };
+}
+
+/** Preview delete patch on a copied workspace — does not modify the source root. */
+export async function previewUnifiedDeletePatch(
+  sourceRoot: string,
+  safeItems: ClassifiedItem[],
+  scratchDir: string
+): Promise<{ patch: string; deletedPaths: string[] }> {
+  if (safeItems.length === 0) {
+    return { patch: EMPTY_CLEANUP_PATCH, deletedPaths: [] };
+  }
+  const copyRoot = path.join(scratchDir, `delete-preview-${nanoid(8)}`);
+  await fs.cp(sourceRoot, copyRoot, { recursive: true });
+  try {
+    return await generateUnifiedDeletePatch(copyRoot, safeItems);
+  } finally {
+    await fs.rm(copyRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function copyRepoBaseline(sourceRoot: string, targetRoot: string): Promise<void> {
+  await fs.rm(targetRoot, { recursive: true, force: true }).catch(() => {});
+  await fs.cp(sourceRoot, targetRoot, { recursive: true });
 }

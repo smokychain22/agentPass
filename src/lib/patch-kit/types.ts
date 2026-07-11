@@ -1,5 +1,6 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { FrameworkName, PackageManager } from "@/lib/scanner/types";
+import type { CandidateAuditRecord, BlockerCode } from "@/lib/execution/candidate-lifecycle";
 
 export interface PatchKitGenerateBody {
   repoUrl: string;
@@ -26,8 +27,17 @@ export interface TransformerResult {
 
 export interface PatchKitSummary {
   safeDeleteCandidates: number;
-  /** Findings with a registered transformer (detected → supported). */
-  supportedFixesDetected: number;
+  /** @deprecated Use eligibleFindings */
+  supportedFixesDetected?: number;
+  /** @deprecated Use eligibleFindings */
+  transformerCompatible: number;
+  /** @deprecated Use transformedFindings */
+  dryRunPassed: number;
+  eligibleFindings?: number;
+  attemptedTransformations?: number;
+  noopTransformations?: number;
+  failedTransformations?: number;
+  notAttempted?: number;
   generatedChanges: number;
   validatedChanges: number;
   verifiedChanges: number;
@@ -44,6 +54,10 @@ export interface PatchKitSummary {
   patchValidationStatus?: "passed" | "failed" | "skipped" | "not_generated";
   deletedPaths?: string[];
   changedPaths?: string[];
+  blockerBreakdown?: Partial<Record<BlockerCode, number>>;
+  blockerSummary?: string;
+  detectedSignals?: number;
+  proofLadder?: import("@/lib/execution/proof-ladder").ProofLadderCounts;
 }
 
 export interface PatchKitArtifacts {
@@ -75,11 +89,13 @@ export interface PatchKitPayload {
     error?: string;
   };
   transformerResults?: TransformerResult[];
+  candidateAudits?: CandidateAuditRecord[];
   artifacts: PatchKitArtifacts;
   downloadUrl: string;
   zipBase64?: string;
   validatedEdits?: Array<{ path: string; content: string }>;
   changeManifest?: ChangeManifestEntry[];
+  cleanupProof?: import("@/lib/execution/proof-ladder").CleanupProof;
 }
 
 export interface PatchKitRepoContext {

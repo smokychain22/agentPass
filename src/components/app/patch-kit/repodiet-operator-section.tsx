@@ -129,22 +129,19 @@ export function RepoDietOperatorSection({
   const [summaryCopied, setSummaryCopied] = useState(false);
 
   const safeCount = patchKit?.summary.safeDeleteCandidates ?? 0;
-  const generatedChanges = patchKit?.summary.generatedChanges ?? 0;
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
-  const operatorLocked = !findings;
+  const locked = !findings || !patchKit;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const githubAccountConnected = Boolean(githubStatus?.connected);
   const repositoryReady = Boolean(preflight?.repositoryAuthorized);
   const canCreateReportPr =
-    !operatorLocked &&
+    !locked &&
     repositoryReady &&
     Boolean(preflight?.canCreateBranch) &&
     Boolean(preflight?.canCreatePullRequest);
   const canCreateSafePr =
     canCreateReportPr &&
-    Boolean(patchKit) &&
-    generatedChanges > 0 &&
-    validatedChanges > 0 &&
+    (validatedChanges > 0 || (patchKit?.validatedEdits?.length ?? 0) > 0 || safeCount > 0) &&
     patchValidated &&
     (!requireVerificationForCleanupPr || verificationStatus === "passed");
 
@@ -237,8 +234,7 @@ export function RepoDietOperatorSection({
   };
 
   const submit = async (mode: CleanupPrMode) => {
-    if (!findings) return;
-    if (mode === "safe_only" && !patchKit) return;
+    if (!findings || !patchKit) return;
 
     setLoading(true);
     setLoadingMode(mode);
@@ -252,7 +248,7 @@ export function RepoDietOperatorSection({
         demo: useDemoAuth,
         githubToken: showAdvancedToken && githubToken.trim() ? githubToken : undefined,
         findings,
-        patchKit: patchKit ?? undefined,
+        patchKit,
       });
       setResult(response);
     } catch (err) {
@@ -279,6 +275,31 @@ export function RepoDietOperatorSection({
 
   const needsManualToken =
     !useDemoAuth && !repositoryReady && showAdvancedToken && githubToken.trim();
+
+  const cleanupPrDisableReason = useMemo(() => {
+    if (locked) return "Run Quick Cleanup first.";
+    if (!patchValidated) return "Patch validation must pass before creating a cleanup PR.";
+    if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
+      return "No validated source changes — generate repairs first.";
+    }
+    if (requireVerificationForCleanupPr && verificationStatus !== "passed") {
+      return "Run verification on the Verify tab first.";
+    }
+    if (!repositoryReady && !needsManualToken) {
+      return "Grant GitHub repository access first.";
+    }
+    return null;
+  }, [
+    locked,
+    patchValidated,
+    validatedChanges,
+    patchKit?.validatedEdits?.length,
+    safeCount,
+    requireVerificationForCleanupPr,
+    verificationStatus,
+    repositoryReady,
+    needsManualToken,
+  ]);
 
   const repositoryOwner = preflight?.repositoryOwner ?? repositoryFullName.split("/")[0] ?? "";
   const installationOwner = preflight?.installationOwner ?? githubStatus?.account?.login;
@@ -308,7 +329,7 @@ export function RepoDietOperatorSection({
             RepoDiet never pushes to main.
           </p>
         </div>
-        {operatorLocked && (
+        {locked && (
           <Badge variant="muted" className="gap-1.5 font-mono text-[10px]">
             <Lock className="h-3 w-3" />
             Locked
@@ -316,15 +337,15 @@ export function RepoDietOperatorSection({
         )}
       </div>
 
-      {operatorLocked ? (
+      {locked ? (
         <Card className="border-dashed border-border bg-card/30">
           <CardContent className="flex items-start gap-3 py-6">
             <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <div>
-              <p className="text-sm font-medium">Run Findings first</p>
+              <p className="text-sm font-medium">Run Findings + Quick Cleanup first</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Complete findings analysis to unlock RepoDiet Operator. Report-only PRs require
-                findings; cleanup PRs require validated changes from Quick Cleanup.
+                Generate your cleanup bundle above. RepoDiet Operator unlocks after findings and
+                artifacts are ready.
               </p>
             </div>
           </CardContent>
@@ -459,20 +480,19 @@ export function RepoDietOperatorSection({
 
             <InfoCard title="Validated Changes">
               <p className="font-mono text-2xl font-semibold text-signal">{validatedChanges}</p>
-              <p className="font-mono text-xs text-muted-foreground">
-                Generated: {generatedChanges}
-              </p>
-              {canCreateSafePr ? (
+              {validatedChanges > 0 && patchValidated ? (
                 <p className="text-signal">Ready to create cleanup PR.</p>
-              ) : patchKit?.summary.supportedFixesDetected ? (
+              ) : (patchKit?.summary.eligibleFindings ?? patchKit?.summary.transformerCompatible) ? (
                 <p>
-                  {patchKit.summary.supportedFixesDetected} supported finding(s) detected;{" "}
+                  {patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible}{" "}
+                  eligible; {patchKit.summary.attemptedTransformations ?? 0} attempted;{" "}
+                  {patchKit.summary.generatedChanges ?? 0} generated;{" "}
                   {validatedChanges > 0
                     ? "patch validation must pass before cleanup PR."
-                    : "no validated changes yet."}
+                    : "none verified yet."}
                 </p>
               ) : (
-                <p>Cleanup PR unavailable. Create a report-only PR instead.</p>
+                <p>Safe cleanup PR unavailable. Create a report-only PR instead.</p>
               )}
             </InfoCard>
 
@@ -525,11 +545,19 @@ export function RepoDietOperatorSection({
             </details>
           )}
 
+          {cleanupPrDisableReason && !canCreateSafePr && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
+              {cleanupPrDisableReason}
+            </div>
+          )}
+
           {validatedChanges === 0 && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
-              {patchKit?.summary.supportedFixesDetected
-                ? `RepoDiet detected ${patchKit.summary.supportedFixesDetected} supported finding(s), but none passed validation yet. You can create a report-only PR with cleanup artifacts.`
-                : "No validated code changes were generated. RepoDiet can create a report-only PR with findings and cleanup artifacts."}
+              {patchKit?.summary.blockerSummary
+                ? patchKit.summary.blockerSummary
+                : (patchKit?.summary.eligibleFindings ?? patchKit?.summary.transformerCompatible ?? 0) > 0
+                  ? `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible finding(s); ${patchKit.summary.attemptedTransformations ?? 0} attempted; ${patchKit.summary.generatedChanges ?? 0} generated; 0 verified changes retained. You can create a report-only PR with cleanup artifacts.`
+                  : "No validated code changes were generated. RepoDiet can create a report-only PR with cleanup artifacts instead."}
             </div>
           )}
 
@@ -543,13 +571,7 @@ export function RepoDietOperatorSection({
             <Button
               onClick={() => submit("safe_only")}
               disabled={loading || (!canCreateSafePr && !needsManualToken)}
-              title={
-                !canCreateSafePr
-                  ? "Requires generated and validated changes with passing patch validation"
-                  : requireVerificationForCleanupPr && verificationStatus !== "passed"
-                    ? "Run verification on the Verify tab first"
-                    : undefined
-              }
+              title={cleanupPrDisableReason ?? undefined}
             >
               {loading && loadingMode === "safe_only" ? (
                 <>

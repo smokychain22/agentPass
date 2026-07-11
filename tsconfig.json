@@ -19,5 +19,5 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "demo-repo", "demo-repos", "agentpass", "rogue", "scripts"]
+  "exclude": ["node_modules", "demo-repo", "demo-repos", "agentpass", "rogue", "scripts", "e2e-fixture"]
 }

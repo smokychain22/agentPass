@@ -6,13 +6,13 @@ import type { FindingsPayload } from "@/lib/findings/types";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { createCleanupPullRequest as createCleanupPr } from "@/lib/operator/create-cleanup-pr";
+import { isEligibleFinding } from "@/lib/findings/actionability-signals";
 import {
   listAutoFixEligible,
   FREE_CLEANUP_LIMIT,
   QUICK_CLEANUP_LIMIT,
 } from "@/lib/cleanup/eligibility";
 import { runFreeCleanupCore, type FreeCleanupResult } from "./run-cleanup-core";
-import { QUICK_CLEANUP_RETAINED_FIX_LIMIT } from "./constants";
 import { createTaskQuote as buildTaskQuote, type TaskOperation, type TaskQuote } from "./task-quote";
 import {
   signExecutionReceipt,
@@ -66,7 +66,7 @@ export function selectSafeFixes(findings: FindingsPayload, limit = QUICK_CLEANUP
 
 export async function generateChanges(
   findings: FindingsPayload,
-  options?: { findingIds?: string[]; maxFixes?: number }
+  options?: { findingIds?: string[]; maxFixes?: number; quickPatchMode?: boolean }
 ): Promise<FreeCleanupResult> {
   return runFreeCleanupCore(findings, options);
 }
@@ -145,9 +145,20 @@ export async function executeQuickCleanup(
   findings: FindingsPayload,
   options?: { findingIds?: string[] }
 ) {
+  const all = [
+    ...findings.duplicates,
+    ...findings.unused.files,
+    ...findings.unused.dependencies,
+    ...findings.unused.exports,
+    ...findings.orphans,
+    ...findings.slopSignals,
+  ];
+  const eligibleCount = all.filter(isEligibleFinding).length;
+
   const result = await generateChanges(findings, {
     findingIds: options?.findingIds,
-    maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+    maxFixes: Math.max(eligibleCount, 1),
+    quickPatchMode: true,
   });
 
   const repository = `${findings.repo.owner}/${findings.repo.name}`;
@@ -172,9 +183,20 @@ export async function runQuickCleanup(
   findings: FindingsPayload,
   selectedFindingIds?: string[]
 ) {
+  const all = [
+    ...findings.duplicates,
+    ...findings.unused.files,
+    ...findings.unused.dependencies,
+    ...findings.unused.exports,
+    ...findings.orphans,
+    ...findings.slopSignals,
+  ];
+  const eligibleCount = all.filter(isEligibleFinding).length;
+
   return runFreeCleanupCore(findings, {
     findingIds: selectedFindingIds,
-    maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+    maxFixes: Math.max(eligibleCount, 1),
+    quickPatchMode: true,
   });
 }
 

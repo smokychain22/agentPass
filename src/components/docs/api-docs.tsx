@@ -23,12 +23,12 @@ import { CodePanel } from "./code-panel";
 import { CopyButton } from "./copy-button";
 
 const SAFETY_POLICY = [
-  "RepoDiet never mutates repositories.",
-  "RepoDiet never asks for private GitHub tokens.",
-  "RepoDiet only scans public repos.",
+  "RepoDiet never pushes to your main branch.",
+  "RepoDiet never merges pull requests for you.",
+  "RepoDiet only works on public repos in the demo; PR mode uses authorized GitHub access.",
   "RepoDiet never reads or displays .env values.",
-  "RepoDiet never auto-deletes files.",
-  "Patch bundles are review-first artifacts.",
+  "RepoDiet applies fixes on a review branch — unused imports, safe file deletes, package removals.",
+  "Duplicates, routes, and protected paths require human review before any change.",
 ];
 
 const LIMITS = [

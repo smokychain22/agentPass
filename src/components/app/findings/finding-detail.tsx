@@ -88,6 +88,27 @@ export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetai
         {finding.packageName && (
           <DetailRow label="Package" value={<span className="font-mono">{finding.packageName}</span>} />
         )}
+        {finding.deletionProof && (
+          <DetailRow
+            label="Deletion proof"
+            value={
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                <li>Imports checked: {finding.deletionProof.importsChecked ? "yes" : "no"}</li>
+                <li>
+                  Dynamic refs checked:{" "}
+                  {finding.deletionProof.dynamicReferencesChecked ? "yes" : "no"}
+                </li>
+                <li>
+                  Verification required: {finding.deletionProof.verificationRequired.join(", ")}
+                </li>
+                <li>
+                  Auto-delete approved:{" "}
+                  {finding.deletionProof.approvedForAutomaticDeletion ? "yes" : "no"}
+                </li>
+              </ul>
+            }
+          />
+        )}
         <DetailRow label="Suggested action" value={patchPreview(finding)} />
         {finding.action === "do_not_touch" && (
           <DetailRow

@@ -17,11 +17,13 @@ import { RateLimitHttpError } from "@/lib/jobs/client";
 import type { RateLimitSnapshot } from "@/lib/security/rate-limit";
 import { useRateLimitCooldown } from "@/hooks/use-rate-limit-cooldown";
 import { PatchKitSummaryCards } from "./patch-kit/summary-cards";
+import { ProofLadderPanel } from "./patch-kit/proof-ladder-panel";
 import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
 import { RepoDietOperatorSection } from "./patch-kit/repodiet-operator-section";
 import { ChangeManifestTable } from "./patch-kit/change-manifest-table";
+import { CandidateAuditTable } from "./patch-kit/candidate-audit-table";
 import { TransformerResultsTable } from "./patch-kit/transformer-results-table";
 import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
@@ -87,7 +89,10 @@ export function PatchKitTab() {
 
   const supportedCount = useMemo(() => {
     if (!findings) return 0;
-    return flattenFindings(findings).filter(isActionableFinding).length;
+    return (
+      findings.summary.transformerCompatible ??
+      flattenFindings(findings).filter(isActionableFinding).length
+    );
   }, [findings]);
 
   const gates = useMemo(
@@ -97,9 +102,8 @@ export function PatchKitTab() {
         projectRootConfirmed: session.projectRootConfirmed,
         findings,
         patchKit,
-        quickCleanupRunning: isLoading,
       }),
-    [session.scanComplete, session.projectRootConfirmed, findings, patchKit, isLoading]
+    [session.scanComplete, session.projectRootConfirmed, findings, patchKit]
   );
 
   const canContinueToVerify = gates.verifyUnlocked;
@@ -136,13 +140,15 @@ export function PatchKitTab() {
 
       <WorkspaceSection
         label="Cleanup eligibility"
-        title="Quick Cleanup"
+        title="Fix & PR"
         description={
           supportedCount === 0
-            ? "RepoDiet found review findings, but none are currently supported for deterministic cleanup."
-            : patchKit?.summary.supportedFixesDetected
-              ? `${patchKit.summary.supportedFixesDetected} supported finding(s) detected. RepoDiet applies up to five deterministic transformations with validated diffs and verification.`
-              : `${supportedCount} eligible finding(s) for deterministic cleanup.`
+            ? "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available."
+            : patchKit?.summary.blockerSummary
+              ? patchKit.summary.blockerSummary
+              : patchKit?.summary.eligibleFindings
+                ? `${patchKit.summary.eligibleFindings} finding(s) ready for automatic fixes. RepoDiet edits source files, deletes safe dead code, removes packages — then opens a cleanup PR.`
+                : `${supportedCount} finding(s) eligible for automatic cleanup.`
         }
         actions={
           <>
@@ -215,7 +221,7 @@ export function PatchKitTab() {
       {!patchKit && !isLoading && !error && supportedCount > 0 && (
         <EmptyState
           icon={Package}
-          title="Detected supported findings ready"
+          title="Supported fixes ready"
           description="RepoDiet will generate real repository-specific changes, validate the patch with git apply --check, and package deliverables for review."
           action={{ label: "Generate Cleanup Changes", onClick: generate }}
         />
@@ -228,35 +234,49 @@ export function PatchKitTab() {
               variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
               message={
                 patchKit.patchValidation.status === "passed"
-                  ? `Patch validated with git apply --check (${patchKit.summary.validatedChanges} validated change(s), ${patchKit.summary.generatedChanges} generated).`
-                  : patchKit.patchValidation.status === "not_generated"
-                    ? `Patch validation: not generated — ${patchKit.patchValidation.error ?? "No patch diff was produced."}`
-                    : `Patch validation: ${patchKit.patchValidation.status}${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}`
+                  ? `${patchKit.summary.validatedChanges} file change(s) validated — click Create Cleanup PR below to apply edits on a review branch. Main is not modified until you merge.`
+                  : `Patch validation failed${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}. ${patchKit.summary.generatedChanges} source edit(s) were generated in an isolated workspace but could not be delivered safely. Click Regenerate Quick Cleanup to retry.`
               }
               dismissible={false}
             />
           )}
-          {gates.quickCleanupState === "blocked" &&
-            patchKit.summary.supportedFixesDetected > 0 && (
+          {patchKit.patchValidation?.status === "passed" &&
+            patchKit.summary.generatedChanges > 0 && (
               <FeedbackBanner
-                variant="warning"
-                message={`${patchKit.summary.supportedFixesDetected} supported finding(s) were detected, but change generation failed or produced no validated patch. Review transformer errors below or retry generation.`}
+                variant="info"
+                message="Changes exist only in RepoDiet's isolated workspace until you create a cleanup pull request. No files on GitHub have been modified yet."
                 dismissible={false}
               />
             )}
+          {patchKit.summary.generatedChanges === 0 && patchKit.summary.validatedChanges === 0 && (
+              <FeedbackBanner
+                variant="warning"
+                message="RepoDiet found issues, but no supported source changes were generated. Review blockers below or try Regenerate after re-scanning."
+                dismissible={false}
+              />
+            )}
+          {patchKit.summary.verifiedChanges === 0 &&
+            (patchKit.summary.generatedChanges ?? 0) > 0 &&
+            (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 && (
+              <FeedbackBanner
+                variant="warning"
+                message={
+                  patchKit.summary.blockerSummary ??
+                  `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible; ${patchKit.summary.attemptedTransformations ?? 0} attempted; ${patchKit.summary.generatedChanges ?? 0} generated; 0 verified changes retained.`
+                }
+                dismissible={false}
+              />
+            )}
+          {patchKit.summary.proofLadder && (
+            <ProofLadderPanel ladder={patchKit.summary.proofLadder} />
+          )}
+          <PatchKitSummaryCards summary={patchKit.summary} />
+          {patchKit.candidateAudits && patchKit.candidateAudits.length > 0 && (
+            <CandidateAuditTable audits={patchKit.candidateAudits} />
+          )}
           {patchKit.transformerResults && patchKit.transformerResults.length > 0 && (
             <TransformerResultsTable results={patchKit.transformerResults} />
           )}
-          {patchKit.summary.validatedChanges === 0 &&
-            patchKit.summary.supportedFixesDetected > 0 &&
-            gates.quickCleanupState !== "blocked" && (
-              <FeedbackBanner
-                variant="warning"
-                message={`${patchKit.summary.supportedFixesDetected} supported finding(s) were detected, but none were validated for this run. Review findings or retry Quick Cleanup.`}
-                dismissible={false}
-              />
-            )}
-          <PatchKitSummaryCards summary={patchKit.summary} />
           {patchKit.changeManifest && patchKit.changeManifest.length > 0 && (
             <ChangeManifestTable entries={patchKit.changeManifest} />
           )}
@@ -277,7 +297,7 @@ export function PatchKitTab() {
         findings={findings}
         patchKit={patchKit}
         demoMode={demoMode}
-        requireVerificationForCleanupPr
+        requireVerificationForCleanupPr={false}
       />
     </div>
   );

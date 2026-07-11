@@ -1,4 +1,5 @@
 import type { Finding, FindingAction, FindingType, FindingsPayload } from "@/lib/findings/types";
+import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { findingAnalyzerLabel } from "@/lib/findings/analyzer-status";
 import type { EvidenceGrade } from "@/lib/workflow/lifecycle";
 import { evidenceGradeForFinding } from "@/lib/workflow/lifecycle";
@@ -53,6 +54,28 @@ export function measurableEvidenceLines(finding: Finding): string[] {
   const grade = evidenceStrengthForFinding(finding);
   lines.push(evidenceStrengthLabel(grade));
 
+  if (finding.classificationLabel) {
+    const label = finding.classificationLabel.replace(/_/g, " ");
+    lines.push(`Classification: ${label}`);
+  }
+  if (finding.classificationState) {
+    lines.push(`Lifecycle state: ${finding.classificationState.replace(/_/g, " ")}`);
+  }
+  if (finding.evidenceBundle?.decisionReason) {
+    lines.push(finding.evidenceBundle.decisionReason);
+  }
+  if (finding.evidenceBundle?.counterEvidence.length) {
+    lines.push(
+      `Counter-evidence checked: ${finding.evidenceBundle.counterEvidence.length} item(s)`
+    );
+    for (const item of finding.evidenceBundle.counterEvidence.slice(0, 3)) {
+      lines.push(`  · ${item.summary}`);
+    }
+  }
+  if (finding.evidenceBundle?.unresolvedRisks.length) {
+    lines.push(`Unresolved risks: ${finding.evidenceBundle.unresolvedRisks.join(", ")}`);
+  }
+
   const { name, mode } = findingAnalyzerLabel(finding);
   lines.push(
     `Analyzer: ${name} · ${mode === "native" ? "Native" : mode === "fallback" ? "Fallback" : "Failed"}`
@@ -88,18 +111,34 @@ export function confidenceExplanation(confidence: number): string {
 
 export function patchPreview(finding: Finding): string {
   if (finding.action === "do_not_touch") {
-    return "No patch action — protected by RepoDiet policy.";
+    return "Protected — RepoDiet will not modify this path.";
+  }
+  if (isActionableFinding(finding)) {
+    switch (finding.type) {
+      case "unused_import":
+        return "Auto-fix: remove unused import from source file in cleanup PR.";
+      case "unused_dependency":
+        return "Auto-fix: remove package from package.json and update lockfile in cleanup PR.";
+      case "unused_file":
+      case "ai_slop_signal":
+        return "Auto-fix: delete temp/archive/backup file when path matches safe patterns.";
+      default:
+        return "Eligible for automatic cleanup in Quick Cleanup.";
+    }
   }
   if (finding.type === "duplicate_code") {
-    return "Included in review-first recommendations; merge/refactor before deletion.";
+    return "Review first — deduplicate or extract shared code manually; auto-merge not supported yet.";
+  }
+  if (finding.type === "orphan_pattern") {
+    return "Review first — confirm route/API is unused before removal.";
   }
   if (finding.type === "unused_dependency") {
-    return "Package removal suggestion in package-cleanup.md after verification.";
+    return "Review package removal — dynamic imports or config references may exist.";
   }
   if (finding.type === "unused_file" && finding.action === "safe_candidate") {
-    return "Candidate for developer review in cleanup patch bundle.";
+    return "Review file deletion — path does not match automatic temp-file patterns.";
   }
-  return "Included in conservative cleanup recommendations after confirmation.";
+  return "Documented for review in cleanup artifacts.";
 }
 
 export function formatFindingAnalyzerLabel(
@@ -119,6 +158,9 @@ export function sourceLabel(source: Finding["source"]): string {
     jscpd: "jscpd · Native",
     madge: "Madge · Native",
     heuristic: "RepoDiet heuristic · Native",
+    repodiet_import: "RepoDiet import analyzer · Native",
+    repodiet_exact_dup: "RepoDiet exact duplicate · Native",
+    repodiet_hygiene: "RepoDiet hygiene · Native",
     knip_fallback: "Internal import graph · Fallback",
     jscpd_fallback: "Internal duplicate detector · Fallback",
     madge_fallback: "Internal dependency graph · Fallback",

@@ -1,4 +1,5 @@
 import type { Finding, FindingType, ToolRunReport } from "./types";
+import { unavailableMessage } from "./analyzer-availability";
 
 export type AnalyzerDisplayMode = "native" | "fallback" | "failed";
 
@@ -135,18 +136,16 @@ export function findingsAnalyzerWarning(reports: {
 }): string | null {
   const lines: string[] = [];
   const entries = [
-    { key: "Knip", report: reports.knip },
-    { key: "jscpd", report: reports.jscpd },
-    { key: "Madge", report: reports.madge },
+    { key: "Knip", report: reports.knip, tool: "knip" as const },
+    { key: "jscpd", report: reports.jscpd, tool: "jscpd" as const },
+    { key: "Madge", report: reports.madge, tool: "madge" as const },
   ];
   for (const entry of entries) {
     const mode = analyzerModeFromReport(entry.report);
-    if (mode === "fallback") {
-      lines.push(`${entry.key} ran in fallback mode`);
-    } else if (mode === "failed") {
-      lines.push(`${entry.key} failed`);
+    if (mode === "fallback" || mode === "failed") {
+      lines.push(unavailableMessage(entry.tool));
     }
   }
   if (!lines.length) return null;
-  return `${lines.join("; ")}. Fallback findings are conservative estimates and are not eligible for automatic deletion without additional verification.`;
+  return lines.join(" ");
 }

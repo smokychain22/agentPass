@@ -1,12 +1,16 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
-import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import {
+  countEligibleFindings,
+  isActionableFinding,
+} from "@/lib/findings/actionability-signals";
 import { flattenFindings } from "@/lib/findings/client";
 
 export type QuickCleanupWorkflowState =
   | "inactive"
   | "running"
   | "blocked"
+  | "failed"
   | "complete";
 
 export interface WorkflowGates {
@@ -14,6 +18,12 @@ export interface WorkflowGates {
   projectRootConfirmed: boolean;
   findingsUnlocked: boolean;
   findingsReady: boolean;
+  eligibleFindingsCount: number;
+  transformedFindingsCount: number;
+  /** @deprecated */
+  transformerCompatibleCount: number;
+  /** @deprecated */
+  dryRunPassedCount: number;
   supportedFixCount: number;
   quickCleanupAvailable: boolean;
   quickCleanupState: QuickCleanupWorkflowState;
@@ -23,6 +33,7 @@ export interface WorkflowGates {
   verifiedChanges: number;
   patchValidated: boolean;
   verifyUnlocked: boolean;
+  verificationPassed: boolean;
   cleanupPrAvailable: boolean;
   reportOnlyPrAvailable: boolean;
 }
@@ -33,12 +44,16 @@ export function computeWorkflowGates(input: {
   findings: FindingsPayload | null;
   patchKit: PatchKitPayload | null;
   quickCleanupRunning?: boolean;
+  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | null;
 }): WorkflowGates {
   const findings = input.findings;
   const patchKit = input.patchKit;
   const projectRootConfirmed = input.projectRootConfirmed ?? true;
 
   const flat = findings ? flattenFindings(findings) : [];
+  const eligibleFindingsCount =
+    findings?.summary.eligibleFindings ?? countEligibleFindings(flat);
+  const transformedFindingsCount = findings?.summary.transformedFindings ?? 0;
   const supportedFixCount = flat.filter(isActionableFinding).length;
   const findingsReady = Boolean(findings);
   const findingsUnlocked = input.scanComplete && projectRootConfirmed;
@@ -48,19 +63,16 @@ export function computeWorkflowGates(input: {
   const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const patchKitReady = Boolean(patchKit?.id);
-  const detectedSupported =
-    patchKit?.summary.supportedFixesDetected ?? supportedFixCount;
+  const verificationPassed = input.verificationStatus === "passed";
 
   let quickCleanupState: QuickCleanupWorkflowState = "inactive";
   if (input.quickCleanupRunning) {
     quickCleanupState = "running";
   } else if (patchKitReady) {
-    if (generatedChanges > 0 && patchValidated) {
+    if (validatedChanges > 0 && patchValidated) {
       quickCleanupState = "complete";
-    } else if (detectedSupported > 0 && generatedChanges === 0) {
-      quickCleanupState = "blocked";
-    } else if (generatedChanges > 0) {
-      quickCleanupState = "blocked";
+    } else if (generatedChanges === 0 && validatedChanges === 0) {
+      quickCleanupState = "failed";
     } else {
       quickCleanupState = "blocked";
     }
@@ -71,8 +83,12 @@ export function computeWorkflowGates(input: {
     projectRootConfirmed,
     findingsUnlocked,
     findingsReady,
+    eligibleFindingsCount,
+    transformedFindingsCount,
+    transformerCompatibleCount: eligibleFindingsCount,
+    dryRunPassedCount: transformedFindingsCount,
     supportedFixCount,
-    quickCleanupAvailable: findingsReady && supportedFixCount > 0,
+    quickCleanupAvailable: findingsReady && eligibleFindingsCount > 0,
     quickCleanupState,
     patchKitReady,
     generatedChanges,
@@ -80,11 +96,13 @@ export function computeWorkflowGates(input: {
     verifiedChanges,
     patchValidated,
     verifyUnlocked: patchKitReady && patchValidated && validatedChanges > 0,
+    verificationPassed,
     cleanupPrAvailable:
       patchKitReady &&
-      generatedChanges > 0 &&
+      patchValidated &&
       validatedChanges > 0 &&
-      patchValidated,
+      generatedChanges > 0 &&
+      verificationPassed,
     reportOnlyPrAvailable: findingsReady,
   };
 }

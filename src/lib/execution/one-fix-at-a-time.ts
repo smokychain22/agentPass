@@ -94,9 +94,12 @@ function countDiffLines(diff: string): { added: number; removed: number } {
 export { countDiffLines };
 
 const PLUGIN_PRIORITY: Record<Phase1PluginId, number> = {
-  remove_temp_file: 0,
-  remove_unused_import: 1,
-  remove_unused_dependency: 2,
+  consolidate_exact_duplicate: 0,
+  remove_temp_file: 1,
+  remove_empty_file: 2,
+  remove_confirmed_unused_file: 3,
+  remove_unused_import: 4,
+  remove_unused_dependency: 5,
   review_only: 99,
 };
 
@@ -240,8 +243,8 @@ export async function runOneFixAtATimeLoop(
         eligibilityEvidence: buildEligibilityEvidence(finding),
         finalDecision: "skipped",
         productOutcome: "no_safe_action",
-        exactReason: "A verified fix was already retained.",
-        rejectionReason: "A verified fix was already retained.",
+        exactReason: `Retained fix limit (${maxFixes}) reached — remaining eligible findings were not processed.`,
+        rejectionReason: `Retained fix limit (${maxFixes}) reached — remaining eligible findings were not processed.`,
         rollbackStatus: "not_needed",
         checks: [],
       });
@@ -256,8 +259,8 @@ export async function runOneFixAtATimeLoop(
         eligibilityEvidence: buildEligibilityEvidence(finding),
         finalDecision: "skipped",
         productOutcome: "no_safe_action",
-        exactReason: `Attempt limit (${maxAttempts}) reached.`,
-        rejectionReason: `Attempt limit (${maxAttempts}) reached.`,
+        exactReason: `Attempt limit (${maxAttempts}) reached — remaining eligible findings were not processed.`,
+        rejectionReason: `Attempt limit (${maxAttempts}) reached — remaining eligible findings were not processed.`,
         rollbackStatus: "not_needed",
         checks: [],
       });

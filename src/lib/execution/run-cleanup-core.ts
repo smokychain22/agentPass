@@ -17,7 +17,7 @@ import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { runOneFixAtATimeLoop, countDiffLines } from "./one-fix-at-a-time";
 import {
   FREE_CANDIDATE_ATTEMPT_LIMIT,
-  QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+  MAX_STRATEGIES_PER_FINDING,
 } from "./constants";
 import { formatRejectionReason } from "./candidate-decision";
 import {
@@ -37,8 +37,15 @@ import { summarizeBaselineReport } from "./baseline-verification";
 import {
   resolvePhase1Plugin,
   isPhase1StructuralCandidate,
+  isPhase1AutoFix,
 } from "@/lib/execution/fix-plugins/phase1-plugins";
 import { enrichFindingsWithPreflight, isActionableFinding } from "@/lib/findings/enrich-preflight";
+import {
+  type CandidateAuditRecord,
+  auditFromPreflight,
+  formatBlockerBreakdown,
+  mergeExecutionIntoAudit,
+} from "./candidate-lifecycle";
 import { CleanupRunStateMachine, type CleanupStateTransition } from "./cleanup-run-state";
 
 export interface FileChange {
@@ -124,6 +131,8 @@ export interface FreeCleanupResult {
   };
   limitations: string[];
   verifiedLabel: string;
+  candidateAudits?: CandidateAuditRecord[];
+  blockerBreakdown?: string;
   receipt: ExecutionReceipt;
 }
 
@@ -198,9 +207,9 @@ export async function runFreeCleanupCore(
     selected = auto.length > 0 ? auto.slice(0, maxFixes) : picked.slice(0, maxFixes);
     mode = auto.length > 0 ? "auto_fix" : "review_plan";
   } else {
-    const autoPool = all.filter(isAutoFixEligible);
-    if (autoPool.length > 0) {
-      selected = autoPool;
+    const compatiblePool = all.filter(isActionableFinding);
+    if (compatiblePool.length > 0) {
+      selected = compatiblePool;
       mode = "auto_fix";
     } else {
       selected = listReviewPlanEligible(all).slice(0, maxFixes);
@@ -310,31 +319,37 @@ export async function runFreeCleanupCore(
       (f) => isPhase1StructuralCandidate(f) || isAutoFixEligible(f)
     );
     const preflightPool = structuralPool.length > 0 ? structuralPool : selected;
-    const alreadyPreflighted = preflightPool.every(
-      (f) =>
-        !isPhase1StructuralCandidate(f) ||
-        f.evidence.signals.some((s) => s.startsWith("classification="))
-    );
 
-    let loopCandidates = preflightPool;
-    if (!options?.quickPatchMode || !alreadyPreflighted) {
-      const { findings: repreflighted } = await enrichFindingsWithPreflight(
-        rootDir,
-        preflightPool
-      );
-      const actionableCandidates = repreflighted.filter(isActionableFinding);
-      loopCandidates =
-        actionableCandidates.length > 0 ? actionableCandidates : repreflighted;
-    } else {
-      loopCandidates = preflightPool.filter(isActionableFinding);
-      if (loopCandidates.length === 0) {
-        loopCandidates = preflightPool;
-      }
-    }
+    const { findings: repreflighted, preflights } = await enrichFindingsWithPreflight(
+      rootDir,
+      preflightPool
+    );
+    const repreflightActionable = repreflighted.filter(isActionableFinding);
+    const structuralActionable = preflightPool.filter(
+      (f) =>
+        isPhase1StructuralCandidate(f) &&
+        resolvePhase1Plugin(f).id !== "review_only" &&
+        !f.protected &&
+        f.action !== "do_not_touch"
+    );
+    const loopCandidates =
+      repreflightActionable.length > 0
+        ? repreflightActionable
+        : options?.quickPatchMode
+          ? structuralActionable
+          : [];
+
+    const attemptLimit = options?.quickPatchMode
+      ? Math.max(loopCandidates.length * MAX_STRATEGIES_PER_FINDING, loopCandidates.length)
+      : FREE_CANDIDATE_ATTEMPT_LIMIT;
+
+    const retainedLimit = options?.quickPatchMode
+      ? Math.max(loopCandidates.length, 1)
+      : maxFixes;
 
     const loop = await runOneFixAtATimeLoop(rootDir, loopCandidates, {
-      maxFixes,
-      maxAttempts: FREE_CANDIDATE_ATTEMPT_LIMIT,
+      maxFixes: retainedLimit,
+      maxAttempts: attemptLimit,
       stateMachine: sm,
       verificationLevel: options?.quickPatchMode ? "diff_only" : "full",
     });
@@ -380,10 +395,40 @@ export async function runFreeCleanupCore(
               rollbackStatus: "not_needed",
             }));
 
+    const candidateAudits: CandidateAuditRecord[] = preflightPool.map((finding) => {
+      const preflight = preflights.get(finding.id);
+      const attempt = loop.attempts.find((a) => a.finding.id === finding.id);
+      if (!preflight) {
+        return {
+          findingId: finding.id,
+          findingType: finding.type,
+          filePath: finding.files[0] ?? finding.packageName,
+          projectRoot: finding.projectRoot,
+          pluginId: resolvePhase1Plugin(finding).id,
+          strategyIds: [],
+          sourceFound: false,
+          sourceHashMatched: false,
+          scanEligible: false,
+          transformAttempted: false,
+          contentChanged: false,
+          dryRunSucceeded: false,
+          proposedSourceChanged: false,
+          proposedDiffGenerated: false,
+          patchValidated: false,
+          verificationSupported: false,
+          retained: false,
+          blockerCode: "plugin_strategy_missing",
+          blockerMessage: "Preflight was not run for this candidate.",
+        };
+      }
+      const audit = auditFromPreflight(finding, preflight, finding.projectRoot);
+      return mergeExecutionIntoAudit(audit, attempt);
+    });
+
+    const blockerBreakdown = formatBlockerBreakdown(candidateAudits);
+
     if (!retained && loop.attempts.length > 0) {
-      limitations.push(
-        `RepoDiet evaluated ${loop.attempts.length} candidate(s) but retained 0 verified change(s).`
-      );
+      limitations.push(blockerBreakdown);
     }
 
     const fileChanges: FileChange[] = loop.changedPaths.map((rel) => ({
@@ -496,6 +541,8 @@ export async function runFreeCleanupCore(
       },
       limitations,
       verifiedLabel: headlineReason,
+      candidateAudits,
+      blockerBreakdown,
       receipt,
     };
   } finally {

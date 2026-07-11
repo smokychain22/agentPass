@@ -7,6 +7,7 @@ import { jscpdCliPath } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { runDuplicateFallback } from "./fallback/duplicate-detector";
 import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
+import { analyzerChildEnv } from "./analyzer-child-env";
 
 export async function runJscpd(rootDir: string): Promise<AnalyzerRunResult<JscpdRawReport>> {
   return timedAnalyzer("jscpd", () => runJscpdInternal(rootDir));
@@ -52,7 +53,7 @@ async function runJscpdInternal(rootDir: string): Promise<AnalyzerRunResult<Jscp
         cwd: rootDir,
         timeout: TOOL_TIMEOUT_MS,
         reject: false,
-        env: { ...process.env, FORCE_COLOR: "0" },
+        env: analyzerChildEnv(),
       }
     );
 

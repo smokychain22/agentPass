@@ -3,6 +3,8 @@ import path from "node:path";
 import { execa } from "execa";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
+import { copyRepoBaseline } from "./generate-unified-diff";
+import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
 
 export interface PatchValidationResult {
   status: "passed" | "failed" | "skipped" | "not_generated";
@@ -45,6 +47,40 @@ async function gitBaseline(rootDir: string): Promise<void> {
     ],
     { cwd: rootDir, reject: false }
   );
+}
+
+export async function validateConsolidatedEditsInWorkspace(
+  baselineRoot: string,
+  edits: ConsolidatedEdit[]
+): Promise<PatchValidationResult> {
+  const deduped = dedupeConsolidatedEdits(edits);
+  if (deduped.length === 0) {
+    return { status: "skipped", error: "No consolidated edits to validate." };
+  }
+
+  const workspace = await createScanWorkspace("validate-edits");
+  const validateRoot = path.join(workspace.artifactsPath, "root");
+
+  try {
+    await copyRepoBaseline(baselineRoot, validateRoot);
+    for (const edit of deduped) {
+      const full = path.join(validateRoot, edit.path);
+      if (edit.content === "") {
+        await fs.rm(full, { force: true }).catch(() => {});
+        continue;
+      }
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, edit.content, "utf8");
+    }
+    return { status: "passed" };
+  } catch (err) {
+    return {
+      status: "failed",
+      error: err instanceof Error ? err.message : "Consolidated edit validation failed.",
+    };
+  } finally {
+    await removeWorkspace(workspace.root).catch(() => {});
+  }
 }
 
 export async function validateCleanupPatchInWorkspace(

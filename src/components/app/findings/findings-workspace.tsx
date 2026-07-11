@@ -248,7 +248,7 @@ export function FindingsWorkspace({
             aria-label="Close finding detail"
           />
           <div className="absolute inset-x-0 bottom-0 max-h-[85vh] overflow-y-auto rounded-t-xl border-t border-border/60 bg-[#05080D] p-4 scrollbar-thin">
-            <FindingDetail finding={selected} onClose={() => setMobileDetailOpen(false)} />
+            <FindingDetail finding={selected} rawToolReports={rawToolReports} onClose={() => setMobileDetailOpen(false)} />
           </div>
         </div>
       )}

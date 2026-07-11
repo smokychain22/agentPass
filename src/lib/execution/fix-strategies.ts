@@ -92,10 +92,52 @@ const TEMP_FILE_STRATEGIES: FixStrategy[] = [
   },
 ];
 
+const EMPTY_FILE_STRATEGIES: FixStrategy[] = [
+  {
+    id: "remove_file",
+    label: "Remove empty file",
+    description: "Delete whitespace-only file with no inbound references.",
+    transformationType: "file_delete",
+    requiredEvidence: ["empty_file=true", "inbound_refs=0"],
+    protectedConditions: ["framework_entry", "route"],
+    targetedChecks: ["import_graph"],
+    repositoryChecks: ["typecheck", "build"],
+  },
+];
+
+const CONFIRMED_UNUSED_FILE_STRATEGIES: FixStrategy[] = [
+  {
+    id: "remove_file",
+    label: "Remove confirmed unused file",
+    description: "Delete Knip-confirmed unused file after reference graph check.",
+    transformationType: "file_delete",
+    requiredEvidence: ["native_analyzer", "inbound_refs=0"],
+    protectedConditions: ["temp_path", "route", "dynamic_import"],
+    targetedChecks: ["import_graph"],
+    repositoryChecks: ["typecheck", "lint", "build"],
+  },
+];
+
+const EXACT_DUPLICATE_STRATEGIES: FixStrategy[] = [
+  {
+    id: "consolidate_to_canonical",
+    label: "Consolidate to canonical file",
+    description: "Rewrite imports and delete byte-identical duplicate file.",
+    transformationType: "duplicate_consolidation",
+    requiredEvidence: ["exact_file_duplicate=true", "content_hash=", "canonical=", "duplicate="],
+    protectedConditions: ["near_duplicate", "route_difference"],
+    targetedChecks: ["import_resolution", "typecheck"],
+    repositoryChecks: ["typecheck", "build"],
+  },
+];
+
 const STRATEGY_MAP: Partial<Record<Phase1PluginId, FixStrategy[]>> = {
   remove_unused_import: UNUSED_IMPORT_STRATEGIES,
   remove_unused_dependency: UNUSED_DEPENDENCY_STRATEGIES,
   remove_temp_file: TEMP_FILE_STRATEGIES,
+  remove_empty_file: EMPTY_FILE_STRATEGIES,
+  remove_confirmed_unused_file: CONFIRMED_UNUSED_FILE_STRATEGIES,
+  consolidate_exact_duplicate: EXACT_DUPLICATE_STRATEGIES,
 };
 
 export function listStrategiesForFinding(

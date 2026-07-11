@@ -7,17 +7,24 @@ import type { PackageManager } from "@/lib/scanner/types";
 import {
   removeUnusedSymbolFromImport,
   convertSymbolToTypeOnlyImport,
-  removeUnusedImportLine,
+  removeUnusedSymbolAtLine,
 } from "@/lib/findings/unused-import-detector";
+import { buildTextDiff } from "../fix-preflight";
 import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
-import { resolvePhase1Plugin, type Phase1PluginId } from "./phase1-plugins";
+import { resolvePhase1TransformPlugin, type Phase1PluginId } from "./phase1-plugins";
 import { defaultStrategyForPlugin } from "../fix-strategies";
 import {
   hashSource,
   validateTransformInvariants,
   type TransformAuditRecord,
 } from "../transform-audit";
+
+import {
+  applyConsolidateExactDuplicate,
+  applyRemoveConfirmedUnusedFile,
+  applyRemoveEmptyFile,
+} from "./apply-extra-transforms";
 
 export interface AppliedFix {
   pluginId: Phase1PluginId;
@@ -74,7 +81,9 @@ async function ensureGitBaseline(rootDir: string): Promise<void> {
 async function gitDiff(rootDir: string, paths?: string[]): Promise<string> {
   const args = ["diff", "--no-color", "HEAD", "--", ...(paths ?? [])];
   const diff = await execa("git", args, { cwd: rootDir, reject: false });
-  return diff.stdout?.trim() ?? "";
+  const out = diff.stdout ?? "";
+  if (!out.trim()) return "";
+  return out.endsWith("\n") ? out : `${out}\n`;
 }
 
 function uninstallCommand(pm: PackageManager, packageName: string): string[] {
@@ -132,6 +141,8 @@ async function applyRemoveUnusedImport(
     finding.evidence.summary;
   const symbol =
     finding.evidence.signals.find((s) => s.startsWith("symbol="))?.slice(7) ?? "";
+  const lineRaw = finding.evidence.signals.find((s) => s.startsWith("line="))?.slice(5);
+  const lineNumber = lineRaw ? Number(lineRaw) : undefined;
 
   const full = path.join(rootDir, rel);
   const original = await fs.readFile(full, "utf8");
@@ -152,6 +163,10 @@ async function applyRemoveUnusedImport(
     case "remove_unused_named_specifier":
     default:
       modified = removeUnusedSymbolFromImport(original, importLine, symbol);
+      if (modified === original && Number.isFinite(lineNumber)) {
+        const atLine = removeUnusedSymbolAtLine(original, lineNumber!, symbol);
+        if (atLine) modified = atLine;
+      }
       break;
   }
 
@@ -162,7 +177,11 @@ async function applyRemoveUnusedImport(
   await ensureGitBaseline(rootDir);
   await fs.writeFile(full, modified, "utf8");
   const persisted = await fs.readFile(full, "utf8");
-  const diff = await gitDiff(rootDir, [rel]);
+  let diff = await gitDiff(rootDir, [rel]);
+  if (!diff.trim() && modified !== original) {
+    diff = buildTextDiff(rel, original, modified);
+    if (!diff.endsWith("\n")) diff = `${diff}\n`;
+  }
 
   const invariant = validateTransformInvariants({
     originalSource: original,
@@ -297,13 +316,19 @@ export async function applyPhase1Fix(
   finding: Finding,
   strategyId?: string
 ): Promise<AppliedFix> {
-  const plugin = resolvePhase1Plugin(finding);
+  const plugin = resolvePhase1TransformPlugin(finding);
   const resolvedStrategy =
     strategyId ?? defaultStrategyForPlugin(plugin.id)?.id ?? "default";
 
   switch (plugin.id) {
     case "remove_temp_file":
       return applyRemoveTempFile(rootDir, finding, resolvedStrategy);
+    case "remove_empty_file":
+      return applyRemoveEmptyFile(rootDir, finding, resolvedStrategy);
+    case "remove_confirmed_unused_file":
+      return applyRemoveConfirmedUnusedFile(rootDir, finding, resolvedStrategy);
+    case "consolidate_exact_duplicate":
+      return applyConsolidateExactDuplicate(rootDir, finding, resolvedStrategy);
     case "remove_unused_import":
       return applyRemoveUnusedImport(rootDir, finding, resolvedStrategy);
     case "remove_unused_dependency":

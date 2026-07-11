@@ -23,14 +23,14 @@ export const HERO = {
   badge: "REPOSITORY INTELLIGENCE",
   headline: "Your AI-built repo is getting heavier every commit.",
   subheadline:
-    "RepoDiet scans JavaScript and TypeScript repositories for duplicate logic, dead files, dependency drift, orphan modules, and AI-generated code debt—then creates a conservative cleanup bundle and opens a review-ready GitHub PR for safe candidates.",
+    "RepoDiet finds duplicate logic, dead files, dependency drift, and orphan modules—then applies verified fixes (remove imports, delete temp files, uninstall packages) and opens a review-ready cleanup PR. You merge when ready.",
 };
 
 export const SITE_TAGLINES = {
   debt: "AI code creates cleanup debt. RepoDiet Operator turns it into a review-ready cleanup PR.",
   positioning:
-    "Not auto-clean. Not a linter. A conservative cleanup operator for AI-built repos.",
-  workflow: "Scan the repo. Map the risk. Generate the bundle. Open the cleanup PR. Verify before merging.",
+    "Not a linter. Not scan-only. A cleanup operator that edits files, deletes safe dead code, and opens PRs.",
+  workflow: "Scan → Find problems → Apply fixes → Open cleanup PR → Verify → You merge.",
   safety:
     "RepoDiet protects routes, configs, env files, lockfiles, and public assets by default.",
   audience: "Built for teams and solo builders using AI coding tools every day.",
@@ -117,14 +117,22 @@ export const WORKFLOW_STEPS = [
   {
     id: "package",
     step: "04",
-    title: "PACKAGE",
-    subtitle: "Patch, report, regression plan",
-    meta: "7 artifacts · conservative patch",
+    title: "FIX",
+    subtitle: "Apply verified changes",
+    meta: "Unused imports · temp files · packages",
+    accent: "electric" as const,
+  },
+  {
+    id: "deliver",
+    step: "05",
+    title: "DELIVER",
+    subtitle: "Cleanup PR + artifacts",
+    meta: "7 artifacts · git-validated patch",
     accent: "electric" as const,
   },
   {
     id: "verify",
-    step: "05",
+    step: "06",
     title: "VERIFY",
     subtitle: "Build, lint, routes",
     meta: "Regression checklist prepared",
@@ -188,7 +196,7 @@ export const USE_CASES = [
 
 export const TRANSFORMATION_SECTION = {
   eyebrow: "Transformation",
-  title: "Watch repository debt become a safe cleanup plan.",
+  title: "Watch repository debt become real fixes in a cleanup PR.",
 };
 
 export const TRANSFORMATION_BEFORE_TREE = [
@@ -212,8 +220,8 @@ export const TRANSFORMATION_BEFORE_LABELS = [
 export const TRANSFORMATION_PROCESSING_STEPS = [
   "Scan",
   "Classify",
-  "Protect",
-  "Package",
+  "Fix",
+  "PR",
 ] as const;
 
 export const TRANSFORMATION_AFTER_ITEMS = [
@@ -250,12 +258,12 @@ export const BEFORE_ITEMS = [
 ];
 
 export const AFTER_ITEMS = [
-  "Findings grouped by risk",
-  "Safe candidates separated from review items",
-  "Protected files clearly marked",
-  "Patch bundle generated",
-  "Cleanup PR opened for human review",
-  "Regression checklist ready before merging",
+  "Unused imports removed from source files",
+  "Temp and backup files deleted when safe",
+  "Unused packages removed from package.json",
+  "Findings grouped by risk with protected paths locked",
+  "Cleanup PR opened on a branch — never pushed to main",
+  "Regression checklist ready before you merge",
 ];
 
 export const FLOW_METRICS = [
@@ -479,7 +487,7 @@ export const PRICING_TIERS = [
   {
     name: "Quick Cleanup",
     price: "0.25 USDT",
-    description: "Up to five supported safe fixes with in-app diff review.",
+    description: "Processes every eligible safe fix with in-app diff review.",
     features: [
       "Up to 5 eligible safe fixes",
       "Real code changes",
@@ -530,16 +538,48 @@ export const PRICING_TIERS = [
 export const OKX_DEMO_FLOW = [
   "Paste a public GitHub repository and scan",
   "Run Findings Engine — evidence-backed risk buckets",
-  "Fix One Safe Issue Free — real diff + verification",
-  "Run Quick Cleanup — up to five supported fixes",
+  "Fix One Safe Issue Free — real diff + verification with proof ladder counts",
+  "Run Quick Cleanup — deterministic transformers with auditable stages",
   "Create Verified Cleanup PR on a demo repository",
-  "Agent pays via x402 and receives signed execution receipt",
+  "Agent calls A2MCP tools and receives cleanupProof with PR URL and signed receipt",
 ];
 
 export const OKX_A2A_SERVICE = {
   name: "RepoDiet Operator — Create a safe cleanup PR for my AI-built repo",
   description:
     "RepoDiet Operator scans an AI-built JavaScript/TypeScript repo, classifies cleanup risk, creates a safe cleanup branch, applies only safe candidate removals, adds cleanup artifacts, and opens a GitHub PR for review. It never pushes to main, never merges PRs, and protects routes, configs, env files, lockfiles, API handlers, and public assets.",
+};
+
+export const OKX_JUDGE_PITCH = {
+  headline: "Autonomous repository repair for AI-built codebases",
+  problem:
+    "AI coding tools help teams ship faster but leave duplicate logic, dead files, unused dependencies, and abandoned modules behind. General coding agents can fix these issues when explicitly prompted — but they require judgment, prompt engineering, and manual Git workflow.",
+  differentiation:
+    "RepoDiet is a vertical cleanup operator — not a horizontal coding agent. Connect a repository and RepoDiet automatically detects evidence-backed debt, applies deterministic transformations, verifies the repository, and delivers a review-ready pull request without cleanup prompts.",
+  proofContract:
+    "Every action moves through an auditable proof ladder: Detected → Eligible → Attempted → Generated → Validated → Verified → Delivered. Numbers come from backend execution, not scan-time estimates.",
+  vsAgents: [
+    "Cursor, Claude Code, and Codex can edit repositories — but users must instruct each cleanup step and manage safety.",
+    "Sonar, Knip, and jscpd mostly detect — RepoDiet removes imports, deletes confirmed dead files, uninstalls packages, and opens PRs.",
+    "Code-review bots inspect new changes — RepoDiet cleans accumulated repository debt and can prevent it from returning.",
+  ],
+  agentUtility:
+    "A2MCP tools expose the same engine as the web app: scan_repository, generate_cleanup_patch, verify_cleanup, create_cleanup_pr. Agents pay for verified outcomes — diffs, verification logs, and PR URLs — not reports.",
+  demoProof: [
+    "Unused import removed with exact diff",
+    "Stale backup file deleted",
+    "Unused dependency removed from package.json and lockfile",
+    "Protected Next.js route left untouched",
+    "Typecheck, lint, and build passed on modified copy",
+    "Cleanup PR opened on repodiet/cleanup-* branch — main untouched",
+  ],
+};
+
+export const OKX_COMPETITIVE_POSITION = {
+  nearDirect: "5–10 products (e.g. Slopfix, Moderne) overlap with repository cleanup and modernization.",
+  adjacent: "40–70 tools cover parts of the workflow — static analyzers, review bots, and general coding agents.",
+  repodietCategory:
+    "Dependabot for repository bloat + Sonar for AI-generated debt + a deterministic cleanup agent — continuous hygiene, not one-off scans.",
 };
 
 export const SAFETY_POLICY_PUBLIC = [

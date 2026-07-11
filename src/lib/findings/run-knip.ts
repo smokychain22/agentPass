@@ -5,11 +5,51 @@ import type { KnipRawReport } from "./types";
 import { TOOL_TIMEOUT_MS, type AnalyzerRunResult } from "./types";
 import { knipCliPath, knipVersion } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
-import { runKnipFallback } from "./fallback/knip-fallback";
 import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
+import { isKnipOomError, knipChildEnv } from "./analyzer-child-env";
 
 export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
   return timedAnalyzer("knip", () => runKnipInternal(rootDir));
+}
+
+interface KnipAttempt {
+  args: string[];
+  label: string;
+}
+
+function knipAttempts(): KnipAttempt[] {
+  return [
+    { label: "default", args: ["--reporter", "json", "--no-progress"] },
+    { label: "production", args: ["--reporter", "json", "--no-progress", "--production"] },
+  ];
+}
+
+async function runKnipCli(
+  cli: string,
+  rootDir: string,
+  args: string[]
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const result = await execa(process.execPath, [cli, ...args], {
+    cwd: rootDir,
+    timeout: TOOL_TIMEOUT_MS,
+    reject: false,
+    env: knipChildEnv(),
+  });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+function parseKnipStdout(stdout: string): KnipRawReport | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as KnipRawReport;
+  } catch {
+    return null;
+  }
 }
 
 async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
@@ -19,24 +59,13 @@ async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipR
     await fs.access(pkgPath);
   } catch {
     logAnalyzer("knip", "skip_no_package_json", { rootDir });
-    try {
-      const report = await runKnipFallback(rootDir);
-      return finalizeAnalyzerResult(
-        "knip",
-        "fallback",
-        report,
-        "No package.json — used import-graph fallback.",
-        Date.now() - started
-      );
-    } catch (err) {
-      return finalizeAnalyzerResult<KnipRawReport>(
-        "knip",
-        "failed",
-        null,
-        err instanceof Error ? err.message : "Knip fallback failed.",
-        Date.now() - started
-      );
-    }
+    return finalizeAnalyzerResult<KnipRawReport>(
+      "knip",
+      "failed",
+      null,
+      "No package.json — Knip cannot run natively.",
+      Date.now() - started
+    );
   }
 
   const cli = knipCliPath();
@@ -47,77 +76,64 @@ async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipR
       cli,
       error: err instanceof Error ? err.message : String(err),
     });
-    return runKnipFallbackWrapped(rootDir, "Knip CLI not found in node_modules.", started);
-  }
-
-  try {
-    const result = await execa(process.execPath, [cli, "--reporter", "json", "--no-progress"], {
-      cwd: rootDir,
-      timeout: TOOL_TIMEOUT_MS,
-      reject: false,
-      env: { ...process.env, FORCE_COLOR: "0" },
-    });
-
-    logAnalyzer("knip", "cli_finished", {
-      exitCode: result.exitCode,
-      stdoutLen: result.stdout?.length ?? 0,
-      stderr: truncateLog(result.stderr),
-      cli,
-      rootDir,
-    });
-
-    if (result.stdout?.trim()) {
-      try {
-        const report = JSON.parse(result.stdout) as KnipRawReport;
-        return finalizeAnalyzerResult("knip", "ok", report, undefined, Date.now() - started, knipVersion());
-      } catch (parseErr) {
-        logAnalyzer("knip", "json_parse_error", {
-          error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-          stdoutHead: truncateLog(result.stdout, 200),
-        });
-      }
-    }
-
-    return runKnipFallbackWrapped(
-      rootDir,
-      result.stderr || `Knip exited ${result.exitCode} with no JSON output.`,
-      started
-    );
-  } catch (err) {
-    logAnalyzer("knip", "cli_exception", {
-      error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? truncateLog(err.stack, 400) : undefined,
-    });
-    return runKnipFallbackWrapped(
-      rootDir,
-      err instanceof Error ? err.message : "Knip failed.",
-      started
-    );
-  }
-}
-
-async function runKnipFallbackWrapped(
-  rootDir: string,
-  reason: string,
-  started: number
-): Promise<AnalyzerRunResult<KnipRawReport>> {
-  try {
-    logAnalyzer("knip", "fallback_start", { rootDir, reason });
-    const report = await runKnipFallback(rootDir);
-    logAnalyzer("knip", "fallback_ok", {
-      issues: report.issues?.length ?? 0,
-    });
-    return finalizeAnalyzerResult("knip", "fallback", report, reason, Date.now() - started);
-  } catch (err) {
-    logAnalyzer("knip", "fallback_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
     return finalizeAnalyzerResult<KnipRawReport>(
       "knip",
       "failed",
       null,
-      err instanceof Error ? err.message : "Knip fallback failed.",
+      "Knip CLI not found in node_modules.",
       Date.now() - started
     );
   }
+
+  let lastError = "Knip produced no JSON output.";
+  for (const attempt of knipAttempts()) {
+    try {
+      const result = await runKnipCli(cli, rootDir, attempt.args);
+      logAnalyzer("knip", "cli_finished", {
+        attempt: attempt.label,
+        exitCode: result.exitCode,
+        stdoutLen: result.stdout.length,
+        stderr: truncateLog(result.stderr),
+        cli,
+        rootDir,
+        rawTransferDisabled: true,
+      });
+
+      const report = parseKnipStdout(result.stdout);
+      if (report) {
+        const note =
+          attempt.label === "production"
+            ? "Ran in --production mode after default attempt needed narrower scope."
+            : undefined;
+        return finalizeAnalyzerResult("knip", "ok", report, note, Date.now() - started, knipVersion());
+      }
+
+      const combined = `${result.stderr}\n${result.stdout}`;
+      if (isKnipOomError(combined)) {
+        lastError = "Knip OOM during oxc-parser raw transfer (retrying with safer settings).";
+        logAnalyzer("knip", "oom_detected", { attempt: attempt.label, rootDir });
+        continue;
+      }
+
+      lastError = result.stderr || `Knip exited ${result.exitCode} with no JSON output.`;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logAnalyzer("knip", "cli_exception", {
+        attempt: attempt.label,
+        error: message,
+        stack: err instanceof Error ? truncateLog(err.stack, 400) : undefined,
+      });
+      lastError = message;
+      if (isKnipOomError(message)) continue;
+    }
+  }
+
+  return finalizeAnalyzerResult<KnipRawReport>(
+    "knip",
+    "failed",
+    null,
+    lastError,
+    Date.now() - started,
+    knipVersion()
+  );
 }
