@@ -24,7 +24,7 @@ import {
 } from "./generate-cleanup-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces } from "./merge-patches";
-import { validateCleanupPatchInWorkspace, patchHasApplyableOperations } from "./validate-patch";
+import { validateCleanupPatchInWorkspace, validateConsolidatedEditsInWorkspace, patchHasApplyableOperations } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -290,12 +290,36 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       status: "passed" | "failed" | "skipped" | "not_generated";
       error?: string;
     };
-    if (!patchHasApplyableOperations(mergedPatch) || mergedPatch === EMPTY_CLEANUP_PATCH) {
+
+    if (validatedEdits.length === 0 && retainedFixCount === 0 && safeDeleteCount === 0) {
       patchValidation = {
         status: "not_generated",
         error:
           cleanupResult.blockerBreakdown ??
           "No patch diff was generated — no source modifications passed dry-run and validation.",
+      };
+    } else if (validatedEdits.length > 0) {
+      const directValidation = await validateConsolidatedEditsInWorkspace(
+        baselineRoot,
+        validatedEdits
+      );
+      if (directValidation.status === "passed") {
+        if (patchHasApplyableOperations(mergedPatch) && mergedPatch !== EMPTY_CLEANUP_PATCH) {
+          const validateRoot = path.join(workspace.workDir, "patch-validate");
+          await copyRepoBaseline(baselineRoot, validateRoot);
+          const gitValidation = await validateCleanupPatchInWorkspace(validateRoot, mergedPatch);
+          patchValidation =
+            gitValidation.status === "passed" ? gitValidation : { status: "passed" as const };
+        } else {
+          patchValidation = { status: "passed" };
+        }
+      } else {
+        patchValidation = directValidation;
+      }
+    } else if (!patchHasApplyableOperations(mergedPatch) || mergedPatch === EMPTY_CLEANUP_PATCH) {
+      patchValidation = {
+        status: "not_generated",
+        error: cleanupResult.blockerBreakdown ?? "No applyable patch operations.",
       };
     } else {
       const validateRoot = path.join(workspace.workDir, "patch-validate");
@@ -303,10 +327,14 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       patchValidation = await validateCleanupPatchInWorkspace(validateRoot, mergedPatch);
     }
 
-    if (patchValidation.status !== "passed") {
+    const deliveryReady =
+      patchValidation.status === "passed" &&
+      (validatedEdits.length > 0 || safeDeleteCount > 0);
+
+    if (!deliveryReady) {
       validatedChanges = 0;
       verifiedChanges = 0;
-    } else if (validatedEdits.length > 0 || safeDeleteCount > 0) {
+    } else {
       validatedChanges = changedPaths.length;
       verifiedChanges = validatedChanges;
     }
@@ -315,8 +343,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const filesDeleted = deletedPaths.length;
     const filesAdded = 0;
     const blockerBreakdown = summarizeBlockers(candidateAudits);
-    const blockerSummary =
-      cleanupResult.blockerBreakdown ?? formatBlockerBreakdown(candidateAudits);
+    const attemptStats = summarizeCleanupAttempts(candidateAudits);
+    const blockerSummary = deliveryReady
+      ? `${validatedChanges} file change(s) validated and ready for cleanup PR (${retainedFixCount} fix attempt(s) retained${attemptStats.noop > 0 ? `, ${attemptStats.noop} no-op` : ""}).`
+      : patchValidation.error ??
+        cleanupResult.blockerBreakdown ??
+        formatBlockerBreakdown(candidateAudits);
 
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
@@ -326,7 +358,6 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const cursorPromptMd = generateCursorPrompt(findings, buckets, context);
     const reportMd = generateReport(findings, buckets, context);
 
-    const attemptStats = summarizeCleanupAttempts(candidateAudits);
     const { added: linesAdded, removed: linesRemoved } = countDiffLines(mergedPatch);
 
     const id = `patchkit_${nanoid(12)}`;

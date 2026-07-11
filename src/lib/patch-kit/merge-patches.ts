@@ -11,6 +11,38 @@ export interface ConsolidatedEdit {
   content: string;
 }
 
+/**
+ * Build consolidated edits by diffing workspace final state against pristine baseline.
+ * More reliable than merging per-attempt modifiedSources when many fixes touch the same file.
+ */
+export async function buildConsolidatedEditsFromWorkspace(
+  baselineRoot: string,
+  workspaceRoot: string,
+  changedPaths: string[]
+): Promise<ConsolidatedEdit[]> {
+  const edits: ConsolidatedEdit[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of changedPaths) {
+    const rel = raw.replace(/\\/g, "/").replace(/^\.\//, "");
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+
+    const baselinePath = path.join(baselineRoot, rel);
+    const workspacePath = path.join(workspaceRoot, rel);
+    const baselineContent = await fs.readFile(baselinePath, "utf8").catch(() => null);
+    const finalContent = await fs.readFile(workspacePath, "utf8").catch(() => null);
+
+    if (finalContent === null && baselineContent !== null) {
+      edits.push({ path: rel, content: "" });
+    } else if (finalContent !== null && baselineContent !== finalContent) {
+      edits.push({ path: rel, content: finalContent });
+    }
+  }
+
+  return edits;
+}
+
 /** Last edit per path wins — supports multiple fixes on the same file. */
 export function dedupeConsolidatedEdits(edits: ConsolidatedEdit[]): ConsolidatedEdit[] {
   const byPath = new Map<string, string>();

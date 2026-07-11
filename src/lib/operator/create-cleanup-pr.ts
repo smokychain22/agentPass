@@ -164,7 +164,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const validatedChanges = patchKit.summary.validatedChanges ?? 0;
   const validatedEdits = patchKit.validatedEdits ?? [];
 
-  if (mode === "safe_only" && validatedChanges === 0 && safePaths.length === 0) {
+  if (mode === "safe_only" && validatedChanges === 0 && validatedEdits.length === 0 && safePaths.length === 0) {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
       "No validated cleanup changes to apply. Use report_only mode to create an audit PR.",
