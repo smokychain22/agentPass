@@ -7,6 +7,7 @@ import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
 import {
   compareBaselineToAfter,
+  ensureWorkspaceDependencies,
   runFullBaselineChecks,
 } from "@/lib/execution/baseline-verification";
 
@@ -67,6 +68,7 @@ export async function validateEditsForDelivery(
 
   try {
     await copyRepoBaseline(baselineRoot, validateRoot);
+    const dependencyInstall = await ensureWorkspaceDependencies(validateRoot);
     const beforeChecks = await runFullBaselineChecks(validateRoot, "baseline");
 
     for (const edit of deduped) {
@@ -102,15 +104,20 @@ export async function validateEditsForDelivery(
         (c.name === "typecheck" || c.name === "build") &&
         c.outcome !== "not_available" &&
         c.outcome !== "skipped" &&
+        c.outcome !== "failed_before_and_after" &&
         c.status === "failed"
     );
     if (required.length > 0) {
       const detail = required
         .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`)
         .join("; ");
+      const installHint =
+        !dependencyInstall.installed && dependencyInstall.reason
+          ? ` Dependency install did not complete (${dependencyInstall.reason}).`
+          : "";
       return {
         status: "failed",
-        error: `Repository ${required.map((c) => c.name).join("/")} must pass before delivery — ${detail}`,
+        error: `Repository ${required.map((c) => c.name).join("/")} must pass before delivery — ${detail}.${installHint}`,
       };
     }
 

@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 import type { SafeDeleteRow } from "./patch-kit-utils";
 
 export function SafeDeleteTable({ rows }: { rows: SafeDeleteRow[] }) {
@@ -30,12 +31,12 @@ export function SafeDeleteTable({ rows }: { rows: SafeDeleteRow[] }) {
                 <th className="px-3 py-2 font-medium">Patch status</th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={row.file}
-                  className="border-b border-border/60 hover:bg-muted/20 transition-colors"
-                >
+            <CollapsibleTableBody
+              items={rows}
+              rowKey={(row) => row.file}
+              emptyMessage="No safe delete candidates."
+              renderRow={(row) => (
+                <>
                   <td className="px-3 py-2.5 font-mono text-xs">{row.file}</td>
                   <td className="px-3 py-2.5 text-sm text-muted-foreground max-w-[220px]">
                     {row.reason}
@@ -51,9 +52,9 @@ export function SafeDeleteTable({ rows }: { rows: SafeDeleteRow[] }) {
                   <td className="px-3 py-2.5 font-mono text-xs text-electric/90">
                     {row.patchStatus}
                   </td>
-                </tr>
-              ))}
-            </tbody>
+                </>
+              )}
+            />
           </table>
         )}
       </CardContent>

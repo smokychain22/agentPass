@@ -3,6 +3,7 @@
 import type { TransformerResult } from "@/lib/patch-kit/types";
 import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
+import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 
 export function TransformerResultsTable({ results }: { results: TransformerResult[] }) {
   if (!results.length) return null;
@@ -21,12 +22,14 @@ export function TransformerResultsTable({ results }: { results: TransformerResul
               <th className="px-2 py-2 font-medium">Reason</th>
             </tr>
           </thead>
-          <tbody>
-            {results.map((row) => (
-              <tr key={row.findingId} className="border-b border-border/40 align-top">
-                <td className="px-2 py-2 font-mono text-xs">{row.findingId}</td>
-                <td className="px-2 py-2 text-xs">{row.transformer}</td>
-                <td className="px-2 py-2">
+          <CollapsibleTableBody
+            items={results}
+            rowKey={(row) => `${row.findingId}-${row.transformer}`}
+            renderRow={(row) => (
+              <>
+                <td className="px-2 py-2 font-mono text-xs align-top">{row.findingId}</td>
+                <td className="px-2 py-2 text-xs align-top">{row.transformer}</td>
+                <td className="px-2 py-2 align-top">
                   <RiskBadge
                     level={
                       row.status === "generated"
@@ -39,13 +42,13 @@ export function TransformerResultsTable({ results }: { results: TransformerResul
                     {row.status}
                   </RiskBadge>
                 </td>
-                <td className="px-2 py-2 font-mono text-xs text-muted-foreground">
+                <td className="px-2 py-2 font-mono text-xs text-muted-foreground align-top">
                   {row.filePath ?? "—"}
                 </td>
-                <td className="px-2 py-2 text-xs text-muted-foreground">{row.reason}</td>
-              </tr>
-            ))}
-          </tbody>
+                <td className="px-2 py-2 text-xs text-muted-foreground align-top">{row.reason}</td>
+              </>
+            )}
+          />
         </table>
       </div>
     </Panel>

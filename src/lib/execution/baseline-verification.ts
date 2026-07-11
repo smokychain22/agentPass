@@ -175,6 +175,45 @@ async function runPackageIntegrity(rootDir: string, phase: "baseline" | "after")
   return runNamedCheck(rootDir, "package integrity", installCommand(pm), phase, INSTALL_TIMEOUT_MS);
 }
 
+async function nodeModulesPresent(rootDir: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(rootDir, "node_modules"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function ensureWorkspaceDependencies(
+  rootDir: string
+): Promise<{ installed: boolean; reason?: string }> {
+  try {
+    await fs.access(path.join(rootDir, "package.json"));
+  } catch {
+    return { installed: false, reason: "No package.json in workspace." };
+  }
+
+  if (await nodeModulesPresent(rootDir)) {
+    return { installed: true };
+  }
+
+  const pm = (await detectPackageManager(rootDir)).packageManager;
+  const command = installCommand(pm);
+  const result = await execa(command[0], command.slice(1), {
+    cwd: rootDir,
+    timeout: INSTALL_TIMEOUT_MS,
+    reject: false,
+    env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "development" },
+  });
+
+  if (result.exitCode !== 0) {
+    const detail = summarize(result.stderr || result.stdout || "install failed");
+    return { installed: false, reason: detail };
+  }
+
+  return { installed: true };
+}
+
 export async function runFullBaselineChecks(rootDir: string, phase: "baseline" | "after"): Promise<BaselineCheck[]> {
   const checks: BaselineCheck[] = [];
   const scripts = await readScripts(rootDir);

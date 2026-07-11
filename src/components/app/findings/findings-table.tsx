@@ -15,6 +15,7 @@ import {
   sourceLabel,
   typeLabel,
 } from "./findings-utils";
+import { CollapsibleFileList } from "@/components/app/ui/collapsible-list";
 import { cn } from "@/lib/utils";
 
 type FilterKey =
@@ -105,12 +106,7 @@ function FindingRow({ finding }: { finding: Finding }) {
               </div>
               <div className="sm:col-span-2">
                 <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Files</p>
-                <ul className="font-mono text-xs text-muted-foreground space-y-0.5">
-                  {finding.files.map((f) => (
-                    <li key={f}>{f}</li>
-                  ))}
-                  {finding.files.length === 0 && <li>—</li>}
-                </ul>
+                <CollapsibleFileList files={finding.files} emptyLabel="—" />
               </div>
               <div className="sm:col-span-2">
                 <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
