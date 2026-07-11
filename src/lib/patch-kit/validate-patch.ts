@@ -88,7 +88,7 @@ export async function validateCleanupPatchInWorkspace(
   patch: string
 ): Promise<PatchValidationResult> {
   if (!patchHasApplyableOperations(patch)) {
-    return { status: "skipped", error: "No applyable patch operations." };
+    return { status: "not_generated", error: "No patch diff was generated." };
   }
 
   const applyable = extractApplyablePatch(patch);
