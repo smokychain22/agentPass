@@ -5,10 +5,10 @@ import type { ChangeOperation } from "../src/lib/patch-kit/canonical-patch";
 import type { FindingsPayload } from "../src/lib/findings/types";
 import { isFrameworkProtectedDependency } from "../src/lib/findings/framework-protected";
 import { validateWorkerApiKey, WorkerAuthError } from "../src/lib/worker/worker-auth";
-import { isWorkerRecentlyOnline } from "../src/lib/worker/worker-instance-store";
-import type { WorkerInstance } from "../src/lib/worker/types";
+import { isVercelSandboxAvailable } from "../src/lib/execution/vercel-sandbox";
 import { deriveAttemptProductOutcome } from "../src/lib/execution/outcomes";
 import { computeWorkflowGates } from "../src/lib/workflow/gates";
+import { redactSecrets } from "../src/lib/execution/sandbox-command";
 
 function test(name: string, fn: () => void | Promise<void>) {
   return (async () => {
@@ -69,7 +69,7 @@ async function run() {
 
     const summary = buildAuthoritativeCleanupRunSummary({
       findings,
-      summary: { patchValidationStatus: "pending_worker" } as never,
+      summary: { patchValidationStatus: "pending_sandbox" } as never,
       changeOperations: ops,
       verification: { status: "not_run", installAttempts: [], checks: [] },
     });
@@ -81,10 +81,10 @@ async function run() {
     assert.equal(summary.reviewRequiredFindings, 1);
   });
 
-  await test("pending_worker keeps git validation at zero while content validation passes", () => {
+  await test("pending_sandbox keeps git validation at zero while content validation passes", () => {
     const summary = buildAuthoritativeCleanupRunSummary({
       findings: { summary: {}, riskBuckets: { reviewFirst: [], doNotTouch: [], safeDelete: [] } } as never,
-      summary: { patchValidationStatus: "pending_worker" } as never,
+      summary: { patchValidationStatus: "pending_sandbox" } as never,
       changeOperations: [
         {
           id: "1",
@@ -140,23 +140,11 @@ async function run() {
     assert.equal(err.code, "WORKER_AUTH_INVALID");
   });
 
-  await test("worker recently online requires heartbeat within 30s", () => {
-    const online: WorkerInstance = {
-      id: "w1",
-      version: "1",
-      hostname: "h",
-      status: "online",
-      startedAt: new Date().toISOString(),
-      heartbeatAt: new Date().toISOString(),
-      completedJobs: 0,
-      failedJobs: 0,
-    };
-    assert.equal(isWorkerRecentlyOnline(online), true);
-    const stale: WorkerInstance = {
-      ...online,
-      heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
-    };
-    assert.equal(isWorkerRecentlyOnline(stale), false);
+  await test("vercel sandbox availability requires Vercel deployment context", () => {
+    const original = process.env.VERCEL;
+    delete process.env.VERCEL;
+    assert.equal(isVercelSandboxAvailable(), false);
+    process.env.VERCEL = original;
   });
 
   await test("retained transformer outcome is generated_pending before verification", () => {
@@ -168,7 +156,7 @@ async function run() {
     assert.equal(outcome, "generated_pending");
   });
 
-  await test("cleanup PR disabled while worker job is pending", () => {
+  await test("cleanup PR disabled while sandbox execution is pending", () => {
     const gates = computeWorkflowGates({
       scanComplete: true,
       findings: {
@@ -186,12 +174,18 @@ async function run() {
           validatedChanges: 0,
           verifiedChanges: 0,
         },
-        patchValidation: { status: "pending_worker" },
+        patchValidation: { status: "pending_sandbox" },
       } as never,
       verificationStatus: "not_run",
     });
     assert.equal(gates.cleanupPrAvailable, false);
     assert.equal(gates.quickCleanupState, "running");
+  });
+
+  await test("redactSecrets removes github tokens from logs", () => {
+    const redacted = redactSecrets("clone https://x-access-token:ghs_secret123@github.com/foo/bar");
+    assert.equal(redacted.includes("ghs_secret123"), false);
+    assert.equal(redacted.includes("[REDACTED]"), true);
   });
 
   console.log("worker-execution: all passed");

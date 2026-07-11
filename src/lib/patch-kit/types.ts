@@ -65,7 +65,7 @@ export interface PatchKitSummary {
   patchLines: number;
   regressionChecks: number;
   bundleFileCount: number;
-  patchValidationStatus?: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
+  patchValidationStatus?: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_sandbox";
   contentValidatedOperations?: number;
   gitValidatedOperations?: number;
   deletedPaths?: string[];
@@ -101,11 +101,12 @@ export interface PatchKitPayload {
   repo: PatchKitRepo;
   summary: PatchKitSummary;
   patchValidation?: {
-    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
+    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_sandbox";
     error?: string;
     userMessage?: string;
-    executionPlane?: "docker_worker" | "vercel_serverless";
-    workerJobId?: string;
+    executionPlane?: "vercel_sandbox";
+    sandboxRunId?: string;
+    workflowRunId?: string;
     baseCommitSha?: string;
     patchHash?: string;
     failingPath?: string;
@@ -145,6 +146,9 @@ export interface PatchKitPayload {
   };
   cleanupRunSummary?: import("./cleanup-summary").CleanupRunSummary;
   deletionProofs?: import("./safe-delete-discovery").SafeDeleteProof[];
+  sandboxRunId?: string;
+  workflowRunId?: string;
+  /** @deprecated use sandboxRunId */
   workerJobId?: string;
 }
 

@@ -68,13 +68,13 @@ export async function POST(request: Request) {
 
     if (
       body.mode !== "report_only" &&
-      patchKit.patchValidation?.status === "pending_worker"
+      patchKit.patchValidation?.status === "pending_sandbox"
     ) {
       return NextResponse.json(
         {
           ok: false,
-          code: "WORKER_JOB_PENDING",
-          error: "Waiting for repository verification on the Docker worker.",
+          code: "SANDBOX_EXECUTION_PENDING",
+          error: "Waiting for repository verification in Vercel Sandbox.",
         },
         { status: 422 }
       );

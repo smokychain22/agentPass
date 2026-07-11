@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withWorkflow } from "workflow/next";
 import analyzerTraceIncludes from "./analyzer-trace-includes.json";
 
 const nextConfig: NextConfig = {
@@ -15,6 +16,7 @@ const nextConfig: NextConfig = {
     "formdata-node",
     "fd-package-json",
     "walkdir",
+    "workflow",
   ],
   outputFileTracingIncludes: {
     "/api/**": [
@@ -25,4 +27,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withWorkflow(nextConfig);

@@ -82,7 +82,7 @@ export interface PatchJob extends BaseJob {
   result?: PatchKitPayload;
   scanId?: string;
   patchValidation?: {
-    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
+    status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_sandbox";
     error?: string;
   };
 }
