@@ -5,10 +5,13 @@ import { execa } from "execa";
 import { EMPTY_CLEANUP_PATCH } from "./generate-cleanup-patch";
 import { extractApplyablePatch } from "./validate-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
+import { hashSource } from "@/lib/execution/transform-audit";
 
 export interface ConsolidatedEdit {
   path: string;
   content: string;
+  /** Hash of file content at scan baseline — used to detect GitHub drift before PR delivery. */
+  baselineContentHash?: string;
 }
 
 /**
@@ -45,11 +48,16 @@ export async function buildConsolidatedEditsFromWorkspace(
 
 /** Last edit per path wins — supports multiple fixes on the same file. */
 export function dedupeConsolidatedEdits(edits: ConsolidatedEdit[]): ConsolidatedEdit[] {
-  const byPath = new Map<string, string>();
+  const byPath = new Map<string, ConsolidatedEdit>();
   for (const edit of edits) {
-    byPath.set(edit.path.replace(/\\/g, "/").replace(/^\.\//, ""), edit.content);
+    const normalizedPath = edit.path.replace(/\\/g, "/").replace(/^\.\//, "");
+    byPath.set(normalizedPath, {
+      path: normalizedPath,
+      content: edit.content,
+      baselineContentHash: edit.baselineContentHash,
+    });
   }
-  return Array.from(byPath.entries()).map(([path, content]) => ({ path, content }));
+  return Array.from(byPath.values());
 }
 
 const WORKSPACE_SKIP_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".turbo"]);
@@ -97,9 +105,17 @@ export async function collectEditsBetweenWorkspaces(
     const modContent = await fs.readFile(modPath, "utf8").catch(() => null);
     if (baseContent === modContent) continue;
     if (modContent === null) {
-      edits.push({ path: rel, content: "" });
+      edits.push({
+        path: rel,
+        content: "",
+        baselineContentHash: baseContent !== null ? hashSource(baseContent) : hashSource(""),
+      });
     } else {
-      edits.push({ path: rel, content: modContent });
+      edits.push({
+        path: rel,
+        content: modContent,
+        baselineContentHash: baseContent !== null ? hashSource(baseContent) : hashSource(""),
+      });
     }
   }
 

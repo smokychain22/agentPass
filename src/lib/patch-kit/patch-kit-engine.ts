@@ -24,7 +24,7 @@ import {
 } from "./generate-cleanup-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces, buildEditsFromRetainedAttempts } from "./merge-patches";
-import { validateCleanupPatchInWorkspace, validateConsolidatedEditsInWorkspace, patchHasApplyableOperations } from "./validate-patch";
+import { validateCleanupPatchInWorkspace, validateEditsForDelivery, patchHasApplyableOperations } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -311,22 +311,18 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
           "No patch diff was generated — no source modifications passed dry-run and validation.",
       };
     } else if (validatedEdits.length > 0) {
-      const directValidation = await validateConsolidatedEditsInWorkspace(
-        baselineRoot,
-        validatedEdits
-      );
-      if (directValidation.status === "passed") {
+      const deliveryValidation = await validateEditsForDelivery(baselineRoot, validatedEdits);
+      if (deliveryValidation.status === "passed") {
         if (patchHasApplyableOperations(mergedPatch) && mergedPatch !== EMPTY_CLEANUP_PATCH) {
           const validateRoot = path.join(workspace.workDir, "patch-validate");
           await copyRepoBaseline(baselineRoot, validateRoot);
           const gitValidation = await validateCleanupPatchInWorkspace(validateRoot, mergedPatch);
-          patchValidation =
-            gitValidation.status === "passed" ? gitValidation : { status: "passed" as const };
+          patchValidation = gitValidation;
         } else {
           patchValidation = { status: "passed" };
         }
       } else {
-        patchValidation = directValidation;
+        patchValidation = deliveryValidation;
       }
     } else if (!patchHasApplyableOperations(mergedPatch) || mergedPatch === EMPTY_CLEANUP_PATCH) {
       patchValidation = {
@@ -348,7 +344,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       verifiedChanges = 0;
     } else {
       validatedChanges = validatedEdits.length;
-      verifiedChanges = validatedChanges;
+      verifiedChanges = validatedEdits.length;
     }
 
     const filesEdited = validatedEdits.filter((e) => e.content !== "").length;

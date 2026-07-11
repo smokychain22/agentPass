@@ -10,6 +10,7 @@ import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
 import { filterOperatorSafeDeletes } from "./safety";
+import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
 
 export type CleanupPrMode = "safe_only" | "report_only";
 
@@ -159,7 +160,6 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
 
   const client = repoMeta.client;
   const baseBranch = input.branch?.trim() || parsed.branch || repoMeta.meta.defaultBranch;
-  const cleanupBranch = buildCleanupBranchName();
 
   const findings = await resolveFindings(input);
   const patchKit = await resolvePatchKit(input, findings);
@@ -179,15 +179,27 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   if (mode === "safe_only" && patchKit.patchValidation?.status !== "passed") {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
-      "Cleanup patch did not pass validation. Regenerate repairs before creating a cleanup PR.",
+      patchKit.patchValidation?.error ??
+        "Cleanup patch did not pass repository validation (build/typecheck). Regenerate repairs before creating a cleanup PR.",
       422
     );
   }
 
-  const baseSha = await client.getBranchSha(parsed.owner, parsed.repo, baseBranch);
+  const warnings: string[] = [];
+  const deliveryContext = await assertCleanupDeliveryContext({
+    client,
+    owner: parsed.owner,
+    repo: parsed.repo,
+    baseBranch,
+    scanCommitSha: findings.repo.commitSha,
+    validatedEdits: mode === "safe_only" ? validatedEdits : [],
+  });
+  warnings.push(...deliveryContext.warnings);
+
+  const baseSha = deliveryContext.liveBaseSha;
+  const cleanupBranch = buildCleanupBranchName();
   await client.createBranch(parsed.owner, parsed.repo, cleanupBranch, baseSha);
 
-  const warnings: string[] = [];
   let filesDeleted = 0;
 
   const artifacts = patchKit.artifacts;

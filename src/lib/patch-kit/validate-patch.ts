@@ -5,6 +5,10 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
+import {
+  compareBaselineToAfter,
+  runFullBaselineChecks,
+} from "@/lib/execution/baseline-verification";
 
 export interface PatchValidationResult {
   status: "passed" | "failed" | "skipped" | "not_generated";
@@ -47,6 +51,123 @@ async function gitBaseline(rootDir: string): Promise<void> {
     ],
     { cwd: rootDir, reject: false }
   );
+}
+
+export async function validateEditsForDelivery(
+  baselineRoot: string,
+  edits: ConsolidatedEdit[]
+): Promise<PatchValidationResult> {
+  const deduped = dedupeConsolidatedEdits(edits);
+  if (deduped.length === 0) {
+    return { status: "skipped", error: "No consolidated edits to validate." };
+  }
+
+  const workspace = await createScanWorkspace("validate-delivery");
+  const validateRoot = path.join(workspace.artifactsPath, "root");
+
+  try {
+    await copyRepoBaseline(baselineRoot, validateRoot);
+    const beforeChecks = await runFullBaselineChecks(validateRoot, "baseline");
+
+    for (const edit of deduped) {
+      const full = path.join(validateRoot, edit.path);
+      if (edit.content === "") {
+        await fs.rm(full, { force: true }).catch(() => {});
+        continue;
+      }
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, edit.content, "utf8");
+    }
+
+    const syntaxError = await findTypeScriptSyntaxFailure(validateRoot, deduped);
+    if (syntaxError) {
+      return { status: "failed", error: syntaxError };
+    }
+
+    const afterChecks = await runFullBaselineChecks(validateRoot, "after");
+    const compared = compareBaselineToAfter(beforeChecks, afterChecks);
+    const introduced = compared.filter((c) => c.outcome === "new_failure_introduced");
+    if (introduced.length > 0) {
+      const detail = introduced
+        .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "check failed"}`)
+        .join("; ");
+      return {
+        status: "failed",
+        error: `Cleanup introduced new repository failures — ${detail}`,
+      };
+    }
+
+    const required = compared.filter(
+      (c) =>
+        (c.name === "typecheck" || c.name === "build") &&
+        c.outcome !== "not_available" &&
+        c.outcome !== "skipped" &&
+        c.status === "failed"
+    );
+    if (required.length > 0) {
+      const detail = required
+        .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`)
+        .join("; ");
+      return {
+        status: "failed",
+        error: `Repository ${required.map((c) => c.name).join("/")} must pass before delivery — ${detail}`,
+      };
+    }
+
+    return { status: "passed" };
+  } catch (err) {
+    return {
+      status: "failed",
+      error: err instanceof Error ? err.message : "Delivery validation failed.",
+    };
+  } finally {
+    await removeWorkspace(workspace.root).catch(() => {});
+  }
+}
+
+async function findTypeScriptSyntaxFailure(
+  rootDir: string,
+  edits: ConsolidatedEdit[]
+): Promise<string | null> {
+  const tsFiles = edits
+    .filter((e) => /\.(tsx?|jsx?)$/.test(e.path) && e.content !== "")
+    .map((e) => e.path);
+  if (tsFiles.length === 0) return null;
+
+  try {
+    const scripts = JSON.parse(
+      await fs.readFile(path.join(rootDir, "package.json"), "utf8")
+    ) as { scripts?: Record<string, string> };
+    if (scripts.scripts?.typecheck || scripts.scripts?.build) {
+      return null;
+    }
+  } catch {
+    // fall through to tsc --noEmit when package scripts are unavailable
+  }
+
+  const configCandidates = ["tsconfig.json", "tsconfig.app.json"];
+  let configPath: string | null = null;
+  for (const candidate of configCandidates) {
+    try {
+      await fs.access(path.join(rootDir, candidate));
+      configPath = candidate;
+      break;
+    } catch {
+      /* try next */
+    }
+  }
+  if (!configPath) return null;
+
+  const result = await execa(
+    "npx",
+    ["tsc", "-p", configPath, "--noEmit", "--pretty", "false"],
+    { cwd: rootDir, reject: false, timeout: 120_000 }
+  );
+  if (result.exitCode === 0) return null;
+  const snippet = (result.stderr || result.stdout || "").trim().slice(0, 400);
+  return snippet
+    ? `TypeScript validation failed after applying cleanup edits — ${snippet}`
+    : "TypeScript validation failed after applying cleanup edits.";
 }
 
 export async function validateConsolidatedEditsInWorkspace(

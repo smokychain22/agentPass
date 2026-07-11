@@ -355,7 +355,7 @@ export async function runFreeCleanupCore(
     });
     if (options?.quickPatchMode) {
       limitations.push(
-        "Quick Cleanup used diff-only validation for speed. Run Verify for full typecheck/lint/build checks."
+        "Per-finding transforms used diff-only checks for speed. Delivery requires full repository validation (typecheck/build) before Create Cleanup PR."
       );
     }
     const { added, removed } = countDiffLines(loop.unifiedDiff);

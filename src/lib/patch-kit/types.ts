@@ -95,7 +95,7 @@ export interface PatchKitPayload {
   artifacts: PatchKitArtifacts;
   downloadUrl: string;
   zipBase64?: string;
-  validatedEdits?: Array<{ path: string; content: string }>;
+  validatedEdits?: Array<{ path: string; content: string; baselineContentHash?: string }>;
   changeManifest?: ChangeManifestEntry[];
   cleanupProof?: import("@/lib/execution/proof-ladder").CleanupProof;
 }

@@ -104,20 +104,71 @@ export class GitHubClient {
     path: string,
     branch: string
   ): Promise<string | null> {
+    const entry = await this.getFileEntry(owner, repo, path, branch);
+    return entry?.sha ?? null;
+  }
+
+  async getFileContent(
+    owner: string,
+    repo: string,
+    path: string,
+    branch: string
+  ): Promise<string | null> {
+    const entry = await this.getFileEntry(owner, repo, path, branch);
+    if (!entry?.content) return null;
+    return Buffer.from(entry.content.replace(/\n/g, ""), "base64").toString("utf8");
+  }
+
+  private async getFileEntry(
+    owner: string,
+    repo: string,
+    filePath: string,
+    branch: string
+  ): Promise<{ sha?: string; content?: string } | null> {
     const res = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}?ref=${encodeURIComponent(branch)}`,
+      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/")}?ref=${encodeURIComponent(branch)}`,
       { headers: this.headers() }
     );
     if (res.status === 404) return null;
     if (!res.ok) {
       throw new ToolExecutionError(
         "INTERNAL_ERROR",
-        `Failed to read file metadata for ${path}.`,
+        `Failed to read file metadata for ${filePath}.`,
         502
       );
     }
-    const data = (await res.json()) as { sha?: string };
-    return data.sha ?? null;
+    return (await res.json()) as { sha?: string; content?: string };
+  }
+
+  async listBranchesWithPrefix(owner: string, repo: string, prefix: string): Promise<string[]> {
+    const names: string[] = [];
+    for (let page = 1; page <= 5; page += 1) {
+      const batch = await this.request<Array<{ name: string }>>(
+        `/repos/${owner}/${repo}/branches?per_page=100&page=${page}`
+      );
+      if (!batch.length) break;
+      for (const branch of batch) {
+        if (branch.name.startsWith(prefix)) names.push(branch.name);
+      }
+      if (batch.length < 100) break;
+    }
+    return names;
+  }
+
+  async listOpenPullRequestsForHeadPrefix(
+    owner: string,
+    repo: string,
+    headPrefix: string
+  ): Promise<Array<{ number: number; url: string; head: string }>> {
+    const pulls = await this.request<
+      Array<{ number: number; html_url: string; head: { ref: string; label: string } }>
+    >(`/repos/${owner}/${repo}/pulls?state=open&per_page=100`);
+    return pulls
+      .filter((pr) => pr.head.ref.startsWith(headPrefix.replace(/\/$/, "")))
+      .map((pr) => ({ number: pr.number, url: pr.html_url, head: pr.head.ref }));
   }
 
   async deleteFile(
