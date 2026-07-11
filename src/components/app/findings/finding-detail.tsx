@@ -12,6 +12,7 @@ import {
   severityColor,
   typeLabel,
 } from "./findings-utils";
+import { CollapsibleFileList } from "@/components/app/ui/collapsible-list";
 import { cn } from "@/lib/utils";
 
 interface FindingDetailProps {
@@ -75,11 +76,7 @@ export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetai
           label="Affected files"
           value={
             finding.files.length > 0 ? (
-              <ul className="space-y-0.5 font-mono text-xs text-muted-foreground">
-                {finding.files.map((f) => (
-                  <li key={f}>{f}</li>
-                ))}
-              </ul>
+              <CollapsibleFileList files={finding.files} />
             ) : (
               finding.packageName ?? "—"
             )

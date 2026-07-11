@@ -1,6 +1,7 @@
 "use client";
 
 import { Panel } from "@/components/design-system/panel";
+import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 import type { ChangeManifestEntry } from "@/lib/patch-kit/types";
 
 export function ChangeManifestTable({ entries }: { entries: ChangeManifestEntry[] }) {
@@ -33,18 +34,20 @@ export function ChangeManifestTable({ entries }: { entries: ChangeManifestEntry[
               <th className="py-2 pr-4">Finding</th>
             </tr>
           </thead>
-          <tbody>
-            {entries.map((entry, i) => (
-              <tr key={`${entry.filePath}-${i}`} className="border-b border-border/20">
+          <CollapsibleTableBody
+            items={entries}
+            rowKey={(entry, index) => `${entry.filePath}-${index}`}
+            renderRow={(entry) => (
+              <>
                 <td className="py-2 pr-4 font-mono text-xs">{entry.filePath}</td>
                 <td className="py-2 pr-4 capitalize">{entry.operation}</td>
                 <td className="py-2 pr-4 font-mono text-xs">{entry.transformationType}</td>
                 <td className="py-2 pr-4 font-mono text-[10px] text-muted-foreground">
                   {entry.findingId}
                 </td>
-              </tr>
-            ))}
-          </tbody>
+              </>
+            )}
+          />
         </table>
       </div>
     </Panel>

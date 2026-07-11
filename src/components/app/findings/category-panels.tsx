@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Finding, FindingsPayload } from "@/lib/findings/types";
+import { CollapsibleFileList } from "@/components/app/ui/collapsible-list";
 import { actionLabel, actionVariant } from "./findings-utils";
 
 function PanelItem({ finding, extra }: { finding: Finding; extra?: React.ReactNode }) {
@@ -14,14 +15,7 @@ function PanelItem({ finding, extra }: { finding: Finding; extra?: React.ReactNo
           {actionLabel(finding.action)}
         </Badge>
       </div>
-      <ul className="mt-2 space-y-0.5 font-mono text-xs text-muted-foreground">
-        {finding.files.slice(0, 6).map((f) => (
-          <li key={f}>{f}</li>
-        ))}
-        {finding.files.length > 6 && (
-          <li className="text-electric">+{finding.files.length - 6} more</li>
-        )}
-      </ul>
+      <CollapsibleFileList files={finding.files} className="mt-2" />
       <p className="mt-2 text-xs text-muted-foreground leading-relaxed">{finding.reason}</p>
       {extra}
       <p className="mt-2 font-mono text-[10px] text-muted-foreground">

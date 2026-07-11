@@ -3,6 +3,7 @@
 import type { CandidateAuditRecord } from "@/lib/execution/candidate-lifecycle";
 import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
+import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 
 function executionLabel(row: CandidateAuditRecord): { level: "safe" | "review" | "neutral"; text: string } {
   if (row.retained) return { level: "safe", text: "verified" };
@@ -35,43 +36,45 @@ export function CandidateAuditTable({ audits }: { audits: CandidateAuditRecord[]
               <th className="px-2 py-2 font-medium">Blocker</th>
             </tr>
           </thead>
-          <tbody>
-            {audits.map((row) => {
+          <CollapsibleTableBody
+            items={audits}
+            rowKey={(row) => row.findingId}
+            renderRow={(row) => {
               const execution = executionLabel(row);
               return (
-                <tr key={row.findingId} className="border-b border-border/40 align-top">
-                  <td className="px-2 py-2 font-mono text-xs">
+                <>
+                  <td className="px-2 py-2 font-mono text-xs align-top">
                     <div>{row.findingId}</div>
                     {row.filePath && (
                       <div className="text-muted-foreground">{row.filePath}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 text-xs">{row.findingType}</td>
-                  <td className="px-2 py-2 text-xs">{row.pluginId}</td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2 text-xs align-top">{row.findingType}</td>
+                  <td className="px-2 py-2 text-xs align-top">{row.pluginId}</td>
+                  <td className="px-2 py-2 align-top">
                     <RiskBadge level={row.scanEligible ? "safe" : "review"}>
                       {row.scanEligible ? "yes" : "no"}
                     </RiskBadge>
                   </td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2 align-top">
                     <RiskBadge level={execution.level}>{execution.text}</RiskBadge>
                   </td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2 align-top">
                     <RiskBadge level={row.retained ? "safe" : "neutral"}>
                       {row.retained ? "yes" : "no"}
                     </RiskBadge>
                   </td>
-                  <td className="px-2 py-2 text-xs text-muted-foreground">
+                  <td className="px-2 py-2 text-xs text-muted-foreground align-top">
                     {row.retained
                       ? "—"
                       : row.blockerCode
                         ? `${row.blockerCode.replace(/_/g, " ")}${row.blockerMessage ? `: ${row.blockerMessage}` : ""}`
                         : "—"}
                   </td>
-                </tr>
+                </>
               );
-            })}
-          </tbody>
+            }}
+          />
         </table>
       </div>
     </Panel>
