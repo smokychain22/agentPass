@@ -243,8 +243,8 @@ export async function runOneFixAtATimeLoop(
         eligibilityEvidence: buildEligibilityEvidence(finding),
         finalDecision: "skipped",
         productOutcome: "no_safe_action",
-        exactReason: "A verified fix was already retained.",
-        rejectionReason: "A verified fix was already retained.",
+        exactReason: `Retained fix limit (${maxFixes}) reached — remaining eligible findings were not processed.`,
+        rejectionReason: `Retained fix limit (${maxFixes}) reached — remaining eligible findings were not processed.`,
         rollbackStatus: "not_needed",
         checks: [],
       });
@@ -259,8 +259,8 @@ export async function runOneFixAtATimeLoop(
         eligibilityEvidence: buildEligibilityEvidence(finding),
         finalDecision: "skipped",
         productOutcome: "no_safe_action",
-        exactReason: `Attempt limit (${maxAttempts}) reached.`,
-        rejectionReason: `Attempt limit (${maxAttempts}) reached.`,
+        exactReason: `Attempt limit (${maxAttempts}) reached — remaining eligible findings were not processed.`,
+        rejectionReason: `Attempt limit (${maxAttempts}) reached — remaining eligible findings were not processed.`,
         rollbackStatus: "not_needed",
         checks: [],
       });

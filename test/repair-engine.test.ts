@@ -210,9 +210,9 @@ test("blocker breakdown is explicit not generic skipped", () => {
   assert.equal(counts.not_attempted, 1);
 });
 
-test("quick cleanup limits: 5 retained, 15 attempts", () => {
-  assert.equal(QUICK_CLEANUP_RETAINED_FIX_LIMIT, 5);
-  assert.equal(QUICK_CLEANUP_ATTEMPT_LIMIT, 15);
+test("quick cleanup limits: process all eligible findings", () => {
+  assert.equal(QUICK_CLEANUP_RETAINED_FIX_LIMIT, 500);
+  assert.equal(QUICK_CLEANUP_ATTEMPT_LIMIT, 500);
 });
 
 test("zero verified changes cannot unlock cleanup PR", () => {

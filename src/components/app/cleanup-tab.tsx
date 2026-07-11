@@ -99,7 +99,7 @@ export function CleanupTab() {
         title="Free Cleanup Run"
         description={
           cta.mode === "auto_fix"
-            ? "RepoDiet ranks eligible findings, tries up to five candidates with deterministic strategies, verifies each change, and shows exact evidence. Your GitHub repository is not modified."
+            ? "RepoDiet ranks eligible findings, runs every supported transformer with deterministic strategies, verifies each change, and shows exact evidence. Your GitHub repository is not modified."
             : "No findings met Phase 1 automatic-fix eligibility. RepoDiet will explain why — no fake changes."
         }
         actions={

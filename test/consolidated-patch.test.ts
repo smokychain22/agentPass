@@ -5,10 +5,11 @@ import path from "node:path";
 import { execa } from "execa";
 import {
   buildConsolidatedPatchFromEdits,
+  collectEditsBetweenWorkspaces,
   dedupeConsolidatedEdits,
+  mergeCleanupPatches,
 } from "../src/lib/patch-kit/merge-patches";
 import { extractApplyablePatch } from "../src/lib/patch-kit/validate-patch";
-import { mergeCleanupPatches } from "../src/lib/patch-kit/merge-patches";
 import { buildTextDiff } from "../src/lib/execution/fix-preflight";
 
 async function testTwoEditsSameFileConsolidatedPassesApply(): Promise<void> {
@@ -79,6 +80,31 @@ async function testTwoEditsSameFileConsolidatedPassesApply(): Promise<void> {
   await fs.rm(fresh, { recursive: true, force: true });
 }
 
-testTwoEditsSameFileConsolidatedPassesApply().then(() => {
+async function testWorkspaceDeltaCollectsFinalState(): Promise<void> {
+  const baseline = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-base-"));
+  const modified = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-mod-"));
+  const rel = "src/panel.tsx";
+  const original = [
+    'import { Clock, Zap } from "lucide-react";',
+    "export function Panel() { return null; }",
+    "",
+  ].join("\n");
+  const finalContent = 'export function Panel() { return null; }\n';
+
+  for (const root of [baseline, modified]) {
+    const full = path.join(root, rel);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, root === baseline ? original : finalContent, "utf8");
+  }
+
+  const edits = await collectEditsBetweenWorkspaces(baseline, modified);
+  assert.equal(edits.length, 1);
+  assert.equal(edits[0].content, finalContent);
+
+  await fs.rm(baseline, { recursive: true, force: true });
+  await fs.rm(modified, { recursive: true, force: true });
+}
+
+Promise.all([testTwoEditsSameFileConsolidatedPassesApply(), testWorkspaceDeltaCollectsFinalState()]).then(() => {
   console.log("consolidated-patch.test.ts: ok");
 });

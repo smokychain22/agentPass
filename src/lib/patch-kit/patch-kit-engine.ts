@@ -8,7 +8,6 @@ import { runBasicScan } from "@/lib/scanner/run-scan";
 import type { Finding, FindingsPayload } from "@/lib/findings/types";
 import { isEligibleFinding } from "@/lib/findings/actionability-signals";
 import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
-import { QUICK_CLEANUP_RETAINED_FIX_LIMIT } from "@/lib/execution/constants";
 import {
   auditTransformerCompatibleFindings,
   formatBlockerBreakdown,
@@ -21,12 +20,11 @@ import { filterFindingsBySelection } from "./filter-findings";
 import { BUNDLE_FILE_COUNT } from "./bundle-manifest";
 import {
   countPatchLines,
-  finalizeCleanupPatch,
   EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
-import { generateUnifiedDeletePatch, copyRepoBaseline } from "./generate-unified-diff";
-import { mergeCleanupPatches, ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, dedupeConsolidatedEdits } from "./merge-patches";
-import { validateCleanupPatchInWorkspace, patchHasApplyableOperations, extractApplyablePatch } from "./validate-patch";
+import { copyRepoBaseline } from "./generate-unified-diff";
+import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces } from "./merge-patches";
+import { validateCleanupPatchInWorkspace, patchHasApplyableOperations } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -227,7 +225,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const dryRunPassed = preflightAudits.filter((a) => a.scanEligible).length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
-      maxFixes: QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+      maxFixes: Math.max(compatibleFindings.length, 1),
       workspaceRootDir: workspace.rootDir,
       quickPatchMode: true,
     });
@@ -246,13 +244,15 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
     const remainingSafeDeletes = buckets.safeDelete.filter((item) => !alreadyDeleted.has(item.path));
 
+    for (const item of remainingSafeDeletes) {
+      const rel = item.path.replace(/\\/g, "/").replace(/^\.\//, "");
+      await fs.rm(path.join(workspace.rootDir, rel), { force: true }).catch(() => {});
+    }
+
     const deleteScratch = path.join(workspace.workDir, "delete-scratch");
     await fs.mkdir(deleteScratch, { recursive: true });
-    const { previewUnifiedDeletePatch } = await import("./generate-unified-diff");
-    const { patch: rawPatch, deletedPaths } = await previewUnifiedDeletePatch(
-      baselineRoot,
-      remainingSafeDeletes,
-      deleteScratch
+    const deletedPaths = remainingSafeDeletes.map((item) =>
+      item.path.replace(/\\/g, "/").replace(/^\.\//, "")
     );
 
     const safeDeleteCount = deletedPaths.length;
@@ -262,10 +262,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       ).length + safeDeleteCount;
     let validatedChanges = retainedFixCount + safeDeleteCount;
     let verifiedChanges = validatedChanges;
-    const changedPaths = [
-      ...cleanupResult.proof.changedFiles,
-      ...deletedPaths.filter((p) => !cleanupResult.proof.changedFiles.includes(p)),
-    ];
+    const workspaceDeltaEdits = await collectEditsBetweenWorkspaces(baselineRoot, workspace.rootDir);
+    const changedPaths = workspaceDeltaEdits.map((e) => e.path);
 
     const transformerResults = buildTransformerResults(
       compatibleFindings,
@@ -273,37 +271,20 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cleanupResult.fixLoop.attempts
     );
 
-    const validatedEdits: Array<{ path: string; content: string }> = [];
-    for (const attempt of cleanupResult.fixLoop.attempts) {
-      if (attempt.status !== "retained") continue;
-      for (const [rel, content] of Object.entries(attempt.modifiedSources ?? {})) {
-        validatedEdits.push({ path: rel, content });
-      }
-    }
-    const consolidatedEdits = dedupeConsolidatedEdits(validatedEdits);
+    const validatedEdits = workspaceDeltaEdits;
 
-    const deletePatch = safeDeleteCount > 0 ? rawPatch : "";
-    let fixDiff = cleanupResult.unifiedDiff?.trim() ?? "";
+    let mergedPatch = EMPTY_CLEANUP_PATCH;
 
-    if (consolidatedEdits.length > 0) {
+    if (validatedEdits.length > 0) {
       const consolidated = await buildConsolidatedPatchFromEdits(
         baselineRoot,
-        consolidatedEdits,
+        validatedEdits,
         workspace.workDir
       );
       if (consolidated.patch && consolidated.patch !== EMPTY_CLEANUP_PATCH) {
-        fixDiff = extractApplyablePatch(consolidated.patch);
+        mergedPatch = ensurePatchTrailingNewline(consolidated.patch);
       }
     }
-
-    const cleanupPatch = finalizeCleanupPatch(
-      safeDeleteCount,
-      deletePatch,
-      fixDiff || undefined
-    );
-    const mergedPatch = ensurePatchTrailingNewline(
-      deletePatch && fixDiff ? mergeCleanupPatches(deletePatch, fixDiff) : cleanupPatch
-    );
 
     let patchValidation: {
       status: "passed" | "failed" | "skipped" | "not_generated";
@@ -325,8 +306,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     if (patchValidation.status !== "passed") {
       validatedChanges = 0;
       verifiedChanges = 0;
-    } else if (consolidatedEdits.length > 0 || safeDeleteCount > 0) {
-      validatedChanges = retainedFixCount + safeDeleteCount;
+    } else if (validatedEdits.length > 0 || safeDeleteCount > 0) {
+      validatedChanges = changedPaths.length;
       verifiedChanges = validatedChanges;
     }
 

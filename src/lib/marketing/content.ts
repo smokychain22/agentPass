@@ -487,7 +487,7 @@ export const PRICING_TIERS = [
   {
     name: "Quick Cleanup",
     price: "0.25 USDT",
-    description: "Up to five supported safe fixes with in-app diff review.",
+    description: "Processes every eligible safe fix with in-app diff review.",
     features: [
       "Up to 5 eligible safe fixes",
       "Real code changes",

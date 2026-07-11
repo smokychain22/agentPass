@@ -17,8 +17,7 @@ import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { runOneFixAtATimeLoop, countDiffLines } from "./one-fix-at-a-time";
 import {
   FREE_CANDIDATE_ATTEMPT_LIMIT,
-  QUICK_CLEANUP_ATTEMPT_LIMIT,
-  QUICK_CLEANUP_RETAINED_FIX_LIMIT,
+  MAX_STRATEGIES_PER_FINDING,
 } from "./constants";
 import { formatRejectionReason } from "./candidate-decision";
 import {
@@ -329,11 +328,15 @@ export async function runFreeCleanupCore(
     const loopCandidates = actionableCandidates;
 
     const attemptLimit = options?.quickPatchMode
-      ? QUICK_CLEANUP_ATTEMPT_LIMIT
+      ? Math.max(loopCandidates.length * MAX_STRATEGIES_PER_FINDING, loopCandidates.length)
       : FREE_CANDIDATE_ATTEMPT_LIMIT;
 
+    const retainedLimit = options?.quickPatchMode
+      ? Math.max(loopCandidates.length, 1)
+      : maxFixes;
+
     const loop = await runOneFixAtATimeLoop(rootDir, loopCandidates, {
-      maxFixes,
+      maxFixes: retainedLimit,
       maxAttempts: attemptLimit,
       stateMachine: sm,
       verificationLevel: options?.quickPatchMode ? "diff_only" : "full",

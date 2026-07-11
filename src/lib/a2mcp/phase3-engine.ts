@@ -311,7 +311,7 @@ export async function executeRunQuickCleanup(
   const cleanup = await executeQuickCleanup(findings, { findingIds: input.findingIds });
 
   const limitations = [
-    "Quick Cleanup uses the same verified fix engine as free proof (up to five retained fixes).",
+    "Quick Cleanup runs every eligible transformer, validates a consolidated patch, and prepares a review-ready PR.",
     "GitHub repository was not modified — isolated workspace only.",
   ];
   if (!input.quoteId) {

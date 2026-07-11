@@ -133,7 +133,8 @@ export function mergeExecutionIntoAudit(
       contentChanged: false,
       dryRunSucceeded: false,
       blockerCode: "not_attempted",
-      blockerMessage: "Eligible finding was not attempted within attempt limit.",
+      blockerMessage:
+        "Eligible finding was not processed — cleanup run stopped at the configured fix/attempt limit.",
     };
   }
 

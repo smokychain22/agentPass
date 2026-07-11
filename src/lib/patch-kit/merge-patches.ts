@@ -20,6 +20,60 @@ export function dedupeConsolidatedEdits(edits: ConsolidatedEdit[]): Consolidated
   return Array.from(byPath.entries()).map(([path, content]) => ({ path, content }));
 }
 
+const WORKSPACE_SKIP_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".turbo"]);
+
+async function listWorkspaceFiles(rootDir: string, rel = ""): Promise<string[]> {
+  const full = path.join(rootDir, rel);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(full, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const ent of entries) {
+    if (WORKSPACE_SKIP_DIRS.has(ent.name)) continue;
+    const childRel = rel ? `${rel}/${ent.name}` : ent.name;
+    const normalized = childRel.replace(/\\/g, "/");
+    if (ent.isDirectory()) {
+      files.push(...(await listWorkspaceFiles(rootDir, normalized)));
+    } else if (ent.isFile()) {
+      files.push(normalized);
+    }
+  }
+  return files;
+}
+
+/**
+ * Diff pristine baseline vs modified workspace into final file contents.
+ * Authoritative source for consolidated patches after sequential fix application.
+ */
+export async function collectEditsBetweenWorkspaces(
+  baselineRoot: string,
+  modifiedRoot: string
+): Promise<ConsolidatedEdit[]> {
+  const baselineFiles = new Set(await listWorkspaceFiles(baselineRoot));
+  const modifiedFiles = new Set(await listWorkspaceFiles(modifiedRoot));
+  const allPaths = new Set([...baselineFiles, ...modifiedFiles]);
+  const edits: ConsolidatedEdit[] = [];
+
+  for (const rel of allPaths) {
+    const basePath = path.join(baselineRoot, rel);
+    const modPath = path.join(modifiedRoot, rel);
+    const baseContent = await fs.readFile(basePath, "utf8").catch(() => null);
+    const modContent = await fs.readFile(modPath, "utf8").catch(() => null);
+    if (baseContent === modContent) continue;
+    if (modContent === null) {
+      edits.push({ path: rel, content: "" });
+    } else {
+      edits.push({ path: rel, content: modContent });
+    }
+  }
+
+  return dedupeConsolidatedEdits(edits);
+}
+
 async function initGitBaseline(rootDir: string): Promise<void> {
   await execa("git", ["init"], { cwd: rootDir, reject: false });
   await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });

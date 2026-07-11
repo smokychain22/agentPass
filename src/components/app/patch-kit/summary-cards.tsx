@@ -56,7 +56,7 @@ const cards: {
   {
     key: "notAttempted",
     title: "Not attempted",
-    explanation: "Eligible findings not processed within attempt limits.",
+    explanation: "Eligible findings not processed before the run completed.",
     getValue: (s) => s.notAttempted ?? 0,
   },
 ];

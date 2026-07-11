@@ -63,7 +63,7 @@ test("limits: 1 retained, 5 candidates, 3 strategies per finding", () => {
   assert.equal(FREE_RETAINED_FIX_LIMIT, 1);
   assert.equal(FREE_CANDIDATE_ATTEMPT_LIMIT, 5);
   assert.equal(MAX_STRATEGIES_PER_FINDING, 3);
-  assert.equal(QUICK_CLEANUP_RETAINED_FIX_LIMIT, 5);
+  assert.equal(QUICK_CLEANUP_RETAINED_FIX_LIMIT, 500);
 });
 
 test("first candidate regression, second would be verified_fix outcome mapping", () => {
