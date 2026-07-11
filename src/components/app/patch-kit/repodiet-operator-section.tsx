@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
@@ -32,6 +32,7 @@ import {
   repodietInstallReturnPath,
   startGitHubGrantAccess,
   repositoryFullNameFromRepoUrl,
+  PENDING_GITHUB_GRANT_KEY,
   type CleanupPrMode,
   type CreateCleanupPrResponse,
   type GitHubConnectionStatus,
@@ -129,6 +130,29 @@ export function RepoDietOperatorSection({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateCleanupPrResponse | null>(null);
   const [summaryCopied, setSummaryCopied] = useState(false);
+  const accessLoadSeq = useRef(0);
+  const cleanedReturnUrl = useRef(false);
+
+  const hasGithubReturnUrl = useMemo(() => {
+    return (
+      searchParams.get("github") === "connected" ||
+      searchParams.get("github_connected") === "true" ||
+      searchParams.get("github_recovered") === "installation_only" ||
+      searchParams.get("github_repo_pending") === "true"
+    );
+  }, [searchParams]);
+
+  const githubReturnParams = useMemo(() => {
+    return {
+      installationId: (() => {
+        const raw = searchParams.get("github_installation_id");
+        const n = raw ? Number(raw) : NaN;
+        return Number.isFinite(n) ? n : undefined;
+      })(),
+      setupAction:
+        searchParams.get("setup_action") === "update" ? ("update" as const) : undefined,
+    };
+  }, [searchParams]);
 
   const safeCount = patchKit?.summary.safeDeleteCandidates ?? 0;
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
@@ -176,76 +200,77 @@ export function RepoDietOperatorSection({
     }
   }, []);
 
-  const runPreflight = useCallback(async () => {
-    if (!repositoryFullName || useDemoAuth) {
-      setPreflight(null);
-      return;
-    }
-    setPreflightLoading(true);
-    try {
-      const result = await fetchGitHubPreflight({
-        repositoryFullName,
-        branch,
-        scanId: findings?.scanId,
-        commitSha: findings?.repo.commitSha,
+  const loadRepositoryAccess = useCallback(
+    async (opts?: { sync?: boolean; trustPending?: boolean }) => {
+      if (!repositoryFullName || useDemoAuth) {
+        setPreflight(null);
+        return null;
+      }
+
+      const seq = ++accessLoadSeq.current;
+      setPreflightLoading(true);
+
+      try {
+        const pendingGrant =
+          typeof window !== "undefined" &&
+          window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
+        const useSync = opts?.sync ?? pendingGrant;
+        const trustPending = opts?.trustPending ?? useSync;
+        const result = useSync
+          ? await syncGitHubRepositoryAccess({
+              repositoryFullName,
+              installationId: githubReturnParams.installationId,
+              setupAction: githubReturnParams.setupAction,
+              trustPendingPropagation: trustPending,
+            })
+          : await fetchGitHubPreflight({
+              repositoryFullName,
+              branch,
+              scanId: findings?.scanId,
+              commitSha: findings?.repo.commitSha,
+            });
+
+        if (seq !== accessLoadSeq.current) return result;
+
+        setPreflight(result);
+
+        if (result.repositoryAuthorized && typeof window !== "undefined") {
+          window.sessionStorage.removeItem(PENDING_GITHUB_GRANT_KEY);
+        }
+
+        return result;
+      } catch {
+        if (seq !== accessLoadSeq.current) return null;
+        setPreflight(null);
+        return null;
+      } finally {
+        if (seq === accessLoadSeq.current) {
+          setPreflightLoading(false);
+        }
+      }
+    },
+    [
+      repositoryFullName,
+      useDemoAuth,
+      githubReturnParams,
+      branch,
+      findings?.scanId,
+      findings?.repo.commitSha,
+    ]
+  );
+
+  useEffect(() => {
+    void refreshGitHubStatus().then(async () => {
+      const pendingGrant =
+        typeof window !== "undefined" &&
+        window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
+      await loadRepositoryAccess({
+        sync: hasGithubReturnUrl || pendingGrant,
+        trustPending: hasGithubReturnUrl || pendingGrant,
       });
-      setPreflight(result);
-    } catch {
-      setPreflight(null);
-    } finally {
-      setPreflightLoading(false);
-    }
-  }, [repositoryFullName, branch, findings, useDemoAuth]);
 
-  const syncRepositoryAccess = useCallback(async () => {
-    if (!repositoryFullName || useDemoAuth) return null;
-    setPreflightLoading(true);
-    try {
-      const installationIdRaw = searchParams.get("github_installation_id");
-      const installationId = installationIdRaw ? Number(installationIdRaw) : undefined;
-      const setupAction =
-        searchParams.get("setup_action") === "update" ? "update" : undefined;
-      const trustPendingPropagation =
-        searchParams.get("github_repo_pending") === "true" ||
-        searchParams.get("github_recovered") === "installation_only" ||
-        setupAction === "update";
-
-      const result = await syncGitHubRepositoryAccess({
-        repositoryFullName,
-        installationId: Number.isFinite(installationId) ? installationId : undefined,
-        setupAction,
-        trustPendingPropagation,
-      });
-      setPreflight(result);
-      return result;
-    } catch {
-      await runPreflight();
-      return null;
-    } finally {
-      setPreflightLoading(false);
-    }
-  }, [repositoryFullName, useDemoAuth, searchParams, runPreflight]);
-
-  useEffect(() => {
-    void refreshGitHubStatus();
-  }, [refreshGitHubStatus]);
-
-  useEffect(() => {
-    void runPreflight();
-  }, [runPreflight]);
-
-  useEffect(() => {
-    const githubConnected =
-      searchParams.get("github") === "connected" ||
-      searchParams.get("github_connected") === "true";
-    const githubRecovered = searchParams.get("github_recovered") === "installation_only";
-    const githubRepoPending = searchParams.get("github_repo_pending") === "true";
-
-    if (!githubConnected && !githubRecovered && !githubRepoPending) return;
-
-    void refreshGitHubStatus()
-      .then(() => syncRepositoryAccess())
-      .finally(() => {
+      if (hasGithubReturnUrl && !cleanedReturnUrl.current) {
+        cleanedReturnUrl.current = true;
         const params = new URLSearchParams(searchParams.toString());
         params.delete("github");
         params.delete("github_connected");
@@ -255,8 +280,55 @@ export function RepoDietOperatorSection({
         params.delete("github_installation_id");
         const qs = params.toString();
         router.replace(qs ? `/app?${qs}` : "/app?tab=patch", { scroll: false });
-      });
-  }, [searchParams, refreshGitHubStatus, syncRepositoryAccess, router]);
+      }
+    });
+  }, [
+    refreshGitHubStatus,
+    loadRepositoryAccess,
+    repositoryFullName,
+    hasGithubReturnUrl,
+    router,
+    searchParams,
+  ]);
+
+  useEffect(() => {
+    if (useDemoAuth || repositoryReady || !repositoryFullName) return;
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const pending =
+        window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
+      if (!pending && !githubStatus?.connected) return;
+      void loadRepositoryAccess({ sync: true, trustPending: true });
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [
+    useDemoAuth,
+    repositoryReady,
+    repositoryFullName,
+    githubStatus?.connected,
+    loadRepositoryAccess,
+  ]);
+
+  useEffect(() => {
+    if (useDemoAuth || repositoryReady || !repositoryFullName) return;
+
+    const pendingGrant =
+      window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
+    if (!pendingGrant) return;
+
+    const interval = window.setInterval(() => {
+      void loadRepositoryAccess({ sync: true, trustPending: true });
+    }, 8000);
+
+    return () => window.clearInterval(interval);
+  }, [useDemoAuth, repositoryReady, repositoryFullName, loadRepositoryAccess]);
 
   const grantAccess = async () => {
     if (!repositoryFullName) return;
@@ -301,7 +373,7 @@ export function RepoDietOperatorSection({
       if (/needs access|grant access|permission denied|not included/i.test(message)) {
         setPreflight(null);
       }
-      void runPreflight();
+      void loadRepositoryAccess();
     } finally {
       setLoading(false);
       setLoadingMode(null);
@@ -318,7 +390,7 @@ export function RepoDietOperatorSection({
   const disconnect = async () => {
     await disconnectGitHubApp();
     await refreshGitHubStatus();
-    await runPreflight();
+    await loadRepositoryAccess();
   };
 
   const needsManualToken = manualTokenReady;
@@ -471,20 +543,36 @@ export function RepoDietOperatorSection({
 
               <div className="flex flex-wrap gap-2">
                 {!useDemoAuth && !repositoryReady && githubStatus?.configured !== false && (
-                  <Button onClick={grantAccess} disabled={grantLoading || !repositoryFullName}>
-                    {grantLoading ? (
-                      <>
-                        <Loader2 className="animate-spin" />
-                        Opening GitHub…
-                      </>
-                    ) : (
-                      <>
-                        <Github className="h-4 w-4" />
-                        {accessMessages.primaryAction ??
-                          `Grant Access to ${repoShortName || "Repository"}`}
-                      </>
-                    )}
-                  </Button>
+                  <>
+                    <Button onClick={grantAccess} disabled={grantLoading || !repositoryFullName}>
+                      {grantLoading ? (
+                        <>
+                          <Loader2 className="animate-spin" />
+                          Opening GitHub…
+                        </>
+                      ) : (
+                        <>
+                          <Github className="h-4 w-4" />
+                          {accessMessages.primaryAction ??
+                            `Grant Access to ${repoShortName || "Repository"}`}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={preflightLoading || !repositoryFullName}
+                      onClick={() => void loadRepositoryAccess({ sync: true, trustPending: true })}
+                    >
+                      {preflightLoading ? (
+                        <>
+                          <Loader2 className="animate-spin" />
+                          Syncing…
+                        </>
+                      ) : (
+                        "I granted access — sync now"
+                      )}
+                    </Button>
+                  </>
                 )}
                 {!useDemoAuth && repositoryReady && (
                   <Button variant="outline" size="sm" onClick={disconnect}>

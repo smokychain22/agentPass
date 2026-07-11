@@ -9,6 +9,7 @@ import {
 import { isGitHubAppConfigured } from "./config";
 import { readInstallationSession } from "./session";
 import { readRepoInstallBinding } from "./install-flow-store";
+import { isRecentRepoInstallBinding } from "./binding-trust";
 import {
   parseRepositoryFullName,
   requiresRepositoryOwnerInstall,
@@ -40,6 +41,7 @@ function mapAccessState(input: {
   configured: boolean;
   session: Awaited<ReturnType<typeof readInstallationSession>>;
   repositoryAccessible: boolean;
+  bindingTrusted: boolean;
   permissionsVerified: boolean;
   suspended: boolean;
 }): GitHubAccessState {
@@ -47,7 +49,7 @@ function mapAccessState(input: {
   if (!input.session) return "not_installed";
   if (input.suspended) return "organization_approval_required";
   if (!input.permissionsVerified) return "permissions_outdated";
-  if (!input.repositoryAccessible) return "installed_repo_missing";
+  if (!input.repositoryAccessible && !input.bindingTrusted) return "installed_repo_missing";
   return "repository_verified";
 }
 
@@ -59,6 +61,7 @@ export async function runGitHubPreflight(
   const session = configured ? await readInstallationSession() : null;
 
   let repositoryAccessible = false;
+  let bindingTrusted = false;
   let permissionsVerified = false;
   let branchExists = false;
   let canCreateBranch = false;
@@ -80,28 +83,32 @@ export async function runGitHubPreflight(
     };
     permissionsVerified = permissionsAreSufficient(details?.permissions);
 
+    const binding = input.sessionKey
+      ? await readRepoInstallBinding(input.sessionKey, input.repositoryFullName)
+      : undefined;
+    bindingTrusted = isRecentRepoInstallBinding(binding, session.installationId);
+
     const access = await installationIncludesRepositoryWithRetry(
       session.installationId,
       owner,
       repo,
-      { attempts: 6, delayMs: 1500 }
+      { attempts: bindingTrusted ? 4 : 6, delayMs: 1500 }
     );
     repositoryAccessible = access.granted;
 
-    if (!repositoryAccessible && input.sessionKey) {
-      const binding = await readRepoInstallBinding(input.sessionKey, input.repositoryFullName);
-      if (binding && binding.installationId === session.installationId) {
-        const propagated = await installationIncludesRepositoryWithRetry(
-          session.installationId,
-          owner,
-          repo,
-          { attempts: 8, delayMs: 2000 }
-        );
-        repositoryAccessible = propagated.granted;
-      }
+    if (!repositoryAccessible && bindingTrusted) {
+      const propagated = await installationIncludesRepositoryWithRetry(
+        session.installationId,
+        owner,
+        repo,
+        { attempts: 8, delayMs: 2000 }
+      );
+      repositoryAccessible = propagated.granted;
     }
 
-    if (repositoryAccessible && permissionsVerified) {
+    const deliveryReady = repositoryAccessible || bindingTrusted;
+
+    if (deliveryReady && permissionsVerified) {
       canCreateBranch = true;
       canCreatePullRequest = true;
 
@@ -134,6 +141,7 @@ export async function runGitHubPreflight(
     configured,
     session,
     repositoryAccessible,
+    bindingTrusted,
     permissionsVerified,
     suspended,
   });
@@ -153,7 +161,8 @@ export async function runGitHubPreflight(
     installationOwner,
     repositoryOwner: owner,
     requiresRepositoryOwnerInstall: ownerMismatch,
-    repositoryAuthorized: repositoryAccessible && permissionsVerified && !suspended,
+    repositoryAuthorized:
+      (repositoryAccessible || bindingTrusted) && permissionsVerified && !suspended,
     permissionsVerified,
     repositoryAccessible,
     canCreateBranch,

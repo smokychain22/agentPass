@@ -62,6 +62,9 @@ export type GitHubPreflightResult = import("@/lib/github-app/types").GitHubPrefl
 
 const REPODIET_APP_FALLBACK = "https://skillswap-skillswap7.vercel.app";
 
+/** Set before redirecting to GitHub grant/configure; cleared after successful sync. */
+export const PENDING_GITHUB_GRANT_KEY = "repodiet_pending_github_grant";
+
 export function repodietInstallReturnPath(scanId?: string): string {
   const origin =
     process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
@@ -151,6 +154,10 @@ export async function startGitHubGrantAccess(input: {
   }
 
   assertClientGitHubInstallRedirectUrl(redirectUrl, json.flow);
+
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem(PENDING_GITHUB_GRANT_KEY, input.repositoryFullName);
+  }
 
   window.location.assign(redirectUrl);
 }

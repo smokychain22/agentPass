@@ -6,6 +6,7 @@ import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { createInstallFlow } from "@/lib/github-app/install-flow";
 import {
   assertValidGitHubInstallRedirectUrl,
+  buildConfigureInstallationUrl,
   getGitHubAppSlugOrThrow,
   GitHubAppSlugError,
   resolveGitHubInstallRedirect,
@@ -18,6 +19,7 @@ import {
 import { readInstallationSession } from "@/lib/github-app/session";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   if (!isGitHubAppConfigured()) {
@@ -92,24 +94,31 @@ export async function POST(request: Request) {
       installationOwner,
     });
 
+    // Fast path: existing installation → configure flow. Do not block redirect on live repo probe.
     let hasRepositoryAccess = false;
-    if (existing) {
+    if (existing && !ownerMismatch) {
       hasRepositoryAccess = await installationIncludesRepository(
         existing.installationId,
         repositoryOwner,
         repo
-      );
+      ).catch(() => false);
     }
 
     const requiresOwnerInstall = ownerMismatch && !hasRepositoryAccess;
 
-    const { url, flow } = resolveGitHubInstallRedirect({
-      slug: appSlug,
-      stateToken,
-      installationId: existing?.installationId,
-      requiresRepositoryOwnerInstall: requiresOwnerInstall,
-      hasRepositoryAccess,
-    });
+    const { url, flow } =
+      existing && !requiresOwnerInstall
+        ? {
+            url: buildConfigureInstallationUrl(appSlug, stateToken),
+            flow: "configure" as const,
+          }
+        : resolveGitHubInstallRedirect({
+            slug: appSlug,
+            stateToken,
+            installationId: existing?.installationId,
+            requiresRepositoryOwnerInstall: requiresOwnerInstall,
+            hasRepositoryAccess,
+          });
 
     assertValidGitHubInstallRedirectUrl(url, flow);
 
