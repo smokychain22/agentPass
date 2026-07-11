@@ -47,11 +47,19 @@ function isProtectedPath(filePath: string): boolean {
   return isDoNotTouchPath(filePath) || isRouteLikePath(filePath);
 }
 
-function baseEligible(finding: Finding): boolean {
-  if (finding.action !== "safe_candidate") return false;
+/** Whether a deterministic transformer may run in isolated workspace repair. */
+function transformEligible(finding: Finding): boolean {
+  if (finding.action === "do_not_touch" || finding.protected) return false;
   if (finding.confidence < MIN_CONFIDENCE) return false;
   if (finding.files.some(isProtectedPath)) return false;
-  return true;
+  if (finding.source.endsWith("_fallback") || UNTRUSTED_SOURCE_MODES.has(finding.sourceMode)) {
+    return false;
+  }
+  return hasActionablePreflight(finding) || finding.action === "safe_candidate";
+}
+
+function baseEligible(finding: Finding): boolean {
+  return transformEligible(finding);
 }
 
 function hasActionablePreflight(finding: Finding): boolean {
@@ -87,9 +95,12 @@ function isConfirmedUnusedFile(finding: Finding): boolean {
 
 /** Structural eligibility before dry-run preflight. */
 export function isPhase1StructuralCandidate(finding: Finding): boolean {
-  if (finding.action !== "safe_candidate") return false;
+  if (finding.action === "do_not_touch" || finding.protected) return false;
   if (finding.confidence < MIN_CONFIDENCE) return false;
   if (finding.files.some(isProtectedPath)) return false;
+  if (finding.source.endsWith("_fallback") || UNTRUSTED_SOURCE_MODES.has(finding.sourceMode)) {
+    return false;
+  }
   if (finding.type === "unused_import") {
     const hasEvidence = finding.evidence.signals.some(
       (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
@@ -166,12 +177,17 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
       const file = finding.files[0];
       if (!file || !isTempFilePath(file)) return false;
       if (isProtectedPath(file)) return false;
-      if (finding.action !== "safe_candidate") return false;
       if (finding.confidence < MIN_CONFIDENCE) return false;
       if (finding.sourceMode === "fallback") return false;
       if (finding.type === "unused_file" && finding.source !== "knip") return false;
-      if (finding.type === "ai_slop_signal") return hasActionablePreflight(finding);
-      return hasActionablePreflight(finding);
+      if (finding.type === "ai_slop_signal") {
+        return hasActionablePreflight(finding) || finding.action === "safe_candidate";
+      }
+      return (
+        hasActionablePreflight(finding) ||
+        finding.action === "safe_candidate" ||
+        isTempFilePath(file)
+      );
     },
     eligibilityReason(finding) {
       const file = finding.files[0];

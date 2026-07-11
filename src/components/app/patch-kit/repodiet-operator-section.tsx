@@ -276,6 +276,31 @@ export function RepoDietOperatorSection({
   const needsManualToken =
     !useDemoAuth && !repositoryReady && showAdvancedToken && githubToken.trim();
 
+  const cleanupPrDisableReason = useMemo(() => {
+    if (locked) return "Run Quick Cleanup first.";
+    if (!patchValidated) return "Patch validation must pass before creating a cleanup PR.";
+    if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
+      return "No validated source changes — generate repairs first.";
+    }
+    if (requireVerificationForCleanupPr && verificationStatus !== "passed") {
+      return "Run verification on the Verify tab first.";
+    }
+    if (!repositoryReady && !needsManualToken) {
+      return "Grant GitHub repository access first.";
+    }
+    return null;
+  }, [
+    locked,
+    patchValidated,
+    validatedChanges,
+    patchKit?.validatedEdits?.length,
+    safeCount,
+    requireVerificationForCleanupPr,
+    verificationStatus,
+    repositoryReady,
+    needsManualToken,
+  ]);
+
   const repositoryOwner = preflight?.repositoryOwner ?? repositoryFullName.split("/")[0] ?? "";
   const installationOwner = preflight?.installationOwner ?? githubStatus?.account?.login;
   const requiresOwnerInstall = Boolean(preflight?.requiresRepositoryOwnerInstall);
@@ -520,6 +545,12 @@ export function RepoDietOperatorSection({
             </details>
           )}
 
+          {cleanupPrDisableReason && !canCreateSafePr && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
+              {cleanupPrDisableReason}
+            </div>
+          )}
+
           {validatedChanges === 0 && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
               {patchKit?.summary.blockerSummary
@@ -540,11 +571,7 @@ export function RepoDietOperatorSection({
             <Button
               onClick={() => submit("safe_only")}
               disabled={loading || (!canCreateSafePr && !needsManualToken)}
-              title={
-                requireVerificationForCleanupPr && verificationStatus !== "passed"
-                  ? "Run verification on the Verify tab first"
-                  : undefined
-              }
+              title={cleanupPrDisableReason ?? undefined}
             >
               {loading && loadingMode === "safe_only" ? (
                 <>

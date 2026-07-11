@@ -297,7 +297,7 @@ export function PatchKitTab() {
         findings={findings}
         patchKit={patchKit}
         demoMode={demoMode}
-        requireVerificationForCleanupPr
+        requireVerificationForCleanupPr={false}
       />
     </div>
   );

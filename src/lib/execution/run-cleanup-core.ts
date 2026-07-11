@@ -324,8 +324,20 @@ export async function runFreeCleanupCore(
       rootDir,
       preflightPool
     );
-    const actionableCandidates = repreflighted.filter(isActionableFinding);
-    const loopCandidates = actionableCandidates;
+    const repreflightActionable = repreflighted.filter(isActionableFinding);
+    const structuralActionable = preflightPool.filter(
+      (f) =>
+        isPhase1StructuralCandidate(f) &&
+        resolvePhase1Plugin(f).id !== "review_only" &&
+        !f.protected &&
+        f.action !== "do_not_touch"
+    );
+    const loopCandidates =
+      repreflightActionable.length > 0
+        ? repreflightActionable
+        : options?.quickPatchMode
+          ? structuralActionable
+          : [];
 
     const attemptLimit = options?.quickPatchMode
       ? Math.max(loopCandidates.length * MAX_STRATEGIES_PER_FINDING, loopCandidates.length)

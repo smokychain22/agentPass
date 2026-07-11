@@ -155,6 +155,41 @@ export async function disconnectGitHubApp(): Promise<void> {
   await fetch("/api/github/disconnect", { method: "POST", credentials: "include" });
 }
 
+export function parseCreateCleanupPrResponse(json: unknown): CreateCleanupPrResponse {
+  const body = json as {
+    ok?: boolean;
+    success?: boolean;
+    pullRequest?: CreateCleanupPrResponse["pullRequest"];
+    actionSummary?: CreateCleanupPrResponse["actionSummary"];
+    repo?: CreateCleanupPrResponse["repo"];
+    warnings?: string[];
+    result?: {
+      pullRequest?: CreateCleanupPrResponse["pullRequest"];
+      actionSummary?: CreateCleanupPrResponse["actionSummary"];
+      repo?: CreateCleanupPrResponse["repo"];
+      warnings?: string[];
+    };
+    error?: { code: string; message: string } | string;
+  };
+
+  const payload = body.result ?? body;
+  const pullRequest = payload.pullRequest ?? body.pullRequest;
+  const actionSummary = payload.actionSummary ?? body.actionSummary;
+  const repo = payload.repo ?? body.repo;
+  const warnings = payload.warnings ?? body.warnings ?? [];
+  const succeeded = body.ok === true || body.success === true || Boolean(pullRequest?.url);
+
+  if (!succeeded || !pullRequest || !actionSummary || !repo) {
+    const message =
+      typeof body.error === "string"
+        ? body.error
+        : body.error?.message ?? "Cleanup PR creation failed.";
+    throw new Error(message);
+  }
+
+  return { pullRequest, actionSummary, repo, warnings };
+}
+
 export async function runCreateCleanupPr(
   request: CreateCleanupPrRequest
 ): Promise<CreateCleanupPrResponse> {
@@ -165,25 +200,8 @@ export async function runCreateCleanupPr(
     body: JSON.stringify(request),
   });
 
-  const json = (await res.json()) as {
-    ok: boolean;
-    pullRequest?: CreateCleanupPrResponse["pullRequest"];
-    actionSummary?: CreateCleanupPrResponse["actionSummary"];
-    repo?: CreateCleanupPrResponse["repo"];
-    warnings?: string[];
-    error?: { code: string; message: string };
-  };
-
-  if (!json.ok || !json.pullRequest || !json.actionSummary || !json.repo) {
-    throw new Error(json.error?.message ?? "Cleanup PR creation failed.");
-  }
-
-  return {
-    pullRequest: json.pullRequest,
-    actionSummary: json.actionSummary,
-    repo: json.repo,
-    warnings: json.warnings ?? [],
-  };
+  const json = await res.json();
+  return parseCreateCleanupPrResponse(json);
 }
 
 export type PatchKitPhase =

@@ -106,6 +106,28 @@ export async function collectEditsBetweenWorkspaces(
   return dedupeConsolidatedEdits(edits);
 }
 
+/** Fallback when workspace walk misses retained in-memory edits. */
+export function buildEditsFromRetainedAttempts(
+  attempts: Array<{
+    status: string;
+    changedPaths: string[];
+    modifiedSources?: Record<string, string>;
+  }>
+): ConsolidatedEdit[] {
+  const edits: ConsolidatedEdit[] = [];
+  for (const attempt of attempts) {
+    if (attempt.status !== "retained") continue;
+    for (const rel of attempt.changedPaths) {
+      const normalized = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+      const content = attempt.modifiedSources?.[rel] ?? attempt.modifiedSources?.[normalized];
+      if (content !== undefined) {
+        edits.push({ path: normalized, content });
+      }
+    }
+  }
+  return dedupeConsolidatedEdits(edits);
+}
+
 async function initGitBaseline(rootDir: string): Promise<void> {
   await execa("git", ["init"], { cwd: rootDir, reject: false });
   await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });

@@ -23,7 +23,7 @@ import {
   EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
-import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces } from "./merge-patches";
+import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces, buildEditsFromRetainedAttempts } from "./merge-patches";
 import { validateCleanupPatchInWorkspace, validateConsolidatedEditsInWorkspace, patchHasApplyableOperations } from "./validate-patch";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
@@ -263,15 +263,27 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     let validatedChanges = retainedFixCount + safeDeleteCount;
     let verifiedChanges = validatedChanges;
     const workspaceDeltaEdits = await collectEditsBetweenWorkspaces(baselineRoot, workspace.rootDir);
-    const changedPaths = workspaceDeltaEdits.map((e) => e.path);
+    let validatedEdits =
+      workspaceDeltaEdits.length > 0
+        ? workspaceDeltaEdits
+        : buildEditsFromRetainedAttempts(cleanupResult.fixLoop.attempts);
+
+    for (const rel of deletedPaths) {
+      if (!validatedEdits.some((e) => e.path === rel)) {
+        validatedEdits.push({ path: rel, content: "" });
+      }
+    }
+    validatedEdits = validatedEdits.filter(
+      (e, i, arr) => arr.findIndex((x) => x.path === e.path) === i
+    );
+
+    const changedPaths = validatedEdits.map((e) => e.path);
 
     const transformerResults = buildTransformerResults(
       compatibleFindings,
       candidateAudits,
       cleanupResult.fixLoop.attempts
     );
-
-    const validatedEdits = workspaceDeltaEdits;
 
     let mergedPatch = EMPTY_CLEANUP_PATCH;
 
@@ -329,17 +341,17 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const deliveryReady =
       patchValidation.status === "passed" &&
-      (validatedEdits.length > 0 || safeDeleteCount > 0);
+      (validatedEdits.length > 0 || safeDeleteCount > 0 || retainedFixCount > 0);
 
     if (!deliveryReady) {
       validatedChanges = 0;
       verifiedChanges = 0;
     } else {
-      validatedChanges = changedPaths.length;
+      validatedChanges = validatedEdits.length;
       verifiedChanges = validatedChanges;
     }
 
-    const filesEdited = changedPaths.length;
+    const filesEdited = validatedEdits.filter((e) => e.content !== "").length;
     const filesDeleted = deletedPaths.length;
     const filesAdded = 0;
     const blockerBreakdown = summarizeBlockers(candidateAudits);
@@ -409,21 +421,32 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const changeManifest: ChangeManifestEntry[] = cleanupResult.fixLoop.attempts
       .filter((a) => a.status === "retained")
       .flatMap((a) =>
-        a.changedPaths.map((path) => ({
-          findingId: a.findingId,
-          transformationType: a.pluginId,
-          filePath: path,
-          operation: "edit" as const,
-        }))
+        a.changedPaths.map((filePath) => {
+          const rel = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+          const original = a.originalSources?.[filePath] ?? a.originalSources?.[rel] ?? "";
+          const modified = a.modifiedSources?.[filePath] ?? a.modifiedSources?.[rel] ?? "";
+          const op: ChangeManifestEntry["operation"] =
+            modified === "" && original !== "" ? "delete" : "edit";
+          return {
+            findingId: a.findingId,
+            transformationType: a.pluginId,
+            filePath: rel,
+            operation: op,
+            linesAdded: modified && original ? Math.max(0, modified.split("\n").length - original.split("\n").length) : undefined,
+            linesRemoved: modified && original ? Math.max(0, original.split("\n").length - modified.split("\n").length) : undefined,
+          };
+        })
       );
-    deletedPaths.forEach((path) => {
-      changeManifest.push({
-        findingId: "safe_delete",
-        transformationType: "file_deletion",
-        filePath: path,
-        operation: "delete",
-      });
-    });
+    for (const rel of deletedPaths) {
+      if (!changeManifest.some((e) => e.filePath === rel)) {
+        changeManifest.push({
+          findingId: "safe_delete",
+          transformationType: "file_deletion",
+          filePath: rel,
+          operation: "delete",
+        });
+      }
+    }
 
     const payload: PatchKitPayload = {
       id,
