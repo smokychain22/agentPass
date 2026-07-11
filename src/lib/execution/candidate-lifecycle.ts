@@ -199,6 +199,14 @@ export function summarizeBlockers(audits: CandidateAuditRecord[]): Record<Blocke
   return counts;
 }
 
+export function isCleanupEligibleAudit(audit: CandidateAuditRecord): boolean {
+  return (
+    audit.scanEligible &&
+    audit.blockerCode !== "transform_noop" &&
+    audit.blockerMessage !== "Dependency entry was not found in the selected manifest."
+  );
+}
+
 export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
   eligible: number;
   ineligible: number;
@@ -215,14 +223,11 @@ export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
   verified: number;
 } {
   const preflightChecked = audits.length;
-  const eligible = audits.filter(
-    (a) =>
-      a.scanEligible &&
-      a.blockerCode !== "transform_noop" &&
-      a.blockerMessage !== "Dependency entry was not found in the selected manifest."
-  ).length;
+  const eligible = audits.filter(isCleanupEligibleAudit).length;
   const ineligible = preflightChecked - eligible;
-  const executed = audits.filter((a) => a.transformAttempted && a.scanEligible).length;
+  const executed = audits.filter(
+    (a) => a.transformAttempted && isCleanupEligibleAudit(a)
+  ).length;
   const generatedChanges = audits.filter((a) => a.contentChanged && a.transformAttempted).length;
   const noop = audits.filter(
     (a) => a.transformAttempted && a.blockerCode === "transform_noop"

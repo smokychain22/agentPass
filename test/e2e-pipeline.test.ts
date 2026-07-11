@@ -13,7 +13,9 @@ import { runRepositoryVerification } from "../src/lib/patch-kit/repository-verif
 import {
   areRequiredPackagesInstalled,
   ensureVerificationDependencies,
+  formatInstallFailureReason,
   inferRequiredPackagesForScripts,
+  lockfileWasPatched,
 } from "../src/lib/execution/workspace-install";
 import { resolveDependencyEntry } from "../src/lib/execution/fix-preflight";
 import { applyRepositoryIdentity } from "../src/lib/github/refresh-repo-identity";
@@ -246,6 +248,60 @@ async function run() {
     const runSummary = buildCleanupRunSummary({
       findings,
       summary,
+      candidateAudits: [
+        {
+          findingId: "1",
+          findingType: "unused_import",
+          pluginId: "remove_unused_import",
+          strategyIds: [],
+          sourceFound: true,
+          sourceHashMatched: true,
+          scanEligible: true,
+          transformAttempted: true,
+          contentChanged: true,
+          dryRunSucceeded: true,
+          proposedSourceChanged: true,
+          proposedDiffGenerated: true,
+          patchValidated: true,
+          verificationSupported: true,
+          retained: true,
+        },
+        {
+          findingId: "2",
+          findingType: "unused_dependency",
+          pluginId: "remove_unused_dependency",
+          strategyIds: [],
+          sourceFound: true,
+          sourceHashMatched: true,
+          scanEligible: true,
+          transformAttempted: true,
+          contentChanged: true,
+          dryRunSucceeded: true,
+          proposedSourceChanged: true,
+          proposedDiffGenerated: true,
+          patchValidated: true,
+          verificationSupported: true,
+          retained: true,
+        },
+        ...Array.from({ length: 3 }, (_, i) => ({
+          findingId: `noop-${i}`,
+          findingType: "unused_import" as const,
+          pluginId: "remove_unused_import" as const,
+          strategyIds: [],
+          sourceFound: true,
+          sourceHashMatched: true,
+          scanEligible: true,
+          transformAttempted: true,
+          contentChanged: false,
+          dryRunSucceeded: false,
+          proposedSourceChanged: true,
+          proposedDiffGenerated: true,
+          patchValidated: false,
+          verificationSupported: true,
+          retained: false,
+          blockerCode: "transform_noop" as const,
+        })),
+      ],
       verification: {
         status: "blocked",
         failureCode: "DEPENDENCY_INSTALL_FAILED",
@@ -258,6 +314,66 @@ async function run() {
     assert.equal(runSummary.validated, 2);
     assert.equal(runSummary.verified, 0);
     assert.equal(runSummary.eligible, 2);
+    assert.equal(runSummary.executed, 2);
+  });
+
+  await test("formatInstallFailureReason strips npm log path noise", () => {
+    const reason = formatInstallFailureReason(
+      "npm error code EUSAGE\nnpm error `npm ci` can only install packages when your package.json and package-lock.json are in sync\nnpm error A complete log of this run can be found in: /tmp/foo.log",
+      ""
+    );
+    assert.ok(reason.includes("package.json and package-lock.json"));
+    assert.ok(!reason.includes("complete log of this run"));
+  });
+
+  await test("lockfileWasPatched detects package manifest edits", () => {
+    assert.equal(lockfileWasPatched(["package.json", "src/index.ts"]), true);
+    assert.equal(lockfileWasPatched(["src/index.ts"]), false);
+  });
+
+  await test("verification install prefers npm install when lockfile was patched", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-lock-patch-"));
+    const pkg = {
+      name: "fixture",
+      scripts: { typecheck: "tsc --noEmit" },
+      dependencies: { react: "18.3.1" },
+      devDependencies: { typescript: "5.6.3" },
+    };
+    await fs.writeFile(path.join(root, "package.json"), JSON.stringify(pkg, null, 2), "utf8");
+    await fs.writeFile(
+      path.join(root, "package-lock.json"),
+      JSON.stringify(
+        {
+          name: "fixture",
+          lockfileVersion: 3,
+          packages: {
+            "": { name: "fixture", dependencies: { react: "18.3.1", "left-pad": "1.0.0" } },
+          },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const patchedPkg = {
+      name: "fixture",
+      scripts: { typecheck: "tsc --noEmit" },
+      dependencies: { react: "18.3.1" },
+      devDependencies: { typescript: "5.6.3" },
+    };
+    await fs.writeFile(path.join(root, "package.json"), JSON.stringify(patchedPkg, null, 2), "utf8");
+
+    const install = await ensureVerificationDependencies(root, "lockfile_patch_test", {
+      requiredPackages: ["typescript"],
+      patchedPaths: ["package.json", "package-lock.json"],
+    });
+    assert.equal(install.installed, true, install.reason);
+    assert.ok(
+      install.attempts.some((a) => a.command.startsWith("npm install")),
+      "expected npm install attempt when lockfile was patched"
+    );
+    await fs.rm(root, { recursive: true, force: true });
   });
 
   await test("backup file deletion proof approves archive backup without imports", async () => {

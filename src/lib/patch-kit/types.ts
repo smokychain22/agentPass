@@ -130,6 +130,8 @@ export interface PatchKitPayload {
     status: "verified" | "blocked" | "failed" | "not_run";
     failureCode?: "DEPENDENCY_INSTALL_FAILED" | "CHECK_FAILED";
     error?: string;
+    installAttempts?: import("@/lib/execution/workspace-install").InstallAttemptRecord[];
+    checks?: import("@/lib/jobs/types").VerifyCheckResult[];
   };
   cleanupRunSummary?: import("./cleanup-summary").CleanupRunSummary;
   deletionProofs?: import("./safe-delete-discovery").SafeDeleteProof[];

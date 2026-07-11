@@ -14,6 +14,7 @@ import {
   summarizeBlockers,
   summarizeCleanupAttempts,
   type CandidateAuditRecord,
+  isCleanupEligibleAudit,
 } from "@/lib/execution/candidate-lifecycle";
 import { classifyFindingsForPatchWithDiscovery } from "./safe-delete-discovery";
 import { filterFindingsBySelection } from "./filter-findings";
@@ -312,11 +313,11 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
 
     const eligibleFindingIds = preflightAudits
-      .filter((a) => a.scanEligible)
+      .filter(isCleanupEligibleAudit)
       .map((a) => a.findingId);
 
     const transformerCompatible = compatibleFindings.length;
-    const dryRunPassed = preflightAudits.filter((a) => a.scanEligible).length;
+    const dryRunPassed = preflightAudits.filter(isCleanupEligibleAudit).length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
       maxFixes: Math.max(eligibleFindingIds.length, 1),
@@ -691,6 +692,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         status: repositoryVerification.status,
         failureCode: repositoryVerification.failureCode,
         error: repositoryVerification.error,
+        installAttempts: repositoryVerification.installAttempts,
+        checks: repositoryVerification.checks,
       },
       cleanupRunSummary,
       deletionProofs,

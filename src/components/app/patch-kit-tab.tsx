@@ -295,7 +295,8 @@ export function PatchKitTab() {
             !verificationIssue &&
             patchKit.patchValidation?.status === "passed" &&
             (patchKit.summary.generatedChanges ?? 0) > 0 &&
-            (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 && (
+            (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 &&
+            !patchKit.summary.blockerSummary?.includes("repository verification blocked") && (
               <FeedbackBanner
                 variant="warning"
                 message={
@@ -328,6 +329,15 @@ export function PatchKitTab() {
               </pre>
             </Panel>
           )}
+          {patchKit.repositoryVerification?.installAttempts &&
+            patchKit.repositoryVerification.installAttempts.length > 0 && (
+              <Panel variant="elevated" padding="md" className="border-border/60">
+                <p className="ds-label mb-2">Developer tools — dependency install</p>
+                <pre className="max-h-64 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {JSON.stringify(patchKit.repositoryVerification.installAttempts, null, 2)}
+                </pre>
+              </Panel>
+            )}
           {patchKit.summary.proofLadder && (
             <ProofLadderPanel
               ladder={

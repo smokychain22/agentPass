@@ -207,11 +207,12 @@ export async function runRepositoryVerification(input: {
 
     const scripts = await readScripts(verifyRoot);
     const requiredPackages = inferRequiredPackagesForScripts(scripts);
+    const patchedPaths = deduped.map((edit) => edit.path.replace(/\\/g, "/"));
 
     const installResult = await ensureVerificationDependencies(
       verifyRoot,
       input.cleanupRunId,
-      { requiredPackages }
+      { requiredPackages, patchedPaths }
     );
     installAttempts = installResult.attempts;
     checks.push({

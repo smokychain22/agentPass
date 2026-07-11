@@ -1,5 +1,8 @@
 import type { FindingsPayload } from "@/lib/findings/types";
-import type { CandidateAuditRecord } from "@/lib/execution/candidate-lifecycle";
+import {
+  isCleanupEligibleAudit,
+  type CandidateAuditRecord,
+} from "@/lib/execution/candidate-lifecycle";
 import type { PatchKitSummary } from "./types";
 import type { RepositoryVerificationResult } from "./repository-verification";
 
@@ -35,13 +38,13 @@ export function buildCleanupRunSummary(input: {
     input.findings.summary.totalFindings ??
     0;
 
-  const eligible =
-    input.summary.eligibleFindings ??
-    input.candidateAudits?.filter((a) => a.scanEligible).length ??
-    0;
+  const eligible = input.candidateAudits
+    ? input.candidateAudits.filter(isCleanupEligibleAudit).length
+    : (input.summary.eligibleFindings ?? 0);
   const ineligible = input.summary.ineligibleFindings ?? Math.max(0, detected - eligible);
-  const executed =
-    input.summary.executedFindings ?? input.summary.attemptedTransformations ?? 0;
+  const executed = input.candidateAudits
+    ? input.candidateAudits.filter((a) => a.transformAttempted && isCleanupEligibleAudit(a)).length
+    : (input.summary.executedFindings ?? input.summary.attemptedTransformations ?? 0);
   const attempted = executed;
   const generated = input.summary.generatedChanges ?? 0;
   const validated =

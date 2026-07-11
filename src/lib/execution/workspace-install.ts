@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { execa } from "execa";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
@@ -38,6 +39,73 @@ function summarize(text: string, max = 280): string {
     .trim();
   const source = withoutWarnings || trimmed;
   return source.length > max ? `${source.slice(0, max)}…` : source;
+}
+
+/** Extract actionable npm failure text — not just the debug log path line. */
+export function formatInstallFailureReason(stderr: string, stdout: string): string {
+  const lines = `${stderr}\n${stdout}`
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(
+      (line) =>
+        !line.startsWith("npm error A complete log of this run can be found in:") &&
+        !line.startsWith("npm notice")
+    );
+
+  const errors = lines.filter(
+    (line) =>
+      line.startsWith("npm error") ||
+      line.includes("ERESOLVE") ||
+      line.includes("EUSAGE") ||
+      line.includes("ENOTFOUND") ||
+      line.includes("ETIMEDOUT") ||
+      line.includes("lock file") ||
+      line.includes("package-lock")
+  );
+
+  if (errors.length > 0) {
+    return errors
+      .map((line) => line.replace(/^npm error\s*/i, ""))
+      .slice(0, 4)
+      .join(" ");
+  }
+
+  return lines.slice(-4).join(" ") || "npm install failed";
+}
+
+async function readLatestNpmLog(cacheDir: string): Promise<string | null> {
+  try {
+    const logsDir = path.join(cacheDir, "_logs");
+    const files = (await fs.readdir(logsDir)).filter((f) => f.endsWith(".log")).sort();
+    const latest = files.at(-1);
+    if (!latest) return null;
+    const raw = await fs.readFile(path.join(logsDir, latest), "utf8");
+    return formatInstallFailureReason(raw, "");
+  } catch {
+    return null;
+  }
+}
+
+function isLockfileSyncError(stderr: string, stdout: string): boolean {
+  const text = `${stderr}\n${stdout}`.toLowerCase();
+  return (
+    text.includes("eusage") ||
+    text.includes("ereseolve") ||
+    text.includes("invalid lock file") ||
+    text.includes("out of sync") ||
+    text.includes("out of date") ||
+    (text.includes("package-lock") &&
+      (text.includes("does not match") || text.includes("npm ci") || text.includes("sync")))
+  );
+}
+
+export function lockfileWasPatched(paths: string[]): boolean {
+  return paths.some((p) =>
+    /(^|\/)package\.json$|(^|\/)package-lock\.json$|(^|\/)pnpm-lock\.yaml$|(^|\/)yarn\.lock$|(^|\/)bun\.lockb$/.test(
+      p.replace(/\\/g, "/")
+    )
+  );
 }
 
 function isIntegrityError(stderr: string, stdout: string): boolean {
@@ -194,15 +262,20 @@ export async function areRequiredPackagesInstalled(
   return true;
 }
 
-function npmVerificationVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
+function npmVerificationVariants(
+  lockfilePresent: boolean,
+  cacheDir?: string,
+  options?: { preferInstall?: boolean }
+): string[][] {
   const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
-  if (lockfilePresent) {
+  if (options?.preferInstall || !lockfilePresent) {
     return [
-      ["npm", "ci", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
-      ["npm", "ci", "--no-audit", "--no-fund", ...cacheFlag],
+      ["npm", "install", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
+      ["npm", "install", "--no-audit", "--no-fund", ...cacheFlag],
     ];
   }
   return [
+    ["npm", "ci", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
     ["npm", "install", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
     ["npm", "install", "--no-audit", "--no-fund", ...cacheFlag],
   ];
@@ -211,7 +284,8 @@ function npmVerificationVariants(lockfilePresent: boolean, cacheDir?: string): s
 function verificationInstallVariants(
   pm: PackageManager,
   lockfilePresent: boolean,
-  cacheDir?: string
+  cacheDir?: string,
+  options?: { lockfilePatched?: boolean }
 ): string[][] {
   switch (pm) {
     case "pnpm":
@@ -224,7 +298,9 @@ function verificationInstallVariants(
     case "bun":
       return [["bun", "install"]];
     default:
-      return npmVerificationVariants(lockfilePresent, cacheDir);
+      return npmVerificationVariants(lockfilePresent, cacheDir, {
+        preferInstall: options?.lockfilePatched,
+      });
   }
 }
 
@@ -234,7 +310,7 @@ async function clearInstallArtifacts(rootDir: string): Promise<void> {
 
 function perRunCacheDir(cleanupRunId: string): string {
   const safe = cleanupRunId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return path.join("/tmp/repodiet-npm-cache", safe);
+  return path.join(os.tmpdir(), "repodiet-npm-cache", safe);
 }
 
 async function recreateCacheDir(cacheDir: string): Promise<void> {
@@ -373,10 +449,13 @@ export async function ensureWorkspaceDependenciesWithCache(
 export async function ensureVerificationDependencies(
   rootDir: string,
   cleanupRunId: string,
-  options?: { requiredPackages?: string[] }
+  options?: { requiredPackages?: string[]; lockfilePatched?: boolean; patchedPaths?: string[] }
 ): Promise<WorkspaceInstallResult & { attempts: InstallAttemptRecord[] }> {
   const attempts: InstallAttemptRecord[] = [];
   const requiredPackages = options?.requiredPackages ?? [];
+  const lockfilePatched =
+    options?.lockfilePatched ??
+    (options?.patchedPaths ? lockfileWasPatched(options.patchedPaths) : false);
 
   try {
     await fs.access(path.join(rootDir, "package.json"));
@@ -395,7 +474,7 @@ export async function ensureVerificationDependencies(
   const cacheDir = perRunCacheDir(cleanupRunId);
   await recreateCacheDir(cacheDir);
 
-  const variants = verificationInstallVariants(pm, hasLockfile, cacheDir);
+  const variants = verificationInstallVariants(pm, hasLockfile, cacheDir, { lockfilePatched });
   let lastReason = "install failed";
   let lastCommand = variants[0]?.join(" ") ?? "npm ci";
   let lastExitCode: number | null = null;
@@ -450,11 +529,24 @@ export async function ensureVerificationDependencies(
       continue;
     }
 
-    lastReason = summarize(stderr || stdout || "install failed");
+    const logReason = await readLatestNpmLog(cacheDir);
+    lastReason =
+      logReason ||
+      formatInstallFailureReason(stderr, stdout) ||
+      summarize(stderr || stdout || "install failed");
     lastExitCode = result.exitCode ?? null;
     lastStdout = stdout;
     lastStderr = stderr;
     lastDurationMs = durationMs;
+
+    if (
+      pm === "npm" &&
+      command[1] === "ci" &&
+      isLockfileSyncError(stderr, stdout) &&
+      attempt + 1 < MAX_ATTEMPTS
+    ) {
+      continue;
+    }
 
     if (
       pm === "npm" &&

@@ -198,6 +198,41 @@ function run() {
     ]);
     assert.equal(stats.noop, 1);
     assert.equal(stats.generatedChanges, 0);
+    assert.equal(stats.executed, 0);
+    assert.equal(stats.eligible, 0);
+  });
+
+  test("summarizeCleanupAttempts counts executed only for eligible non-noop findings", () => {
+    const noop = {
+      findingId: "noop",
+      findingType: "unused_import" as const,
+      pluginId: "remove_unused_import" as const,
+      strategyIds: [],
+      sourceFound: true,
+      sourceHashMatched: true,
+      scanEligible: true,
+      transformAttempted: true,
+      contentChanged: false,
+      dryRunSucceeded: false,
+      proposedSourceChanged: true,
+      proposedDiffGenerated: true,
+      patchValidated: false,
+      verificationSupported: true,
+      retained: false,
+      blockerCode: "transform_noop" as const,
+    };
+    const retained = {
+      ...noop,
+      findingId: "ok",
+      transformAttempted: true,
+      contentChanged: true,
+      retained: true,
+      blockerCode: undefined,
+    };
+    const stats = summarizeCleanupAttempts([noop, noop, noop, retained, retained]);
+    assert.equal(stats.eligible, 2);
+    assert.equal(stats.executed, 2);
+    assert.equal(stats.noop, 3);
   });
 }
 
