@@ -12,11 +12,11 @@ const STAGES: {
 }[] = [
   { key: "detected", label: "Detected", description: "Evidence-backed signals from native analyzers" },
   { key: "eligible", label: "Eligible", description: "Supported by a deterministic transformer" },
-  { key: "attempted", label: "Attempted", description: "Transformer ran in isolated workspace" },
-  { key: "generated", label: "Generated", description: "Non-empty source modification produced" },
-  { key: "validated", label: "Validated", description: "Patch passed git apply --check" },
-  { key: "verified", label: "Verified", description: "Repository checks passed on modified copy" },
-  { key: "delivered", label: "Delivered", description: "Cleanup PR opened on review branch" },
+  { key: "executed", label: "Executed findings", description: "Eligible findings that entered transformer execution" },
+  { key: "generated", label: "Generated file operations", description: "Non-empty source modifications produced" },
+  { key: "validated", label: "Validated file operations", description: "Patch passed git apply --check --index" },
+  { key: "verified", label: "Verified file operations", description: "Repository checks passed on patched copy" },
+  { key: "delivered", label: "Delivered file operations", description: "Cleanup PR opened on review branch" },
 ];
 
 export function ProofLadderPanel({
@@ -26,7 +26,11 @@ export function ProofLadderPanel({
   ladder: ProofLadderCounts;
   className?: string;
 }) {
-  const maxStage = STAGES.map((s) => ladder[s.key]).reduce((a, b) => Math.max(a, b), 1);
+  const maxStage = STAGES.map((s) => {
+    const key = s.key === "executed" ? ("executed" as keyof ProofLadderCounts) : s.key;
+    const value = ladder[key] ?? (key === "executed" ? ladder.attempted : 0);
+    return typeof value === "number" ? value : 0;
+  }).reduce((a, b) => Math.max(a, b), 1);
 
   return (
     <Panel variant="elevated" padding="md" className={className}>
@@ -37,7 +41,10 @@ export function ProofLadderPanel({
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {STAGES.map((stage) => {
-          const value = ladder[stage.key];
+          const value =
+            stage.key === "executed"
+              ? (ladder.executed ?? ladder.attempted)
+              : ladder[stage.key];
           const active = value > 0;
           return (
             <div

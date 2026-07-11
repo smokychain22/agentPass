@@ -221,9 +221,7 @@ export async function runOneFixAtATimeLoop(
   sm.emit("ranking_candidates");
   sm.emit("selecting_finding");
 
-  const candidates = sortPhase1Candidates(
-    findings.filter((f) => isPhase1AutoFix(f) || isPhase1StructuralCandidate(f))
-  );
+  const candidates = sortPhase1Candidates(findings);
 
   const attempts: FixAttemptResult[] = [];
   const decisions: CandidateDecisionRecord[] = [];

@@ -29,6 +29,7 @@ import { buildSafeDeleteRows } from "./patch-kit/patch-kit-utils";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { flattenFindings } from "@/lib/findings/client";
+import { Panel } from "@/components/design-system/panel";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState, classifyPatchError } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
@@ -229,15 +230,27 @@ export function PatchKitTab() {
 
       {patchKit && (
         <>
-          {patchKit.patchValidation && (
+          {patchKit.patchValidation && patchKit.patchValidation.status !== "passed" && (
             <FeedbackBanner
-              variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
+              variant="warning"
               message={
-                patchKit.patchValidation.status === "passed"
-                  ? patchKit.summary.verifiedChanges && patchKit.summary.verifiedChanges > 0
-                    ? `${patchKit.summary.verifiedChanges} verified change(s) — click Create Cleanup PR below to apply edits on a review branch. Main is not modified until you merge.`
-                    : `${patchKit.summary.generatedChanges} generated change(s); ${patchKit.summary.validatedChanges ?? 0} patch-validated. Repository verification is required before Create Cleanup PR.`
-                  : `Patch validation failed${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}. ${patchKit.summary.generatedChanges} source edit(s) were generated in an isolated workspace but could not be delivered safely. Click Regenerate Quick Cleanup to retry.`
+                patchKit.patchValidation.userMessage ??
+                `Patch could not be applied to the scanned commit.${
+                  patchKit.patchValidation.failingPath
+                    ? ` Affected path: ${patchKit.patchValidation.failingPath}.`
+                    : ""
+                } Click Regenerate Quick Cleanup to retry.`
+              }
+              dismissible={false}
+            />
+          )}
+          {patchKit.patchValidation?.status === "passed" && (
+            <FeedbackBanner
+              variant="success"
+              message={
+                patchKit.summary.verifiedChanges && patchKit.summary.verifiedChanges > 0
+                  ? `${patchKit.summary.verifiedFileOperations ?? patchKit.summary.verifiedChanges} verified file operation(s) — click Create Cleanup PR below to apply edits on a review branch. Main is not modified until you merge.`
+                  : `${patchKit.summary.generatedFileOperations ?? patchKit.summary.generatedChanges} generated file operation(s); ${patchKit.summary.validatedFileOperations ?? patchKit.summary.validatedChanges ?? 0} patch-validated. Repository verification is required before Create Cleanup PR.`
               }
               dismissible={false}
             />
@@ -264,11 +277,32 @@ export function PatchKitTab() {
                 variant="warning"
                 message={
                   patchKit.summary.blockerSummary ??
-                  `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible; ${patchKit.summary.attemptedTransformations ?? 0} attempted; ${patchKit.summary.generatedChanges ?? 0} generated; 0 verified changes retained.`
+                  `${patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible} eligible findings; ${patchKit.summary.executedFindings ?? patchKit.summary.attemptedTransformations ?? 0} executed; ${patchKit.summary.generatedFileOperations ?? patchKit.summary.generatedChanges} generated file operations; 0 verified file operations.`
                 }
                 dismissible={false}
               />
             )}
+          {patchKit.patchValidation?.attempt && (
+            <Panel variant="elevated" padding="md" className="border-border/60">
+              <p className="ds-label mb-2">Developer tools — patch validation</p>
+              <pre className="max-h-64 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                {JSON.stringify(
+                  {
+                    command: patchKit.patchValidation.attempt.command,
+                    exitCode: patchKit.patchValidation.attempt.exitCode,
+                    baseCommitSha: patchKit.patchValidation.baseCommitSha,
+                    patchHash: patchKit.patchValidation.patchHash,
+                    failingPath: patchKit.patchValidation.failingPath,
+                    stderr: patchKit.patchValidation.gitStderr ?? patchKit.patchValidation.attempt.stderr,
+                    stdout: patchKit.patchValidation.attempt.stdout,
+                    durationMs: patchKit.patchValidation.attempt.durationMs,
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+            </Panel>
+          )}
           {patchKit.summary.proofLadder && (
             <ProofLadderPanel
               ladder={
@@ -276,7 +310,8 @@ export function PatchKitTab() {
                   ? {
                       detected: patchKit.cleanupRunSummary.detected,
                       eligible: patchKit.cleanupRunSummary.eligible,
-                      attempted: patchKit.cleanupRunSummary.attempted,
+                      executed: patchKit.cleanupRunSummary.executed,
+                      attempted: patchKit.cleanupRunSummary.executed,
                       generated: patchKit.cleanupRunSummary.generated,
                       validated: patchKit.cleanupRunSummary.validated,
                       verified: patchKit.cleanupRunSummary.verified,

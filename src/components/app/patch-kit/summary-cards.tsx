@@ -10,42 +10,35 @@ const cards: {
   getValue: (s: PatchKitSummary) => number | string;
 }[] = [
   {
-    key: "verifiedChanges",
-    title: "Retained in workspace",
+    key: "deliveredFileOperations",
+    title: "Delivered file operations",
+    explanation: "Validated changes included in an opened cleanup PR.",
+    getValue: (s) => s.deliveredFileOperations ?? 0,
+  },
+  {
+    key: "verifiedFileOperations",
+    title: "Verified file operations",
+    explanation: "Patch applied and repository checks (install, typecheck, build) passed.",
+    getValue: (s) => s.verifiedFileOperations ?? s.verifiedChanges ?? 0,
+  },
+  {
+    key: "validatedFileOperations",
+    title: "Validated file operations",
     explanation:
-      "Individual fixes applied in RepoDiet's isolated copy. Your GitHub repository is unchanged until you create a cleanup PR.",
-    getValue: (s) => s.verifiedChanges ?? 0,
+      "Combined cleanup patch passed git apply --check --index against the scanned commit.",
+    getValue: (s) => s.validatedFileOperations ?? s.validatedChanges ?? 0,
   },
   {
-    key: "validatedChanges",
-    title: "Patch-validated changes",
-    explanation:
-      "Combined cleanup patch passed git apply --check against the scanned commit. Required before Create Cleanup PR.",
-    getValue: (s) => s.validatedChanges ?? 0,
+    key: "generatedFileOperations",
+    title: "Generated file operations",
+    explanation: "Edit, delete, or add operations produced in the isolated workspace.",
+    getValue: (s) => s.generatedFileOperations ?? s.generatedChanges ?? 0,
   },
   {
-    key: "generatedChanges",
-    title: "Generated changes",
-    explanation: "Non-empty diffs produced in the isolated workspace.",
-    getValue: (s) => s.generatedChanges ?? 0,
-  },
-  {
-    key: "attemptedTransformations",
-    title: "Attempted",
-    explanation: "Transformers invoked against exact scanned source files.",
-    getValue: (s) => s.attemptedTransformations ?? 0,
-  },
-  {
-    key: "noopTransformations",
-    title: "No-op",
-    explanation: "Transformer ran but output equals original — not counted as success.",
-    getValue: (s) => s.noopTransformations ?? 0,
-  },
-  {
-    key: "failedTransformations",
-    title: "Failed",
-    explanation: "Transformer could not safely process the finding.",
-    getValue: (s) => s.failedTransformations ?? 0,
+    key: "executedFindings",
+    title: "Executed findings",
+    explanation: "Eligible findings that entered transformer execution.",
+    getValue: (s) => s.executedFindings ?? s.attemptedTransformations ?? 0,
   },
   {
     key: "eligibleFindings",
@@ -54,16 +47,22 @@ const cards: {
     getValue: (s) => s.eligibleFindings ?? s.transformerCompatible ?? 0,
   },
   {
-    key: "notAttempted",
-    title: "Not attempted",
-    explanation: "Eligible findings not processed before the run completed.",
-    getValue: (s) => s.notAttempted ?? 0,
+    key: "detectedFindings",
+    title: "Detected findings",
+    explanation: "Evidence-backed signals from native analyzers.",
+    getValue: (s) => s.detectedFindings ?? 0,
+  },
+  {
+    key: "noopTransformations",
+    title: "No-op executions",
+    explanation: "Transformer ran but output equals original — not counted as generated.",
+    getValue: (s) => s.noOpExecutions ?? s.noopTransformations ?? 0,
   },
 ];
 
 export function PatchKitSummaryCards({ summary }: { summary: PatchKitSummary }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {cards.map((card) => {
         const value = card.getValue(summary);
         return (

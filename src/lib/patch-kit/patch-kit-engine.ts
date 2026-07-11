@@ -23,8 +23,14 @@ import {
   EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
-import { ensurePatchTrailingNewline, buildPatchFromWorkspaceDelta, buildEditsFromRetainedAttempts, filterEditsAgainstBaseline, collectEditsBetweenWorkspaces, buildConsolidatedPatchFromEdits, buildManualPatchFromEdits } from "./merge-patches";
+import { ensurePatchTrailingNewline, buildPatchFromWorkspaceDelta, buildEditsFromRetainedAttempts, filterEditsAgainstBaseline, collectEditsBetweenWorkspaces } from "./merge-patches";
 import { validateGeneratedPatchOnly, patchHasApplyableOperations } from "./validate-patch";
+import {
+  assertBaseCommitFresh,
+  buildCanonicalRepositoryPatch,
+  buildChangeOperationsFromEdits,
+  type ChangeOperation,
+} from "./canonical-patch";
 import { runRepositoryVerification } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
 import {
@@ -219,6 +225,63 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       findings = applyRepositoryIdentity(findings, identity);
     }
 
+    const baseCommitSha =
+      findings.repo.commitSha ?? workspace.repo.commitSha ?? "unknown";
+    const staleCheck = assertBaseCommitFresh(
+      findings.repo.commitSha,
+      workspace.repo.commitSha
+    );
+    if (staleCheck.stale) {
+      const stalePayload: PatchKitPayload = {
+        id: cleanupRunId,
+        scanId: findings.scanId,
+        repo: {
+          owner: findings.repo.owner,
+          name: findings.repo.name,
+          branch: findings.repo.branch,
+        },
+        summary: {
+          safeDeleteCandidates: 0,
+          transformerCompatible: 0,
+          dryRunPassed: 0,
+          detectedFindings:
+            findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? 0,
+          generatedChanges: 0,
+          validatedChanges: 0,
+          verifiedChanges: 0,
+          filesEdited: 0,
+          filesDeleted: 0,
+          filesAdded: 0,
+          rawReviewFindings: findings.summary.reviewRequired,
+          reviewFirstItems: 0,
+          doNotTouchItems: findings.summary.doNotTouch ?? 0,
+          packageSuggestions: findings.unused.dependencies.length,
+          patchLines: 0,
+          regressionChecks: 0,
+          bundleFileCount: BUNDLE_FILE_COUNT,
+          patchValidationStatus: "failed",
+          blockerSummary: `Base commit is stale — scan: ${staleCheck.scanCommitSha?.slice(0, 7)}, current: ${staleCheck.currentCommitSha?.slice(0, 7)}.`,
+        },
+        patchValidation: {
+          status: "failed",
+          error: "BASE_COMMIT_STALE",
+          userMessage: `The repository branch moved after the scan. Rescan before generating cleanup changes.\n\nScan commit: ${staleCheck.scanCommitSha}\nCurrent commit: ${staleCheck.currentCommitSha}`,
+          baseCommitSha: staleCheck.scanCommitSha,
+        },
+        artifacts: {
+          reportMd: "# RepoDiet cleanup blocked\n\nBase commit stale — rescan required.",
+          cleanupPatch: EMPTY_CLEANUP_PATCH,
+          packageCleanupMd: "",
+          regressionChecklistMd: "",
+          cursorPromptMd: "",
+          findingsJson: findings,
+          patchkitSummaryJson: "{}",
+        },
+        downloadUrl: `/api/patches/${cleanupRunId}/download`,
+      };
+      return stalePayload;
+    }
+
     const context = detectRepoContextFromFindings(findings);
     const { buckets, deletionProofs } = await classifyFindingsForPatchWithDiscovery(
       workspace.rootDir,
@@ -236,11 +299,16 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       flatFindings
     );
 
+    const eligibleFindingIds = preflightAudits
+      .filter((a) => a.scanEligible)
+      .map((a) => a.findingId);
+
     const transformerCompatible = compatibleFindings.length;
     const dryRunPassed = preflightAudits.filter((a) => a.scanEligible).length;
 
     const cleanupResult = await runFreeCleanupCore(findings, {
-      maxFixes: Math.max(compatibleFindings.length, 1),
+      maxFixes: Math.max(eligibleFindingIds.length, 1),
+      findingIds: eligibleFindingIds,
       workspaceRootDir: workspace.rootDir,
       quickPatchMode: true,
     });
@@ -290,29 +358,34 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     let patchBundle = { patch: EMPTY_CLEANUP_PATCH, changedPaths: [] as string[], edits: generatedEdits };
 
     if (generatedEdits.length > 0) {
-      patchBundle = await buildPatchFromWorkspaceDelta(
+      const canonical = await buildCanonicalRepositoryPatch(
         baselineRoot,
-        workspace.rootDir,
+        generatedEdits,
         workspace.workDir
       );
-      if (patchBundle.edits.length === 0) {
-        patchBundle.edits = generatedEdits;
-      }
-
-      if (!patchHasApplyableOperations(patchBundle.patch)) {
-        const gitFromEdits = await buildConsolidatedPatchFromEdits(
+      if (patchHasApplyableOperations(canonical.patch)) {
+        patchBundle = { ...canonical, edits: generatedEdits };
+      } else {
+        patchBundle = await buildPatchFromWorkspaceDelta(
           baselineRoot,
-          generatedEdits,
+          workspace.rootDir,
           workspace.workDir
         );
-        if (patchHasApplyableOperations(gitFromEdits.patch)) {
-          patchBundle = { ...gitFromEdits, edits: generatedEdits };
-        } else {
-          const manual = await buildManualPatchFromEdits(baselineRoot, generatedEdits);
-          patchBundle = { ...manual, edits: generatedEdits };
+        if (patchBundle.edits.length === 0) {
+          patchBundle.edits = generatedEdits;
         }
       }
     }
+
+    const protectedPaths = [
+      ...(findings.riskBuckets?.doNotTouch ?? []),
+      ...buckets.doNotTouch.map((item) => item.path),
+    ];
+
+    const changeOperations: ChangeOperation[] = await buildChangeOperationsFromEdits(
+      baselineRoot,
+      generatedEdits
+    );
 
     const generatedChanges = generatedEdits.length;
     const changedPaths = generatedEdits.map((e) => e.path);
@@ -327,10 +400,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       cleanupResult.fixLoop.attempts
     );
 
-    let patchValidation: {
-      status: "passed" | "failed" | "skipped" | "not_generated";
-      error?: string;
-    };
+    let patchValidation: PatchKitPayload["patchValidation"];
 
     if (generatedEdits.length === 0 && retainedFixCount === 0 && safeDeleteCount === 0) {
       patchValidation = {
@@ -343,11 +413,20 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       patchHasApplyableOperations(mergedPatch) &&
       mergedPatch !== EMPTY_CLEANUP_PATCH
     ) {
-      patchValidation = await validateGeneratedPatchOnly(baselineRoot, mergedPatch);
+      patchValidation = await validateGeneratedPatchOnly(baselineRoot, mergedPatch, {
+        cleanupRunId,
+        repository: `${findings.repo.owner}/${findings.repo.name}`,
+        baseCommitSha,
+        workDir: workspace.workDir,
+        expectedOperations: changeOperations,
+        protectedPaths,
+      });
     } else if (generatedEdits.length > 0) {
       patchValidation = {
         status: "failed",
         error: "Generated edits did not produce an applyable unified patch.",
+        userMessage:
+          "Generated file operations did not produce a Git-applyable patch. See Developer Tools for details.",
       };
     } else {
       patchValidation = {
@@ -360,24 +439,31 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     let validatedChanges = 0;
     let verifiedChanges = 0;
 
-    if (patchValidation.status === "passed" && generatedEdits.length > 0) {
+    if (patchValidation?.status === "passed" && generatedEdits.length > 0) {
       validatedEdits = generatedEdits;
       validatedChanges = generatedEdits.length;
     }
 
-    const repositoryVerification = await runRepositoryVerification({
-      baselineRoot,
-      edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
-      cleanupRunId,
-      patch: mergedPatch,
-    });
+    const repositoryVerification =
+      patchValidation?.status === "passed"
+        ? await runRepositoryVerification({
+            baselineRoot,
+            edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
+            cleanupRunId,
+            patch: mergedPatch,
+          })
+        : {
+            status: "not_run" as const,
+            installAttempts: [],
+            checks: [],
+          };
 
     if (repositoryVerification.status === "verified" && validatedChanges > 0) {
       verifiedChanges = validatedChanges;
     }
 
     const deliveryReady =
-      patchValidation.status === "passed" &&
+      patchValidation?.status === "passed" &&
       validatedChanges > 0 &&
       repositoryVerification.status === "verified";
 
@@ -386,16 +472,19 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const filesAdded = 0;
     const blockerBreakdown = summarizeBlockers(candidateAudits);
     const attemptStats = summarizeCleanupAttempts(candidateAudits);
+    const detectedFindings =
+      findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? flatFindings.length;
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
       context,
       context.packageManager
     );
     const blockerSummary = deliveryReady
-      ? `${verifiedChanges} change(s) verified and ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} patch-validated).`
-      : patchValidation.status === "passed" && repositoryVerification.status === "blocked"
-        ? `${generatedChanges} generated change(s); patch validation passed; repository verification blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
-        : patchValidation.error ??
+      ? `${verifiedChanges} verified file operation(s) ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} patch-validated).`
+      : patchValidation?.status === "passed" && repositoryVerification.status === "blocked"
+        ? `${generatedChanges} generated file operation(s); patch validation passed; repository verification blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
+        : patchValidation?.userMessage ??
+          patchValidation?.error ??
           repositoryVerification.error ??
           cleanupResult.blockerBreakdown ??
           formatBlockerBreakdown(candidateAudits);
@@ -406,15 +495,24 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       supportedFixesDetected: transformerCompatible,
       transformerCompatible,
       dryRunPassed,
-      detectedSignals: findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? 0,
+      detectedFindings,
+      preflightCheckedFindings: attemptStats.preflightChecked || flatFindings.length,
       eligibleFindings: attemptStats.eligible,
-      attemptedTransformations: attemptStats.attempted,
+      ineligibleFindings: attemptStats.ineligible,
+      executedFindings: attemptStats.executed,
+      attemptedTransformations: attemptStats.executed,
       noopTransformations: attemptStats.noop,
+      noOpExecutions: attemptStats.noop,
       failedTransformations: attemptStats.failed,
+      failedExecutions: attemptStats.failedExecutions,
       notAttempted: attemptStats.notAttempted,
       generatedChanges,
+      generatedFileOperations: generatedChanges,
       validatedChanges,
+      validatedFileOperations: validatedChanges,
       verifiedChanges,
+      verifiedFileOperations: verifiedChanges,
+      deliveredFileOperations: 0,
       retainedFixAttempts: retainedFixCount,
       filesEdited,
       filesDeleted,
@@ -426,7 +524,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       patchLines: countPatchLines(mergedPatch),
       regressionChecks: checkCount,
       bundleFileCount: BUNDLE_FILE_COUNT,
-      patchValidationStatus: patchValidation.status,
+      patchValidationStatus: patchValidation?.status,
       deletedPaths,
       changedPaths,
       blockerBreakdown,
@@ -455,6 +553,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     summary.proofLadder = {
       ...summary.proofLadder,
       eligible: cleanupRunSummary.eligible,
+      executed: cleanupRunSummary.executed,
+      attempted: cleanupRunSummary.executed,
       generated: cleanupRunSummary.generated,
       validated: cleanupRunSummary.validated,
       verified: cleanupRunSummary.verified,
@@ -523,6 +623,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       },
       summary,
       patchValidation,
+      changeOperations,
       transformerResults,
       candidateAudits,
       artifacts: {

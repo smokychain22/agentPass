@@ -201,21 +201,28 @@ export function summarizeBlockers(audits: CandidateAuditRecord[]): Record<Blocke
 
 export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
   eligible: number;
+  ineligible: number;
+  preflightChecked: number;
+  executed: number;
+  /** @deprecated Use executed */
   attempted: number;
   generatedChanges: number;
   noop: number;
   failed: number;
+  failedExecutions: number;
   notAttempted: number;
   validated: number;
   verified: number;
 } {
+  const preflightChecked = audits.length;
   const eligible = audits.filter(
     (a) =>
       a.scanEligible &&
       a.blockerCode !== "transform_noop" &&
       a.blockerMessage !== "Dependency entry was not found in the selected manifest."
   ).length;
-  const attempted = audits.filter((a) => a.transformAttempted).length;
+  const ineligible = preflightChecked - eligible;
+  const executed = audits.filter((a) => a.transformAttempted && a.scanEligible).length;
   const generatedChanges = audits.filter((a) => a.contentChanged && a.transformAttempted).length;
   const noop = audits.filter(
     (a) => a.transformAttempted && a.blockerCode === "transform_noop"
@@ -231,10 +238,14 @@ export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
   const validated = audits.filter((a) => a.retained && a.patchValidated).length;
   return {
     eligible,
-    attempted,
+    ineligible,
+    preflightChecked,
+    executed,
+    attempted: executed,
     generatedChanges,
     noop,
     failed,
+    failedExecutions: failed,
     notAttempted,
     validated,
     verified: validated,
@@ -245,9 +256,11 @@ export function formatBlockerBreakdown(audits: CandidateAuditRecord[]): string {
   const stats = summarizeCleanupAttempts(audits);
   const blockers = summarizeBlockers(audits);
   const parts: string[] = [
+    `Detected findings: ${stats.preflightChecked}`,
     `Eligible findings: ${stats.eligible}`,
-    `Attempted: ${stats.attempted}`,
-    `Changes generated: ${stats.generatedChanges}`,
+    `Ineligible findings: ${stats.ineligible}`,
+    `Executed findings: ${stats.executed}`,
+    `Generated file operations: ${stats.generatedChanges}`,
     `No-op: ${stats.noop}`,
     `Failed: ${stats.failed}`,
     `Not attempted: ${stats.notAttempted}`,
