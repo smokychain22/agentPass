@@ -93,7 +93,7 @@ export async function POST(request: Request) {
     });
 
     let hasRepositoryAccess = false;
-    if (existing && !ownerMismatch) {
+    if (existing) {
       hasRepositoryAccess = await installationIncludesRepository(
         existing.installationId,
         repositoryOwner,
@@ -101,11 +101,13 @@ export async function POST(request: Request) {
       );
     }
 
+    const requiresOwnerInstall = ownerMismatch && !hasRepositoryAccess;
+
     const { url, flow } = resolveGitHubInstallRedirect({
       slug: appSlug,
       stateToken,
       installationId: existing?.installationId,
-      requiresRepositoryOwnerInstall: ownerMismatch,
+      requiresRepositoryOwnerInstall: requiresOwnerInstall,
       hasRepositoryAccess,
     });
 
@@ -119,7 +121,7 @@ export async function POST(request: Request) {
       targetRepo: repo,
     });
 
-    const accessState = ownerMismatch
+    const accessState = requiresOwnerInstall
       ? "wrong_account"
       : existing
         ? hasRepositoryAccess
@@ -138,7 +140,7 @@ export async function POST(request: Request) {
       repositoryFullName,
       repositoryOwner,
       installationOwner,
-      requiresRepositoryOwnerInstall: ownerMismatch,
+      requiresRepositoryOwnerInstall: requiresOwnerInstall,
       messages,
     });
   } catch (err) {

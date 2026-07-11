@@ -183,7 +183,10 @@ export function parseCreateCleanupPrResponse(json: unknown): CreateCleanupPrResp
     const message =
       typeof body.error === "string"
         ? body.error
-        : body.error?.message ?? "Cleanup PR creation failed.";
+        : body.error?.message ??
+          (typeof (json as { message?: string }).message === "string"
+            ? (json as { message: string }).message
+            : "Cleanup PR creation failed.");
     throw new Error(message);
   }
 

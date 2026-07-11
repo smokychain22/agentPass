@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createCleanupPullRequest } from "@/lib/operator/create-cleanup-pr";
+import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { getStoredPatchKit, getPatchKitByScanId } from "@/lib/patch-kit/patch-kit-store";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
     }
 
     const repoUrl = `https://github.com/${patchKit.repo.owner}/${patchKit.repo.name}`;
+    const sessionKey = await buildSessionKey(request);
     const result = await createCleanupPullRequest({
       repoUrl,
       branch: patchKit.repo.branch,
@@ -69,6 +71,7 @@ export async function POST(request: Request) {
       mode: body.mode ?? "safe_only",
       demo: body.demo,
       githubToken: body.githubToken,
+      sessionKey,
     });
 
     return NextResponse.json({

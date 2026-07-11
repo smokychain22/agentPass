@@ -137,8 +137,14 @@ export async function runGitHubPreflight(
 
   if (input.sessionKey) {
     const binding = await readRepoInstallBinding(input.sessionKey, input.repositoryFullName);
-    if (binding && session && binding.installationId === session.installationId) {
-      repositoryAccessible = repositoryAccessible || true;
+    if (binding && session && binding.installationId === session.installationId && !repositoryAccessible) {
+      const propagated = await installationIncludesRepositoryWithRetry(
+        session.installationId,
+        owner,
+        repo,
+        { attempts: 6, delayMs: 2000 }
+      );
+      repositoryAccessible = propagated.granted;
     }
   }
 

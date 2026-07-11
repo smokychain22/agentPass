@@ -146,15 +146,15 @@ export async function GET(request: NextRequest) {
       stateLength: stateToken.length,
     });
 
-    if (!ownerMatches) {
+    const trustUpdateCallback = setupAction === "update";
+
+    if (!ownerMatches && !access.granted && !trustUpdateCallback) {
       await consumeInstallFlowState(stateToken);
       return redirectWithError("wrong_account", flow.returnPath, flow.scanId);
     }
 
     await saveInstallationSession(session);
     await clearInstallSessionId();
-
-    const trustUpdateCallback = setupAction === "update";
 
     if (!access.granted && !trustUpdateCallback) {
       await consumeInstallFlowState(stateToken);

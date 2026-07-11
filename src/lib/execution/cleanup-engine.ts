@@ -83,6 +83,7 @@ export async function createCleanupPullRequest(input: {
   patchKit?: PatchKitPayload;
   demo?: boolean;
   githubToken?: string;
+  sessionKey?: string;
 }) {
   return createCleanupPr(input);
 }

@@ -417,7 +417,12 @@ export async function executeCreateCleanupPrPhase3(
   body: unknown,
   taskId: string
 ): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
   const input = ToolInputSchemas.createCleanupPr(body);
+  const sessionKey =
+    typeof record.sessionKey === "string" && record.sessionKey.trim()
+      ? record.sessionKey.trim()
+      : undefined;
   let findings: FindingsPayload | undefined;
 
   if (input.findings) {
@@ -433,6 +438,7 @@ export async function executeCreateCleanupPrPhase3(
     patchKit: input.patchKit as never,
     demo: input.demo,
     githubToken: input.githubToken,
+    sessionKey,
   });
 
   const pullRequestUrl = pr.data.pullRequest.url;

@@ -21,6 +21,7 @@ export interface CreateCleanupPrInput {
   findings?: FindingsPayload;
   patchKit?: PatchKitPayload;
   demo?: boolean;
+  sessionKey?: string;
 }
 
 const ARTIFACT_PATHS = {
@@ -149,6 +150,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       owner: parsed.owner,
       repo: parsed.repo,
       githubToken: input.githubToken,
+      sessionKey: input.sessionKey,
     });
     const client = new GitHubClient(token);
     const meta = await client.getRepo(parsed.owner, parsed.repo);

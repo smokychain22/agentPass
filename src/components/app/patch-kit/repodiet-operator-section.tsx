@@ -134,7 +134,8 @@ export function RepoDietOperatorSection({
   const locked = !findings || !patchKit;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const githubAccountConnected = Boolean(githubStatus?.connected);
-  const repositoryReady = Boolean(preflight?.repositoryAuthorized);
+  const repositoryReady =
+    Boolean(preflight?.repositoryAuthorized) && !preflightLoading && !statusLoading;
   const manualTokenReady =
     !useDemoAuth && showAdvancedToken && Boolean(githubToken.trim()) && !repositoryReady;
 
@@ -264,7 +265,11 @@ export function RepoDietOperatorSection({
       });
       setResult(response);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Cleanup PR creation failed.");
+      const message = err instanceof Error ? err.message : "Cleanup PR creation failed.";
+      setError(message);
+      if (/needs access|grant access|permission denied|not included/i.test(message)) {
+        setPreflight(null);
+      }
       void runPreflight();
     } finally {
       setLoading(false);
@@ -490,7 +495,9 @@ export function RepoDietOperatorSection({
 
             <InfoCard title="Repository">
               <p className="font-mono text-xs">{repositoryFullName || repoUrl}</p>
-              {repositoryReady ? (
+              {statusLoading || preflightLoading ? (
+                <p className="text-muted-foreground">Checking repository access…</p>
+              ) : repositoryReady ? (
                 <p className="text-signal">Ready for pull requests</p>
               ) : (
                 <p>Grant repository access to enable PR actions.</p>
