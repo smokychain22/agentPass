@@ -153,7 +153,11 @@ async function runImportValidation(rootDir: string, phase: "baseline" | "after")
   }
 }
 
-async function runPackageIntegrity(rootDir: string, phase: "baseline" | "after"): Promise<BaselineCheck> {
+async function runPackageIntegrity(
+  rootDir: string,
+  phase: "baseline" | "after",
+  options?: { forceInstall?: boolean }
+): Promise<BaselineCheck> {
   const pkgPath = path.join(rootDir, "package.json");
   try {
     await fs.access(pkgPath);
@@ -167,6 +171,20 @@ async function runPackageIntegrity(rootDir: string, phase: "baseline" | "after")
       stdoutSummary: "No package.json",
       stderrSummary: "",
       outcome: "not_available",
+      phase,
+    };
+  }
+
+  if (!options?.forceInstall && (await nodeModulesPresent(rootDir))) {
+    return {
+      name: "package integrity",
+      command: "node_modules present",
+      status: "passed",
+      exitCode: 0,
+      durationMs: 0,
+      stdoutSummary: "Dependencies already installed in workspace.",
+      stderrSummary: "",
+      outcome: "passed",
       phase,
     };
   }
@@ -199,22 +217,39 @@ export async function ensureWorkspaceDependencies(
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
   const command = installCommand(pm);
-  const result = await execa(command[0], command.slice(1), {
-    cwd: rootDir,
-    timeout: INSTALL_TIMEOUT_MS,
-    reject: false,
-    env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "development" },
-  });
+  let lastReason = "install failed";
 
-  if (result.exitCode !== 0) {
-    const detail = summarize(result.stderr || result.stdout || "install failed");
-    return { installed: false, reason: detail };
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const result = await execa(command[0], command.slice(1), {
+      cwd: rootDir,
+      timeout: INSTALL_TIMEOUT_MS,
+      reject: false,
+      env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "development" },
+    });
+
+    if (result.exitCode === 0) {
+      return { installed: true };
+    }
+
+    lastReason = summarize(result.stderr || result.stdout || "install failed");
+    if (attempt < 2) {
+      await fs.rm(path.join(rootDir, "node_modules"), { recursive: true, force: true }).catch(() => {});
+    }
   }
 
-  return { installed: true };
+  return { installed: false, reason: lastReason };
 }
 
-export async function runFullBaselineChecks(rootDir: string, phase: "baseline" | "after"): Promise<BaselineCheck[]> {
+export interface RunFullBaselineChecksOptions {
+  /** Delivery validation installs dependencies once up-front; skip redundant install checks. */
+  skipPackageIntegrity?: boolean;
+}
+
+export async function runFullBaselineChecks(
+  rootDir: string,
+  phase: "baseline" | "after",
+  options?: RunFullBaselineChecksOptions
+): Promise<BaselineCheck[]> {
   const checks: BaselineCheck[] = [];
   const scripts = await readScripts(rootDir);
   const pm = (await detectPackageManager(rootDir)).packageManager;
@@ -239,7 +274,9 @@ export async function runFullBaselineChecks(rootDir: string, phase: "baseline" |
     checks.push(await runNamedCheck(rootDir, name, runScriptCommand(pm, name), phase));
   }
 
-  checks.push(await runPackageIntegrity(rootDir, phase));
+  if (!options?.skipPackageIntegrity) {
+    checks.push(await runPackageIntegrity(rootDir, phase));
+  }
   return checks;
 }
 

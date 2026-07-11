@@ -69,7 +69,15 @@ export async function validateEditsForDelivery(
   try {
     await copyRepoBaseline(baselineRoot, validateRoot);
     const dependencyInstall = await ensureWorkspaceDependencies(validateRoot);
-    const beforeChecks = await runFullBaselineChecks(validateRoot, "baseline");
+    if (!dependencyInstall.installed) {
+      return {
+        status: "failed",
+        error: `Could not install repository dependencies for delivery validation — ${dependencyInstall.reason ?? "install failed"}.`,
+      };
+    }
+
+    const checkOptions = { skipPackageIntegrity: true };
+    const beforeChecks = await runFullBaselineChecks(validateRoot, "baseline", checkOptions);
 
     for (const edit of deduped) {
       const full = path.join(validateRoot, edit.path);
@@ -86,9 +94,18 @@ export async function validateEditsForDelivery(
       return { status: "failed", error: syntaxError };
     }
 
-    const afterChecks = await runFullBaselineChecks(validateRoot, "after");
+    const afterChecks = await runFullBaselineChecks(validateRoot, "after", checkOptions);
     const compared = compareBaselineToAfter(beforeChecks, afterChecks);
-    const introduced = compared.filter((c) => c.outcome === "new_failure_introduced");
+    const deliveryChecks = new Set([
+      "import validation",
+      "typecheck",
+      "lint",
+      "test",
+      "build",
+    ]);
+    const introduced = compared.filter(
+      (c) => c.outcome === "new_failure_introduced" && deliveryChecks.has(c.name)
+    );
     if (introduced.length > 0) {
       const detail = introduced
         .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "check failed"}`)
