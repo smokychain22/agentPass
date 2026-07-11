@@ -5,12 +5,6 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
-import {
-  compareBaselineToAfter,
-  ensureWorkspaceDependencies,
-  runFullBaselineChecks,
-} from "@/lib/execution/baseline-verification";
-import { isWorkspaceDependencyReady } from "@/lib/execution/workspace-install";
 
 export interface PatchValidationResult {
   status: "passed" | "failed" | "skipped" | "not_generated";
@@ -55,13 +49,43 @@ async function gitBaseline(rootDir: string): Promise<void> {
   );
 }
 
+/** Patch validation only — git apply --check on the combined patch. Never installs dependencies. */
+export async function validateGeneratedPatchOnly(
+  baselineRoot: string,
+  patch: string
+): Promise<PatchValidationResult> {
+  if (!patchHasApplyableOperations(patch)) {
+    return { status: "not_generated", error: "No patch diff was generated." };
+  }
+
+  const validateRoot = path.join(
+    path.dirname(baselineRoot),
+    `patch-validate-${Date.now()}`
+  );
+  try {
+    await copyRepoBaseline(baselineRoot, validateRoot);
+    return await validateCleanupPatchInWorkspace(validateRoot, patch);
+  } finally {
+    await fs.rm(validateRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * @deprecated Patch validation must not install dependencies. Use validateGeneratedPatchOnly
+ * for patch validation and runRepositoryVerification for repository checks.
+ */
 export async function validateEditsForDelivery(
   baselineRoot: string,
-  edits: ConsolidatedEdit[]
+  edits: ConsolidatedEdit[],
+  patch?: string
 ): Promise<PatchValidationResult> {
   const deduped = dedupeConsolidatedEdits(edits);
   if (deduped.length === 0) {
     return { status: "skipped", error: "No consolidated edits to validate." };
+  }
+
+  if (patch?.trim()) {
+    return validateGeneratedPatchOnly(baselineRoot, patch);
   }
 
   const workspace = await createScanWorkspace("validate-delivery");
@@ -69,80 +93,22 @@ export async function validateEditsForDelivery(
 
   try {
     await copyRepoBaseline(baselineRoot, validateRoot);
-    const dependencyInstall = await ensureWorkspaceDependencies(validateRoot);
-    const canRunFullChecks =
-      dependencyInstall.installed || (await isWorkspaceDependencyReady(validateRoot));
-
-    if (!canRunFullChecks) {
-      await applyConsolidatedEdits(validateRoot, deduped);
-      const syntaxError = await runTypeScriptSyntaxCheck(validateRoot, deduped, {
-        lightweight: true,
-      });
-      if (syntaxError) {
-        return { status: "failed", error: syntaxError };
-      }
-      return { status: "passed" };
-    }
-
-    const checkOptions = { skipPackageIntegrity: true };
-    const beforeChecks = await runFullBaselineChecks(validateRoot, "baseline", checkOptions);
-
-    await applyConsolidatedEdits(validateRoot, deduped);
-
-    const syntaxError = await runTypeScriptSyntaxCheck(validateRoot, deduped);
-    if (syntaxError) {
-      return { status: "failed", error: syntaxError };
-    }
-
-    const afterChecks = await runFullBaselineChecks(validateRoot, "after", checkOptions);
-    const compared = compareBaselineToAfter(beforeChecks, afterChecks);
-    const deliveryChecks = new Set([
-      "import validation",
-      "typecheck",
-      "lint",
-      "test",
-      "build",
-    ]);
-    const introduced = compared.filter(
-      (c) => c.outcome === "new_failure_introduced" && deliveryChecks.has(c.name)
+    const { buildConsolidatedPatchFromEdits } = await import("./merge-patches");
+    const workDir = path.join(workspace.artifactsPath, "work");
+    await fs.mkdir(workDir, { recursive: true });
+    const consolidated = await buildConsolidatedPatchFromEdits(
+      baselineRoot,
+      deduped,
+      workDir
     );
-    if (introduced.length > 0) {
-      const detail = introduced
-        .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "check failed"}`)
-        .join("; ");
-      return {
-        status: "failed",
-        error: `Cleanup introduced new repository failures — ${detail}`,
-      };
+    if (!consolidated.patch.trim()) {
+      return { status: "not_generated", error: "No patch diff was generated." };
     }
-
-    const required = compared.filter(
-      (c) =>
-        (c.name === "typecheck" || c.name === "build") &&
-        c.outcome !== "not_available" &&
-        c.outcome !== "skipped" &&
-        c.outcome !== "failed_before_and_after" &&
-        c.status === "failed"
-    );
-    if (required.length > 0) {
-      const detail = required
-        .map((c) => `${c.name}: ${c.stderrSummary || c.stdoutSummary || "failed"}`)
-        .join("; ");
-      const installHint =
-        !dependencyInstall.installed && dependencyInstall.reason
-          ? ` Dependency install did not complete (${dependencyInstall.reason}).`
-          : "";
-      return {
-        status: "failed",
-        error: `Repository ${required.map((c) => c.name).join("/")} must pass before delivery — ${detail}.${installHint}`,
-      };
-    }
-
-    return { status: "passed" };
+    return await validateCleanupPatchInWorkspace(validateRoot, consolidated.patch);
   } catch (err) {
     return {
       status: "failed",
-      error: err instanceof Error ? err.message : "Delivery validation failed.",
+      error: err instanceof Error ? err.message : "Patch validation failed.",
     };
   } finally {
     await removeWorkspace(workspace.root).catch(() => {});

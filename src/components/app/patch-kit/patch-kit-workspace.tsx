@@ -33,8 +33,11 @@ export function PatchKitWorkspace({
     <div className="space-y-4">
       <Panel variant="cyan" padding="sm" className="flex items-start gap-3">
         <p className="text-sm text-muted-foreground">
-          <strong className="text-foreground">RepoDiet does not apply this patch automatically.</strong>{" "}
-          Review all artifacts before merging any cleanup changes.
+          <strong className="text-foreground">
+            RepoDiet generated these changes in an isolated workspace.
+          </strong>{" "}
+          After validation and verification, it will apply them to a new cleanup branch and open a
+          pull request for review.
         </p>
       </Panel>
 

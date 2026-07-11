@@ -4,19 +4,29 @@ import { Panel } from "@/components/design-system/panel";
 import { CollapsibleTableBody } from "@/components/app/ui/collapsible-list";
 import type { ChangeManifestEntry } from "@/lib/patch-kit/types";
 
-export function ChangeManifestTable({ entries }: { entries: ChangeManifestEntry[] }) {
+export function ChangeManifestTable({
+  entries,
+  validatedChanges = 0,
+}: {
+  entries: ChangeManifestEntry[];
+  validatedChanges?: number;
+}) {
   if (!entries.length) return null;
 
   const uniqueFiles = new Set(entries.map((e) => e.filePath)).size;
   const edits = entries.filter((e) => e.operation === "edit").length;
   const deletes = entries.filter((e) => e.operation === "delete").length;
   const adds = entries.filter((e) => e.operation === "add").length;
+  const heading =
+    validatedChanges > 0
+      ? `${uniqueFiles} patch-validated file${uniqueFiles === 1 ? "" : "s"}`
+      : `${uniqueFiles} generated change${uniqueFiles === 1 ? "" : "s"}`;
 
   return (
     <Panel variant="elevated" padding="md">
       <p className="ds-label mb-2">Change manifest</p>
       <p className="mb-4 text-sm text-muted-foreground">
-        {uniqueFiles} patch-validated file{uniqueFiles === 1 ? "" : "s"}
+        {heading}
         {entries.length > uniqueFiles
           ? ` · ${entries.length} finding-level edit${entries.length === 1 ? "" : "s"}`
           : ""}

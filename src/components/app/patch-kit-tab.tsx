@@ -234,7 +234,9 @@ export function PatchKitTab() {
               variant={patchKit.patchValidation.status === "passed" ? "success" : "warning"}
               message={
                 patchKit.patchValidation.status === "passed"
-                  ? `${patchKit.summary.validatedChanges} file change(s) validated — click Create Cleanup PR below to apply edits on a review branch. Main is not modified until you merge.`
+                  ? patchKit.summary.verifiedChanges && patchKit.summary.verifiedChanges > 0
+                    ? `${patchKit.summary.verifiedChanges} verified change(s) — click Create Cleanup PR below to apply edits on a review branch. Main is not modified until you merge.`
+                    : `${patchKit.summary.generatedChanges} generated change(s); ${patchKit.summary.validatedChanges ?? 0} patch-validated. Repository verification is required before Create Cleanup PR.`
                   : `Patch validation failed${patchKit.patchValidation.error ? ` — ${patchKit.patchValidation.error}` : ""}. ${patchKit.summary.generatedChanges} source edit(s) were generated in an isolated workspace but could not be delivered safely. Click Regenerate Quick Cleanup to retry.`
               }
               dismissible={false}
@@ -268,7 +270,27 @@ export function PatchKitTab() {
               />
             )}
           {patchKit.summary.proofLadder && (
-            <ProofLadderPanel ladder={patchKit.summary.proofLadder} />
+            <ProofLadderPanel
+              ladder={
+                patchKit.cleanupRunSummary
+                  ? {
+                      detected: patchKit.cleanupRunSummary.detected,
+                      eligible: patchKit.cleanupRunSummary.eligible,
+                      attempted: patchKit.cleanupRunSummary.attempted,
+                      generated: patchKit.cleanupRunSummary.generated,
+                      validated: patchKit.cleanupRunSummary.validated,
+                      verified: patchKit.cleanupRunSummary.verified,
+                      delivered: patchKit.cleanupRunSummary.delivered,
+                      noop: patchKit.cleanupRunSummary.noOp,
+                      failed: patchKit.cleanupRunSummary.failed,
+                      notAttempted: patchKit.cleanupRunSummary.notAttempted,
+                      rejectedForSafety:
+                        patchKit.cleanupRunSummary.reviewRequired +
+                        patchKit.cleanupRunSummary.protected,
+                    }
+                  : patchKit.summary.proofLadder
+              }
+            />
           )}
           <PatchKitSummaryCards summary={patchKit.summary} />
           {patchKit.candidateAudits && patchKit.candidateAudits.length > 0 && (
@@ -278,7 +300,10 @@ export function PatchKitTab() {
             <TransformerResultsTable results={patchKit.transformerResults} />
           )}
           {patchKit.changeManifest && patchKit.changeManifest.length > 0 && (
-            <ChangeManifestTable entries={patchKit.changeManifest} />
+            <ChangeManifestTable
+              entries={patchKit.changeManifest}
+              validatedChanges={patchKit.summary.validatedChanges ?? 0}
+            />
           )}
           <SafetyPolicyCard />
           <PatchKitWorkspace

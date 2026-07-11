@@ -176,6 +176,15 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     );
   }
 
+  if (mode === "safe_only" && (patchKit.summary.verifiedChanges ?? 0) === 0) {
+    throw new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      patchKit.repositoryVerification?.error ??
+        "No verified cleanup changes to apply. Complete repository verification before creating a cleanup PR.",
+      422
+    );
+  }
+
   if (mode === "safe_only" && patchKit.patchValidation?.status !== "passed") {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",

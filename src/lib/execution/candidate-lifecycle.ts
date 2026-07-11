@@ -209,7 +209,12 @@ export function summarizeCleanupAttempts(audits: CandidateAuditRecord[]): {
   validated: number;
   verified: number;
 } {
-  const eligible = audits.filter((a) => a.scanEligible).length;
+  const eligible = audits.filter(
+    (a) =>
+      a.scanEligible &&
+      a.blockerCode !== "transform_noop" &&
+      a.blockerMessage !== "Dependency entry was not found in the selected manifest."
+  ).length;
   const attempted = audits.filter((a) => a.transformAttempted).length;
   const generatedChanges = audits.filter((a) => a.contentChanged && a.transformAttempted).length;
   const noop = audits.filter(

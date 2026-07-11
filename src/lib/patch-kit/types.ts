@@ -98,6 +98,13 @@ export interface PatchKitPayload {
   validatedEdits?: Array<{ path: string; content: string; baselineContentHash?: string }>;
   changeManifest?: ChangeManifestEntry[];
   cleanupProof?: import("@/lib/execution/proof-ladder").CleanupProof;
+  repositoryVerification?: {
+    status: "verified" | "blocked" | "failed" | "not_run";
+    failureCode?: "DEPENDENCY_INSTALL_FAILED" | "CHECK_FAILED";
+    error?: string;
+  };
+  cleanupRunSummary?: import("./cleanup-summary").CleanupRunSummary;
+  deletionProofs?: import("./safe-delete-discovery").SafeDeleteProof[];
 }
 
 export interface PatchKitRepoContext {

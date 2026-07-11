@@ -182,6 +182,9 @@ export interface Finding {
   title: string;
   files: string[];
   packageName?: string;
+  manifestPath?: string;
+  dependencySection?: "dependencies" | "devDependencies" | "optionalDependencies" | "peerDependencies";
+  analyzerEvidence?: string;
   lines?: { start: number; end: number };
   confidence: number;
   confidenceReason: string;
@@ -239,6 +242,9 @@ export interface FindingsPayload {
     branch: string;
     url?: string;
     commitSha?: string;
+    githubRepositoryId?: number;
+    previousOwner?: string;
+    previousName?: string;
   };
   summary: FindingsSummary;
   duplicates: Finding[];

@@ -48,6 +48,88 @@ export interface GeneratedChangePayload {
   deletions: number;
 }
 
+export type DependencySection =
+  | "dependencies"
+  | "devDependencies"
+  | "optionalDependencies"
+  | "peerDependencies";
+
+export interface DependencyPreflightEvidence {
+  packageName: string;
+  manifestPath: string;
+  dependencySection: DependencySection;
+  analyzerEvidence: string;
+}
+
+const DEPENDENCY_SECTIONS: DependencySection[] = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+
+export async function resolveDependencyEntry(
+  rootDir: string,
+  finding: Finding
+): Promise<DependencyPreflightEvidence | { eligible: false; reason: string }> {
+  const packageName = finding.packageName?.trim();
+  if (!packageName) {
+    return { eligible: false, reason: "Dependency entry was not found in the selected manifest." };
+  }
+
+  const manifestPath = finding.manifestPath?.replace(/\\/g, "/") ?? "package.json";
+  const fullManifest = path.join(rootDir, manifestPath);
+  let pkg: Record<string, Record<string, string> | undefined>;
+  try {
+    pkg = JSON.parse(await fs.readFile(fullManifest, "utf8")) as Record<
+      string,
+      Record<string, string> | undefined
+    >;
+  } catch {
+    return { eligible: false, reason: "Dependency entry was not found in the selected manifest." };
+  }
+
+  let dependencySection = finding.dependencySection;
+  if (!dependencySection) {
+    for (const section of DEPENDENCY_SECTIONS) {
+      if (pkg[section]?.[packageName] !== undefined) {
+        dependencySection = section;
+        break;
+      }
+    }
+  }
+
+  if (!dependencySection || pkg[dependencySection]?.[packageName] === undefined) {
+    return { eligible: false, reason: "Dependency entry was not found in the selected manifest." };
+  }
+
+  const lockfiles = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb"];
+  const hasLockfile = await Promise.all(
+    lockfiles.map((name) => fs.access(path.join(rootDir, name)).then(() => true).catch(() => false))
+  ).then((results) => results.some(Boolean));
+
+  if (!hasLockfile && manifestPath === "package.json") {
+    try {
+      await fs.access(path.join(rootDir, "package.json"));
+    } catch {
+      return { eligible: false, reason: "Dependency entry was not found in the selected manifest." };
+    }
+  }
+
+  const analyzerEvidence =
+    finding.analyzerEvidence ??
+    finding.evidence.summary ??
+    finding.evidence.signals.find((s) => s.startsWith("knip=")) ??
+    finding.source;
+
+  return {
+    packageName,
+    manifestPath,
+    dependencySection,
+    analyzerEvidence,
+  };
+}
+
 function importEvidence(finding: Finding): { importLine: string; symbol: string; lineNumber?: number } {
   const importLine =
     finding.evidence.signals.find((s) => s.startsWith("importLine="))?.slice("importLine=".length) ??
@@ -219,31 +301,20 @@ export async function dryRunPhase1Fix(
   }
 
   if (plugin.id === "remove_unused_dependency") {
-    const pkgName = finding.packageName;
-    if (!pkgName) return null;
-    const pkgPath = path.join(rootDir, "package.json");
+    const dep = await resolveDependencyEntry(rootDir, finding);
+    if ("eligible" in dep && dep.eligible === false) return null;
+    const evidence = dep as DependencyPreflightEvidence;
+    const pkgName = evidence.packageName;
+    const pkgPath = path.join(rootDir, evidence.manifestPath);
     const original = await fs.readFile(pkgPath, "utf8");
-    const pkg = JSON.parse(original) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    const modifiedPkg = structuredClone(pkg);
-    let removed = false;
-    if (strategyId === "remove_from_dev_dependencies") {
-      if (modifiedPkg.devDependencies?.[pkgName]) {
-        delete modifiedPkg.devDependencies[pkgName];
-        removed = true;
-      }
-    } else if (modifiedPkg.dependencies?.[pkgName]) {
-      delete modifiedPkg.dependencies[pkgName];
-      removed = true;
-    } else if (modifiedPkg.devDependencies?.[pkgName]) {
-      delete modifiedPkg.devDependencies[pkgName];
-      removed = true;
-    }
-    if (!removed) return null;
+    const pkg = JSON.parse(original) as Record<string, Record<string, string> | undefined>;
+    const modifiedPkg = structuredClone(pkg) as Record<string, Record<string, string> | undefined>;
+    const section = evidence.dependencySection;
+    if (!modifiedPkg[section]?.[pkgName]) return null;
+    delete modifiedPkg[section]![pkgName];
     const modified = `${JSON.stringify(modifiedPkg, null, 2)}\n`;
-    const unifiedDiff = buildTextDiff("package.json", original, modified);
+    const relManifest = evidence.manifestPath.replace(/\\/g, "/");
+    const unifiedDiff = buildTextDiff(relManifest, original, modified);
     const { additions, deletions } = countDiffStats(unifiedDiff);
     if (additions + deletions === 0) return null;
     return {
@@ -252,7 +323,7 @@ export async function dryRunPhase1Fix(
       originalHash: hashSource(original),
       modifiedHash: hashSource(modified),
       unifiedDiff,
-      changedFiles: ["package.json"],
+      changedFiles: [relManifest],
       additions,
       deletions,
     };
@@ -303,6 +374,78 @@ export async function runFixPreflight(
     };
   }
 
+  if (plugin.id === "remove_unused_dependency") {
+    const resolved = await resolveDependencyEntry(rootDir, finding);
+    if ("eligible" in resolved && resolved.eligible === false) {
+      const blocker = resolved.reason;
+      return {
+        ...base,
+        strategyAvailable: false,
+        blocker,
+        blockerCode: "transform_noop",
+      };
+    }
+    const dep = resolved as DependencyPreflightEvidence;
+    const strategies = listStrategiesForFinding(finding, plugin.id);
+    if (strategies.length === 0) {
+      const blocker = "No supported strategies for this finding.";
+      return {
+        ...base,
+        blocker,
+        blockerCode: "plugin_strategy_missing",
+      };
+    }
+    for (const strategy of strategies) {
+      try {
+        await fs.access(path.join(rootDir, dep.manifestPath));
+        base.sourceLocated = true;
+        const change = await dryRunPhase1Fix(rootDir, {
+          ...finding,
+          packageName: dep.packageName,
+          manifestPath: dep.manifestPath,
+          dependencySection: dep.dependencySection,
+          analyzerEvidence: dep.analyzerEvidence,
+        }, strategy.id);
+        if (!change) continue;
+        const allPass =
+          base.pluginAvailable &&
+          base.sourceLocated &&
+          base.sourceHashMatches &&
+          base.protectedPathCheck &&
+          change.originalHash !== change.modifiedHash &&
+          change.unifiedDiff.length > 0 &&
+          change.additions + change.deletions > 0;
+        if (allPass) {
+          return {
+            ...base,
+            strategyAvailable: true,
+            strategyId: strategy.id,
+            dryRunChangedSource: true,
+            diffGenerated: true,
+            classification: "actionable_candidate",
+            sourceHash: change.originalHash,
+            proposedModifiedHash: change.modifiedHash,
+            proposedDiff: change.unifiedDiff,
+          };
+        }
+      } catch {
+        /* try next strategy */
+      }
+    }
+    const blocker = "Dry-run could not produce a valid source modification.";
+    return {
+      ...base,
+      strategyAvailable: strategies.length > 0,
+      blocker,
+      blockerCode: blockerCodeFromPreflight({
+        ...base,
+        strategyAvailable: strategies.length > 0,
+        blocker,
+        classification: "detected_candidate",
+      }),
+    };
+  }
+
   const strategies = listStrategiesForFinding(finding, plugin.id);
   if (strategies.length === 0) {
     const blocker = "No supported strategies for this finding.";
@@ -317,9 +460,6 @@ export async function runFixPreflight(
     try {
       if (finding.files[0]) {
         await fs.access(path.join(rootDir, finding.files[0]));
-        base.sourceLocated = true;
-      } else if (plugin.id === "remove_unused_dependency") {
-        await fs.access(path.join(rootDir, "package.json"));
         base.sourceLocated = true;
       }
 
