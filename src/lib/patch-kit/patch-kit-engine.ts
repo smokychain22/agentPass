@@ -23,7 +23,7 @@ import {
   EMPTY_CLEANUP_PATCH,
 } from "./generate-cleanup-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
-import { ensurePatchTrailingNewline, buildConsolidatedPatchFromEdits, collectEditsBetweenWorkspaces, buildEditsFromRetainedAttempts } from "./merge-patches";
+import { ensurePatchTrailingNewline, buildPatchFromWorkspaceDelta, buildEditsFromRetainedAttempts, filterEditsAgainstBaseline, collectEditsBetweenWorkspaces, buildConsolidatedPatchFromEdits, buildManualPatchFromEdits } from "./merge-patches";
 import { validateGeneratedPatchOnly, patchHasApplyableOperations } from "./validate-patch";
 import { runRepositoryVerification } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
@@ -271,46 +271,61 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
 
     const safeDeleteCount = deletedPaths.length;
-    const generatedChanges =
-      cleanupResult.fixLoop.attempts.filter(
-        (a) => Object.keys(a.modifiedSources ?? {}).length > 0
-      ).length + safeDeleteCount;
 
-    const workspaceDeltaEdits = await collectEditsBetweenWorkspaces(baselineRoot, workspace.rootDir);
-    let generatedEdits =
-      workspaceDeltaEdits.length > 0
-        ? workspaceDeltaEdits
-        : buildEditsFromRetainedAttempts(cleanupResult.fixLoop.attempts);
-
-    for (const rel of deletedPaths) {
-      if (!generatedEdits.some((e) => e.path === rel)) {
-        generatedEdits.push({ path: rel, content: "" });
-      }
-    }
-    generatedEdits = generatedEdits.filter(
-      (e, i, arr) => arr.findIndex((x) => x.path === e.path) === i
+    let generatedEdits = await filterEditsAgainstBaseline(
+      baselineRoot,
+      await collectEditsBetweenWorkspaces(baselineRoot, workspace.rootDir)
     );
 
+    if (generatedEdits.length === 0) {
+      const retainedEdits = buildEditsFromRetainedAttempts(cleanupResult.fixLoop.attempts);
+      for (const rel of deletedPaths) {
+        if (!retainedEdits.some((e) => e.path === rel)) {
+          retainedEdits.push({ path: rel, content: "" });
+        }
+      }
+      generatedEdits = await filterEditsAgainstBaseline(baselineRoot, retainedEdits);
+    }
+
+    let patchBundle = { patch: EMPTY_CLEANUP_PATCH, changedPaths: [] as string[], edits: generatedEdits };
+
+    if (generatedEdits.length > 0) {
+      patchBundle = await buildPatchFromWorkspaceDelta(
+        baselineRoot,
+        workspace.rootDir,
+        workspace.workDir
+      );
+      if (patchBundle.edits.length === 0) {
+        patchBundle.edits = generatedEdits;
+      }
+
+      if (!patchHasApplyableOperations(patchBundle.patch)) {
+        const gitFromEdits = await buildConsolidatedPatchFromEdits(
+          baselineRoot,
+          generatedEdits,
+          workspace.workDir
+        );
+        if (patchHasApplyableOperations(gitFromEdits.patch)) {
+          patchBundle = { ...gitFromEdits, edits: generatedEdits };
+        } else {
+          const manual = await buildManualPatchFromEdits(baselineRoot, generatedEdits);
+          patchBundle = { ...manual, edits: generatedEdits };
+        }
+      }
+    }
+
+    const generatedChanges = generatedEdits.length;
     const changedPaths = generatedEdits.map((e) => e.path);
+    let mergedPatch =
+      patchBundle.patch && patchBundle.patch !== EMPTY_CLEANUP_PATCH
+        ? ensurePatchTrailingNewline(patchBundle.patch)
+        : EMPTY_CLEANUP_PATCH;
 
     const transformerResults = buildTransformerResults(
       compatibleFindings,
       candidateAudits,
       cleanupResult.fixLoop.attempts
     );
-
-    let mergedPatch = EMPTY_CLEANUP_PATCH;
-
-    if (generatedEdits.length > 0) {
-      const consolidated = await buildConsolidatedPatchFromEdits(
-        baselineRoot,
-        generatedEdits,
-        workspace.workDir
-      );
-      if (consolidated.patch && consolidated.patch !== EMPTY_CLEANUP_PATCH) {
-        mergedPatch = ensurePatchTrailingNewline(consolidated.patch);
-      }
-    }
 
     let patchValidation: {
       status: "passed" | "failed" | "skipped" | "not_generated";

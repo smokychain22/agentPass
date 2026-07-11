@@ -6,6 +6,7 @@ import { EMPTY_CLEANUP_PATCH } from "./generate-cleanup-patch";
 import { extractApplyablePatch } from "./validate-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { hashSource } from "@/lib/execution/transform-audit";
+import { patchHasApplyableOperations } from "./validate-patch";
 
 export interface ConsolidatedEdit {
   path: string;
@@ -120,6 +121,151 @@ export async function collectEditsBetweenWorkspaces(
   }
 
   return dedupeConsolidatedEdits(edits);
+}
+
+/** Keep only edits that differ from the pristine baseline snapshot. */
+export async function filterEditsAgainstBaseline(
+  baselineRoot: string,
+  edits: ConsolidatedEdit[]
+): Promise<ConsolidatedEdit[]> {
+  const filtered: ConsolidatedEdit[] = [];
+  for (const edit of dedupeConsolidatedEdits(edits)) {
+    const baseContent = await fs.readFile(path.join(baselineRoot, edit.path), "utf8").catch(() => null);
+    if (edit.content === "") {
+      if (baseContent !== null) filtered.push(edit);
+      continue;
+    }
+    if (baseContent !== edit.content) filtered.push(edit);
+  }
+  return filtered;
+}
+
+/** Fallback unified diff built per file when git repository diff is unavailable. */
+export async function buildManualPatchFromEdits(
+  baselineRoot: string,
+  edits: ConsolidatedEdit[]
+): Promise<{ patch: string; changedPaths: string[] }> {
+  const { buildTextDiff } = await import("@/lib/execution/fix-preflight");
+  const deduped = dedupeConsolidatedEdits(edits);
+  const sections: string[] = [];
+  const changedPaths: string[] = [];
+
+  for (const edit of deduped) {
+    const rel = edit.path;
+    const basePath = path.join(baselineRoot, rel);
+    const original = await fs.readFile(basePath, "utf8").catch(() => null);
+    if (edit.content === "") {
+      if (original === null) continue;
+      const section = buildTextDiff(rel, original, "");
+      if (section.trim()) {
+        sections.push(section);
+        changedPaths.push(rel);
+      }
+      continue;
+    }
+    if (original === edit.content) continue;
+    const section = buildTextDiff(rel, original ?? "", edit.content);
+    if (section.trim()) {
+      sections.push(section);
+      changedPaths.push(rel);
+    }
+  }
+
+  if (sections.length === 0) {
+    return { patch: EMPTY_CLEANUP_PATCH, changedPaths: [] };
+  }
+
+  const patch = mergeCleanupPatches(...sections);
+  const header = [
+    "# RepoDiet cleanup patch",
+    "# Consolidated unified diff — apply with: git apply repodiet-cleanup.patch",
+    `# Edited paths: ${changedPaths.length}`,
+    "",
+  ].join("\n");
+
+  return {
+    patch: ensurePatchTrailingNewline(`${header}\n${extractApplyablePatch(patch)}`),
+    changedPaths,
+  };
+}
+
+async function diffPathsWithNoIndex(
+  baselineRoot: string,
+  modifiedRoot: string,
+  rel: string
+): Promise<string> {
+  const basePath = path.join(baselineRoot, rel);
+  const modPath = path.join(modifiedRoot, rel);
+  const baseExists = await fs.access(basePath).then(() => true).catch(() => false);
+  const modExists = await fs.access(modPath).then(() => true).catch(() => false);
+
+  if (!baseExists && !modExists) return "";
+  if (baseExists && !modExists) {
+    const result = await execa("git", ["diff", "--no-index", "--no-color", basePath, "/dev/null"], {
+      reject: false,
+    });
+    return (result.stdout || result.stderr || "").trim();
+  }
+  if (!baseExists && modExists) {
+    const result = await execa("git", ["diff", "--no-index", "--no-color", "/dev/null", modPath], {
+      reject: false,
+    });
+    return (result.stdout || result.stderr || "").trim();
+  }
+
+  const result = await execa("git", ["diff", "--no-index", "--no-color", basePath, modPath], {
+    reject: false,
+  });
+  return (result.stdout || "").trim();
+}
+
+/**
+ * Build patch from the actual modified workspace (authoritative) with git and manual fallbacks.
+ */
+export async function buildPatchFromWorkspaceDelta(
+  baselineRoot: string,
+  modifiedRoot: string,
+  workDir: string
+): Promise<{ patch: string; changedPaths: string[]; edits: ConsolidatedEdit[] }> {
+  const edits = await filterEditsAgainstBaseline(
+    baselineRoot,
+    await collectEditsBetweenWorkspaces(baselineRoot, modifiedRoot)
+  );
+
+  if (edits.length === 0) {
+    return { patch: EMPTY_CLEANUP_PATCH, changedPaths: [], edits: [] };
+  }
+
+  const gitPatch = await buildConsolidatedPatchFromEdits(baselineRoot, edits, workDir);
+  if (patchHasApplyableOperations(gitPatch.patch)) {
+    return { ...gitPatch, edits };
+  }
+
+  const noIndexSections: string[] = [];
+  const changedPaths: string[] = [];
+  for (const edit of edits) {
+    const section = await diffPathsWithNoIndex(baselineRoot, modifiedRoot, edit.path);
+    if (!section || !section.includes("diff --git")) continue;
+    noIndexSections.push(section);
+    changedPaths.push(edit.path);
+  }
+
+  if (noIndexSections.length > 0) {
+    const header = [
+      "# RepoDiet cleanup patch",
+      "# Consolidated unified diff — apply with: git apply repodiet-cleanup.patch",
+      `# Edited paths: ${changedPaths.length}`,
+      "",
+    ].join("\n");
+    return {
+      patch: ensurePatchTrailingNewline(`${header}\n${noIndexSections.join("\n\n")}`),
+      changedPaths,
+      edits,
+    };
+  }
+
+  const manual = await buildManualPatchFromEdits(baselineRoot, edits);
+  return { ...manual, edits };
 }
 
 /** Fallback when workspace walk misses retained in-memory edits. */

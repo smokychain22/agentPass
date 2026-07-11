@@ -5,11 +5,13 @@ import path from "node:path";
 import { execa } from "execa";
 import {
   buildConsolidatedPatchFromEdits,
+  buildPatchFromWorkspaceDelta,
   collectEditsBetweenWorkspaces,
   dedupeConsolidatedEdits,
+  filterEditsAgainstBaseline,
   mergeCleanupPatches,
 } from "../src/lib/patch-kit/merge-patches";
-import { extractApplyablePatch } from "../src/lib/patch-kit/validate-patch";
+import { extractApplyablePatch, patchHasApplyableOperations } from "../src/lib/patch-kit/validate-patch";
 import { buildTextDiff } from "../src/lib/execution/fix-preflight";
 
 async function testTwoEditsSameFileConsolidatedPassesApply(): Promise<void> {
@@ -105,6 +107,48 @@ async function testWorkspaceDeltaCollectsFinalState(): Promise<void> {
   await fs.rm(modified, { recursive: true, force: true });
 }
 
-Promise.all([testTwoEditsSameFileConsolidatedPassesApply(), testWorkspaceDeltaCollectsFinalState()]).then(() => {
+async function testWorkspaceDeltaPatchIsApplyable(): Promise<void> {
+  const baseline = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-ws-base-"));
+  const modified = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-ws-mod-"));
+  const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-ws-work-"));
+  const rel = "src/Dashboard.tsx";
+  const original = 'import { Clock } from "lucide-react";\nexport function Dashboard() { return null; }\n';
+  const updated = 'export function Dashboard() { return null; }\n';
+
+  for (const [root, content] of [
+    [baseline, original],
+    [modified, updated],
+  ] as const) {
+    const full = path.join(root, rel);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, content, "utf8");
+  }
+
+  const { patch, edits } = await buildPatchFromWorkspaceDelta(baseline, modified, workDir);
+  assert.equal(edits.length, 1);
+  assert.ok(patchHasApplyableOperations(patch), `expected applyable patch, got: ${patch.slice(0, 200)}`);
+
+  await fs.rm(baseline, { recursive: true, force: true });
+  await fs.rm(modified, { recursive: true, force: true });
+  await fs.rm(workDir, { recursive: true, force: true });
+}
+
+async function testFilterEditsAgainstBaselineDropsNoops(): Promise<void> {
+  const baseline = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-filter-"));
+  await fs.writeFile(path.join(baseline, "package.json"), '{"name":"demo"}\n', "utf8");
+  const filtered = await filterEditsAgainstBaseline(baseline, [
+    { path: "package.json", content: '{"name":"demo"}\n' },
+    { path: "src/missing.ts", content: "" },
+  ]);
+  assert.equal(filtered.length, 0);
+  await fs.rm(baseline, { recursive: true, force: true });
+}
+
+Promise.all([
+  testTwoEditsSameFileConsolidatedPassesApply(),
+  testWorkspaceDeltaCollectsFinalState(),
+  testWorkspaceDeltaPatchIsApplyable(),
+  testFilterEditsAgainstBaselineDropsNoops(),
+]).then(() => {
   console.log("consolidated-patch.test.ts: ok");
 });
