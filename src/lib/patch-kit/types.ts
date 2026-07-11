@@ -107,6 +107,8 @@ export interface PatchKitPayload {
     failingPath?: string;
     failingHunk?: string;
     gitStderr?: string;
+    patchGenerationMethod?: "git-cli" | "pure-js";
+    gitCliAvailable?: boolean;
     attempt?: import("./canonical-patch").PatchValidationAttempt;
     validatedPaths?: string[];
     unexpectedPaths?: string[];
