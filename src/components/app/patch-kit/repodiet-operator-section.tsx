@@ -27,6 +27,7 @@ import {
   disconnectGitHubApp,
   fetchGitHubConnectionStatus,
   fetchGitHubPreflight,
+  syncGitHubRepositoryAccess,
   runCreateCleanupPr,
   repodietInstallReturnPath,
   startGitHubGrantAccess,
@@ -196,6 +197,35 @@ export function RepoDietOperatorSection({
     }
   }, [repositoryFullName, branch, findings, useDemoAuth]);
 
+  const syncRepositoryAccess = useCallback(async () => {
+    if (!repositoryFullName || useDemoAuth) return null;
+    setPreflightLoading(true);
+    try {
+      const installationIdRaw = searchParams.get("github_installation_id");
+      const installationId = installationIdRaw ? Number(installationIdRaw) : undefined;
+      const setupAction =
+        searchParams.get("setup_action") === "update" ? "update" : undefined;
+      const trustPendingPropagation =
+        searchParams.get("github_repo_pending") === "true" ||
+        searchParams.get("github_recovered") === "installation_only" ||
+        setupAction === "update";
+
+      const result = await syncGitHubRepositoryAccess({
+        repositoryFullName,
+        installationId: Number.isFinite(installationId) ? installationId : undefined,
+        setupAction,
+        trustPendingPropagation,
+      });
+      setPreflight(result);
+      return result;
+    } catch {
+      await runPreflight();
+      return null;
+    } finally {
+      setPreflightLoading(false);
+    }
+  }, [repositoryFullName, useDemoAuth, searchParams, runPreflight]);
+
   useEffect(() => {
     void refreshGitHubStatus();
   }, [refreshGitHubStatus]);
@@ -214,7 +244,7 @@ export function RepoDietOperatorSection({
     if (!githubConnected && !githubRecovered && !githubRepoPending) return;
 
     void refreshGitHubStatus()
-      .then(() => runPreflight())
+      .then(() => syncRepositoryAccess())
       .finally(() => {
         const params = new URLSearchParams(searchParams.toString());
         params.delete("github");
@@ -222,10 +252,11 @@ export function RepoDietOperatorSection({
         params.delete("github_recovered");
         params.delete("github_repo_pending");
         params.delete("setup_action");
+        params.delete("github_installation_id");
         const qs = params.toString();
         router.replace(qs ? `/app?${qs}` : "/app?tab=patch", { scroll: false });
       });
-  }, [searchParams, refreshGitHubStatus, runPreflight, router]);
+  }, [searchParams, refreshGitHubStatus, syncRepositoryAccess, router]);
 
   const grantAccess = async () => {
     if (!repositoryFullName) return;
@@ -294,7 +325,7 @@ export function RepoDietOperatorSection({
 
   const cleanupPrDisableReason = useMemo(() => {
     if (locked) return "Run Quick Cleanup first.";
-    if (statusLoading || preflightLoading) return "Checking GitHub repository access…";
+    if (statusLoading || preflightLoading) return "Syncing repository access with GitHub…";
     if (!patchValidated) return "Patch validation must pass before creating a cleanup PR.";
     if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
       return "No validated source changes — generate repairs first.";
@@ -386,7 +417,7 @@ export function RepoDietOperatorSection({
                 {statusLoading || preflightLoading ? (
                   <p className="text-sm text-muted-foreground flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Checking repository access…
+                    Syncing repository access with GitHub…
                   </p>
                 ) : useDemoAuth ? (
                   <p className="text-sm text-muted-foreground">
@@ -496,7 +527,7 @@ export function RepoDietOperatorSection({
             <InfoCard title="Repository">
               <p className="font-mono text-xs">{repositoryFullName || repoUrl}</p>
               {statusLoading || preflightLoading ? (
-                <p className="text-muted-foreground">Checking repository access…</p>
+                <p className="text-muted-foreground">Syncing repository access with GitHub…</p>
               ) : repositoryReady ? (
                 <p className="text-signal">Ready for pull requests</p>
               ) : (

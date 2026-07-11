@@ -4,7 +4,6 @@ import type { GitHubPreflightResult } from "./types";
 import {
   createInstallationAccessToken,
   getInstallationDetails,
-  installationIncludesRepository,
   installationIncludesRepositoryWithRetry,
 } from "./installations";
 import { isGitHubAppConfigured } from "./config";
@@ -42,19 +41,11 @@ function mapAccessState(input: {
   session: Awaited<ReturnType<typeof readInstallationSession>>;
   repositoryAccessible: boolean;
   permissionsVerified: boolean;
-  owner: string;
-  installationOwner?: string;
   suspended: boolean;
 }): GitHubAccessState {
   if (!input.configured) return "not_configured";
   if (!input.session) return "not_installed";
   if (input.suspended) return "organization_approval_required";
-  if (
-    input.installationOwner &&
-    input.installationOwner.toLowerCase() !== input.owner.toLowerCase()
-  ) {
-    return "wrong_account";
-  }
   if (!input.permissionsVerified) return "permissions_outdated";
   if (!input.repositoryAccessible) return "installed_repo_missing";
   return "repository_verified";
@@ -88,25 +79,29 @@ export async function runGitHubPreflight(
       suspendedAt: details?.suspendedAt,
     };
     permissionsVerified = permissionsAreSufficient(details?.permissions);
-    repositoryAccessible = await installationIncludesRepository(
+
+    const access = await installationIncludesRepositoryWithRetry(
       session.installationId,
       owner,
-      repo
+      repo,
+      { attempts: 6, delayMs: 1500 }
     );
+    repositoryAccessible = access.granted;
 
-    if (!repositoryAccessible && session) {
-      const retried = await installationIncludesRepositoryWithRetry(
-        session.installationId,
-        owner,
-        repo,
-        { attempts: 3, delayMs: 1000 }
-      );
-      repositoryAccessible = retried.granted;
+    if (!repositoryAccessible && input.sessionKey) {
+      const binding = await readRepoInstallBinding(input.sessionKey, input.repositoryFullName);
+      if (binding && binding.installationId === session.installationId) {
+        const propagated = await installationIncludesRepositoryWithRetry(
+          session.installationId,
+          owner,
+          repo,
+          { attempts: 8, delayMs: 2000 }
+        );
+        repositoryAccessible = propagated.granted;
+      }
     }
 
     if (repositoryAccessible && permissionsVerified) {
-      // Write contents + pull_requests permissions are sufficient to open cleanup PRs.
-      // Branch probe failures (stale scan branch, transient API errors) must not block delivery.
       canCreateBranch = true;
       canCreatePullRequest = true;
 
@@ -135,26 +130,11 @@ export async function runGitHubPreflight(
     }
   }
 
-  if (input.sessionKey) {
-    const binding = await readRepoInstallBinding(input.sessionKey, input.repositoryFullName);
-    if (binding && session && binding.installationId === session.installationId && !repositoryAccessible) {
-      const propagated = await installationIncludesRepositoryWithRetry(
-        session.installationId,
-        owner,
-        repo,
-        { attempts: 6, delayMs: 2000 }
-      );
-      repositoryAccessible = propagated.granted;
-    }
-  }
-
   const accessState = mapAccessState({
     configured,
     session,
     repositoryAccessible,
     permissionsVerified,
-    owner,
-    installationOwner,
     suspended,
   });
 

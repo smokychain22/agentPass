@@ -96,6 +96,29 @@ export async function fetchGitHubPreflight(input: {
   return json;
 }
 
+export async function syncGitHubRepositoryAccess(input: {
+  repositoryFullName: string;
+  installationId?: number;
+  setupAction?: "install" | "update";
+  trustPendingPropagation?: boolean;
+}): Promise<GitHubPreflightResult> {
+  const res = await fetch("/api/github/sync-access", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json()) as {
+    ok: boolean;
+    error?: string;
+    preflight?: GitHubPreflightResult;
+  };
+  if (!json.ok || !json.preflight) {
+    throw new Error(json.error ?? "Could not sync GitHub repository access.");
+  }
+  return json.preflight;
+}
+
 export async function startGitHubGrantAccess(input: {
   repositoryFullName: string;
   scanId?: string;

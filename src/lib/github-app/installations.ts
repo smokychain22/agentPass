@@ -145,11 +145,11 @@ export async function installationIncludesRepository(
   owner: string,
   repo: string
 ): Promise<boolean> {
-  const repos = await listInstallationAccessibleRepos(installationId);
-  if (repositoryFullNameInList(repos, owner, repo)) {
+  if (await installationHasRepoAccess(installationId, owner, repo)) {
     return true;
   }
-  return installationHasRepoAccess(installationId, owner, repo);
+  const repos = await listInstallationAccessibleRepos(installationId);
+  return repositoryFullNameInList(repos, owner, repo);
 }
 
 export async function installationIncludesRepositoryWithRetry(

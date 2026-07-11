@@ -1,28 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppBaseUrl, resolveRepodietReturnUrl } from "@/lib/github-app/app-base-url";
+import { completeInstallAccess } from "@/lib/github-app/complete-install-access";
 import { parseInstallCallbackParams } from "@/lib/github-app/install-callback";
-import {
-  clearInstallSessionId,
-  saveInstallationSession,
-} from "@/lib/github-app/session";
+import { clearInstallSessionId } from "@/lib/github-app/session";
 import {
   consumeInstallFlowState,
   resolveInstallFlowFromPendingCookie,
   resolveInstallFlowState,
 } from "@/lib/github-app/install-flow";
-import {
-  fetchInstallationSession,
-  installationIncludesRepositoryWithRetry,
-} from "@/lib/github-app/installations";
-import { saveRepoInstallBinding, type InstallFlowRecord } from "@/lib/github-app/install-flow-store";
+import { verifySignedInstallState } from "@/lib/github-app/install-signed-state";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
-import { githubOwnersMatch } from "@/lib/github-app/repository";
 import {
   clearPendingInstallCookie,
   readPendingInstallCookie,
 } from "@/lib/github-app/install-flow-cookie";
+import type { InstallFlowRecord } from "@/lib/github-app/install-flow-store";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function redirectWithError(
   code: string,
@@ -61,7 +56,75 @@ async function resolveFlowRecord(
     return { ok: true, record: { ...pending, sessionKey } };
   }
 
+  const signed = verifySignedInstallState(stateToken);
+  if (signed) {
+    const { parseRepositoryFullName } = await import("@/lib/github-app/repository");
+    const { owner, repo } = parseRepositoryFullName(signed.rf);
+    return {
+      ok: true,
+      record: {
+        stateHash: stateToken.slice(0, 32),
+        sessionKey,
+        repositoryFullName: signed.rf,
+        owner,
+        repo,
+        scanId: signed.s,
+        returnPath: signed.rp,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      },
+    };
+  }
+
   return primary;
+}
+
+async function recoverInstallContext(
+  stateToken: string,
+  sessionKey: string
+): Promise<{
+  repositoryFullName: string;
+  returnPath?: string;
+  scanId?: string;
+  owner: string;
+  repo: string;
+} | null> {
+  const pending = await readPendingInstallCookie();
+  if (pending) {
+    return {
+      repositoryFullName: pending.repositoryFullName,
+      returnPath: pending.returnPath,
+      scanId: pending.scanId,
+      owner: pending.owner,
+      repo: pending.repo,
+    };
+  }
+
+  const signed = verifySignedInstallState(stateToken);
+  if (signed) {
+    const { parseRepositoryFullName } = await import("@/lib/github-app/repository");
+    const { owner, repo } = parseRepositoryFullName(signed.rf);
+    return {
+      repositoryFullName: signed.rf,
+      returnPath: signed.rp,
+      scanId: signed.s,
+      owner,
+      repo,
+    };
+  }
+
+  const resolved = await resolveInstallFlowState(stateToken, sessionKey);
+  if (resolved.ok) {
+    return {
+      repositoryFullName: resolved.record.repositoryFullName,
+      returnPath: resolved.record.returnPath,
+      scanId: resolved.record.scanId,
+      owner: resolved.record.owner,
+      repo: resolved.record.repo,
+    };
+  }
+
+  return null;
 }
 
 export async function GET(request: NextRequest) {
@@ -83,6 +146,7 @@ export async function GET(request: NextRequest) {
   }
 
   const { installationId, setupAction, stateToken } = parsed.params;
+  const trustUpdateCallback = setupAction === "update";
 
   let resolved = await resolveFlowRecord(stateToken, sessionKey);
 
@@ -104,17 +168,35 @@ export async function GET(request: NextRequest) {
       hasPendingCookie: Boolean(pending),
     });
 
+    const recovered = await recoverInstallContext(stateToken, sessionKey);
+    if (!recovered) {
+      await clearPendingInstallCookie();
+      return redirectWithError(code, pending?.returnPath, pending?.scanId);
+    }
+
     try {
-      const session = await fetchInstallationSession(installationId);
-      await saveInstallationSession(session);
+      const completed = await completeInstallAccess({
+        installationId,
+        repositoryFullName: recovered.repositoryFullName,
+        sessionKey,
+        setupAction,
+        trustPendingPropagation: trustUpdateCallback,
+      });
+
       await clearInstallSessionId();
       await clearPendingInstallCookie();
 
-      return redirectWithSuccess(pending?.returnPath, pending?.scanId, {
+      const successParams: Record<string, string> = {
         github: "connected",
         setup_action: setupAction,
         github_recovered: "installation_only",
-      });
+        github_installation_id: String(installationId),
+      };
+      if (!completed.repositoryAccessible && trustUpdateCallback) {
+        successParams.github_repo_pending = "true";
+      }
+
+      return redirectWithSuccess(recovered.returnPath, recovered.scanId, successParams);
     } catch {
       await clearPendingInstallCookie();
       return redirectWithError(code, pending?.returnPath, pending?.scanId);
@@ -124,60 +206,30 @@ export async function GET(request: NextRequest) {
   const flow = { ...resolved.record, sessionKey };
 
   try {
-    const session = await fetchInstallationSession(installationId);
-    const ownerMatches = githubOwnersMatch(session.accountLogin, flow.owner);
-    const access = await installationIncludesRepositoryWithRetry(
+    const completed = await completeInstallAccess({
       installationId,
-      flow.owner,
-      flow.repo
-    );
-
-    console.info("[github-install-complete]", {
-      installationId,
+      repositoryFullName: flow.repositoryFullName,
+      sessionKey,
       setupAction,
-      appBaseUrl: getAppBaseUrl(),
-      targetOwner: flow.owner,
-      targetRepo: flow.repo,
-      installationOwner: session.accountLogin,
-      ownerMatches,
-      hasAccess: access.granted,
-      accessibleRepoCount: access.accessibleRepos.length,
-      accessibleReposSample: access.accessibleRepos.slice(0, 5),
-      stateLength: stateToken.length,
+      trustPendingPropagation: trustUpdateCallback,
     });
 
-    const trustUpdateCallback = setupAction === "update";
-
-    if (!ownerMatches && !access.granted && !trustUpdateCallback) {
-      await consumeInstallFlowState(stateToken);
-      return redirectWithError("wrong_account", flow.returnPath, flow.scanId);
-    }
-
-    await saveInstallationSession(session);
     await clearInstallSessionId();
 
-    if (!access.granted && !trustUpdateCallback) {
+    if (!completed.repositoryAccessible && !trustUpdateCallback) {
       await consumeInstallFlowState(stateToken);
       return redirectWithError("repo_not_granted", flow.returnPath, flow.scanId);
     }
 
-    await saveRepoInstallBinding({
-      sessionKey,
-      installationId: session.installationId,
-      installationOwner: session.accountLogin,
-      installationOwnerType: session.accountType,
-      repositoryFullName: flow.repositoryFullName,
-      setupAction,
-      authorizedAt: new Date().toISOString(),
-    });
-
     await consumeInstallFlowState(stateToken);
+    await clearPendingInstallCookie();
 
     const successParams: Record<string, string> = {
       github: "connected",
       setup_action: setupAction,
+      github_installation_id: String(installationId),
     };
-    if (!access.granted && trustUpdateCallback) {
+    if (!completed.repositoryAccessible && trustUpdateCallback) {
       successParams.github_repo_pending = "true";
     }
 
