@@ -387,6 +387,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       generatedChanges,
       validatedChanges,
       verifiedChanges,
+      retainedFixAttempts: retainedFixCount,
       filesEdited,
       filesDeleted,
       filesAdded,
@@ -436,7 +437,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             linesRemoved: modified && original ? Math.max(0, original.split("\n").length - modified.split("\n").length) : undefined,
           };
         })
-      );
+      )
+      .filter((entry) => changedPaths.includes(entry.filePath));
     for (const rel of deletedPaths) {
       if (!changeManifest.some((e) => e.filePath === rel)) {
         changeManifest.push({

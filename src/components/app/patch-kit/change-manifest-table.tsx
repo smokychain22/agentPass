@@ -6,6 +6,7 @@ import type { ChangeManifestEntry } from "@/lib/patch-kit/types";
 export function ChangeManifestTable({ entries }: { entries: ChangeManifestEntry[] }) {
   if (!entries.length) return null;
 
+  const uniqueFiles = new Set(entries.map((e) => e.filePath)).size;
   const edits = entries.filter((e) => e.operation === "edit").length;
   const deletes = entries.filter((e) => e.operation === "delete").length;
   const adds = entries.filter((e) => e.operation === "add").length;
@@ -14,8 +15,12 @@ export function ChangeManifestTable({ entries }: { entries: ChangeManifestEntry[
     <Panel variant="elevated" padding="md">
       <p className="ds-label mb-2">Change manifest</p>
       <p className="mb-4 text-sm text-muted-foreground">
-        {entries.length} generated change{entries.length === 1 ? "" : "s"} · {edits} edit
-        {edits === 1 ? "" : "s"} · {deletes} deletion{deletes === 1 ? "" : "s"}
+        {uniqueFiles} patch-validated file{uniqueFiles === 1 ? "" : "s"}
+        {entries.length > uniqueFiles
+          ? ` · ${entries.length} finding-level edit${entries.length === 1 ? "" : "s"}`
+          : ""}
+        {" · "}
+        {edits} edit{edits === 1 ? "" : "s"} · {deletes} deletion{deletes === 1 ? "" : "s"}
         {adds > 0 ? ` · ${adds} addition${adds === 1 ? "" : "s"}` : ""}
       </p>
       <div className="overflow-x-auto">

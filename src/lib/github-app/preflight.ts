@@ -105,21 +105,32 @@ export async function runGitHubPreflight(
     }
 
     if (repositoryAccessible && permissionsVerified) {
+      // Write contents + pull_requests permissions are sufficient to open cleanup PRs.
+      // Branch probe failures (stale scan branch, transient API errors) must not block delivery.
+      canCreateBranch = true;
+      canCreatePullRequest = true;
+
       try {
         const token = await createInstallationAccessToken(session.installationId);
         const client = new GitHubClient(token.token);
-        const branch = input.branch?.trim() || (await client.getRepo(owner, repo)).defaultBranch;
-        const sha = await client.getBranchSha(owner, repo, branch);
-        branchExists = true;
-        canCreateBranch = true;
-        canCreatePullRequest = true;
-        if (input.commitSha) {
-          commitMatches = sha === input.commitSha || sha.startsWith(input.commitSha);
+        const defaultBranch = (await client.getRepo(owner, repo)).defaultBranch;
+        const requestedBranch = input.branch?.trim();
+        const branchesToTry = [...new Set([requestedBranch, defaultBranch].filter(Boolean))] as string[];
+
+        for (const branch of branchesToTry) {
+          try {
+            const sha = await client.getBranchSha(owner, repo, branch);
+            branchExists = true;
+            if (input.commitSha) {
+              commitMatches = sha === input.commitSha || sha.startsWith(input.commitSha);
+            }
+            break;
+          } catch {
+            // Try default branch next when the scanned branch is missing or renamed.
+          }
         }
       } catch {
         branchExists = false;
-        canCreateBranch = false;
-        canCreatePullRequest = false;
       }
     }
   }

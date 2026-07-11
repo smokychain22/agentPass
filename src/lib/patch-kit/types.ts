@@ -41,6 +41,8 @@ export interface PatchKitSummary {
   generatedChanges: number;
   validatedChanges: number;
   verifiedChanges: number;
+  /** Retained transformer attempts before per-file consolidation for patch delivery */
+  retainedFixAttempts?: number;
   filesEdited: number;
   filesDeleted: number;
   filesAdded: number;

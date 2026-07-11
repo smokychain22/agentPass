@@ -36,6 +36,7 @@ import {
   type GitHubConnectionStatus,
   type GitHubPreflightResult,
 } from "@/lib/patch-kit/client";
+import { computeOperatorPrGates } from "@/lib/patch-kit/operator-pr-gates";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { cn } from "@/lib/utils";
@@ -134,16 +135,27 @@ export function RepoDietOperatorSection({
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const githubAccountConnected = Boolean(githubStatus?.connected);
   const repositoryReady = Boolean(preflight?.repositoryAuthorized);
-  const canCreateReportPr =
-    !locked &&
-    repositoryReady &&
-    Boolean(preflight?.canCreateBranch) &&
-    Boolean(preflight?.canCreatePullRequest);
-  const canCreateSafePr =
-    canCreateReportPr &&
-    (validatedChanges > 0 || (patchKit?.validatedEdits?.length ?? 0) > 0 || safeCount > 0) &&
-    patchValidated &&
-    (!requireVerificationForCleanupPr || verificationStatus === "passed");
+  const manualTokenReady =
+    !useDemoAuth && showAdvancedToken && Boolean(githubToken.trim()) && !repositoryReady;
+
+  const operatorGates = computeOperatorPrGates({
+    locked,
+    statusLoading,
+    preflightLoading,
+    repositoryAuthorized: repositoryReady,
+    permissionsVerified: Boolean(preflight?.permissionsVerified),
+    canCreateBranch: preflight?.canCreateBranch ?? false,
+    canCreatePullRequest: preflight?.canCreatePullRequest ?? false,
+    useDemoAuth,
+    manualTokenReady,
+    patchValidated,
+    validatedChanges,
+    validatedEditCount: patchKit?.validatedEdits?.length ?? 0,
+    safeDeleteCount: safeCount,
+    requireVerificationForCleanupPr,
+    verificationStatus,
+  });
+  const { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr } = operatorGates;
 
   const githubReturnError = githubErrorMessage(
     searchParams.get("github_error"),
@@ -273,11 +285,11 @@ export function RepoDietOperatorSection({
     await runPreflight();
   };
 
-  const needsManualToken =
-    !useDemoAuth && !repositoryReady && showAdvancedToken && githubToken.trim();
+  const needsManualToken = manualTokenReady;
 
   const cleanupPrDisableReason = useMemo(() => {
     if (locked) return "Run Quick Cleanup first.";
+    if (statusLoading || preflightLoading) return "Checking GitHub repository access…";
     if (!patchValidated) return "Patch validation must pass before creating a cleanup PR.";
     if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
       return "No validated source changes — generate repairs first.";
@@ -285,12 +297,17 @@ export function RepoDietOperatorSection({
     if (requireVerificationForCleanupPr && verificationStatus !== "passed") {
       return "Run verification on the Verify tab first.";
     }
-    if (!repositoryReady && !needsManualToken) {
+    if (!repositoryReady && !needsManualToken && !useDemoAuth) {
       return "Grant GitHub repository access first.";
+    }
+    if (!githubPrPermissionsReady && repositoryReady) {
+      return "GitHub permissions need updating — reconnect RepoDiet with contents and pull request write access.";
     }
     return null;
   }, [
     locked,
+    statusLoading,
+    preflightLoading,
     patchValidated,
     validatedChanges,
     patchKit?.validatedEdits?.length,
@@ -299,6 +316,8 @@ export function RepoDietOperatorSection({
     verificationStatus,
     repositoryReady,
     needsManualToken,
+    useDemoAuth,
+    githubPrPermissionsReady,
   ]);
 
   const repositoryOwner = preflight?.repositoryOwner ?? repositoryFullName.split("/")[0] ?? "";
