@@ -34,6 +34,10 @@ function bindingKey(sessionKey: string, repositoryFullName: string): string {
   return `binding:${sessionKey}:${repositoryFullName}`;
 }
 
+function bindingKeyByInstallation(installationId: number, repositoryFullName: string): string {
+  return `binding:install:${installationId}:${repositoryFullName}`;
+}
+
 export function hashInstallState(stateToken: string): string {
   return createHash("sha256").update(stateToken, "utf8").digest("hex");
 }
@@ -88,6 +92,11 @@ export async function saveRepoInstallBinding(binding: RepoInstallBinding): Promi
     bindingKey(binding.sessionKey, binding.repositoryFullName),
     binding
   );
+  await setDurableRecord(
+    "github_installations",
+    bindingKeyByInstallation(binding.installationId, binding.repositoryFullName),
+    binding
+  );
 }
 
 export async function readRepoInstallBinding(
@@ -98,4 +107,32 @@ export async function readRepoInstallBinding(
     "github_installations",
     bindingKey(sessionKey, repositoryFullName)
   );
+}
+
+export async function resolveRepoInstallBinding(input: {
+  sessionKey?: string;
+  installationId: number;
+  repositoryFullName: string;
+}): Promise<RepoInstallBinding | undefined> {
+  if (input.sessionKey) {
+    const sessionBinding = await readRepoInstallBinding(
+      input.sessionKey,
+      input.repositoryFullName
+    );
+    if (
+      sessionBinding &&
+      sessionBinding.installationId === input.installationId
+    ) {
+      return sessionBinding;
+    }
+  }
+
+  const installBinding = await getDurableRecord<RepoInstallBinding>(
+    "github_installations",
+    bindingKeyByInstallation(input.installationId, input.repositoryFullName)
+  );
+  if (installBinding && installBinding.installationId === input.installationId) {
+    return installBinding;
+  }
+  return undefined;
 }

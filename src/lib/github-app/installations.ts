@@ -163,13 +163,13 @@ export async function installationIncludesRepositoryWithRetry(
   let accessibleRepos: string[] = [];
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    accessibleRepos = await listInstallationAccessibleRepos(installationId);
-    if (repositoryFullNameInList(accessibleRepos, owner, repo)) {
+    const hasDirect = await installationHasRepoAccess(installationId, owner, repo);
+    if (hasDirect) {
       return { granted: true, accessibleRepos };
     }
 
-    const hasDirect = await installationHasRepoAccess(installationId, owner, repo);
-    if (hasDirect) {
+    accessibleRepos = await listInstallationAccessibleRepos(installationId);
+    if (repositoryFullNameInList(accessibleRepos, owner, repo)) {
       return { granted: true, accessibleRepos };
     }
 

@@ -1,11 +1,14 @@
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
+import { GitHubClient } from "@/lib/github/github-client";
+import { isRecentRepoInstallBinding } from "@/lib/github-app/binding-trust";
 import {
   createInstallationAccessToken,
+  installationHasRepoAccess,
   installationIncludesRepositoryWithRetry,
 } from "@/lib/github-app/installations";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
-import { readRepoInstallBinding } from "@/lib/github-app/install-flow-store";
+import { resolveRepoInstallBinding } from "@/lib/github-app/install-flow-store";
 import { readInstallationSession } from "@/lib/github-app/session";
 import { requiresRepositoryOwnerInstall } from "@/lib/github-app/repository";
 
@@ -18,6 +21,21 @@ export interface ResolveCleanupGitHubTokenInput {
   sessionKey?: string;
 }
 
+async function probeRepositoryWithInstallationToken(
+  installationId: number,
+  owner: string,
+  repo: string
+): Promise<boolean> {
+  try {
+    const installationToken = await createInstallationAccessToken(installationId);
+    const client = new GitHubClient(installationToken.token);
+    await client.getRepo(owner, repo);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function assertInstallationRepositoryAccess(input: {
   installationId: number;
   owner: string;
@@ -26,15 +44,22 @@ async function assertInstallationRepositoryAccess(input: {
   installationOwner?: string;
 }): Promise<void> {
   const repositoryFullName = `${input.owner}/${input.repo}`;
-  let attempts = 3;
-  let delayMs = 1000;
+  const binding = await resolveRepoInstallBinding({
+    sessionKey: input.sessionKey,
+    installationId: input.installationId,
+    repositoryFullName,
+  });
+  const bindingTrusted = isRecentRepoInstallBinding(binding, input.installationId);
 
-  if (input.sessionKey) {
-    const binding = await readRepoInstallBinding(input.sessionKey, repositoryFullName);
-    if (binding && binding.installationId === input.installationId) {
-      // GitHub can take a few seconds to propagate repository selection after configure.
-      attempts = 6;
-      delayMs = 2000;
+  const quickAttempts = bindingTrusted ? 4 : 3;
+  const quickDelayMs = bindingTrusted ? 800 : 1000;
+
+  for (let attempt = 1; attempt <= quickAttempts; attempt += 1) {
+    if (await installationHasRepoAccess(input.installationId, input.owner, input.repo)) {
+      return;
+    }
+    if (attempt < quickAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, quickDelayMs));
     }
   }
 
@@ -42,10 +67,17 @@ async function assertInstallationRepositoryAccess(input: {
     input.installationId,
     input.owner,
     input.repo,
-    { attempts, delayMs }
+    {
+      attempts: bindingTrusted ? 4 : 3,
+      delayMs: bindingTrusted ? 1000 : 1000,
+    }
   );
 
   if (access.granted) return;
+
+  if (await probeRepositoryWithInstallationToken(input.installationId, input.owner, input.repo)) {
+    return;
+  }
 
   const ownerMismatch = requiresRepositoryOwnerInstall({
     repositoryOwner: input.owner,
@@ -63,9 +95,11 @@ async function assertInstallationRepositoryAccess(input: {
   const sample = access.accessibleRepos.slice(0, 5).join(", ");
   throw new ToolExecutionError(
     "GITHUB_PERMISSION_DENIED",
-    sample
-      ? `RepoDiet needs access to ${repositoryFullName}. Grant access from the Patch tab, ensure the repository is selected on GitHub, then try again.`
-      : "RepoDiet needs access to this repository. Grant access from the Patch tab and try again.",
+    bindingTrusted
+      ? `RepoDiet saved your grant for ${repositoryFullName}, but GitHub has not confirmed repository access yet. Open GitHub → Settings → Applications → RepoDiet → Configure, ensure ${repositoryFullName} is selected, click Save, then use “I granted access — sync now” on the Patch tab.`
+      : sample
+        ? `RepoDiet needs access to ${repositoryFullName}. Grant access from the Patch tab, ensure the repository is selected on GitHub, then try again.`
+        : "RepoDiet needs access to this repository. Grant access from the Patch tab and try again.",
     403
   );
 }

@@ -8,7 +8,7 @@ import {
 } from "./installations";
 import { isGitHubAppConfigured } from "./config";
 import { readInstallationSession } from "./session";
-import { readRepoInstallBinding } from "./install-flow-store";
+import { resolveRepoInstallBinding } from "./install-flow-store";
 import { isRecentRepoInstallBinding } from "./binding-trust";
 import {
   parseRepositoryFullName,
@@ -86,8 +86,15 @@ export async function runGitHubPreflight(
     permissionsVerified = permissionsAreSufficient(details?.permissions);
 
     const binding = input.sessionKey
-      ? await readRepoInstallBinding(input.sessionKey, input.repositoryFullName)
-      : undefined;
+      ? await resolveRepoInstallBinding({
+          sessionKey: input.sessionKey,
+          installationId: session.installationId,
+          repositoryFullName: input.repositoryFullName,
+        })
+      : await resolveRepoInstallBinding({
+          installationId: session.installationId,
+          repositoryFullName: input.repositoryFullName,
+        });
     bindingTrusted = isRecentRepoInstallBinding(binding, session.installationId);
 
     const attempts = input.quick ? 2 : bindingTrusted ? 3 : 4;
