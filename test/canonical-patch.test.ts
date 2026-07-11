@@ -10,6 +10,7 @@ import {
   parseGitApplyError,
   validateCanonicalPatch,
 } from "../src/lib/patch-kit/canonical-patch";
+import { buildApplyablePatchFromEdits } from "../src/lib/patch-kit/applyable-patch-builder";
 import { mergeCleanupPatches } from "../src/lib/patch-kit/merge-patches";
 import { buildTextDiff } from "../src/lib/execution/fix-preflight";
 import { extractApplyablePatch } from "../src/lib/patch-kit/validate-patch";
@@ -133,12 +134,47 @@ async function testChangeOperationsFromEdits(): Promise<void> {
   await fs.rm(baseline, { recursive: true, force: true });
 }
 
+async function testPureJsPatchPassesGitApply(): Promise<void> {
+  const baseline = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-purejs-"));
+  const rel = "src/Dashboard.tsx";
+  const original = 'import { Clock } from "lucide-react";\nexport function Dashboard() { return null; }\n';
+  const updated = 'export function Dashboard() { return null; }\n';
+  await fs.mkdir(path.join(baseline, "src"), { recursive: true });
+  await fs.writeFile(path.join(baseline, rel), original, "utf8");
+
+  const { patch } = await buildApplyablePatchFromEdits(baseline, [{ path: rel, content: updated }]);
+  assert.ok(patch.includes("diff --git"), "expected applyable patch");
+
+  const fresh = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-purejs-apply-"));
+  await fs.mkdir(path.join(fresh, "src"), { recursive: true });
+  await fs.writeFile(path.join(fresh, rel), original, "utf8");
+  await execa("git", ["init"], { cwd: fresh, reject: false });
+  await execa("git", ["add", "-A"], { cwd: fresh, reject: false });
+  await execa(
+    "git",
+    ["-c", "user.email=repodiet@local", "-c", "user.name=RepoDiet", "commit", "-m", "baseline"],
+    { cwd: fresh, reject: false }
+  );
+
+  const patchFile = path.join(fresh, "cleanup.patch");
+  await fs.writeFile(patchFile, extractApplyablePatch(patch), "utf8");
+  const check = await execa("git", ["apply", "--check", "--index", patchFile], {
+    cwd: fresh,
+    reject: false,
+  });
+  assert.equal(check.exitCode, 0, check.stderr || check.stdout);
+
+  await fs.rm(baseline, { recursive: true, force: true });
+  await fs.rm(fresh, { recursive: true, force: true });
+}
+
 Promise.all([
   testConcatenatedPatchesRejected(),
   testValidationInSeparateWorkspace(),
   testStaleBaseCommitRejected(),
   testParseGitApplyError(),
   testChangeOperationsFromEdits(),
+  testPureJsPatchPassesGitApply(),
 ]).then(() => {
   console.log("canonical-patch.test.ts: ok");
 });

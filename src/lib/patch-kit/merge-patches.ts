@@ -7,6 +7,7 @@ import { extractApplyablePatch } from "./validate-patch";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { hashSource } from "@/lib/execution/transform-audit";
 import { patchHasApplyableOperations } from "./validate-patch";
+import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
 
 export interface ConsolidatedEdit {
   path: string;
@@ -245,6 +246,11 @@ export async function buildPatchFromWorkspaceDelta(
   const gitPatch = await buildConsolidatedPatchFromEdits(baselineRoot, edits, workDir);
   if (patchHasApplyableOperations(gitPatch.patch)) {
     return { ...gitPatch, edits };
+  }
+
+  const pure = await buildApplyablePatchFromEdits(baselineRoot, edits);
+  if (patchHasApplyableOperations(pure.patch)) {
+    return { patch: pure.patch, changedPaths: pure.changedPaths, edits };
   }
 
   return { patch: EMPTY_CLEANUP_PATCH, changedPaths: [], edits };

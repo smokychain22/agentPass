@@ -271,6 +271,7 @@ export function PatchKitTab() {
               />
             )}
           {patchKit.summary.verifiedChanges === 0 &&
+            patchKit.patchValidation?.status === "passed" &&
             (patchKit.summary.generatedChanges ?? 0) > 0 &&
             (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 && (
               <FeedbackBanner
@@ -292,6 +293,8 @@ export function PatchKitTab() {
                     exitCode: patchKit.patchValidation.attempt.exitCode,
                     baseCommitSha: patchKit.patchValidation.baseCommitSha,
                     patchHash: patchKit.patchValidation.patchHash,
+                    patchGenerationMethod: patchKit.patchValidation.patchGenerationMethod,
+                    gitCliAvailable: patchKit.patchValidation.gitCliAvailable,
                     failingPath: patchKit.patchValidation.failingPath,
                     stderr: patchKit.patchValidation.gitStderr ?? patchKit.patchValidation.attempt.stderr,
                     stdout: patchKit.patchValidation.attempt.stdout,

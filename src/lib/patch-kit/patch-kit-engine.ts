@@ -31,6 +31,8 @@ import {
   buildChangeOperationsFromEdits,
   type ChangeOperation,
 } from "./canonical-patch";
+import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
+import { isGitCliAvailable } from "./git-runtime";
 import { runRepositoryVerification } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
 import {
@@ -356,6 +358,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     }
 
     let patchBundle = { patch: EMPTY_CLEANUP_PATCH, changedPaths: [] as string[], edits: generatedEdits };
+    let patchGenerationMethod: "git-cli" | "pure-js" | undefined;
+    let gitCliAvailable: boolean | undefined;
 
     if (generatedEdits.length > 0) {
       const canonical = await buildCanonicalRepositoryPatch(
@@ -363,16 +367,24 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         generatedEdits,
         workspace.workDir
       );
+      patchGenerationMethod = canonical.method;
+      gitCliAvailable = canonical.gitCliAvailable;
       if (patchHasApplyableOperations(canonical.patch)) {
         patchBundle = { ...canonical, edits: generatedEdits };
       } else {
-        patchBundle = await buildPatchFromWorkspaceDelta(
-          baselineRoot,
-          workspace.rootDir,
-          workspace.workDir
-        );
-        if (patchBundle.edits.length === 0) {
-          patchBundle.edits = generatedEdits;
+        const pure = await buildApplyablePatchFromEdits(baselineRoot, generatedEdits);
+        if (patchHasApplyableOperations(pure.patch)) {
+          patchGenerationMethod = "pure-js";
+          patchBundle = { patch: pure.patch, changedPaths: pure.changedPaths, edits: generatedEdits };
+        } else {
+          patchBundle = await buildPatchFromWorkspaceDelta(
+            baselineRoot,
+            workspace.rootDir,
+            workspace.workDir
+          );
+          if (patchBundle.edits.length === 0) {
+            patchBundle.edits = generatedEdits;
+          }
         }
       }
     }
@@ -421,12 +433,25 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         expectedOperations: changeOperations,
         protectedPaths,
       });
+      if (patchValidation && patchGenerationMethod) {
+        patchValidation = {
+          ...patchValidation,
+          patchGenerationMethod,
+          gitCliAvailable,
+        };
+      }
     } else if (generatedEdits.length > 0) {
+      const gitAvailable = await isGitCliAvailable();
       patchValidation = {
         status: "failed",
         error: "Generated edits did not produce an applyable unified patch.",
-        userMessage:
-          "Generated file operations did not produce a Git-applyable patch. See Developer Tools for details.",
+        userMessage: [
+          "Generated file operations did not produce a Git-applyable patch.",
+          gitAvailable
+            ? "Git is available but patch generation failed — see Developer Tools."
+            : "Git CLI is unavailable in this runtime; pure-JS patch builder also failed.",
+          `Edits: ${generatedEdits.length}, paths: ${generatedEdits.map((e) => e.path).join(", ")}`,
+        ].join("\n"),
       };
     } else {
       patchValidation = {
