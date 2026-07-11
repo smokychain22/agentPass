@@ -154,6 +154,80 @@ async function hasNpmLockfile(rootDir: string): Promise<boolean> {
   }
 }
 
+export function inferRequiredPackagesForScripts(
+  scripts: Record<string, string>
+): string[] {
+  const required = new Set<string>();
+  for (const [name, command] of Object.entries(scripts)) {
+    const cmd = command.toLowerCase();
+    if (name === "typecheck" && cmd.includes("tsc")) required.add("typescript");
+    if (name === "build" && cmd.includes("next")) required.add("next");
+    if (name === "lint" && cmd.includes("eslint")) required.add("eslint");
+    if (name === "test" && (cmd.includes("vitest") || cmd.includes("jest"))) {
+      if (cmd.includes("vitest")) required.add("vitest");
+      if (cmd.includes("jest")) required.add("jest");
+    }
+  }
+  return [...required];
+}
+
+export async function isPackageInstalled(
+  rootDir: string,
+  packageName: string
+): Promise<boolean> {
+  try {
+    await fs.access(path.join(rootDir, "node_modules", packageName, "package.json"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function areRequiredPackagesInstalled(
+  rootDir: string,
+  packageNames: string[]
+): Promise<boolean> {
+  if (packageNames.length === 0) return await isWorkspaceDependencyReady(rootDir);
+  for (const pkg of packageNames) {
+    if (!(await isPackageInstalled(rootDir, pkg))) return false;
+  }
+  return true;
+}
+
+function npmVerificationVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
+  const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
+  if (lockfilePresent) {
+    return [
+      ["npm", "ci", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
+      ["npm", "ci", "--no-audit", "--no-fund", ...cacheFlag],
+    ];
+  }
+  return [
+    ["npm", "install", "--prefer-online", "--no-audit", "--no-fund", ...cacheFlag],
+    ["npm", "install", "--no-audit", "--no-fund", ...cacheFlag],
+  ];
+}
+
+function verificationInstallVariants(
+  pm: PackageManager,
+  lockfilePresent: boolean,
+  cacheDir?: string
+): string[][] {
+  switch (pm) {
+    case "pnpm":
+      return [
+        ["pnpm", "install", "--no-frozen-lockfile"],
+        ["pnpm", "install", "--no-frozen-lockfile", "--force"],
+      ];
+    case "yarn":
+      return [["yarn", "install"], ["yarn", "install", "--force"]];
+    case "bun":
+      return [["bun", "install"]];
+    default:
+      return npmVerificationVariants(lockfilePresent, cacheDir);
+  }
+}
+
 async function clearInstallArtifacts(rootDir: string): Promise<void> {
   await fs.rm(path.join(rootDir, "node_modules"), { recursive: true, force: true }).catch(() => {});
 }
@@ -278,6 +352,122 @@ export async function ensureWorkspaceDependenciesWithCache(
       stderr: lastStderr,
       attempts,
     };
+  }
+
+  return {
+    installed: false,
+    reason: lastReason,
+    command: lastCommand,
+    exitCode: lastExitCode,
+    durationMs: lastDurationMs,
+    stdout: lastStdout,
+    stderr: lastStderr,
+    attempts,
+  };
+}
+
+/**
+ * Strict dependency install for repository verification — never treats partial
+ * node_modules as success and runs npm ci without --ignore-scripts.
+ */
+export async function ensureVerificationDependencies(
+  rootDir: string,
+  cleanupRunId: string,
+  options?: { requiredPackages?: string[] }
+): Promise<WorkspaceInstallResult & { attempts: InstallAttemptRecord[] }> {
+  const attempts: InstallAttemptRecord[] = [];
+  const requiredPackages = options?.requiredPackages ?? [];
+
+  try {
+    await fs.access(path.join(rootDir, "package.json"));
+  } catch {
+    return {
+      installed: false,
+      reason: "No package.json in workspace.",
+      attempts,
+    };
+  }
+
+  await clearInstallArtifacts(rootDir);
+
+  const pm = (await detectPackageManager(rootDir)).packageManager;
+  const hasLockfile = await lockfilePresent(rootDir);
+  const cacheDir = perRunCacheDir(cleanupRunId);
+  await recreateCacheDir(cacheDir);
+
+  const variants = verificationInstallVariants(pm, hasLockfile, cacheDir);
+  let lastReason = "install failed";
+  let lastCommand = variants[0]?.join(" ") ?? "npm ci";
+  let lastExitCode: number | null = null;
+  let lastStdout = "";
+  let lastStderr = "";
+  let lastDurationMs = 0;
+  let integrityRetries = 0;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    const command = variants[attempt % variants.length];
+    lastCommand = command.join(" ");
+    const t0 = Date.now();
+    const result = await execa(command[0], command.slice(1), {
+      cwd: rootDir,
+      timeout: INSTALL_TIMEOUT_MS,
+      reject: false,
+      env: installEnv(cacheDir),
+    });
+    const durationMs = Date.now() - t0;
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+
+    attempts.push({
+      command: lastCommand,
+      attempt: attempt + 1,
+      exitCode: result.exitCode ?? null,
+      stdout: summarize(stdout, 2000),
+      stderr: summarize(stderr, 2000),
+      durationMs,
+    });
+
+    const packagesReady = await areRequiredPackagesInstalled(rootDir, requiredPackages);
+    if (result.exitCode === 0 && packagesReady) {
+      return {
+        installed: true,
+        command: lastCommand,
+        exitCode: 0,
+        durationMs,
+        stdout,
+        stderr,
+        attempts,
+      };
+    }
+
+    if (result.exitCode === 0 && !packagesReady) {
+      lastReason = `Install exited 0 but required packages missing: ${requiredPackages.join(", ")}`;
+      lastExitCode = 1;
+      lastStdout = stdout;
+      lastStderr = lastReason;
+      lastDurationMs = durationMs;
+      await clearInstallArtifacts(rootDir);
+      continue;
+    }
+
+    lastReason = summarize(stderr || stdout || "install failed");
+    lastExitCode = result.exitCode ?? null;
+    lastStdout = stdout;
+    lastStderr = stderr;
+    lastDurationMs = durationMs;
+
+    if (
+      pm === "npm" &&
+      isIntegrityError(stderr, stdout) &&
+      integrityRetries < CACHE_RETRY_MAX
+    ) {
+      integrityRetries += 1;
+      await recreateCacheDir(cacheDir);
+      await clearInstallArtifacts(rootDir);
+      continue;
+    }
+
+    await clearInstallArtifacts(rootDir);
   }
 
   return {

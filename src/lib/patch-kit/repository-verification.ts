@@ -1,16 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execa } from "execa";
+import { execa, type ExecaReturnValue } from "execa";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
 import {
-  ensureWorkspaceDependenciesWithCache,
+  ensureVerificationDependencies,
+  inferRequiredPackagesForScripts,
   type InstallAttemptRecord,
 } from "@/lib/execution/workspace-install";
 import { extractApplyablePatch } from "./validate-patch";
+import { applyEditsToWorkspace } from "./canonical-patch";
 
 export type RepositoryVerificationStatus = "verified" | "blocked" | "failed" | "not_run";
 
@@ -22,13 +24,29 @@ export interface RepositoryVerificationResult {
   checks: VerifyCheckResult[];
 }
 
-const COMMAND_TIMEOUT_MS = 120_000;
+const COMMAND_TIMEOUT_MS = 180_000;
 const ALLOWED_SCRIPT_NAMES = ["typecheck", "lint", "test", "build"] as const;
 
 function summarize(text: string, max = 400): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
   return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+function localBinPath(rootDir: string): string {
+  return path.join(rootDir, "node_modules", ".bin");
+}
+
+function verificationEnv(rootDir: string, scriptName?: string): NodeJS.ProcessEnv {
+  const localBin = localBinPath(rootDir);
+  const pathEnv = process.env.PATH ?? "";
+  return {
+    ...process.env,
+    CI: "true",
+    FORCE_COLOR: "0",
+    NODE_ENV: scriptName === "build" ? "production" : "test",
+    PATH: `${localBin}${path.delimiter}${pathEnv}`,
+  };
 }
 
 async function readScripts(rootDir: string): Promise<Record<string, string>> {
@@ -58,45 +76,93 @@ function runScriptCommand(pm: string, name: string): string[] {
   }
 }
 
-async function applyEdits(rootDir: string, edits: ConsolidatedEdit[]): Promise<void> {
-  for (const edit of edits) {
-    const full = path.join(rootDir, edit.path);
-    if (edit.content === "") {
-      await fs.rm(full, { force: true }).catch(() => {});
-      continue;
-    }
-    await fs.mkdir(path.dirname(full), { recursive: true });
-    await fs.writeFile(full, edit.content, "utf8");
+async function commandExists(rootDir: string, binName: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(localBinPath(rootDir), binName));
+    return true;
+  } catch {
+    return false;
   }
 }
 
-async function applyPatch(rootDir: string, patch: string): Promise<boolean> {
-  const applyable = extractApplyablePatch(patch);
-  if (!applyable.trim()) return false;
-  const patchFile = path.join(rootDir, ".repodiet-verify.patch");
-  await fs.writeFile(patchFile, applyable, "utf8");
-  await execa("git", ["init"], { cwd: rootDir, reject: false });
-  await execa("git", ["add", "-A"], { cwd: rootDir, reject: false });
-  await execa(
-    "git",
-    [
-      "-c",
-      "user.email=repodiet@local",
-      "-c",
-      "user.name=RepoDiet",
-      "commit",
-      "-m",
-      "baseline",
-      "--allow-empty",
-    ],
-    { cwd: rootDir, reject: false }
-  );
-  const apply = await execa("git", ["apply", "--index", patchFile], {
+async function runVerificationScript(
+  rootDir: string,
+  pm: string,
+  name: string,
+  scriptCmd: string
+): Promise<ExecaReturnValue> {
+  const env = verificationEnv(rootDir, name);
+  const primary = runScriptCommand(pm, name);
+  let result = await execa(primary[0], primary.slice(1), {
     cwd: rootDir,
+    timeout: COMMAND_TIMEOUT_MS,
     reject: false,
-    timeout: 60_000,
+    env,
   });
-  return apply.exitCode === 0;
+
+  const stderr = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
+  const missingBinary = /command not found|ENOENT|cannot find module/i.test(stderr);
+  if (result.exitCode === 0 || !missingBinary) {
+    return result;
+  }
+
+  if (name === "typecheck" && scriptCmd.includes("tsc")) {
+    const tscBin = path.join(rootDir, "node_modules", "typescript", "bin", "tsc");
+    try {
+      await fs.access(tscBin);
+      return execa("node", [tscBin, "--noEmit"], {
+        cwd: rootDir,
+        timeout: COMMAND_TIMEOUT_MS,
+        reject: false,
+        env,
+      });
+    } catch {
+      return result;
+    }
+  }
+
+  if (name === "build" && scriptCmd.includes("next")) {
+    const nextBin = path.join(rootDir, "node_modules", "next", "dist", "bin", "next");
+    try {
+      await fs.access(nextBin);
+      return execa("node", [nextBin, "build"], {
+        cwd: rootDir,
+        timeout: COMMAND_TIMEOUT_MS,
+        reject: false,
+        env: verificationEnv(rootDir, "build"),
+      });
+    } catch {
+      return result;
+    }
+  }
+
+  return result;
+}
+
+async function applyPatchOrEdits(
+  rootDir: string,
+  patch: string | undefined,
+  edits: ConsolidatedEdit[]
+): Promise<void> {
+  if (patch?.trim()) {
+    const applyable = extractApplyablePatch(patch);
+    if (applyable.trim()) {
+      const patchFile = path.join(rootDir, ".repodiet-verify.patch");
+      await fs.writeFile(patchFile, applyable, "utf8");
+      const { ensureGitRepoInitialized } = await import("./git-runtime");
+      const initialized = await ensureGitRepoInitialized(rootDir);
+      if (initialized) {
+        const apply = await execa("git", ["apply", "--index", patchFile], {
+          cwd: rootDir,
+          reject: false,
+          timeout: 60_000,
+        });
+        if (apply.exitCode === 0) return;
+      }
+    }
+  }
+
+  await applyEditsToWorkspace(rootDir, edits);
 }
 
 export async function runRepositoryVerification(input: {
@@ -117,15 +183,7 @@ export async function runRepositoryVerification(input: {
 
   try {
     await copyRepoBaseline(input.baselineRoot, verifyRoot);
-
-    if (input.patch?.trim()) {
-      const applied = await applyPatch(verifyRoot, input.patch);
-      if (!applied) {
-        await applyEdits(verifyRoot, deduped);
-      }
-    } else {
-      await applyEdits(verifyRoot, deduped);
-    }
+    await applyPatchOrEdits(verifyRoot, input.patch, deduped);
 
     const pkgPath = path.join(verifyRoot, "package.json");
     const hasPackageJson = await fs.access(pkgPath).then(() => true).catch(() => false);
@@ -147,14 +205,18 @@ export async function runRepositoryVerification(input: {
       };
     }
 
-    const installResult = await ensureWorkspaceDependenciesWithCache(
+    const scripts = await readScripts(verifyRoot);
+    const requiredPackages = inferRequiredPackagesForScripts(scripts);
+
+    const installResult = await ensureVerificationDependencies(
       verifyRoot,
-      input.cleanupRunId
+      input.cleanupRunId,
+      { requiredPackages }
     );
     installAttempts = installResult.attempts;
     checks.push({
       name: "dependency install",
-      command: installResult.command ?? "npm install",
+      command: installResult.command ?? "npm ci",
       status: installResult.installed ? "passed" : "failed",
       exitCode: installResult.exitCode ?? null,
       durationMs: installResult.durationMs ?? 0,
@@ -173,17 +235,38 @@ export async function runRepositoryVerification(input: {
     }
 
     const pm = (await detectPackageManager(verifyRoot)).packageManager;
-    const scripts = await readScripts(verifyRoot);
     for (const name of ALLOWED_SCRIPT_NAMES) {
-      if (!scripts[name]) continue;
+      const scriptCmd = scripts[name];
+      if (!scriptCmd) continue;
+
+      if (name === "typecheck" && !(await commandExists(verifyRoot, "tsc"))) {
+        checks.push({
+          name,
+          command: scriptCmd,
+          status: "failed",
+          exitCode: 1,
+          durationMs: 0,
+          stdoutSummary: "",
+          stderrSummary: "typescript is not installed in node_modules/.bin after npm ci.",
+        });
+        continue;
+      }
+      if (name === "build" && scriptCmd.includes("next") && !(await commandExists(verifyRoot, "next"))) {
+        checks.push({
+          name,
+          command: scriptCmd,
+          status: "failed",
+          exitCode: 1,
+          durationMs: 0,
+          stdoutSummary: "",
+          stderrSummary: "next is not installed in node_modules/.bin after npm ci.",
+        });
+        continue;
+      }
+
       const t0 = Date.now();
       const command = runScriptCommand(pm, name);
-      const result = await execa(command[0], command.slice(1), {
-        cwd: verifyRoot,
-        timeout: COMMAND_TIMEOUT_MS,
-        reject: false,
-        env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "test" },
-      });
+      const result = await runVerificationScript(verifyRoot, pm, name, scriptCmd);
       checks.push({
         name,
         command: command.join(" "),

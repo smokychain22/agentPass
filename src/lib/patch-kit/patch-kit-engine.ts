@@ -35,10 +35,8 @@ import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
 import { isGitCliAvailable } from "./git-runtime";
 import { runRepositoryVerification } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
-import {
-  refreshRepositoryIdentityFromUrl,
-  applyRepositoryIdentity,
-} from "@/lib/github/refresh-repo-identity";
+import { refreshRepositoryIdentityFromUrl, applyRepositoryIdentity } from "@/lib/github/refresh-repo-identity";
+import { fetchBranchCommitSha } from "@/lib/github/fetch-repo-zip";
 import { generatePackageCleanup } from "./generate-package-cleanup";
 import {
   detectRepoContextFromFindings,
@@ -227,12 +225,24 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       findings = applyRepositoryIdentity(findings, identity);
     }
 
-    const baseCommitSha =
-      findings.repo.commitSha ?? workspace.repo.commitSha ?? "unknown";
-    const staleCheck = assertBaseCommitFresh(
-      findings.repo.commitSha,
-      workspace.repo.commitSha
-    );
+    let scanCommitSha = findings.repo.commitSha ?? workspace.repo.commitSha;
+    if (!scanCommitSha) {
+      scanCommitSha =
+        (await fetchBranchCommitSha(
+          findings.repo.owner,
+          findings.repo.name,
+          findings.repo.branch
+        )) ?? undefined;
+      if (scanCommitSha) {
+        findings = {
+          ...findings,
+          repo: { ...findings.repo, commitSha: scanCommitSha },
+        };
+      }
+    }
+
+    const baseCommitSha = scanCommitSha ?? workspace.repo.commitSha ?? "unknown";
+    const staleCheck = assertBaseCommitFresh(scanCommitSha, workspace.repo.commitSha);
     if (staleCheck.stale) {
       const stalePayload: PatchKitPayload = {
         id: cleanupRunId,

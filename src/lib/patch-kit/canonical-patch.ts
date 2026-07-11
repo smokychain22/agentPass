@@ -144,7 +144,7 @@ async function initGitBaseline(rootDir: string): Promise<string> {
   return (rev.stdout ?? "unknown").trim();
 }
 
-async function applyEditsToWorkspace(rootDir: string, edits: ConsolidatedEdit[]): Promise<string[]> {
+export async function applyEditsToWorkspace(rootDir: string, edits: ConsolidatedEdit[]): Promise<string[]> {
   const changedPaths: string[] = [];
   for (const edit of dedupeConsolidatedEdits(edits)) {
     const rel = edit.path.replace(/\\/g, "/").replace(/^\.\//, "");

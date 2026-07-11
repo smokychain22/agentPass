@@ -10,6 +10,11 @@ import {
   validateGeneratedPatchOnly,
 } from "../src/lib/patch-kit/validate-patch";
 import { runRepositoryVerification } from "../src/lib/patch-kit/repository-verification";
+import {
+  areRequiredPackagesInstalled,
+  ensureVerificationDependencies,
+  inferRequiredPackagesForScripts,
+} from "../src/lib/execution/workspace-install";
 import { resolveDependencyEntry } from "../src/lib/execution/fix-preflight";
 import { applyRepositoryIdentity } from "../src/lib/github/refresh-repo-identity";
 import type { FindingsPayload } from "../src/lib/findings/types";
@@ -160,6 +165,38 @@ async function run() {
     });
 
     assert.equal("eligible" in resolved && resolved.eligible === false, true);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  await test("verification install requires typescript and next binaries", async () => {
+    const scripts = { typecheck: "tsc --noEmit", build: "next build" };
+    const required = inferRequiredPackagesForScripts(scripts);
+    assert.deepEqual(required.sort(), ["next", "typescript"]);
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-verify-install-"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        {
+          name: "fixture",
+          scripts,
+          dependencies: { next: "15.5.20", react: "18.3.1", "react-dom": "18.3.1" },
+          devDependencies: { typescript: "5.6.3" },
+        },
+        null,
+        2
+      )
+    );
+    await fs.mkdir(path.join(root, "node_modules", "left-pad"), { recursive: true });
+    await fs.writeFile(path.join(root, "node_modules", "left-pad", "package.json"), "{}", "utf8");
+
+    assert.equal(await areRequiredPackagesInstalled(root, required), false);
+
+    const install = await ensureVerificationDependencies(root, "verify_test", {
+      requiredPackages: required,
+    });
+    assert.equal(install.installed, true, install.reason);
+    assert.equal(await areRequiredPackagesInstalled(root, required), true);
     await fs.rm(root, { recursive: true, force: true });
   });
 

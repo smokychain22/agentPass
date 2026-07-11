@@ -125,6 +125,32 @@ export function PatchKitTab() {
     [findings]
   );
 
+  const verificationIssue = useMemo(() => {
+    if (!patchKit?.repositoryVerification) return null;
+    const status = patchKit.repositoryVerification.status;
+    if (status !== "failed" && status !== "blocked") return null;
+    return patchKit.repositoryVerification.error ?? null;
+  }, [patchKit]);
+
+  const fixPrDescription = useMemo(() => {
+    if (supportedCount === 0) {
+      return "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available.";
+    }
+    if (verificationIssue) {
+      return verificationIssue;
+    }
+    if (patchKit?.patchValidation?.status !== "passed" && patchKit?.patchValidation?.userMessage) {
+      return patchKit.patchValidation.userMessage;
+    }
+    if (patchKit?.summary.blockerSummary && !patchKit.summary.blockerSummary.startsWith("Repository verification failed")) {
+      return patchKit.summary.blockerSummary;
+    }
+    if (patchKit?.summary.eligibleFindings) {
+      return `${patchKit.summary.eligibleFindings} finding(s) ready for automatic fixes. RepoDiet edits source files, deletes safe dead code, removes packages — then opens a cleanup PR.`;
+    }
+    return `${supportedCount} finding(s) eligible for automatic cleanup.`;
+  }, [supportedCount, patchKit, verificationIssue]);
+
   if (!findings) {
     return (
       <LockedTab
@@ -142,15 +168,7 @@ export function PatchKitTab() {
       <WorkspaceSection
         label="Cleanup eligibility"
         title="Fix & PR"
-        description={
-          supportedCount === 0
-            ? "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available."
-            : patchKit?.summary.blockerSummary
-              ? patchKit.summary.blockerSummary
-              : patchKit?.summary.eligibleFindings
-                ? `${patchKit.summary.eligibleFindings} finding(s) ready for automatic fixes. RepoDiet edits source files, deletes safe dead code, removes packages — then opens a cleanup PR.`
-                : `${supportedCount} finding(s) eligible for automatic cleanup.`
-        }
+        description={fixPrDescription}
         actions={
           <>
             {supportedCount > 0 && (
@@ -230,7 +248,10 @@ export function PatchKitTab() {
 
       {patchKit && (
         <>
-          {patchKit.patchValidation && patchKit.patchValidation.status !== "passed" && (
+          {verificationIssue && (
+            <FeedbackBanner variant="warning" message={verificationIssue} dismissible={false} />
+          )}
+          {patchKit.patchValidation && patchKit.patchValidation.status !== "passed" && !verificationIssue && (
             <FeedbackBanner
               variant="warning"
               message={
@@ -271,6 +292,7 @@ export function PatchKitTab() {
               />
             )}
           {patchKit.summary.verifiedChanges === 0 &&
+            !verificationIssue &&
             patchKit.patchValidation?.status === "passed" &&
             (patchKit.summary.generatedChanges ?? 0) > 0 &&
             (patchKit.summary.eligibleFindings ?? patchKit.summary.transformerCompatible ?? 0) > 0 && (
