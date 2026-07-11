@@ -15,6 +15,7 @@ import type { ClassifiedItem } from "@/lib/patch-kit/types";
 import { resolvePhase1TransformPlugin, type Phase1PluginId } from "./phase1-plugins";
 import { defaultStrategyForPlugin } from "../fix-strategies";
 import { packageImportedInProject } from "../package-usage-scan";
+import { isToolingDependency } from "@/lib/findings/framework-protected";
 import {
   hashSource,
   validateTransformInvariants,
@@ -242,6 +243,10 @@ async function applyRemoveUnusedDependency(
 ): Promise<AppliedFix> {
   const pkgName = finding.packageName;
   if (!pkgName) throw new Error("No package name for dependency fix.");
+
+  if (isToolingDependency(pkgName)) {
+    throw new Error(`Package ${pkgName} is a framework/tooling dependency and cannot be removed automatically.`);
+  }
 
   if (await packageImportedInProject(rootDir, pkgName)) {
     throw new Error(

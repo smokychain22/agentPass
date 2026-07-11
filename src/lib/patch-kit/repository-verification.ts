@@ -30,7 +30,8 @@ const COMMAND_TIMEOUT_MS = 180_000;
 const ALLOWED_SCRIPT_NAMES = ["typecheck", "lint", "test", "build"] as const;
 
 function summarize(text: string, max = 400): string {
-  const trimmed = text.trim();
+  const stripped = text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\[[0-9;]*m/g, "");
+  const trimmed = stripped.trim();
   if (!trimmed) return "";
   return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
 }

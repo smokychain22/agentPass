@@ -7,6 +7,7 @@ import {
   removeUnusedSymbolAtLine,
 } from "@/lib/findings/unused-import-detector";
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
+import { isToolingDependency } from "@/lib/findings/framework-protected";
 import { resolvePhase1Plugin, resolvePhase1TransformPlugin, type Phase1PluginId } from "./fix-plugins/phase1-plugins";
 import { listStrategiesForFinding } from "./fix-strategies";
 import { blockerCodeFromPreflight } from "./candidate-lifecycle";
@@ -375,6 +376,15 @@ export async function runFixPreflight(
   }
 
   if (plugin.id === "remove_unused_dependency") {
+    const packageName = finding.packageName?.trim();
+    if (packageName && isToolingDependency(packageName)) {
+      const blocker = "Framework or tooling dependency cannot be removed automatically.";
+      return {
+        ...base,
+        blocker,
+        blockerCode: "protected_path",
+      };
+    }
     const resolved = await resolveDependencyEntry(rootDir, finding);
     if ("eligible" in resolved && resolved.eligible === false) {
       const blocker = resolved.reason;

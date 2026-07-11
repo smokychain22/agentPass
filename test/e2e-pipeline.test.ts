@@ -384,6 +384,64 @@ async function run() {
     assert.equal(lockfileWasPatched(["src/index.ts"]), false);
   });
 
+  await test("ensureVerificationManifestIntegrity restores react-dom for Next.js", async () => {
+    const { ensureVerificationManifestIntegrity } = await import(
+      "../src/lib/execution/workspace-install"
+    );
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-manifest-"));
+    await fs.cp(path.join(process.cwd(), "e2e-fixture/package-lock.json"), path.join(root, "package-lock.json"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        {
+          scripts: { build: "next build", typecheck: "tsc --noEmit" },
+          dependencies: { next: "15.5.20", react: "18.3.1" },
+          devDependencies: { typescript: "5.6.3" },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const changed = await ensureVerificationManifestIntegrity(root);
+    assert.equal(changed, true);
+    const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+    assert.equal(pkg.dependencies["react-dom"], "18.3.1");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  await test("tooling dependencies cannot be auto-removed in preflight", async () => {
+    const { runFixPreflight } = await import("../src/lib/execution/fix-preflight");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-tooling-"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        { dependencies: { next: "15.5.20", react: "18.3.1", "react-dom": "18.3.1" } },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const preflight = await runFixPreflight(root, {
+      id: "dep-react-dom",
+      type: "unused_dependency",
+      title: "react-dom",
+      packageName: "react-dom",
+      files: [],
+      confidence: 0.9,
+      confidenceReason: "knip",
+      severity: "low",
+      action: "review_first",
+      reason: "unused",
+      source: "knip",
+      sourceMode: "native",
+      evidence: { summary: "unused", signals: [] },
+    });
+    assert.notEqual(preflight.classification, "actionable_candidate");
+    assert.equal(preflight.blockerCode, "protected_path");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
   await test("resolvePackageVersionSpec reads react-dom from lockfile when removed from package.json", async () => {
     const { resolvePackageVersionSpec } = await import("../src/lib/execution/workspace-install");
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-lockver-"));
@@ -451,6 +509,10 @@ async function run() {
     assert.ok(
       install.attempts.some((a) => a.command.includes("--legacy-peer-deps")),
       "expected legacy-peer-deps on verification install"
+    );
+    assert.ok(
+      !install.attempts.some((a) => a.command.includes("--omit=optional")),
+      "verification install must include optional deps for Next.js swc binaries"
     );
     await fs.rm(root, { recursive: true, force: true });
   });

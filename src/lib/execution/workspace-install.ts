@@ -204,12 +204,12 @@ function isDiskSpaceError(stderr: string, stdout: string): boolean {
   return text.includes("enospc") || text.includes("no space left on device") || text.includes("erofs");
 }
 
-function installEnv(cacheDir: string | undefined, rootDir: string): NodeJS.ProcessEnv {
+function installEnv(cacheDir: string | undefined, rootDir: string, mode: "workspace" | "verify" = "workspace"): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     CI: "true",
     FORCE_COLOR: "0",
-    NODE_ENV: "development",
+    NODE_ENV: mode === "verify" ? "development" : "development",
     NPM_CONFIG_AUDIT: "false",
     NPM_CONFIG_FUND: "false",
     NPM_CONFIG_FETCH_RETRIES: "5",
@@ -217,9 +217,12 @@ function installEnv(cacheDir: string | undefined, rootDir: string): NodeJS.Proce
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000",
     NPM_CONFIG_PROGRESS: "false",
     NPM_CONFIG_LOGLEVEL: "warn",
-    NPM_CONFIG_OPTIONAL: "false",
     NPM_CONFIG_LEGACY_PEER_DEPS: "true",
   };
+
+  if (mode === "workspace") {
+    env.NPM_CONFIG_OPTIONAL = "false";
+  }
 
   if (cacheDir) {
     env.NPM_CONFIG_CACHE = isServerlessRuntime()
@@ -230,11 +233,11 @@ function installEnv(cacheDir: string | undefined, rootDir: string): NodeJS.Proce
   return env;
 }
 
-function npmInstallBaseFlags(cacheDir?: string, options?: { legacyPeerDeps?: boolean }): string[] {
+function npmInstallBaseFlags(cacheDir?: string, options?: { legacyPeerDeps?: boolean; omitOptional?: boolean }): string[] {
   const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
   const flags = [
     "--ignore-scripts",
-    "--omit=optional",
+    ...(options?.omitOptional !== false ? ["--omit=optional"] : []),
     "--no-audit",
     "--no-fund",
     ...cacheFlag,
@@ -243,6 +246,11 @@ function npmInstallBaseFlags(cacheDir?: string, options?: { legacyPeerDeps?: boo
     flags.push("--legacy-peer-deps");
   }
   return flags;
+}
+
+/** Verification installs must include optional deps (e.g. @next/swc-* platform binaries). */
+function verificationNpmFlags(cacheDir?: string): string[] {
+  return npmInstallBaseFlags(cacheDir, { legacyPeerDeps: true, omitOptional: false });
 }
 
 function npmInstallVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
@@ -420,17 +428,17 @@ function npmVerificationVariants(
   cacheDir?: string,
   options?: { preferInstall?: boolean }
 ): string[][] {
-  const flags = npmInstallBaseFlags(cacheDir);
+  const flags = verificationNpmFlags(cacheDir);
   if (options?.preferInstall || !lockfilePresent) {
     return [
       ["npm", "install", ...flags],
-      ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--omit=optional", ...(cacheDir ? ["--cache", cacheDir] : [])],
+      ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--legacy-peer-deps", ...(cacheDir ? ["--cache", cacheDir] : [])],
     ];
   }
   return [
     ["npm", "ci", ...flags],
     ["npm", "install", ...flags],
-    ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--omit=optional", ...(cacheDir ? ["--cache", cacheDir] : [])],
+    ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--legacy-peer-deps", ...(cacheDir ? ["--cache", cacheDir] : [])],
   ];
 }
 
@@ -482,7 +490,7 @@ async function buildServerlessVerificationVariants(
   cacheDir: string,
   options: { lockfilePatched: boolean; hasLockfile: boolean }
 ): Promise<string[][]> {
-  const flags = npmInstallBaseFlags(cacheDir);
+  const flags = verificationNpmFlags(cacheDir);
   if (options.hasLockfile && !options.lockfilePatched) {
     return [
       ["npm", "ci", ...flags],
@@ -492,11 +500,49 @@ async function buildServerlessVerificationVariants(
   if (options.hasLockfile) {
     return [
       ["npm", "install", ...flags],
-      ["npm", "install", ...flags.filter((f) => f !== "--cache"), ...(cacheDir ? ["--cache", cacheDir] : [])],
+      ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", "--legacy-peer-deps", ...(cacheDir ? ["--cache", cacheDir] : [])],
     ];
   }
   const specs = await packageSpecsForVerification(rootDir, ["typescript", "next"]);
   return [["npm", "install", "--no-save", ...flags, ...specs]];
+}
+
+/**
+ * Next.js build requires react/react-dom in package.json dependencies even when
+ * install populated node_modules. Restore framework entries removed by false-positive findings.
+ */
+export async function ensureVerificationManifestIntegrity(rootDir: string): Promise<boolean> {
+  const pkgPath = path.join(rootDir, "package.json");
+  let pkg: {
+    scripts?: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  try {
+    pkg = JSON.parse(await fs.readFile(pkgPath, "utf8")) as typeof pkg;
+  } catch {
+    return false;
+  }
+
+  const scripts = pkg.scripts ?? {};
+  const usesNext = scripts.build?.toLowerCase().includes("next");
+  if (!usesNext) return false;
+
+  const deps = { ...(pkg.dependencies ?? {}) };
+  let changed = false;
+  for (const name of ["next", "react", "react-dom"]) {
+    if (deps[name]) continue;
+    const spec = await resolvePackageVersionSpec(rootDir, name);
+    const version = spec.includes("@") ? spec.slice(spec.indexOf("@") + 1) : "";
+    if (!version) continue;
+    deps[name] = version;
+    changed = true;
+  }
+
+  if (!changed) return false;
+  pkg.dependencies = deps;
+  await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+  return true;
 }
 
 function perRunCacheDir(cleanupRunId: string): string {
@@ -559,7 +605,7 @@ export async function ensureWorkspaceDependenciesWithCache(
       cwd: rootDir,
       timeout: INSTALL_TIMEOUT_MS,
       reject: false,
-      env: installEnv(cacheDir, rootDir),
+      env: installEnv(cacheDir, rootDir, "workspace"),
     });
     const durationMs = Date.now() - t0;
     const stdout = result.stdout ?? "";
@@ -667,6 +713,8 @@ export async function ensureVerificationDependencies(
     };
   }
 
+  await ensureVerificationManifestIntegrity(rootDir);
+
   if (
     options?.preserveExistingModules &&
     (await areRequiredPackagesInstalled(rootDir, requiredPackages))
@@ -715,7 +763,7 @@ export async function ensureVerificationDependencies(
       cwd: rootDir,
       timeout: INSTALL_TIMEOUT_MS,
       reject: false,
-      env: installEnv(cacheDir, rootDir),
+      env: installEnv(cacheDir, rootDir, "verify"),
     });
     const durationMs = Date.now() - t0;
     const stdout = result.stdout ?? "";
