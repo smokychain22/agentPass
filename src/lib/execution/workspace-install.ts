@@ -116,8 +116,7 @@ export function formatInstallFailureReason(stderr: string, stdout: string): stri
   );
 
   if (streamErrors.length > 0) {
-    return streamErrors
-      .map((line) => line.replace(/^npm error\s*/i, ""))
+    return [...new Set(streamErrors.map((line) => line.replace(/^npm error\s*/i, "")))]
       .slice(0, 4)
       .join(" ");
   }
@@ -141,6 +140,9 @@ export function humanizeInstallFailure(reason: string): string {
   if (/\bENOSPC\b|no space left on device/i.test(clean)) {
     return "Dependency install failed: server temporary storage is full (ENOSPC). RepoDiet freed workspace scratch data and uses a minimal verification install on serverless — click Regenerate Quick Cleanup after deploy.";
   }
+  if (/\bERESOLVE\b/i.test(clean)) {
+    return "Dependency install failed: npm could not resolve the dependency tree (ERESOLVE). RepoDiet installs with --legacy-peer-deps from the patched lockfile on serverless — click Regenerate Quick Cleanup after deploy.";
+  }
   if (!clean || /^install failed$/i.test(clean)) {
     return "Dependency install failed before repository checks could run.";
   }
@@ -159,6 +161,11 @@ async function readLatestNpmLog(cacheDir: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function isPeerDependencyError(stderr: string, stdout: string): boolean {
+  const text = `${stderr}\n${stdout}`.toLowerCase();
+  return text.includes("eresolve") || text.includes("unable to resolve dependency tree");
 }
 
 function isLockfileSyncError(stderr: string, stdout: string): boolean {
@@ -211,6 +218,7 @@ function installEnv(cacheDir: string | undefined, rootDir: string): NodeJS.Proce
     NPM_CONFIG_PROGRESS: "false",
     NPM_CONFIG_LOGLEVEL: "warn",
     NPM_CONFIG_OPTIONAL: "false",
+    NPM_CONFIG_LEGACY_PEER_DEPS: "true",
   };
 
   if (cacheDir) {
@@ -222,15 +230,19 @@ function installEnv(cacheDir: string | undefined, rootDir: string): NodeJS.Proce
   return env;
 }
 
-function npmInstallBaseFlags(cacheDir?: string): string[] {
+function npmInstallBaseFlags(cacheDir?: string, options?: { legacyPeerDeps?: boolean }): string[] {
   const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
-  return [
+  const flags = [
     "--ignore-scripts",
     "--omit=optional",
     "--no-audit",
     "--no-fund",
     ...cacheFlag,
   ];
+  if (options?.legacyPeerDeps !== false) {
+    flags.push("--legacy-peer-deps");
+  }
+  return flags;
 }
 
 function npmInstallVariants(lockfilePresent: boolean, cacheDir?: string): string[][] {
@@ -318,6 +330,44 @@ export function inferRequiredPackagesForScripts(
   return [...required];
 }
 
+/** Read a package version from package.json, then package-lock.json. */
+export async function resolvePackageVersionSpec(
+  rootDir: string,
+  packageName: string
+): Promise<string> {
+  const pkgPath = path.join(rootDir, "package.json");
+  const pkg = JSON.parse(await fs.readFile(pkgPath, "utf8")) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const fromPkg = pkg.dependencies?.[packageName] ?? pkg.devDependencies?.[packageName];
+  if (fromPkg) return `${packageName}@${fromPkg}`;
+
+  try {
+    const lockPath = path.join(rootDir, "package-lock.json");
+    const lock = JSON.parse(await fs.readFile(lockPath, "utf8")) as {
+      packages?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+      dependencies?: Record<string, { version?: string }>;
+    };
+    const rootDep = lock.packages?.[""]?.dependencies?.[packageName];
+    if (rootDep) return `${packageName}@${rootDep}`;
+
+    const nodeEntry = lock.packages?.[`node_modules/${packageName}`];
+    if (nodeEntry?.version) return `${packageName}@${nodeEntry.version}`;
+
+    const legacy = lock.dependencies?.[packageName]?.version;
+    if (legacy) return `${packageName}@${legacy}`;
+  } catch {
+    /* no lockfile */
+  }
+
+  if (packageName === "react-dom" && pkg.dependencies?.react) {
+    return `react-dom@${pkg.dependencies.react}`;
+  }
+
+  return packageName;
+}
+
 /** Package@version specs for a minimal serverless verification install. */
 export async function packageSpecsForVerification(
   rootDir: string,
@@ -335,10 +385,11 @@ export async function packageSpecsForVerification(
     names.add("react");
     names.add("react-dom");
   }
-  return [...names].map((name) => {
-    const ver = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
-    return ver ? `${name}@${ver}` : name;
-  });
+  const specs: string[] = [];
+  for (const name of names) {
+    specs.push(await resolvePackageVersionSpec(rootDir, name));
+  }
+  return specs;
 }
 
 export async function isPackageInstalled(
@@ -428,12 +479,24 @@ async function prepareNpmCache(cacheDir: string, serverless: boolean): Promise<v
 
 async function buildServerlessVerificationVariants(
   rootDir: string,
-  requiredPackages: string[],
-  cacheDir: string
+  cacheDir: string,
+  options: { lockfilePatched: boolean; hasLockfile: boolean }
 ): Promise<string[][]> {
-  const specs = await packageSpecsForVerification(rootDir, requiredPackages);
-  const flags = ["--no-save", ...npmInstallBaseFlags(cacheDir)];
-  return [["npm", "install", ...flags, ...specs]];
+  const flags = npmInstallBaseFlags(cacheDir);
+  if (options.hasLockfile && !options.lockfilePatched) {
+    return [
+      ["npm", "ci", ...flags],
+      ["npm", "install", ...flags],
+    ];
+  }
+  if (options.hasLockfile) {
+    return [
+      ["npm", "install", ...flags],
+      ["npm", "install", ...flags.filter((f) => f !== "--cache"), ...(cacheDir ? ["--cache", cacheDir] : [])],
+    ];
+  }
+  const specs = await packageSpecsForVerification(rootDir, ["typescript", "next"]);
+  return [["npm", "install", "--no-save", ...flags, ...specs]];
 }
 
 function perRunCacheDir(cleanupRunId: string): string {
@@ -630,9 +693,12 @@ export async function ensureVerificationDependencies(
   await prepareNpmCache(cacheDir, serverless);
 
   const variants = serverless
-    ? await buildServerlessVerificationVariants(rootDir, requiredPackages, cacheDir)
+    ? await buildServerlessVerificationVariants(rootDir, cacheDir, {
+        lockfilePatched,
+        hasLockfile,
+      })
     : verificationInstallVariants(pm, hasLockfile, cacheDir, { lockfilePatched });
-  const maxAttempts = serverless ? 2 : MAX_ATTEMPTS;
+  const maxAttempts = serverless ? 3 : MAX_ATTEMPTS;
   let lastReason = "install failed";
   let lastCommand = variants[0]?.join(" ") ?? "npm ci";
   let lastExitCode: number | null = null;
@@ -704,8 +770,8 @@ export async function ensureVerificationDependencies(
     if (
       pm === "npm" &&
       command[1] === "ci" &&
-      isLockfileSyncError(stderr, stdout) &&
-      attempt + 1 < MAX_ATTEMPTS
+      (isLockfileSyncError(stderr, stdout) || isPeerDependencyError(stderr, stdout)) &&
+      attempt + 1 < maxAttempts
     ) {
       continue;
     }

@@ -384,6 +384,28 @@ async function run() {
     assert.equal(lockfileWasPatched(["src/index.ts"]), false);
   });
 
+  await test("resolvePackageVersionSpec reads react-dom from lockfile when removed from package.json", async () => {
+    const { resolvePackageVersionSpec } = await import("../src/lib/execution/workspace-install");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-lockver-"));
+    await fs.cp(path.join(process.cwd(), "e2e-fixture/package-lock.json"), path.join(root, "package-lock.json"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        {
+          name: "fixture",
+          dependencies: { next: "15.5.20", react: "18.3.1" },
+          devDependencies: { typescript: "5.6.3" },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const spec = await resolvePackageVersionSpec(root, "react-dom");
+    assert.equal(spec, "react-dom@18.3.1");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
   await test("verification install prefers npm install when lockfile was patched", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-lock-patch-"));
     const pkg = {
@@ -425,6 +447,10 @@ async function run() {
     assert.ok(
       install.attempts.some((a) => a.command.includes("npm install")),
       "expected npm install attempt when lockfile was patched"
+    );
+    assert.ok(
+      install.attempts.some((a) => a.command.includes("--legacy-peer-deps")),
+      "expected legacy-peer-deps on verification install"
     );
     await fs.rm(root, { recursive: true, force: true });
   });
