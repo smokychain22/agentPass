@@ -5,6 +5,7 @@ repos/
 .env
 *.log
 .DS_Store
+.vercel
 dist/
 .next/
 out/
@@ -12,4 +13,6 @@ out/
 **/.jscpd-out/
 **/.repodiet-jscpd/
 data-test/
+data-*/
+agentpass/data-test/
 tsconfig.tsbuildinfo
