@@ -23,6 +23,8 @@ export interface GitHubPreflightInput {
   scanId?: string;
   commitSha?: string;
   sessionKey?: string;
+  /** Fast path for UI — minimal GitHub API retries (sub-second). */
+  quick?: boolean;
 }
 
 function permissionsAreSufficient(permissions?: {
@@ -88,20 +90,23 @@ export async function runGitHubPreflight(
       : undefined;
     bindingTrusted = isRecentRepoInstallBinding(binding, session.installationId);
 
+    const attempts = input.quick ? 2 : bindingTrusted ? 3 : 4;
+    const delayMs = input.quick ? 400 : 1000;
+
     const access = await installationIncludesRepositoryWithRetry(
       session.installationId,
       owner,
       repo,
-      { attempts: bindingTrusted ? 4 : 6, delayMs: 1500 }
+      { attempts, delayMs }
     );
     repositoryAccessible = access.granted;
 
-    if (!repositoryAccessible && bindingTrusted) {
+    if (!repositoryAccessible && bindingTrusted && !input.quick) {
       const propagated = await installationIncludesRepositoryWithRetry(
         session.installationId,
         owner,
         repo,
-        { attempts: 8, delayMs: 2000 }
+        { attempts: 4, delayMs: 1500 }
       );
       repositoryAccessible = propagated.granted;
     }

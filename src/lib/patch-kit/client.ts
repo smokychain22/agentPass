@@ -99,27 +99,52 @@ export async function fetchGitHubPreflight(input: {
   return json;
 }
 
-export async function syncGitHubRepositoryAccess(input: {
-  repositoryFullName: string;
-  installationId?: number;
-  setupAction?: "install" | "update";
-  trustPendingPropagation?: boolean;
-}): Promise<GitHubPreflightResult> {
-  const res = await fetch("/api/github/sync-access", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(input),
-  });
-  const json = (await res.json()) as {
-    ok: boolean;
-    error?: string;
-    preflight?: GitHubPreflightResult;
-  };
-  if (!json.ok || !json.preflight) {
-    throw new Error(json.error ?? "Could not sync GitHub repository access.");
+export async function syncGitHubRepositoryAccess(
+  input: {
+    repositoryFullName: string;
+    installationId?: number;
+    setupAction?: "install" | "update";
+    trustPendingPropagation?: boolean;
+    branch?: string;
+    scanId?: string;
+    commitSha?: string;
+  },
+  opts?: { timeoutMs?: number }
+): Promise<GitHubPreflightResult> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch("/api/github/sync-access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const json = (await res.json()) as {
+      ok: boolean;
+      error?: string;
+      preflight?: GitHubPreflightResult;
+    };
+    if (!json.ok || !json.preflight) {
+      throw new Error(json.error ?? "Could not sync GitHub repository access.");
+    }
+    return json.preflight;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return fetchGitHubPreflight({
+        repositoryFullName: input.repositoryFullName,
+        branch: input.branch,
+        scanId: input.scanId,
+        commitSha: input.commitSha,
+      });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  return json.preflight;
 }
 
 export async function startGitHubGrantAccess(input: {

@@ -99,4 +99,25 @@ test("allows report-only PR without validated changes when authorized", () => {
   assert.equal(gates.canCreateSafePr, false);
 });
 
+test("enables cleanup PR when authorized even if background refresh is in flight", () => {
+  const gates = computeOperatorPrGates({
+    locked: false,
+    statusLoading: false,
+    preflightLoading: false,
+    repositoryAuthorized: true,
+    permissionsVerified: true,
+    canCreateBranch: true,
+    canCreatePullRequest: true,
+    useDemoAuth: false,
+    manualTokenReady: false,
+    patchValidated: true,
+    validatedChanges: 22,
+    validatedEditCount: 22,
+    safeDeleteCount: 0,
+    requireVerificationForCleanupPr: false,
+    verificationStatus: null,
+  });
+  assert.equal(gates.canCreateSafePr, true);
+});
+
 console.log("operator-pr-gates: all passed");
