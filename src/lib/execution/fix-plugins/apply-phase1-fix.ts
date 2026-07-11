@@ -14,6 +14,7 @@ import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-dif
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
 import { resolvePhase1TransformPlugin, type Phase1PluginId } from "./phase1-plugins";
 import { defaultStrategyForPlugin } from "../fix-strategies";
+import { packageImportedInProject } from "../package-usage-scan";
 import {
   hashSource,
   validateTransformInvariants,
@@ -241,6 +242,12 @@ async function applyRemoveUnusedDependency(
 ): Promise<AppliedFix> {
   const pkgName = finding.packageName;
   if (!pkgName) throw new Error("No package name for dependency fix.");
+
+  if (await packageImportedInProject(rootDir, pkgName)) {
+    throw new Error(
+      `Package ${pkgName} is still imported in source files — refusing automatic removal.`
+    );
+  }
 
   const pkgPath = path.join(rootDir, "package.json");
   const original = await fs.readFile(pkgPath, "utf8");

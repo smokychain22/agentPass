@@ -20,8 +20,20 @@ function symbolUsedInBody(body: string, symbol: string): boolean {
   const escaped = escapeRegExp(symbol);
   const wordRe = new RegExp(`\\b${escaped}\\b`);
   const jsxRe = new RegExp(`<${escaped}[\\s/>{]`);
-  const typeRe = new RegExp(`:\\s*${escaped}\\b|${escaped}\\s*[|&<>,;)]`);
+  const typeRe = new RegExp(
+    `:\\s*${escaped}\\b|${escaped}\\s*[|&<>,;)]|Pick<${escaped}\\b|${escaped}\\s*extends\\b`
+  );
   return wordRe.test(body) || jsxRe.test(body) || typeRe.test(body);
+}
+
+function buildScanBody(lines: string[], importBlocks: Array<{ start: number; end: number }>): string {
+  const importLines = new Set<number>();
+  for (const block of importBlocks) {
+    for (let i = block.start; i <= block.end; i += 1) {
+      importLines.add(i);
+    }
+  }
+  return lines.filter((_, idx) => !importLines.has(idx)).join("\n");
 }
 
 function parseNamedImports(importClause: string): string[] {
@@ -63,8 +75,7 @@ export function detectUnusedImportsInSource(
     importBlocks.push({ start: i, end, text: block });
   }
 
-  const bodyStart = importBlocks.length > 0 ? importBlocks[importBlocks.length - 1].end + 1 : 0;
-  const body = lines.slice(bodyStart).join("\n");
+  const body = buildScanBody(lines, importBlocks);
 
   for (const block of importBlocks) {
     const text = block.text.replace(/\n/g, " ").trim();

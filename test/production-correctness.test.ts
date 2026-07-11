@@ -108,6 +108,18 @@ async function run() {
     assert.equal(detectUnusedImportsInSource("src/y.ts", source).length, 0);
   });
 
+  await test("import used before mid-file import block is not flagged unused", () => {
+    const source = `import { isStablecoin } from "./token-filters";\n\nexport function x(t: { symbol: string }) {\n  return isStablecoin(t.symbol);\n}\n\nimport { helper } from "./alpha-quality";\nexport const y = helper;\n`;
+    const found = detectUnusedImportsInSource("src/feed-curation.ts", source);
+    assert.ok(!found.some((f) => f.symbol.includes("isStablecoin")));
+  });
+
+  await test("type used in Pick<> generic is not flagged unused", () => {
+    const source = `import type { TokenSecurityReport } from "./token-security";\n\nexport function label(risk?: { security?: Pick<TokenSecurityReport, "label"> }) {\n  return risk?.security?.label ?? "ok";\n}\n`;
+    const found = detectUnusedImportsInSource("src/feed-curation.ts", source);
+    assert.ok(!found.some((f) => f.symbol.includes("TokenSecurityReport")));
+  });
+
   await test("dry-run noop cannot classify as actionable", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-pc-"));
     const rel = "src/a.ts";
