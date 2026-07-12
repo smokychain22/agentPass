@@ -131,3 +131,21 @@ export async function isPublicGitHubRepository(owner: string, repo: string): Pro
     return false;
   }
 }
+
+/** True when path exists in the git tree at ref (commit SHA or branch). */
+export async function gitPathExistsAtRef(
+  owner: string,
+  repo: string,
+  ref: string,
+  filePath: string
+): Promise<boolean> {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  try {
+    const res = await tryFetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${normalized}?ref=${encodeURIComponent(ref)}`
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

@@ -40,6 +40,7 @@ import {
   type ChangeOperation,
 } from "./canonical-patch";
 import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
+import { reconcileEditsWithGitCommit } from "./reconcile-git-commit";
 import { isGitCliAvailable } from "./git-runtime";
 import { startRepositoryCleanupExecution, SandboxUnavailableError } from "@/lib/execution/start-cleanup-workflow";
 import { runRepositoryVerification } from "./repository-verification";
@@ -451,11 +452,49 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       ...buckets.doNotTouch.map((item) => item.path),
     ];
 
-    const changeOperations: ChangeOperation[] = await buildChangeOperationsFromEdits(
+    let changeOperations: ChangeOperation[] = await buildChangeOperationsFromEdits(
       baselineRoot,
       generatedEdits,
       { findingIdsByPath }
     );
+
+    if (baseCommitSha && baseCommitSha !== "unknown" && changeOperations.length > 0) {
+      const reconciled = await reconcileEditsWithGitCommit({
+        owner: findings.repo.owner,
+        repo: findings.repo.name,
+        baseCommitSha,
+        edits: generatedEdits,
+        changeOperations,
+      });
+      if (reconciled.droppedPaths.length > 0) {
+        generatedEdits = reconciled.edits;
+        changeOperations = reconciled.changeOperations;
+        if (generatedEdits.length > 0) {
+          const canonical = await buildCanonicalRepositoryPatch(
+            baselineRoot,
+            generatedEdits,
+            workspace.workDir
+          );
+          patchGenerationMethod = canonical.method;
+          gitCliAvailable = canonical.gitCliAvailable;
+          if (patchHasApplyableOperations(canonical.patch)) {
+            patchBundle = { ...canonical, edits: generatedEdits };
+          } else {
+            const pure = await buildApplyablePatchFromEdits(baselineRoot, generatedEdits);
+            if (patchHasApplyableOperations(pure.patch)) {
+              patchGenerationMethod = "pure-js";
+              patchBundle = {
+                patch: pure.patch,
+                changedPaths: pure.changedPaths,
+                edits: generatedEdits,
+              };
+            }
+          }
+        } else {
+          patchBundle = { patch: EMPTY_CLEANUP_PATCH, changedPaths: [], edits: [] };
+        }
+      }
+    }
 
     const generatedChanges = changeOperations.length;
     const changedPaths = changeOperations.map((op) => op.filePath);

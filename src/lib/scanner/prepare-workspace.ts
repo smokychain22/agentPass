@@ -113,21 +113,29 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
   );
 }
 
-function isE2eFixtureUrl(repoUrl: string): boolean {
-  return /repodiet-e2e-test/i.test(repoUrl);
+function shouldUseBundledE2eFixture(repoUrl: string): boolean {
+  const fixturePath = process.env.REPODIET_E2E_FIXTURE_PATH?.trim();
+  const useFixture =
+    process.env.REPODIET_USE_E2E_FIXTURE === "1" || Boolean(fixturePath);
+  if (!useFixture) return false;
+
+  const parsed = parseGitHubUrl(repoUrl);
+  if (!parsed) return false;
+  return parsed.repo === "repodiet-e2e-test";
 }
 
-async function prepareE2eFixtureWorkspace(): Promise<RepoWorkspace> {
+async function prepareE2eFixtureWorkspace(repoUrl: string): Promise<RepoWorkspace> {
+  const parsed = parseGitHubUrl(repoUrl);
   const sourceDir =
     process.env.REPODIET_E2E_FIXTURE_PATH?.trim() ||
     path.join(process.cwd(), "e2e-fixture");
   return prepareLocalCopyWorkspace(
     sourceDir,
     {
-      owner: "smokychain22",
-      name: "repodiet-e2e-test",
-      branch: "main",
-      url: "https://github.com/smokychain22/repodiet-e2e-test",
+      owner: parsed?.owner ?? "smokychain22",
+      name: parsed?.repo ?? "repodiet-e2e-test",
+      branch: parsed?.branch || "main",
+      url: repoUrl,
     },
     "e2e-fixture"
   );
@@ -142,8 +150,8 @@ export async function prepareRepoWorkspace(
     return prepareLocalDemoWorkspace();
   }
 
-  if (isE2eFixtureUrl(repoUrl)) {
-    return prepareE2eFixtureWorkspace();
+  if (shouldUseBundledE2eFixture(repoUrl)) {
+    return prepareE2eFixtureWorkspace(repoUrl);
   }
 
   const parsed = parseGitHubUrl(repoUrl);
