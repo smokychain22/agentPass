@@ -1,0 +1,13 @@
+{
+  "id": "dynamic-import",
+  "category": "dynamic_import",
+  "description": "Module referenced via dynamic import() must not be reported unused",
+  "repo": "accuracy-lab/fixtures/dynamic-import",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["import_graph", "runtime_reachability"],
+    "remediationClass": "red"
+  }
+}

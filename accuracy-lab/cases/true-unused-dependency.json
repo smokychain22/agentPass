@@ -1,0 +1,15 @@
+{
+  "id": "true-unused-dependency",
+  "category": "true_unused_dependency",
+  "description": "Package listed in package.json with zero import references",
+  "repo": "accuracy-lab/fixtures/true-unused-dependency",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "unused_dependency",
+    "expectedConfidence": "high_confidence",
+    "autofixAllowed": true,
+    "expectedChangedFiles": ["package.json"],
+    "requiredVerification": ["knip", "import_graph"],
+    "remediationClass": "green"
+  }
+}

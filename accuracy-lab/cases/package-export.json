@@ -1,0 +1,13 @@
+{
+  "id": "package-export",
+  "category": "package_export",
+  "description": "Public package.json exports consumed externally must not be removed",
+  "repo": "accuracy-lab/fixtures/package-export",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["api_surface", "package_exports"],
+    "remediationClass": "red"
+  }
+}

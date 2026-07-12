@@ -1,0 +1,14 @@
+{
+  "id": "security-taint",
+  "category": "security_taint",
+  "description": "Auth/payment paths must never receive green-tier autofix",
+  "repo": "accuracy-lab/fixtures/security-taint",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "unused_import",
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["protected_paths", "remediation_class"],
+    "remediationClass": "red"
+  }
+}

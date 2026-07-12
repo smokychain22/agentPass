@@ -89,8 +89,7 @@ async function runVerificationScriptsInSandbox(
   );
 
   const checks: Array<{ name: string; exitCode: number; stderr: string }> = [];
-  // Sandbox verification prioritizes fast signal checks — skip heavy production builds.
-  for (const script of ["typecheck", "test"] as const) {
+  for (const script of ["typecheck", "lint", "test", "build"] as const) {
     const probe = await runSandboxShell(
       sandbox,
       `cd "${root}" && node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts['${script}']?0:2)"`,

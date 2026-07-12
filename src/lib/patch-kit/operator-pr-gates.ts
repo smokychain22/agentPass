@@ -55,7 +55,8 @@ export function computeOperatorPrGates(input: OperatorPrGateInput) {
     hasVerifiedWork &&
     verificationReady &&
     githubPrPermissionsReady &&
-    (input.mandatoryGatesPassed !== false);
+    (input.mandatoryGatesPassed === true ||
+      (input.mandatoryGatesPassed === undefined && input.verifiedChanges > 0));
 
   return { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr };
 }

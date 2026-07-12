@@ -1,0 +1,15 @@
+{
+  "id": "circular-dependency",
+  "category": "circular_dependency",
+  "description": "Static import cycle detected by resolver SCC and Madge",
+  "repo": "accuracy-lab/fixtures/circular-dependency",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "orphan_pattern",
+    "expectedConfidence": "high_confidence",
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["madge", "resolver_scc"],
+    "remediationClass": "yellow"
+  }
+}

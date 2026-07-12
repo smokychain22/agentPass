@@ -42,7 +42,7 @@ test("removes single unused symbol from named import", () => {
   assert.ok(!out.includes("unused"));
 });
 
-test("temp file path eligible under phase1 with safe_candidate", () => {
+test("temp file path eligible under phase1 with native safe_candidate", () => {
   const finding: Finding = {
     id: "f1",
     type: "unused_file",
@@ -53,9 +53,12 @@ test("temp file path eligible under phase1 with safe_candidate", () => {
     severity: "low",
     action: "safe_candidate",
     reason: "Unreachable temp file",
-    source: "knip_fallback",
-    sourceMode: "fallback",
-    evidence: { summary: "test", signals: ["path=tmp/temp-widget.tsx"] },
+    source: "knip",
+    sourceMode: "native",
+    evidence: {
+      summary: "test",
+      signals: ["path=tmp/temp-widget.tsx", "classification=actionable_candidate"],
+    },
   };
   assert.equal(isPhase1AutoFix(finding), true);
 });

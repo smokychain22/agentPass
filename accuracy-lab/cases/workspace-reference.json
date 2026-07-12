@@ -1,0 +1,13 @@
+{
+  "id": "workspace-reference",
+  "category": "workspace_reference",
+  "description": "Monorepo workspace package cross-reference must not be flagged orphan",
+  "repo": "accuracy-lab/fixtures/workspace-reference",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["workspace_manifest", "import_graph"],
+    "remediationClass": "red"
+  }
+}

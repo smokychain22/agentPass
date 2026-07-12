@@ -1,0 +1,15 @@
+{
+  "id": "exact-duplication",
+  "category": "exact_duplication",
+  "description": "Byte-identical duplicate blocks flagged by jscpd and RepoDiet exact-dup enricher",
+  "repo": "accuracy-lab/fixtures/exact-duplication",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "duplicate_code",
+    "expectedConfidence": "verified",
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["jscpd", "repodiet_exact_dup"],
+    "remediationClass": "yellow"
+  }
+}

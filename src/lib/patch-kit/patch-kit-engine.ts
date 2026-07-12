@@ -60,9 +60,14 @@ import { storePatchKit } from "./patch-kit-store";
 import { supportedTransformerFor } from "@/lib/workflow/lifecycle";
 import { buildCleanupProof, buildProofLadderCounts } from "@/lib/execution/proof-ladder";
 import { countDiffLines } from "@/lib/execution/one-fix-at-a-time";
-import { buildRemediationPlan, isGreenAutoFixAllowed } from "./remediation-class";
+import { buildRemediationPlan } from "./remediation-class";
 import { buildVerificationGateReport } from "./verification-gates";
 import { generatePrEvidenceReport } from "./generate-pr-evidence-report";
+import { runPostPatchVerification } from "@/lib/verification/post-patch-verification";
+import { compareApiSurface } from "@/lib/verification/api-surface";
+import { diffImportGraphs } from "@/lib/verification/import-graph-diff";
+import { generateYellowDraftPatches } from "./yellow-draft-patches";
+import { findingsPayloadToSarif } from "@/lib/findings/sarif-export";
 import type {
   ChangeManifestEntry,
   PatchKitGenerateBody,
@@ -333,7 +338,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const eligibleFindingIds = preflightAudits
       .filter(isCleanupEligibleAudit)
-      .filter((a) => isGreenAutoFixAllowed(a.findingId, remediationPlan))
+      .filter((a) => {
+        const item = remediationPlan.green.find((g) => g.findingId === a.findingId);
+        // Red-tier findings never auto-fix; green and unclassified eligible audits may proceed
+        if (!item) return true;
+        return item.remediationClass !== "red";
+      })
       .map((a) => a.findingId);
 
     const transformerCompatible = compatibleFindings.length;
@@ -580,6 +590,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     }
     if (gitValidationPassed && generatedChanges > 0) {
       validatedChanges = generatedChanges;
+      if (validatedEdits.length === 0 && retainedFixCount > 0) {
+        const retainedEdits = buildEditsFromRetainedAttempts(cleanupResult.fixLoop.attempts);
+        validatedEdits = await filterEditsAgainstBaseline(baselineRoot, retainedEdits);
+      }
     }
 
     const repositoryVerification: RepositoryVerificationResult = await (async () => {
@@ -845,6 +859,55 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       }
     }
 
+    const hasPatchedChanges = generatedEdits.length > 0 || deletedPaths.length > 0;
+    const appliedFindingIds = [
+      ...new Set(
+        changeManifest.map((e) => e.findingId).filter((id) => id && id !== "safe_delete")
+      ),
+    ];
+
+    const sarifBaseline = findingsPayloadToSarif(findings);
+
+    let postPatchVerification;
+    let apiSurfaceDiff;
+    let importGraphDiff;
+    let yellowDraftPatches;
+
+    if (hasPatchedChanges) {
+      if (appliedFindingIds.length > 0) {
+        postPatchVerification = await runPostPatchVerification({
+          rootDir: workspace.rootDir,
+          baselineFindings: findings,
+          changeManifest,
+          appliedFindingIds,
+        });
+      }
+
+      try {
+        apiSurfaceDiff = await compareApiSurface(baselineRoot, workspace.rootDir);
+      } catch {
+        /* optional */
+      }
+
+      try {
+        importGraphDiff = await diffImportGraphs(baselineRoot, workspace.rootDir);
+      } catch {
+        /* optional */
+      }
+    }
+
+    if (remediationPlan.yellow.length > 0) {
+      try {
+        yellowDraftPatches = await generateYellowDraftPatches({
+          rootDir: workspace.rootDir,
+          findings: flatFindings,
+          remediationPlan,
+        });
+      } catch {
+        yellowDraftPatches = [];
+      }
+    }
+
     const verificationGates = buildVerificationGateReport(
       {
         id,
@@ -868,6 +931,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         },
         remediationPlan,
         changeManifest,
+        postPatchVerification,
+        apiSurfaceDiff,
+        importGraphDiff,
       } as PatchKitPayload,
       findings
     );
@@ -891,6 +957,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
           error: repositoryVerification.error,
         },
         remediationPlan,
+        postPatchVerification,
+        apiSurfaceDiff,
+        importGraphDiff,
+        yellowDraftPatches,
       } as PatchKitPayload,
       remediationPlan,
       verificationGates,
@@ -908,6 +978,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       findingsJson: findings,
       patchkitSummaryJson,
       prEvidenceReportMd,
+      sarifBaselineJson: JSON.stringify(sarifBaseline, null, 2),
     });
 
     const payload: PatchKitPayload = {
@@ -970,6 +1041,11 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       remediationPlan,
       verificationGates,
       prEvidenceReportMd,
+      postPatchVerification,
+      apiSurfaceDiff,
+      importGraphDiff,
+      yellowDraftPatches,
+      sarifBaseline,
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);

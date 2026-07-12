@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DEMO_REPO_BRANCH,
   DEMO_REPO_NAME,
@@ -131,9 +132,10 @@ function shouldUseBundledE2eFixture(repoUrl: string): boolean {
 
 async function prepareE2eFixtureWorkspace(repoUrl: string): Promise<RepoWorkspace> {
   const parsed = parseGitHubUrl(repoUrl);
+  const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const sourceDir =
     process.env.REPODIET_E2E_FIXTURE_PATH?.trim() ||
-    path.join(process.cwd(), "e2e-fixture");
+    path.join(repoRoot, "e2e-fixture");
   return prepareLocalCopyWorkspace(
     sourceDir,
     {

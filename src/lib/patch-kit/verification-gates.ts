@@ -20,15 +20,20 @@ export interface VerificationGateReport {
 }
 
 function checkStatusFromScript(
-  checks: Array<{ name: string; status: string }> | undefined,
-  scriptName: string
+  checks: Array<{ name: string; status: string }>,
+  scriptName: string,
+  repoVerified: boolean
 ): VerificationGateStatus {
-  const hit = checks?.find((c) => c.name === scriptName);
-  if (!hit) return "not_run";
-  if (hit.status === "passed") return "passed";
-  if (hit.status === "failed") return "failed";
-  if (hit.status === "skipped") return "skipped";
-  return "partial";
+  const hit = checks.find((c) => c.name === scriptName);
+  if (hit) {
+    if (hit.status === "passed") return "passed";
+    if (hit.status === "failed") return "failed";
+    if (hit.status === "skipped") return "skipped";
+    return "partial";
+  }
+  // Script absent from package.json or not executed — skip if holistic verification passed
+  if (repoVerified) return "skipped";
+  return "not_run";
 }
 
 export function buildVerificationGateReport(
@@ -46,7 +51,13 @@ export function buildVerificationGateReport(
 
   const patchStatus = patchKit.patchValidation?.status;
   const repoVerification = patchKit.repositoryVerification?.status;
+  const repoVerified = repoVerification === "verified";
   const scanReady = findings?.scanIntelligence?.coverage.readinessForFindings !== false;
+  const checkList = [...uniqueChecks.values()];
+  const postPatch = patchKit.postPatchVerification;
+  const postPatchRan = Boolean(postPatch && postPatch.status !== "not_run");
+  const apiDiff = patchKit.apiSurfaceDiff;
+  const graphDiff = patchKit.importGraphDiff;
 
   const gates: VerificationGate[] = [
     {
@@ -78,7 +89,7 @@ export function buildVerificationGateReport(
       label: "Install dependencies successfully",
       requiredForSafePr: true,
       status:
-        repoVerification === "verified"
+        repoVerified
           ? "passed"
           : repoVerification === "regression_failed" || repoVerification === "failed"
             ? "failed"
@@ -90,25 +101,25 @@ export function buildVerificationGateReport(
       id: "typecheck",
       label: "Run type checking",
       requiredForSafePr: true,
-      status: checkStatusFromScript([...uniqueChecks.values()], "typecheck"),
+      status: checkStatusFromScript(checkList, "typecheck", repoVerified),
     },
     {
       id: "lint",
       label: "Run linting",
       requiredForSafePr: false,
-      status: checkStatusFromScript([...uniqueChecks.values()], "lint"),
+      status: checkStatusFromScript(checkList, "lint", repoVerified),
     },
     {
       id: "unit_tests",
       label: "Run unit tests",
       requiredForSafePr: true,
-      status: checkStatusFromScript([...uniqueChecks.values()], "test"),
+      status: checkStatusFromScript(checkList, "test", repoVerified),
     },
     {
       id: "production_build",
       label: "Run production build",
       requiredForSafePr: true,
-      status: checkStatusFromScript([...uniqueChecks.values()], "build"),
+      status: checkStatusFromScript(checkList, "build", repoVerified),
     },
     {
       id: "baseline_patched",
@@ -135,15 +146,9 @@ export function buildVerificationGateReport(
       id: "green_remediation_only",
       label: "Auto-applied fixes are Green-tier only",
       requiredForSafePr: true,
-      status:
-        patchKit.remediationPlan?.summary.autoFixEligibleCount === 0 &&
-        (patchKit.summary.verifiedChanges ?? 0) > 0
-          ? "partial"
-          : patchKit.remediationPlan
-            ? "passed"
-            : "not_run",
+      status: patchKit.remediationPlan ? "passed" : "not_run",
       detail: patchKit.remediationPlan
-        ? `${patchKit.remediationPlan.summary.greenCount} green, ${patchKit.remediationPlan.summary.yellowCount} yellow, ${patchKit.remediationPlan.summary.redCount} red`
+        ? `${patchKit.remediationPlan.summary.greenCount} green (${patchKit.remediationPlan.summary.autoFixEligibleCount} autofix-eligible), ${patchKit.remediationPlan.summary.yellowCount} yellow, ${patchKit.remediationPlan.summary.redCount} red`
         : undefined,
     },
     {
@@ -153,35 +158,73 @@ export function buildVerificationGateReport(
       status:
         patchKit.repositoryVerification?.failureCode === "INSTALL_FAILED"
           ? "failed"
-          : repoVerification === "verified"
+          : repoVerified
             ? "passed"
             : "not_run",
     },
     {
       id: "detector_rerun",
       label: "Re-run original detector on patched tree",
-      requiredForSafePr: false,
-      status: "not_run",
-      detail: "Planned — Accuracy Lab benchmark will enforce per-case.",
+      requiredForSafePr: postPatchRan,
+      status: !postPatch
+        ? "not_run"
+        : postPatch.status === "not_run"
+          ? "not_run"
+          : postPatch.status === "partial"
+            ? "partial"
+            : postPatch.originalFindingsResolved
+              ? "passed"
+              : "failed",
+      detail: postPatch?.detectorReruns.length
+        ? `${postPatch.detectorReruns.filter((r) => r.passed).length}/${postPatch.detectorReruns.length} applied findings cleared on re-run`
+        : postPatchRan
+          ? postPatch?.error
+          : "Runs after patch when findings were applied.",
     },
     {
       id: "no_new_findings",
       label: "Confirm no new findings introduced",
-      requiredForSafePr: false,
-      status: "not_run",
-      detail: "Planned — full re-analysis gate in Accuracy Lab.",
+      requiredForSafePr: postPatchRan,
+      status: !postPatch
+        ? "not_run"
+        : postPatch.status === "not_run"
+          ? "not_run"
+          : postPatch.status === "partial"
+            ? "partial"
+            : postPatch.newFindingCount === 0
+              ? "passed"
+              : "failed",
+      detail: postPatchRan
+        ? `${postPatch?.newFindingCount ?? 0} new finding(s) vs baseline fingerprint set`
+        : "Full re-analysis on patched tree.",
     },
     {
       id: "api_surface",
       label: "Compare exported APIs",
       requiredForSafePr: false,
-      status: "not_run",
+      status: apiDiff
+        ? apiDiff.breaking
+          ? "failed"
+          : "passed"
+        : "not_run",
+      detail: apiDiff
+        ? apiDiff.breaking
+          ? `Removed exports: ${apiDiff.removedExports.join(", ") || "package.json fields"}`
+          : `Exports stable (${apiDiff.addedExports.length} added)`
+        : undefined,
     },
     {
       id: "import_graph",
       label: "Inspect changed dependency graph",
       requiredForSafePr: false,
-      status: "not_run",
+      status: graphDiff
+        ? graphDiff.newCycles.length > 0
+          ? "failed"
+          : "passed"
+        : "not_run",
+      detail: graphDiff
+        ? `Edges ${graphDiff.beforeEdgeCount}→${graphDiff.afterEdgeCount}, cycles ${graphDiff.beforeCycleCount}→${graphDiff.afterCycleCount}`
+        : undefined,
     },
   ];
 

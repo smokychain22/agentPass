@@ -1,0 +1,13 @@
+{
+  "id": "script-only-dependency",
+  "category": "script_only_dependency",
+  "description": "DevDependency used only in npm scripts must not be flagged unused",
+  "repo": "accuracy-lab/fixtures/script-only-dependency",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["package_scripts", "knip"],
+    "remediationClass": "red"
+  }
+}

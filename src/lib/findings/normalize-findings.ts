@@ -336,7 +336,9 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
   const knipFindings =
     input.knip && input.knipResult.status === "ok"
       ? fromKnip(input.knip, input.rootDir, "knip")
-      : { files: [], dependencies: [], exports: [] };
+      : input.knip && input.knipResult.status === "fallback"
+        ? fromKnip(input.knip, input.rootDir, "knip_fallback")
+        : { files: [], dependencies: [], exports: [] };
   const duplicates =
     input.jscpd && input.jscpdResult.status === "ok"
       ? fromJscpd(input.jscpd, input.rootDir, "jscpd")

@@ -1,0 +1,14 @@
+{
+  "id": "api-breaking-fix",
+  "category": "api_breaking_fix",
+  "description": "Removing exported API surface must fail api_surface gate",
+  "repo": "accuracy-lab/fixtures/api-breaking-fix",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "unused_export",
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["api_surface", "package_exports"],
+    "remediationClass": "red"
+  }
+}

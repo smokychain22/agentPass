@@ -63,7 +63,13 @@ function isProvenUnreachableFile(finding: Finding): boolean {
 
 export function classifyFindingRemediation(finding: Finding): RemediationClassification {
   const plugin = resolvePhase1Plugin(finding);
-  const tier = finding.confidenceTier ?? "needs_review";
+  const tier =
+    finding.confidenceTier ??
+    (finding.evidenceBundle?.autoFixAllowed
+      ? "verified"
+      : finding.action === "safe_candidate"
+        ? "high_confidence"
+        : "needs_review");
   const bundle = finding.evidenceBundle;
   const verificationRequired =
     finding.deletionProof?.verificationRequired ??

@@ -155,6 +155,11 @@ export interface PatchKitPayload {
   remediationPlan?: import("./remediation-class").RemediationPlan;
   verificationGates?: import("./verification-gates").VerificationGateReport;
   prEvidenceReportMd?: string;
+  postPatchVerification?: import("@/lib/verification/post-patch-verification").PostPatchVerificationReport;
+  apiSurfaceDiff?: import("@/lib/verification/api-surface").ApiSurfaceDiff;
+  importGraphDiff?: import("@/lib/verification/import-graph-diff").ImportGraphDiff;
+  yellowDraftPatches?: import("./yellow-draft-patches").YellowDraftPatch[];
+  sarifBaseline?: import("@/lib/findings/sarif-export").SarifLog;
   /** @deprecated use sandboxRunId */
   workerJobId?: string;
 }

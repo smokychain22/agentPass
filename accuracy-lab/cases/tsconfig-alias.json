@@ -1,0 +1,13 @@
+{
+  "id": "tsconfig-alias",
+  "category": "tsconfig_alias",
+  "description": "Path alias imports must resolve and suppress false unused-file positives",
+  "repo": "accuracy-lab/fixtures/tsconfig-alias",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["tsconfig_paths", "import_graph"],
+    "remediationClass": "red"
+  }
+}

@@ -12,22 +12,41 @@ interface AccuracyCase {
 }
 
 async function main() {
-  const casesDir = path.join(import.meta.dirname, "cases");
+  const labDir = import.meta.dirname;
+  const casesDir = path.join(labDir, "cases");
   const files = (await fs.readdir(casesDir)).filter((f) => f.endsWith(".json"));
-  let valid = 0;
+
+  const manifest = JSON.parse(
+    await fs.readFile(path.join(labDir, "manifest.json"), "utf8")
+  ) as {
+    caseCategories: string[];
+    releaseTargets: { displayedFindingsPrecision: number };
+  };
+
+  const cases: AccuracyCase[] = [];
   for (const file of files) {
     const raw = await fs.readFile(path.join(casesDir, file), "utf8");
     const c = JSON.parse(raw) as AccuracyCase;
     if (!c.id || !c.category || !c.groundTruth) {
       throw new Error(`Invalid case: ${file}`);
     }
-    valid += 1;
+    cases.push(c);
     console.log(`  ✓ ${c.id} (${c.category})`);
   }
-  const manifest = JSON.parse(
-    await fs.readFile(path.join(import.meta.dirname, "manifest.json"), "utf8")
-  );
-  console.log(`accuracy-lab: ${valid} case(s) validated`);
+
+  const covered = new Set(cases.map((c) => c.category));
+  const missing = manifest.caseCategories.filter((cat) => !covered.has(cat));
+  const extra = [...covered].filter((cat) => !manifest.caseCategories.includes(cat));
+
+  if (missing.length) {
+    throw new Error(`Missing benchmark categories: ${missing.join(", ")}`);
+  }
+  if (extra.length) {
+    throw new Error(`Unknown categories in cases: ${extra.join(", ")}`);
+  }
+
+  console.log(`accuracy-lab: ${cases.length} case(s) validated`);
+  console.log(`categories covered: ${manifest.caseCategories.length}/${manifest.caseCategories.length}`);
   console.log(`release targets: precision ≥ ${manifest.releaseTargets.displayedFindingsPrecision * 100}%`);
 }
 
