@@ -1,4 +1,4 @@
-const REPODIET_APP_FALLBACK = "https://skillswap-skillswap7.vercel.app";
+import { REPODIET_PRODUCTION_FALLBACK_URL } from "@/lib/app/production-url";
 
 export function getServerBaseUrl(): string {
   const candidates = [
@@ -19,7 +19,7 @@ export function getServerBaseUrl(): string {
     }
   }
 
-  return REPODIET_APP_FALLBACK;
+  return REPODIET_PRODUCTION_FALLBACK_URL;
 }
 
 export function buildToolCurl(

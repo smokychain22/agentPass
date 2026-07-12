@@ -1,6 +1,6 @@
 # repodiet-e2e-test
 
-Controlled Next.js fixture for verifying [RepoDiet](https://skillswap-skillswap7.vercel.app) performs real detection, editing, deletion, verification, and PR creation.
+Controlled Next.js fixture for verifying [RepoDiet](https://skillswap-virid-kappa.vercel.app) performs real detection, editing, deletion, verification, and PR creation.
 
 **Every issue below is intentional.** Do not use this repository for production code.
 

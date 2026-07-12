@@ -84,13 +84,13 @@ async function run() {
       const stateToken = createSignedInstallState({
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
         scanId: "scan_signed",
-        returnPath: "https://skillswap-skillswap7.vercel.app/app?tab=patch&scanId=scan_signed",
+        returnPath: "https://skillswap-virid-kappa.vercel.app/app?tab=patch&scanId=scan_signed",
       });
 
       const payload = verifySignedInstallState(stateToken);
       assert.ok(payload);
       assert.equal(payload?.rf, "Ibrahimmovic/Circle-Arc-Net");
-      assert.equal(payload?.rp.includes("skillswap-skillswap7.vercel.app"), true);
+      assert.equal(payload?.rp.includes("skillswap-virid-kappa.vercel.app"), true);
       assert.ok(stateToken.length < 400);
     });
   });
@@ -99,7 +99,7 @@ async function run() {
     await withGitHubAppEnv(async () => {
       const stateToken = createSignedInstallState({
         repositoryFullName: "Ibrahimmovic/Circle-Arc-Net",
-        returnPath: "https://skillswap-skillswap7.vercel.app/app?tab=patch",
+        returnPath: "https://skillswap-virid-kappa.vercel.app/app?tab=patch",
       });
 
       const resolved = await resolveInstallFlowState(stateToken, "sess-signed-2");
@@ -306,7 +306,7 @@ async function run() {
 
     try {
       const url = resolveRepodietReturnUrl("/app?tab=patch&scanId=scan_123");
-      assert.equal(url.origin, "https://skillswap-skillswap7.vercel.app");
+      assert.equal(url.origin, "https://skillswap-virid-kappa.vercel.app");
       assert.equal(url.pathname, "/app");
       assert.equal(url.searchParams.get("tab"), "patch");
       assert.equal(url.searchParams.get("scanId"), "scan_123");
@@ -333,7 +333,7 @@ async function run() {
     try {
       const base = getAppBaseUrl();
       assert.equal(isGitHubWebsiteUrl(base), false);
-      assert.match(base, /^https:\/\/skillswap-skillswap7\.vercel\.app$/);
+      assert.match(base, /^https:\/\/skillswap-virid-kappa\.vercel\.app$/);
     } finally {
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];

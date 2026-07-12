@@ -58,9 +58,9 @@ export interface GitHubConnectionStatus {
   };
 }
 
-export type GitHubPreflightResult = import("@/lib/github-app/types").GitHubPreflightResult;
+import { REPODIET_PRODUCTION_FALLBACK_URL } from "@/lib/app/production-url";
 
-const REPODIET_APP_FALLBACK = "https://skillswap-skillswap7.vercel.app";
+export type GitHubPreflightResult = import("@/lib/github-app/types").GitHubPreflightResult;
 
 /** Set before redirecting to GitHub grant/configure; cleared after successful sync. */
 export const PENDING_GITHUB_GRANT_KEY = "repodiet_pending_github_grant";
@@ -68,7 +68,7 @@ export const PENDING_GITHUB_GRANT_KEY = "repodiet_pending_github_grant";
 export function repodietInstallReturnPath(scanId?: string): string {
   const origin =
     process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    (typeof window !== "undefined" ? window.location.origin : REPODIET_APP_FALLBACK);
+    (typeof window !== "undefined" ? window.location.origin : REPODIET_PRODUCTION_FALLBACK_URL);
   const params = new URLSearchParams({ tab: "patch" });
   if (scanId) params.set("scanId", scanId);
   return `${origin}/app?${params.toString()}`;

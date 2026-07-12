@@ -2,7 +2,7 @@
 
 Audit date: 2026-07-10  
 Branch audited: `cursor/production-audit-39ce`  
-Production URL: `https://skillswap-skillswap7.vercel.app/`
+Production URL: `https://skillswap-virid-kappa.vercel.app/`
 
 This document classifies every user-visible capability as **REAL**, **PARTIAL**, **DEMO**, **COSMETIC**, **FAKE**, or **BROKEN** based on code-path inspection — not UI labels or README claims.
 

@@ -23,7 +23,7 @@ Do **not** use A2MCP paid tools as a substitute for the full repair-and-PR workf
 
 ## API contract
 
-Base URL: `ASP_PUBLIC_BASE_URL` (production: `https://skillswap-skillswap7.vercel.app`)
+Base URL: `ASP_PUBLIC_BASE_URL` (production: `https://skillswap-virid-kappa.vercel.app`)
 
 Authenticate every request:
 

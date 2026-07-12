@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { accessCopyForState } from "@/lib/github-app/access-states";
+import { REPODIET_PRODUCTION_FALLBACK_URL } from "@/lib/app/production-url";
 import {
   buildPrSummaryText,
   copyText,
@@ -89,7 +90,7 @@ function githubErrorMessage(code: string | null, repoName: string): string | nul
       ).body;
     case "state_reused":
     case "invalid_state":
-      return "GitHub finished installation, but RepoDiet could not verify the request. Click Install RepoDiet again. Use https://skillswap-skillswap7.vercel.app (not a preview URL) for the most reliable install flow.";
+      return `GitHub finished installation, but RepoDiet could not verify the request. Click Install RepoDiet again. Use ${REPODIET_PRODUCTION_FALLBACK_URL} (not a preview URL) for the most reliable install flow.`;
     case "invalid_setup_action":
     case "missing_setup_action":
       return "GitHub returned an unexpected installation action. Try again.";

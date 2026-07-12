@@ -1,4 +1,4 @@
-const REPODIET_APP_FALLBACK = "https://skillswap-skillswap7.vercel.app";
+import { REPODIET_PRODUCTION_FALLBACK_URL } from "@/lib/app/production-url";
 
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -44,7 +44,7 @@ export function getAppBaseUrl(): string {
     );
   }
 
-  return REPODIET_APP_FALLBACK;
+  return REPODIET_PRODUCTION_FALLBACK_URL;
 }
 
 export function resolveRepodietReturnUrl(returnPath?: string, scanId?: string): URL {
