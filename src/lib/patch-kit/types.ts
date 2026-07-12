@@ -148,6 +148,8 @@ export interface PatchKitPayload {
   deletionProofs?: import("./safe-delete-discovery").SafeDeleteProof[];
   sandboxRunId?: string;
   workflowRunId?: string;
+  /** Public repos use the same ZIP/git path as Scan — sandbox verification does not require App grant. */
+  repositoryIsPublic?: boolean;
   /** @deprecated use sandboxRunId */
   workerJobId?: string;
 }

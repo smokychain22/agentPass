@@ -241,15 +241,19 @@ export function PatchKitTab() {
       return "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available.";
     }
     if (
-      patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
-      patchKit?.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED") ||
-      patchKit?.patchValidation?.error?.includes("GITHUB_REPOSITORY_NOT_GRANTED")
+      !patchKit?.repositoryIsPublic &&
+      (patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
+        patchKit?.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED") ||
+        patchKit?.patchValidation?.error?.includes("GITHUB_REPOSITORY_NOT_GRANTED"))
     ) {
       const detail =
         patchKit.patchValidation.userMessage ??
         patchKit.patchValidation.error ??
-        "RepoDiet cannot access this repository from the sandbox.";
+        "RepoDiet needs GitHub App write access before opening a cleanup pull request.";
       return detail.replace(/^GITHUB_REPOSITORY_NOT_GRANTED:\s*/, "");
+    }
+    if (patchKit?.repositoryIsPublic && patchKit?.patchValidation?.status === "pending_sandbox") {
+      return "Public repository — running real Git validation and verification in Vercel Sandbox (no extra grant needed for this step).";
     }
     if (patchKit?.patchValidation?.status === "pending_sandbox") {
       return "Real Git validation and repository verification are running in an isolated Vercel Sandbox.";
@@ -391,13 +395,14 @@ export function PatchKitTab() {
             />
           )}
           {(patchKit.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
-            patchKit.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED")) && (
+            patchKit.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED")) &&
+            !patchKit.repositoryIsPublic && (
             <FeedbackBanner
               variant="warning"
               message={
                 (patchKit.patchValidation.userMessage ?? patchKit.patchValidation.error ?? "")
                   .replace(/^GITHUB_REPOSITORY_NOT_GRANTED:\s*/, "") ||
-                "RepoDiet cannot clone this repository in the sandbox. Grant access in RepoDiet Operator below, sync, then Regenerate Quick Cleanup."
+                "Grant GitHub App write access in RepoDiet Operator before opening a cleanup pull request."
               }
               dismissible={false}
             />

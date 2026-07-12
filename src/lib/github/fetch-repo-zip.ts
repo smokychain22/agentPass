@@ -120,3 +120,14 @@ export async function fetchRepoZip(
 
   throw new RepoFetchError(FETCH_ERROR);
 }
+
+export async function isPublicGitHubRepository(owner: string, repo: string): Promise<boolean> {
+  try {
+    const res = await tryFetch(`https://api.github.com/repos/${owner}/${repo}`);
+    if (!res.ok) return false;
+    const data = (await res.json()) as { private?: boolean };
+    return data.private === false;
+  } catch {
+    return false;
+  }
+}

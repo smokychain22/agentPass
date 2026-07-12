@@ -181,10 +181,12 @@ export function RepoDietOperatorSection({
       ? "verified"
       : patchKit?.repositoryVerification?.status ?? null);
   const githubAccountConnected = Boolean(githubStatus?.connected);
+  const repositoryIsPublic = patchKit?.repositoryIsPublic === true;
   const sandboxAccessBlocked =
-    patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
-    patchKit?.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED") ||
-    patchKit?.patchValidation?.error?.includes("GITHUB_REPOSITORY_NOT_GRANTED");
+    !repositoryIsPublic &&
+    (patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
+      patchKit?.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED") ||
+      patchKit?.patchValidation?.error?.includes("GITHUB_REPOSITORY_NOT_GRANTED"));
   const repositoryReady =
     Boolean(preflight?.repositoryAuthorized) && !sandboxAccessBlocked;
   const grantPropagationPending = Boolean(preflight?.grantPropagationPending);
@@ -439,7 +441,7 @@ export function RepoDietOperatorSection({
     if (locked) return "Run Quick Cleanup first.";
     if (accessSyncing) return "Syncing repository access with GitHub…";
     if (sandboxAccessBlocked) {
-      return "Grant GitHub repository access, sync, then Regenerate Quick Cleanup.";
+      return "Grant GitHub App write access to open a cleanup pull request (verification uses the same public clone path as Scan).";
     }
     if (!patchValidated) {
       return "Patch validation must pass before creating a cleanup PR.";
@@ -547,13 +549,20 @@ export function RepoDietOperatorSection({
                     <p>{repositoryFullName} authorized</p>
                     <p>Permissions verified</p>
                   </div>
-                ) : grantPropagationPending ? (
+                ) : grantPropagationPending && !repositoryIsPublic ? (
                   <div className="space-y-1 text-sm text-muted-foreground">
                     <p className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Grant received — waiting for GitHub to propagate access to {repositoryFullName}
                     </p>
                     <p className="text-xs">Click &quot;I granted access — sync now&quot; below if this takes more than a minute.</p>
+                  </div>
+                ) : repositoryIsPublic && !repositoryReady ? (
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <p className="text-signal">Public repository — scan and sandbox verification are ready.</p>
+                    <p className="text-xs">
+                      Grant GitHub App access only when you want RepoDiet to open a cleanup pull request.
+                    </p>
                   </div>
                 ) : sandboxAccessBlocked ? (
                   <div className="space-y-2">
@@ -680,6 +689,8 @@ export function RepoDietOperatorSection({
                 <p className="text-muted-foreground">Syncing repository access with GitHub…</p>
               ) : repositoryReady ? (
                 <p className="text-signal">Ready for pull requests</p>
+              ) : repositoryIsPublic ? (
+                <p className="text-signal">Ready for sandbox verification (public repo)</p>
               ) : (
                 <p>Grant repository access to enable PR actions.</p>
               )}

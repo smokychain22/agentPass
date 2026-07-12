@@ -14,6 +14,7 @@ import {
   inferRequiredPackagesForScripts,
 } from "@/lib/execution/workspace-install";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
+import { isPublicGitHubRepository } from "@/lib/github/fetch-repo-zip";
 import {
   auditTransformerCompatibleFindings,
   formatBlockerBreakdown,
@@ -815,6 +816,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         name: findings.repo.name,
         branch: findings.repo.branch,
       },
+      repositoryIsPublic: await isPublicGitHubRepository(
+        findings.repo.owner,
+        findings.repo.name
+      ),
       summary,
       patchValidation,
       changeOperations,

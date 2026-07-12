@@ -6,6 +6,7 @@ import {
   getInstallationDetails,
 } from "@/lib/github-app/installations";
 import { lookupRepositoryInstallationBinding } from "@/lib/github-app/install-flow-store";
+import { isPublicGitHubRepository } from "@/lib/github/fetch-repo-zip";
 import { getSandboxRun } from "./sandbox-run-store";
 import { requiresRepositoryOwnerInstall } from "@/lib/github-app/repository";
 
@@ -14,6 +15,10 @@ export interface FreshGitHubTokenResult {
   expiresAt: string;
   installationId: number;
 }
+
+export type SandboxCloneAuth =
+  | ({ mode: "installation" } & FreshGitHubTokenResult)
+  | { mode: "public" };
 
 function permissionsAreSufficient(permissions?: {
   contents: string;
@@ -40,9 +45,35 @@ function formatRepositoryAccessError(input: {
       installationOwner: input.installationOwner,
     })
   ) {
-    return `GITHUB_REPOSITORY_NOT_GRANTED: RepoDiet must be installed on the ${input.owner} GitHub account to clone ${fullName}. Open RepoDiet Operator → Grant Access, or install the app on ${input.owner}.`;
+    return `RepoDiet must be installed on the ${input.owner} GitHub account to open pull requests for ${fullName}. Verification can still run on public repositories.`;
   }
-  return `GITHUB_REPOSITORY_NOT_GRANTED: RepoDiet cannot access ${fullName} from the connected GitHub App installation. Open RepoDiet Operator → Grant Access to ${fullName}, click "I granted access — sync now", then Regenerate Quick Cleanup.`;
+  return `RepoDiet needs GitHub App write access to ${fullName} before opening a cleanup pull request.`;
+}
+
+async function resolveInstallationId(
+  input: {
+    repositoryOwner: string;
+    repositoryName: string;
+    installationId?: number;
+  }
+): Promise<number> {
+  const repositoryFullName = `${input.repositoryOwner}/${input.repositoryName}`;
+  let installationId = input.installationId;
+
+  if (!installationId) {
+    const binding = await lookupRepositoryInstallationBinding(repositoryFullName);
+    installationId = binding?.installationId;
+  }
+
+  if (!installationId) {
+    const session = await readInstallationSession();
+    if (!session?.installationId) {
+      throw new Error("GITHUB_APP_NOT_CONNECTED");
+    }
+    installationId = session.installationId;
+  }
+
+  return installationId;
 }
 
 export async function createFreshGitHubInstallationToken(input: {
@@ -68,21 +99,7 @@ export async function createFreshGitHubInstallationToken(input: {
     }
   }
 
-  const repositoryFullName = `${input.repositoryOwner}/${input.repositoryName}`;
-  let installationId = input.installationId;
-
-  if (!installationId) {
-    const binding = await lookupRepositoryInstallationBinding(repositoryFullName);
-    installationId = binding?.installationId;
-  }
-
-  if (!installationId) {
-    const session = await readInstallationSession();
-    if (!session?.installationId) {
-      throw new Error("GITHUB_APP_NOT_CONNECTED");
-    }
-    installationId = session.installationId;
-  }
+  const installationId = await resolveInstallationId(input);
 
   const details = await getInstallationDetails(installationId);
   if (!permissionsAreSufficient(details?.permissions)) {
@@ -114,10 +131,40 @@ export async function createFreshGitHubInstallationToken(input: {
   };
 }
 
+/**
+ * Scan uses public ZIP downloads; sandbox git validation must not require App repo
+ * access for public repositories that were already scanned successfully.
+ */
+export async function resolveSandboxCloneAuth(input: {
+  repositoryOwner: string;
+  repositoryName: string;
+  installationId?: number;
+  jobId?: string;
+}): Promise<SandboxCloneAuth> {
+  const isPublic = await isPublicGitHubRepository(
+    input.repositoryOwner,
+    input.repositoryName
+  );
+  if (isPublic) {
+    return { mode: "public" };
+  }
+
+  const token = await createFreshGitHubInstallationToken(input);
+  return { mode: "installation", ...token };
+}
+
 export function authenticatedCloneUrl(repoUrl: string, token: string): string {
   const trimmed = repoUrl.trim().replace(/\/$/, "");
   if (!trimmed.startsWith("https://github.com/")) {
     throw new Error("UNSUPPORTED_REPOSITORY_URL");
   }
   return trimmed.replace("https://", `https://x-access-token:${token}@`);
+}
+
+export function publicGitCloneUrl(repoUrl: string): string {
+  const trimmed = repoUrl.trim().replace(/\/$/, "");
+  if (!trimmed.startsWith("https://github.com/")) {
+    throw new Error("UNSUPPORTED_REPOSITORY_URL");
+  }
+  return trimmed.endsWith(".git") ? trimmed : `${trimmed}.git`;
 }

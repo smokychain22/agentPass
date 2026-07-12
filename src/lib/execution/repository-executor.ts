@@ -8,7 +8,8 @@ import { hashPatchContent } from "@/lib/patch-kit/canonical-patch";
 import { cloneExactCommit, generateGitPatch, getGitVersion, validateGitPatch } from "./git-clone";
 import {
   authenticatedCloneUrl,
-  createFreshGitHubInstallationToken,
+  publicGitCloneUrl,
+  resolveSandboxCloneAuth,
 } from "./sandbox-github-token";
 import { runSandboxCommand, runSandboxShell } from "./sandbox-command";
 import {
@@ -41,13 +42,17 @@ async function cloneInSandbox(
   root: string,
   repoUrl: string,
   baseCommitSha: string,
-  token: string
+  auth: { mode: "installation" | "public"; token?: string }
 ): Promise<void> {
-  const authUrl = authenticatedCloneUrl(repoUrl, token);
+  const remoteUrl =
+    auth.mode === "installation" && auth.token
+      ? authenticatedCloneUrl(repoUrl, auth.token)
+      : publicGitCloneUrl(repoUrl);
+  const secrets = auth.mode === "installation" && auth.token ? [auth.token] : [];
   await runSandboxShell(
     sandbox,
-    `rm -rf "${root}" && mkdir -p "${root}" && cd "${root}" && git init && git remote add origin "${authUrl.replace(/"/g, '\\"')}" && git fetch --depth 1 origin ${baseCommitSha} && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "${baseCommitSha}" && test -z "$(git status --porcelain)"`,
-    { secrets: [token] }
+    `rm -rf "${root}" && mkdir -p "${root}" && cd "${root}" && git init && git remote add origin "${remoteUrl.replace(/"/g, '\\"')}" && git fetch --depth 1 origin ${baseCommitSha} && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "${baseCommitSha}" && test -z "$(git status --porcelain)"`,
+    secrets.length > 0 ? { secrets } : undefined
   );
 }
 
@@ -159,18 +164,25 @@ export async function executeRepositoryCleanupInSandbox(
   };
 
   let sandbox: Sandbox | undefined;
-  let token = "";
+  let cloneToken = "";
 
   try {
     await updateSandboxRun(runId, { status: "creating_sandbox", progress: "Preparing isolated sandbox" });
 
-    const github = await createFreshGitHubInstallationToken({
+    const cloneAuth = await resolveSandboxCloneAuth({
       repositoryOwner: payload.repositoryOwner,
       repositoryName: payload.repositoryName,
       installationId: payload.installationId,
       jobId: runId,
     });
-    token = github.token;
+    if (cloneAuth.mode === "installation") {
+      cloneToken = cloneAuth.token;
+    }
+    log(
+      cloneAuth.mode === "public"
+        ? "clone: public repository (scan-compatible, no App grant required)"
+        : `clone: installation ${cloneAuth.installationId}`
+    );
 
     sandbox = await createCleanupSandbox({
       cleanupRunId: payload.cleanupRunId,
@@ -189,7 +201,10 @@ export async function executeRepositoryCleanupInSandbox(
     log(`git: ${gitVersion}`);
 
     await runSandboxShell(sandbox, `mkdir -p "${workspace}"`);
-    await cloneInSandbox(sandbox, baseline, payload.repoUrl, payload.baseCommitSha, token);
+    await cloneInSandbox(sandbox, baseline, payload.repoUrl, payload.baseCommitSha, {
+      mode: cloneAuth.mode,
+      token: cloneAuth.mode === "installation" ? cloneAuth.token : undefined,
+    });
     await runSandboxShell(
       sandbox,
       `mkdir -p "${transformed}" "${validation}" && cp -a "${baseline}/." "${transformed}/" && cp -a "${baseline}/." "${validation}/"`
@@ -327,7 +342,7 @@ export async function executeRepositoryCleanupInSandbox(
       logs,
     };
   } finally {
-    token = "";
+    cloneToken = "";
     await stopCleanupSandbox(sandbox);
   }
 }
@@ -336,7 +351,7 @@ export async function executeRepositoryCleanupLocal(
   payload: SandboxRunPayload
 ): Promise<RepositoryExecutionResult> {
   const workRoot = path.join("/tmp", "repodiet", payload.cleanupRunId);
-  const github = await createFreshGitHubInstallationToken({
+  const cloneAuth = await resolveSandboxCloneAuth({
     repositoryOwner: payload.repositoryOwner,
     repositoryName: payload.repositoryName,
     installationId: payload.installationId,
@@ -345,7 +360,7 @@ export async function executeRepositoryCleanupLocal(
   const { rootDir: baselineRoot } = await cloneExactCommit({
     repoUrl: payload.repoUrl,
     baseCommitSha: payload.baseCommitSha,
-    token: github.token,
+    token: cloneAuth.mode === "installation" ? cloneAuth.token : undefined,
     workDir: workRoot,
   });
 
