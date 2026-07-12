@@ -205,7 +205,17 @@ export interface Finding {
   protectionReason?: string;
   suggestedAction?: string;
   projectRoot?: string;
+  /** Post evidence-gate confidence tier for UI and prioritization. */
+  confidenceTier?: FindingConfidenceTier;
+  priorityScore?: number;
+  evidenceGate?: import("@/lib/findings/evidence-gate").FindingEvidenceGate;
 }
+
+export type FindingConfidenceTier =
+  | "verified"
+  | "high_confidence"
+  | "needs_review"
+  | "suppressed";
 
 export interface FindingsSummary {
   totalFindings: number;
@@ -232,6 +242,12 @@ export interface FindingsSummary {
   transformedFindings?: number;
   reviewRequiredFindings?: number;
   protectedFindings?: number;
+  confidenceTiers?: {
+    verified: number;
+    highConfidence: number;
+    needsReview: number;
+    suppressed: number;
+  };
 }
 
 export interface FindingsPayload {
@@ -270,6 +286,8 @@ export interface FindingsPayload {
     projectRoot?: string;
     scanId?: string;
   };
+  scanIntelligence?: import("@/lib/scanner/intelligence-manifest").RepositoryIntelligenceManifest;
+  scanCoverageWarning?: string;
   repositoryModel?: {
     projects: Array<Record<string, unknown>>;
     workspaces: string[];

@@ -153,7 +153,7 @@ export function FindingsTab() {
       <WorkspaceSection
         label="Analysis workspace"
         title="Findings Engine"
-        description="RepoDiet analyzes your scanned repository with Knip, jscpd, Madge, and RepoDiet import/backup detectors. Each finding is classified with evidence grade and file path before Quick Cleanup."
+        description="Analyzers detect issues; RepoDiet verifies them through a 3-stage evidence gate before you see them. Findings are ranked by actionable priority, not severity alone."
         actions={
           <>
             <Button onClick={runFindings} disabled={isLoading}>
@@ -226,6 +226,50 @@ export function FindingsTab() {
               <FeedbackBanner variant="warning" message={warning} dismissible={false} />
             ) : null;
           })()}
+
+          {findings.scanCoverageWarning && (
+            <FeedbackBanner
+              variant="warning"
+              message={findings.scanCoverageWarning}
+              dismissible={false}
+            />
+          )}
+
+          {findings.summary.confidenceTiers && (
+            <Panel variant="elevated" padding="sm" className="border-border/60">
+              <p className="ds-label mb-2">Evidence confidence tiers</p>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Findings are ranked by priority (confidence × reachability × exposure × blast radius ×
+                maintenance × recurrence × fix safety), not severity alone.
+              </p>
+              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-muted-foreground">Verified</dt>
+                  <dd className="font-mono text-lg text-signal">
+                    {findings.summary.confidenceTiers.verified}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">High confidence</dt>
+                  <dd className="font-mono text-lg">
+                    {findings.summary.confidenceTiers.highConfidence}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Needs review</dt>
+                  <dd className="font-mono text-lg text-amber-400">
+                    {findings.summary.confidenceTiers.needsReview}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Suppressed</dt>
+                  <dd className="font-mono text-lg text-muted-foreground">
+                    {findings.summary.confidenceTiers.suppressed}
+                  </dd>
+                </div>
+              </dl>
+            </Panel>
+          )}
 
           {findings.mode === "demo" && (
             <FeedbackBanner

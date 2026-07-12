@@ -62,6 +62,13 @@ export async function runFindingsEngine(
 
     const scanId = options?.scanId ?? `scan_${nanoid(12)}`;
 
+    let scanIntelligence: import("@/lib/scanner/intelligence-manifest").RepositoryIntelligenceManifest | undefined;
+    if (options?.scanId) {
+      const { getAppScan } = await import("@/lib/scan/app-scan-store");
+      const stored = await getAppScan(options.scanId);
+      scanIntelligence = stored?.payload.intelligenceManifest;
+    }
+
     onStage?.("jscpd");
     const jscpdResult = await runJscpd(workspace.rootDir);
 
@@ -177,6 +184,9 @@ export async function runFindingsEngine(
       repositoryModel,
     });
 
+    const { enrichFindingsWithEvidenceGate } = await import("@/lib/findings/enrich-evidence-gate");
+    payload = enrichFindingsWithEvidenceGate(payload);
+
     payload = enrichPayloadLifecycle(payload);
 
     const verifiedFlat = flattenPayloadFindings(payload);
@@ -213,6 +223,12 @@ export async function runFindingsEngine(
       projectRoot: payload.repositoryModel?.primaryProjectRoot,
       scanId: payload.scanId,
     };
+    if (scanIntelligence) {
+      payload.scanIntelligence = scanIntelligence;
+      if (!payload.repo.commitSha && scanIntelligence.identity.commitSha) {
+        payload.repo = { ...payload.repo, commitSha: scanIntelligence.identity.commitSha };
+      }
+    }
     if (workspace.repo.commitSha && !payload.repo.commitSha) {
       payload.repo = { ...payload.repo, commitSha: workspace.repo.commitSha };
     }

@@ -3,6 +3,14 @@ import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { findingAnalyzerLabel } from "@/lib/findings/analyzer-status";
 import type { EvidenceGrade } from "@/lib/workflow/lifecycle";
 import { evidenceGradeForFinding } from "@/lib/workflow/lifecycle";
+import {
+  confidenceTierLabel,
+  sortFindingsByPriority,
+  type FindingConfidenceTier,
+} from "@/lib/findings/evidence-gate";
+
+export { sortFindingsByPriority, confidenceTierLabel };
+export type { FindingConfidenceTier };
 
 export function typeLabel(type: FindingType): string {
   const map: Record<FindingType, string> = {
@@ -32,6 +40,21 @@ export function actionVariant(
   if (action === "safe_candidate") return "signal";
   if (action === "do_not_touch") return "default";
   return "electric";
+}
+
+export function confidenceTierVariant(
+  tier: FindingConfidenceTier
+): "safe" | "cyan" | "review" | "neutral" {
+  switch (tier) {
+    case "verified":
+      return "safe";
+    case "high_confidence":
+      return "cyan";
+    case "needs_review":
+      return "review";
+    case "suppressed":
+      return "neutral";
+  }
 }
 
 export function severityColor(severity: string): string {

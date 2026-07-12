@@ -28,6 +28,7 @@ import { ScanEmptyIllustration } from "@/components/app/ui/scan-empty-illustrati
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { ProjectRootSelectionPanel } from "@/components/app/scan/project-root-selection-panel";
 import { AnalysisLineageBanner } from "@/components/app/analysis-lineage-banner";
+import { ScanCoveragePanel } from "@/components/app/scan/scan-coverage-panel";
 
 const LOADING_PHASES: ScanPhase[] = [
   "validating",
@@ -299,6 +300,11 @@ export function ScanTab() {
           </Panel>
 
           <AnalysisLineageBanner scan={displayResult} />
+
+          <ScanCoveragePanel
+            scan={displayResult}
+            manifest={displayResult.intelligenceManifest}
+          />
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard label="Framework" value={displayResult.framework.name} accent="cyan" />
