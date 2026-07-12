@@ -40,6 +40,7 @@ import {
   type GitHubPreflightResult,
 } from "@/lib/patch-kit/client";
 import { computeOperatorPrGates } from "@/lib/patch-kit/operator-pr-gates";
+import type { RepositoryVerificationStatus } from "@/lib/patch-kit/repository-verification";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { cn } from "@/lib/utils";
@@ -51,7 +52,7 @@ interface RepoDietOperatorSectionProps {
   patchKit: PatchKitPayload | null;
   demoMode: boolean;
   requireVerificationForCleanupPr?: boolean;
-  verificationStatus?: "passed" | "failed" | "partial" | "not_run" | "verified" | "blocked" | null;
+  verificationStatus?: RepositoryVerificationStatus | "passed" | "partial" | null;
 }
 
 function InfoCard({

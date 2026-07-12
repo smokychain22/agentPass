@@ -573,11 +573,7 @@ export function PatchKitTab() {
         patchKit={patchKit}
         demoMode={demoMode}
         requireVerificationForCleanupPr={true}
-        verificationStatus={
-          patchKit?.repositoryVerification?.status === "verified"
-            ? "verified"
-            : patchKit?.repositoryVerification?.status ?? null
-        }
+        verificationStatus={patchKit?.repositoryVerification?.status ?? null}
       />
     </div>
   );
