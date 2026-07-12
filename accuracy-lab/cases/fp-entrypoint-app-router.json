@@ -1,0 +1,17 @@
+{
+  "id": "fp-entrypoint-app-router",
+  "category": "false_positive_entrypoint",
+  "description": "app/page.tsx must NOT be reported as unused despite no static importers",
+  "repo": "accuracy-lab/fixtures/fp-entrypoint",
+  "inject": {
+    "files": ["src/app/dashboard/page.tsx"]
+  },
+  "groundTruth": {
+    "expectedFinding": false,
+    "expectedConfidence": null,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["import_graph", "framework_entry_points"],
+    "remediationClass": "red"
+  }
+}

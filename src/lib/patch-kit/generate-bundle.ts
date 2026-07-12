@@ -11,6 +11,7 @@ export interface BundleFiles {
   cursorPromptMd: string;
   findingsJson: FindingsPayload;
   patchkitSummaryJson: string;
+  prEvidenceReportMd?: string;
 }
 
 export interface BundleResult {
@@ -39,6 +40,9 @@ export async function generateBundle(
   zip.file("cursor-prompt.md", files.cursorPromptMd);
   zip.file("findings.json", JSON.stringify(files.findingsJson, null, 2));
   zip.file("patchkit-summary.json", files.patchkitSummaryJson);
+  if (files.prEvidenceReportMd) {
+    zip.file("pr-evidence-report.md", files.prEvidenceReportMd);
+  }
 
   const zipBuffer = await zip.generateAsync({
     type: "nodebuffer",

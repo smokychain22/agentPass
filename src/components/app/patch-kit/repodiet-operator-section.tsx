@@ -221,6 +221,7 @@ export function RepoDietOperatorSection({
     filesDeletedPlanned: patchKit?.summary.filesDeleted ?? patchKit?.summary.deletedPaths?.length ?? 0,
     requireVerificationForCleanupPr: true,
     verificationStatus: repoVerificationStatus,
+    mandatoryGatesPassed: patchKit?.verificationGates?.allRequiredPassed !== false,
   });
   const { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr } = operatorGates;
 
@@ -492,6 +493,14 @@ export function RepoDietOperatorSection({
       verifiedChanges === 0
     ) {
       return "Run verification on the Verify tab first.";
+    }
+    if (patchKit?.verificationGates && !patchKit.verificationGates.allRequiredPassed) {
+      const failed = patchKit.verificationGates.gates
+        .filter((g) => g.requiredForSafePr && g.status === "failed")
+        .map((g) => g.label);
+      return failed.length
+        ? `Verification gates failed: ${failed.join(", ")}`
+        : "Mandatory verification gates are not complete.";
     }
     return null;
   }, [

@@ -1,0 +1,31 @@
+{
+  "name": "repodiet-accuracy-lab",
+  "version": "0.1.0",
+  "description": "Benchmark corpus and regression harness for RepoDiet accuracy",
+  "releaseTargets": {
+    "displayedFindingsPrecision": 0.95,
+    "autofixEligibilityPrecision": 0.99,
+    "openedPrVerificationPassRate": 1.0,
+    "incompleteScanCleanResults": 0,
+    "highConfidenceWithoutEvidence": 0
+  },
+  "caseCategories": [
+    "true_unused_file",
+    "false_positive_entrypoint",
+    "true_unused_dependency",
+    "script_only_dependency",
+    "dynamic_import",
+    "tsconfig_alias",
+    "workspace_reference",
+    "package_export",
+    "circular_dependency",
+    "runtime_cycle",
+    "exact_duplication",
+    "intentional_duplication",
+    "generated_code",
+    "security_taint",
+    "near_miss_negative",
+    "behavior_changing_fix",
+    "api_breaking_fix"
+  ]
+}
