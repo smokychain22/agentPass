@@ -201,8 +201,9 @@ test("blocker breakdown is explicit not generic skipped", () => {
     },
   ];
   const summary = formatBlockerBreakdown(audits);
-  assert.match(summary, /Eligible findings: 2/i);
-  assert.match(summary, /Changes generated: 0/i);
+  assert.match(summary, /Eligible findings: 1/i);
+  assert.match(summary, /Ineligible findings: 1/i);
+  assert.match(summary, /Generated file operations: 0/i);
   assert.match(summary, /No-op: 1/i);
   assert.match(summary, /Not attempted: 1/i);
   const counts = summarizeBlockers(audits);

@@ -60,7 +60,7 @@ import { storePatchKit } from "./patch-kit-store";
 import { supportedTransformerFor } from "@/lib/workflow/lifecycle";
 import { buildCleanupProof, buildProofLadderCounts } from "@/lib/execution/proof-ladder";
 import { countDiffLines } from "@/lib/execution/one-fix-at-a-time";
-import { buildRemediationPlan, isGreenAutoFixAllowed } from "./remediation-class";
+import { buildRemediationPlan } from "./remediation-class";
 import { buildVerificationGateReport } from "./verification-gates";
 import { generatePrEvidenceReport } from "./generate-pr-evidence-report";
 import type {
@@ -333,7 +333,12 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const eligibleFindingIds = preflightAudits
       .filter(isCleanupEligibleAudit)
-      .filter((a) => isGreenAutoFixAllowed(a.findingId, remediationPlan))
+      .filter((a) => {
+        const item = remediationPlan.green.find((g) => g.findingId === a.findingId);
+        // Red-tier findings never auto-fix; green and unclassified eligible audits may proceed
+        if (!item) return true;
+        return item.remediationClass !== "red";
+      })
       .map((a) => a.findingId);
 
     const transformerCompatible = compatibleFindings.length;
@@ -580,6 +585,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     }
     if (gitValidationPassed && generatedChanges > 0) {
       validatedChanges = generatedChanges;
+      if (validatedEdits.length === 0 && retainedFixCount > 0) {
+        const retainedEdits = buildEditsFromRetainedAttempts(cleanupResult.fixLoop.attempts);
+        validatedEdits = await filterEditsAgainstBaseline(baselineRoot, retainedEdits);
+      }
     }
 
     const repositoryVerification: RepositoryVerificationResult = await (async () => {

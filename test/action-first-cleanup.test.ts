@@ -66,7 +66,7 @@ test("limits: 1 retained, 5 candidates, 3 strategies per finding", () => {
   assert.equal(QUICK_CLEANUP_RETAINED_FIX_LIMIT, 500);
 });
 
-test("first candidate regression, second would be verified_fix outcome mapping", () => {
+test("retained attempt is generated_pending until repository verification completes", () => {
   const regression = deriveAttemptProductOutcome({
     internalStatus: "skipped",
     reason: "Verification introduced new failure in: typecheck",
@@ -79,7 +79,7 @@ test("first candidate regression, second would be verified_fix outcome mapping",
     reason: "Fix verified and retained.",
     pluginId: "remove_unused_import",
   });
-  assert.equal(retained, "verified_fix");
+  assert.equal(retained, "generated_pending");
 });
 
 test("all five fail summary is explicit", () => {

@@ -40,12 +40,12 @@ function executionStepFinding(): Finding {
     title: "Unused import: ExecutionStep",
     files: ["agora-forge/src/lib/execution/orchestrator.ts"],
     confidence: 0.9,
-    confidenceReason: "heuristic",
+    confidenceReason: "knip",
     severity: "low",
     action: "safe_candidate",
     reason: "ExecutionStep unused",
-    source: "heuristic",
-    sourceMode: "heuristic",
+    source: "repodiet_import",
+    sourceMode: "native",
     evidence: {
       summary: "unused ExecutionStep",
       signals: [

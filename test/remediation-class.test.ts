@@ -77,6 +77,23 @@ test("orphan pattern defaults to yellow", () => {
   assert.equal(c.draftPatchOnly, true);
 });
 
+test("verification gates pass when repo verified even without per-script checks", () => {
+  const report = buildVerificationGateReport({
+    id: "pk1",
+    repo: { owner: "o", name: "r", branch: "main" },
+    summary: { validatedChanges: 2, verifiedChanges: 2, filesDeleted: 0 } as PatchKitPayload["summary"],
+    patchValidation: { status: "passed" },
+    repositoryVerification: { status: "verified", checks: [] },
+    remediationPlan: {
+      green: [],
+      yellow: [],
+      red: [],
+      summary: { greenCount: 1, yellowCount: 0, redCount: 0, autoFixEligibleCount: 1 },
+    },
+  } as PatchKitPayload);
+  assert.equal(report.allRequiredPassed, true);
+});
+
 test("verification gates block when patch validation failed", () => {
   const report = buildVerificationGateReport({
     id: "pk1",

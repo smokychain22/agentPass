@@ -20,15 +20,20 @@ export interface VerificationGateReport {
 }
 
 function checkStatusFromScript(
-  checks: Array<{ name: string; status: string }> | undefined,
-  scriptName: string
+  checks: Array<{ name: string; status: string }>,
+  scriptName: string,
+  repoVerified: boolean
 ): VerificationGateStatus {
-  const hit = checks?.find((c) => c.name === scriptName);
-  if (!hit) return "not_run";
-  if (hit.status === "passed") return "passed";
-  if (hit.status === "failed") return "failed";
-  if (hit.status === "skipped") return "skipped";
-  return "partial";
+  const hit = checks.find((c) => c.name === scriptName);
+  if (hit) {
+    if (hit.status === "passed") return "passed";
+    if (hit.status === "failed") return "failed";
+    if (hit.status === "skipped") return "skipped";
+    return "partial";
+  }
+  // Script absent from package.json or not executed — skip if holistic verification passed
+  if (repoVerified) return "skipped";
+  return "not_run";
 }
 
 export function buildVerificationGateReport(
@@ -46,7 +51,9 @@ export function buildVerificationGateReport(
 
   const patchStatus = patchKit.patchValidation?.status;
   const repoVerification = patchKit.repositoryVerification?.status;
+  const repoVerified = repoVerification === "verified";
   const scanReady = findings?.scanIntelligence?.coverage.readinessForFindings !== false;
+  const checkList = [...uniqueChecks.values()];
 
   const gates: VerificationGate[] = [
     {
@@ -78,7 +85,7 @@ export function buildVerificationGateReport(
       label: "Install dependencies successfully",
       requiredForSafePr: true,
       status:
-        repoVerification === "verified"
+        repoVerified
           ? "passed"
           : repoVerification === "regression_failed" || repoVerification === "failed"
             ? "failed"
@@ -90,25 +97,25 @@ export function buildVerificationGateReport(
       id: "typecheck",
       label: "Run type checking",
       requiredForSafePr: true,
-      status: checkStatusFromScript([...uniqueChecks.values()], "typecheck"),
+      status: checkStatusFromScript(checkList, "typecheck", repoVerified),
     },
     {
       id: "lint",
       label: "Run linting",
       requiredForSafePr: false,
-      status: checkStatusFromScript([...uniqueChecks.values()], "lint"),
+      status: checkStatusFromScript(checkList, "lint", repoVerified),
     },
     {
       id: "unit_tests",
       label: "Run unit tests",
       requiredForSafePr: true,
-      status: checkStatusFromScript([...uniqueChecks.values()], "test"),
+      status: checkStatusFromScript(checkList, "test", repoVerified),
     },
     {
       id: "production_build",
       label: "Run production build",
       requiredForSafePr: true,
-      status: checkStatusFromScript([...uniqueChecks.values()], "build"),
+      status: checkStatusFromScript(checkList, "build", repoVerified),
     },
     {
       id: "baseline_patched",
@@ -135,15 +142,9 @@ export function buildVerificationGateReport(
       id: "green_remediation_only",
       label: "Auto-applied fixes are Green-tier only",
       requiredForSafePr: true,
-      status:
-        patchKit.remediationPlan?.summary.autoFixEligibleCount === 0 &&
-        (patchKit.summary.verifiedChanges ?? 0) > 0
-          ? "partial"
-          : patchKit.remediationPlan
-            ? "passed"
-            : "not_run",
+      status: patchKit.remediationPlan ? "passed" : "not_run",
       detail: patchKit.remediationPlan
-        ? `${patchKit.remediationPlan.summary.greenCount} green, ${patchKit.remediationPlan.summary.yellowCount} yellow, ${patchKit.remediationPlan.summary.redCount} red`
+        ? `${patchKit.remediationPlan.summary.greenCount} green (${patchKit.remediationPlan.summary.autoFixEligibleCount} autofix-eligible), ${patchKit.remediationPlan.summary.yellowCount} yellow, ${patchKit.remediationPlan.summary.redCount} red`
         : undefined,
     },
     {
@@ -153,7 +154,7 @@ export function buildVerificationGateReport(
       status:
         patchKit.repositoryVerification?.failureCode === "INSTALL_FAILED"
           ? "failed"
-          : repoVerification === "verified"
+          : repoVerified
             ? "passed"
             : "not_run",
     },

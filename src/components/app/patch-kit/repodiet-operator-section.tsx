@@ -221,7 +221,9 @@ export function RepoDietOperatorSection({
     filesDeletedPlanned: patchKit?.summary.filesDeleted ?? patchKit?.summary.deletedPaths?.length ?? 0,
     requireVerificationForCleanupPr: true,
     verificationStatus: repoVerificationStatus,
-    mandatoryGatesPassed: patchKit?.verificationGates?.allRequiredPassed !== false,
+    mandatoryGatesPassed: patchKit?.verificationGates
+      ? patchKit.verificationGates.allRequiredPassed
+      : undefined,
   });
   const { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr } = operatorGates;
 
