@@ -140,17 +140,23 @@ export async function persistSandboxFailureToPatchKit(input: {
       ? ({ status: "passed" } as const)
       : ({ status: "passed" } as const);
 
+  const userMessage =
+    input.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
+    input.failureMessage.includes("GITHUB_REPOSITORY_NOT_GRANTED")
+      ? input.failureMessage.replace(/^GITHUB_REPOSITORY_NOT_GRANTED:\s*/, "")
+      : input.failureMessage;
+
   return persistSandboxResultsToPatchKit({
     cleanupRunId: input.cleanupRunId,
     sandboxRunId: input.sandboxRunId,
     patchValidation: {
-      status: "failed",
-      error: input.failureMessage,
-      userMessage: input.failureMessage,
+      status: "blocked",
+      error: userMessage,
+      userMessage,
       gitPatchValidation: {
         status: "blocked",
         failureCode: input.failureCode,
-        error: input.failureMessage,
+        error: userMessage,
       },
       contentIntegrityValidation,
     },

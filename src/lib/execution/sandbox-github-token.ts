@@ -2,10 +2,12 @@ import { createInstallationAccessToken } from "@/lib/github-app/installations";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
 import { readInstallationSession } from "@/lib/github-app/session";
 import {
-  installationHasRepoAccess,
+  installationIncludesRepositoryWithRetry,
   getInstallationDetails,
 } from "@/lib/github-app/installations";
+import { lookupRepositoryInstallationBinding } from "@/lib/github-app/install-flow-store";
 import { getSandboxRun } from "./sandbox-run-store";
+import { requiresRepositoryOwnerInstall } from "@/lib/github-app/repository";
 
 export interface FreshGitHubTokenResult {
   token: string;
@@ -24,6 +26,23 @@ function permissionsAreSufficient(permissions?: {
     permissions.pullRequests === "write" &&
     (permissions.metadata === "read" || permissions.metadata === "write")
   );
+}
+
+function formatRepositoryAccessError(input: {
+  owner: string;
+  repo: string;
+  installationOwner?: string;
+}): string {
+  const fullName = `${input.owner}/${input.repo}`;
+  if (
+    requiresRepositoryOwnerInstall({
+      repositoryOwner: input.owner,
+      installationOwner: input.installationOwner,
+    })
+  ) {
+    return `GITHUB_REPOSITORY_NOT_GRANTED: RepoDiet must be installed on the ${input.owner} GitHub account to clone ${fullName}. Open RepoDiet Operator → Grant Access, or install the app on ${input.owner}.`;
+  }
+  return `GITHUB_REPOSITORY_NOT_GRANTED: RepoDiet cannot access ${fullName} from the connected GitHub App installation. Open RepoDiet Operator → Grant Access to ${fullName}, click "I granted access — sync now", then Regenerate Quick Cleanup.`;
 }
 
 export async function createFreshGitHubInstallationToken(input: {
@@ -49,16 +68,20 @@ export async function createFreshGitHubInstallationToken(input: {
     }
   }
 
-  const installationId = input.installationId;
+  const repositoryFullName = `${input.repositoryOwner}/${input.repositoryName}`;
+  let installationId = input.installationId;
+
+  if (!installationId) {
+    const binding = await lookupRepositoryInstallationBinding(repositoryFullName);
+    installationId = binding?.installationId;
+  }
+
   if (!installationId) {
     const session = await readInstallationSession();
     if (!session?.installationId) {
       throw new Error("GITHUB_APP_NOT_CONNECTED");
     }
-    return createFreshGitHubInstallationToken({
-      ...input,
-      installationId: session.installationId,
-    });
+    installationId = session.installationId;
   }
 
   const details = await getInstallationDetails(installationId);
@@ -66,13 +89,21 @@ export async function createFreshGitHubInstallationToken(input: {
     throw new Error("GITHUB_PERMISSION_DENIED");
   }
 
-  const hasAccess = await installationHasRepoAccess(
+  const access = await installationIncludesRepositoryWithRetry(
     installationId,
     input.repositoryOwner,
-    input.repositoryName
+    input.repositoryName,
+    { attempts: 6, delayMs: 2000 }
   );
-  if (!hasAccess) {
-    throw new Error("GITHUB_REPOSITORY_NOT_GRANTED");
+
+  if (!access.granted) {
+    throw new Error(
+      formatRepositoryAccessError({
+        owner: input.repositoryOwner,
+        repo: input.repositoryName,
+        installationOwner: details?.accountLogin,
+      })
+    );
   }
 
   const result = await createInstallationAccessToken(installationId);

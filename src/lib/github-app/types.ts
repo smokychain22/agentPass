@@ -45,6 +45,8 @@ export interface GitHubPreflightResult {
     primaryAction?: string;
     secondaryAction?: string;
   };
+  /** User granted access recently; GitHub may still be propagating. */
+  grantPropagationPending?: boolean;
   developer?: {
     contentsPermission?: string;
     pullRequestsPermission?: string;

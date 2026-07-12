@@ -90,6 +90,10 @@ export function createInstallFlowRecord(input: {
   };
 }
 
+function repoBindingIndexKey(repositoryFullName: string): string {
+  return `binding:repo:${repositoryFullName}`;
+}
+
 export async function saveRepoInstallBinding(binding: RepoInstallBinding): Promise<void> {
   await setDurableRecord(
     "github_installations",
@@ -101,6 +105,11 @@ export async function saveRepoInstallBinding(binding: RepoInstallBinding): Promi
     bindingKeyByInstallation(binding.installationId, binding.repositoryFullName),
     binding
   );
+  await setDurableRecord("github_installations", repoBindingIndexKey(binding.repositoryFullName), {
+    installationId: binding.installationId,
+    installationOwner: binding.installationOwner,
+    authorizedAt: binding.authorizedAt,
+  });
   const browserId = browserSessionFromKey(binding.sessionKey);
   if (browserId) {
     await setDurableRecord(
@@ -163,4 +172,14 @@ export async function resolveRepoInstallBinding(input: {
     return installBinding;
   }
   return undefined;
+}
+
+export async function lookupRepositoryInstallationBinding(
+  repositoryFullName: string
+): Promise<{ installationId: number; installationOwner?: string; authorizedAt?: string } | undefined> {
+  return getDurableRecord<{
+    installationId: number;
+    installationOwner?: string;
+    authorizedAt?: string;
+  }>("github_installations", repoBindingIndexKey(repositoryFullName));
 }

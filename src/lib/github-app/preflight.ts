@@ -185,8 +185,8 @@ export async function runGitHubPreflight(
     installationOwner,
     repositoryOwner: owner,
     requiresRepositoryOwnerInstall: ownerMismatch,
-    repositoryAuthorized:
-      (repositoryAccessible || bindingTrusted) && permissionsVerified && !suspended,
+    repositoryAuthorized: repositoryAccessible && permissionsVerified && !suspended,
+    grantPropagationPending: bindingTrusted && !repositoryAccessible && !suspended,
     permissionsVerified,
     repositoryAccessible,
     canCreateBranch,

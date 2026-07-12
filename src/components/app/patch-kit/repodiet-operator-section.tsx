@@ -181,7 +181,13 @@ export function RepoDietOperatorSection({
       ? "verified"
       : patchKit?.repositoryVerification?.status ?? null);
   const githubAccountConnected = Boolean(githubStatus?.connected);
-  const repositoryReady = Boolean(preflight?.repositoryAuthorized);
+  const sandboxAccessBlocked =
+    patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
+    patchKit?.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED") ||
+    patchKit?.patchValidation?.error?.includes("GITHUB_REPOSITORY_NOT_GRANTED");
+  const repositoryReady =
+    Boolean(preflight?.repositoryAuthorized) && !sandboxAccessBlocked;
+  const grantPropagationPending = Boolean(preflight?.grantPropagationPending);
   const accessSyncing =
     (statusLoading || preflightLoading) && !repositoryReady;
   const manualTokenReady =
@@ -432,7 +438,12 @@ export function RepoDietOperatorSection({
   const cleanupPrDisableReason = useMemo(() => {
     if (locked) return "Run Quick Cleanup first.";
     if (accessSyncing) return "Syncing repository access with GitHub…";
-    if (!patchValidated) return "Patch validation must pass before creating a cleanup PR.";
+    if (sandboxAccessBlocked) {
+      return "Grant GitHub repository access, sync, then Regenerate Quick Cleanup.";
+    }
+    if (!patchValidated) {
+      return "Patch validation must pass before creating a cleanup PR.";
+    }
     if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
       return "No validated source changes — generate repairs first.";
     }
@@ -449,6 +460,7 @@ export function RepoDietOperatorSection({
   }, [
     locked,
     accessSyncing,
+    sandboxAccessBlocked,
     patchValidated,
     validatedChanges,
     patchKit?.validatedEdits?.length,
@@ -534,6 +546,23 @@ export function RepoDietOperatorSection({
                     <p>GitHub connected</p>
                     <p>{repositoryFullName} authorized</p>
                     <p>Permissions verified</p>
+                  </div>
+                ) : grantPropagationPending ? (
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <p className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Grant received — waiting for GitHub to propagate access to {repositoryFullName}
+                    </p>
+                    <p className="text-xs">Click &quot;I granted access — sync now&quot; below if this takes more than a minute.</p>
+                  </div>
+                ) : sandboxAccessBlocked ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Sandbox cannot clone this repository</p>
+                    <p className="text-sm text-muted-foreground">
+                      {patchKit?.patchValidation?.userMessage ??
+                        patchKit?.patchValidation?.error ??
+                        `Grant RepoDiet access to ${repositoryFullName}, sync, then Regenerate Quick Cleanup.`}
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-2">

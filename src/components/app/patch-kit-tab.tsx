@@ -240,6 +240,17 @@ export function PatchKitTab() {
     if (supportedCount === 0) {
       return "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available.";
     }
+    if (
+      patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
+      patchKit?.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED") ||
+      patchKit?.patchValidation?.error?.includes("GITHUB_REPOSITORY_NOT_GRANTED")
+    ) {
+      const detail =
+        patchKit.patchValidation.userMessage ??
+        patchKit.patchValidation.error ??
+        "RepoDiet cannot access this repository from the sandbox.";
+      return detail.replace(/^GITHUB_REPOSITORY_NOT_GRANTED:\s*/, "");
+    }
     if (patchKit?.patchValidation?.status === "pending_sandbox") {
       return "Real Git validation and repository verification are running in an isolated Vercel Sandbox.";
     }
@@ -379,19 +390,20 @@ export function PatchKitTab() {
               dismissible={false}
             />
           )}
-          {patchKit.patchValidation?.status === "failed" &&
-            patchKit.sandboxRunId && (
+          {(patchKit.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
+            patchKit.patchValidation?.userMessage?.includes("GITHUB_REPOSITORY_NOT_GRANTED")) && (
             <FeedbackBanner
               variant="warning"
               message={
-                patchKit.patchValidation.userMessage ??
-                patchKit.patchValidation.error ??
-                "Vercel Sandbox verification failed. Click Regenerate Quick Cleanup to retry."
+                (patchKit.patchValidation.userMessage ?? patchKit.patchValidation.error ?? "")
+                  .replace(/^GITHUB_REPOSITORY_NOT_GRANTED:\s*/, "") ||
+                "RepoDiet cannot clone this repository in the sandbox. Grant access in RepoDiet Operator below, sync, then Regenerate Quick Cleanup."
               }
               dismissible={false}
             />
           )}
           {patchKit.patchValidation?.status === "blocked" &&
+            patchKit.patchValidation.gitPatchValidation?.failureCode !== "GITHUB_REPOSITORY_NOT_GRANTED" &&
             patchKit.patchValidation.gitPatchValidation?.failureCode !== "SANDBOX_UNAVAILABLE" &&
             !verificationIssue && (
             <FeedbackBanner

@@ -66,7 +66,11 @@ export async function runSandboxExecutionOnce(runId: string): Promise<void> {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sandbox execution failed";
-    const failureCode = message.includes("SANDBOX") ? "SANDBOX_UNAVAILABLE" : "SANDBOX_EXECUTION_FAILED";
+    const failureCode = message.includes("GITHUB_REPOSITORY_NOT_GRANTED")
+      ? "GITHUB_REPOSITORY_NOT_GRANTED"
+      : message.includes("SANDBOX")
+        ? "SANDBOX_UNAVAILABLE"
+        : "SANDBOX_EXECUTION_FAILED";
 
     await failSandboxRun(runId, failureCode, message);
     await persistSandboxFailureToPatchKit({
