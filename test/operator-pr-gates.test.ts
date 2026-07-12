@@ -107,4 +107,27 @@ test("allows report-only PR without validated changes when authorized", () => {
   assert.equal(gates.canCreateSafePr, false);
 });
 
+test("enables cleanup PR when verifiedChanges are present without explicit verificationStatus", () => {
+  const gates = computeOperatorPrGates({
+    locked: false,
+    statusLoading: false,
+    preflightLoading: false,
+    repositoryAuthorized: true,
+    permissionsVerified: true,
+    canCreateBranch: true,
+    canCreatePullRequest: true,
+    useDemoAuth: false,
+    manualTokenReady: false,
+    patchValidated: true,
+    generatedChanges: 2,
+    validatedChanges: 2,
+    verifiedChanges: 2,
+    validatedEditCount: 2,
+    safeDeleteCount: 0,
+    requireVerificationForCleanupPr: true,
+    verificationStatus: null,
+  });
+  assert.equal(gates.canCreateSafePr, true);
+});
+
 console.log("operator-pr-gates: all passed");

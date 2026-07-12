@@ -44,6 +44,17 @@ export function resolveGrantPropagationPending(input: {
   );
 }
 
+/** PR delivery may proceed when GitHub confirms access or a recent grant binding is trusted. */
+export function resolveRepositoryAuthorized(input: {
+  repositoryAccessible: boolean;
+  bindingTrusted: boolean;
+  permissionsVerified: boolean;
+  suspended: boolean;
+}): boolean {
+  const deliveryReady = input.repositoryAccessible || input.bindingTrusted;
+  return deliveryReady && input.permissionsVerified && !input.suspended;
+}
+
 function permissionsAreSufficient(permissions?: {
   contents: string;
   pullRequests: string;
@@ -193,6 +204,15 @@ export async function runGitHubPreflight(
     installationOwner,
   });
 
+  const repositoryAuthorized =
+    !ownerMismatch &&
+    resolveRepositoryAuthorized({
+      repositoryAccessible,
+      bindingTrusted,
+      permissionsVerified,
+      suspended,
+    });
+
   const { accessCopyForState } = await import("./access-states");
   const displayState =
     ownerMismatch && !repositoryAccessible && !repositoryIsPublic
@@ -208,7 +228,7 @@ export async function runGitHubPreflight(
     repositoryOwner: owner,
     requiresRepositoryOwnerInstall: ownerMismatch,
     repositoryIsPublic,
-    repositoryAuthorized: repositoryAccessible && permissionsVerified && !suspended,
+    repositoryAuthorized,
     grantPropagationPending: resolveGrantPropagationPending({
       bindingTrusted,
       repositoryAccessible,

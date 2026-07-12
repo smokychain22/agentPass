@@ -193,7 +193,7 @@ export function RepoDietOperatorSection({
     Boolean(preflight?.repositoryAuthorized) && !sandboxAccessBlocked;
   const grantPropagationPending = Boolean(preflight?.grantPropagationPending);
   const accessSyncing =
-    (statusLoading || preflightLoading) && !repositoryReady;
+    (statusLoading && githubStatus === null) || (preflightLoading && preflight === null);
   const manualTokenReady =
     !useDemoAuth && showAdvancedToken && Boolean(githubToken.trim()) && !repositoryReady;
 
@@ -244,6 +244,7 @@ export function RepoDietOperatorSection({
       sync?: boolean;
       trustPending?: boolean;
       quick?: boolean;
+      silent?: boolean;
       installationId?: number;
       setupAction?: "install" | "update";
     }) => {
@@ -261,7 +262,9 @@ export function RepoDietOperatorSection({
       }
 
       const seq = ++accessLoadSeq.current;
-      setPreflightLoading(true);
+      if (!opts?.silent) {
+        setPreflightLoading(true);
+      }
 
       const run = async (): Promise<GitHubPreflightResult | null> => {
         try {
@@ -309,7 +312,7 @@ export function RepoDietOperatorSection({
           setPreflight((current) => current);
           return null;
         } finally {
-          if (seq === accessLoadSeq.current) {
+          if (seq === accessLoadSeq.current && !opts?.silent) {
             setPreflightLoading(false);
           }
         }
@@ -368,7 +371,7 @@ export function RepoDietOperatorSection({
       const pending =
         window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
       if (!pending) return;
-      void loadRepositoryAccess({ sync: true, trustPending: false });
+      void loadRepositoryAccess({ sync: true, trustPending: false, quick: true });
     };
 
     document.addEventListener("visibilitychange", onVisible);
@@ -384,7 +387,7 @@ export function RepoDietOperatorSection({
     if (!grantPropagationPending) return;
 
     const poll = () => {
-      void loadRepositoryAccess({ sync: true, trustPending: false });
+      void loadRepositoryAccess({ sync: true, trustPending: false, quick: true, silent: true });
     };
     const id = window.setInterval(poll, 8_000);
     return () => window.clearInterval(id);
@@ -474,14 +477,19 @@ export function RepoDietOperatorSection({
     if (validatedChanges === 0 && (patchKit?.validatedEdits?.length ?? 0) === 0 && safeCount === 0) {
       return "No validated source changes — generate repairs first.";
     }
-    if (requireVerificationForCleanupPr && verificationStatus !== "verified") {
-      return "Run verification on the Verify tab first.";
-    }
     if (!repositoryReady && !needsManualToken && !useDemoAuth) {
       return "Grant GitHub repository access first.";
     }
     if (!githubPrPermissionsReady && repositoryReady) {
       return "GitHub permissions need updating — reconnect RepoDiet with contents and pull request write access.";
+    }
+    if (
+      requireVerificationForCleanupPr &&
+      repoVerificationStatus !== "verified" &&
+      repoVerificationStatus !== "passed" &&
+      verifiedChanges === 0
+    ) {
+      return "Run verification on the Verify tab first.";
     }
     return null;
   }, [
@@ -493,7 +501,8 @@ export function RepoDietOperatorSection({
     patchKit?.validatedEdits?.length,
     safeCount,
     requireVerificationForCleanupPr,
-    verificationStatus,
+    repoVerificationStatus,
+    verifiedChanges,
     repositoryReady,
     needsManualToken,
     useDemoAuth,
@@ -805,7 +814,12 @@ export function RepoDietOperatorSection({
             </div>
           )}
 
-          {requireVerificationForCleanupPr && validatedChanges > 0 && patchValidated && verificationStatus !== "verified" && (
+          {requireVerificationForCleanupPr &&
+            validatedChanges > 0 &&
+            patchValidated &&
+            repoVerificationStatus !== "verified" &&
+            repoVerificationStatus !== "passed" &&
+            verifiedChanges === 0 && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
               Cleanup PR requires verification to pass on the Verify tab before code changes can be delivered.
             </div>
