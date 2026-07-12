@@ -124,6 +124,94 @@ export function generatePrEvidenceReport(input: {
   }
   lines.push("");
 
+  const ppv = patchKit.postPatchVerification;
+  if (ppv && ppv.status !== "not_run") {
+    lines.push("## Post-patch verification", "");
+    lines.push(`- **Status:** ${ppv.status}`);
+    lines.push(`- **Original findings resolved:** ${ppv.originalFindingsResolved ? "yes" : "no"}`);
+    lines.push(`- **New findings introduced:** ${ppv.newFindingCount}`);
+    lines.push(
+      `- **Finding counts:** baseline ${ppv.baselineFindingCount} → patched ${ppv.patchedFindingCount}`,
+      ""
+    );
+
+    if (ppv.detectorReruns.length) {
+      lines.push("### Detector re-runs", "");
+      for (const rerun of ppv.detectorReruns) {
+        lines.push(
+          `- [${rerun.passed ? "passed" : "failed"}] \`${rerun.findingId}\` (${rerun.analyzer}) — ${rerun.detail}`
+        );
+      }
+      lines.push("");
+    }
+
+    if (ppv.recallByRuleFamily?.length) {
+      lines.push("### Per-rule-family recall", "");
+      lines.push("| Rule family | Applied | Resolved | Recall |", "|-------------|---------|----------|--------|");
+      for (const row of ppv.recallByRuleFamily) {
+        lines.push(
+          `| ${row.ruleFamily} | ${row.appliedCount} | ${row.resolvedCount} | ${(row.recall * 100).toFixed(0)}% |`
+        );
+      }
+      lines.push("");
+    }
+
+    if (ppv.cycleVerification) {
+      const cv = ppv.cycleVerification;
+      lines.push(
+        "### Cycle verification (resolver vs Madge)",
+        "",
+        `- Resolver cycles: ${cv.resolverCycles.length}`,
+        `- Madge cycles: ${cv.madgeCycles.length}`,
+        `- Agreement ratio: ${(cv.agreementRatio * 100).toFixed(0)}%`,
+        `- Madge-only: ${cv.madgeOnlyCycles.length}, resolver-only: ${cv.resolverOnlyCycles.length}`,
+        ""
+      );
+    }
+
+    if (ppv.newFindingsIntroduced.length) {
+      lines.push("### New findings (sample)", "");
+      for (const f of ppv.newFindingsIntroduced.slice(0, 10)) {
+        lines.push(`- ${f.type}: ${f.files.join(", ") || f.packageName || f.title}`);
+      }
+      lines.push("");
+    }
+  }
+
+  const apiDiff = patchKit.apiSurfaceDiff;
+  if (apiDiff) {
+    lines.push("## API surface comparison", "");
+    lines.push(`- **Breaking change:** ${apiDiff.breaking ? "yes" : "no"}`);
+    if (apiDiff.removedExports.length) {
+      lines.push(`- Removed: ${apiDiff.removedExports.join(", ")}`);
+    }
+    if (apiDiff.addedExports.length) {
+      lines.push(`- Added: ${apiDiff.addedExports.join(", ")}`);
+    }
+    lines.push("");
+  }
+
+  const graphDiff = patchKit.importGraphDiff;
+  if (graphDiff) {
+    lines.push("## Import graph diff", "");
+    lines.push(
+      `- Edges: ${graphDiff.beforeEdgeCount} → ${graphDiff.afterEdgeCount}`,
+      `- Cycles: ${graphDiff.beforeCycleCount} → ${graphDiff.afterCycleCount}`,
+      `- New cycles: ${graphDiff.newCycles.length}`,
+      `- Resolved cycles: ${graphDiff.resolvedCycles.length}`,
+      ""
+    );
+  }
+
+  if (patchKit.yellowDraftPatches?.length) {
+    lines.push("## Yellow-tier draft patches (review required)", "");
+    lines.push(`_${patchKit.yellowDraftPatches.length} draft(s) generated — not auto-applied._`, "");
+    for (const draft of patchKit.yellowDraftPatches.slice(0, 8)) {
+      lines.push(`- \`${draft.findingId}\` — ${draft.title} (${draft.strategyId})`);
+    }
+    lines.push("");
+  }
+
   const checks = patchKit.repositoryVerification?.checks ?? [];
   if (checks.length) {
     lines.push("## Commands executed", "");

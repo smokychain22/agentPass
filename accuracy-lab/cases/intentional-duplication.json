@@ -1,0 +1,13 @@
+{
+  "id": "intentional-duplication",
+  "category": "intentional_duplication",
+  "description": "Similar but intentionally divergent code must not auto-merge",
+  "repo": "accuracy-lab/fixtures/intentional-duplication",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["jscpd", "semantic_diff"],
+    "remediationClass": "red"
+  }
+}

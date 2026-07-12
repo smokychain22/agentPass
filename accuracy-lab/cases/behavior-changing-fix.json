@@ -1,0 +1,14 @@
+{
+  "id": "behavior-changing-fix",
+  "category": "behavior_changing_fix",
+  "description": "Fix that alters runtime behavior must be yellow/red not green",
+  "repo": "accuracy-lab/fixtures/behavior-changing-fix",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "orphan_pattern",
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["typecheck", "test", "no_new_findings"],
+    "remediationClass": "yellow"
+  }
+}

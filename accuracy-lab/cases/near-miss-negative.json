@@ -1,0 +1,13 @@
+{
+  "id": "near-miss-negative",
+  "category": "near_miss_negative",
+  "description": "File with similar name to used module must not be flagged unused",
+  "repo": "accuracy-lab/fixtures/near-miss-negative",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["import_graph", "symbol_resolution"],
+    "remediationClass": "red"
+  }
+}

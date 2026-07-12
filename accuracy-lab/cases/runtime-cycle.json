@@ -1,0 +1,14 @@
+{
+  "id": "runtime-cycle",
+  "category": "runtime_cycle",
+  "description": "Runtime-only cycle (lazy require) may differ between Madge and resolver",
+  "repo": "accuracy-lab/fixtures/runtime-cycle",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "orphan_pattern",
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["resolver_scc", "madge_agreement"],
+    "remediationClass": "yellow"
+  }
+}

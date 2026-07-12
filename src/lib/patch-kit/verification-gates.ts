@@ -54,6 +54,10 @@ export function buildVerificationGateReport(
   const repoVerified = repoVerification === "verified";
   const scanReady = findings?.scanIntelligence?.coverage.readinessForFindings !== false;
   const checkList = [...uniqueChecks.values()];
+  const postPatch = patchKit.postPatchVerification;
+  const postPatchRan = Boolean(postPatch && postPatch.status !== "not_run");
+  const apiDiff = patchKit.apiSurfaceDiff;
+  const graphDiff = patchKit.importGraphDiff;
 
   const gates: VerificationGate[] = [
     {
@@ -161,28 +165,66 @@ export function buildVerificationGateReport(
     {
       id: "detector_rerun",
       label: "Re-run original detector on patched tree",
-      requiredForSafePr: false,
-      status: "not_run",
-      detail: "Planned — Accuracy Lab benchmark will enforce per-case.",
+      requiredForSafePr: postPatchRan,
+      status: !postPatch
+        ? "not_run"
+        : postPatch.status === "not_run"
+          ? "not_run"
+          : postPatch.status === "partial"
+            ? "partial"
+            : postPatch.originalFindingsResolved
+              ? "passed"
+              : "failed",
+      detail: postPatch?.detectorReruns.length
+        ? `${postPatch.detectorReruns.filter((r) => r.passed).length}/${postPatch.detectorReruns.length} applied findings cleared on re-run`
+        : postPatchRan
+          ? postPatch?.error
+          : "Runs after patch when findings were applied.",
     },
     {
       id: "no_new_findings",
       label: "Confirm no new findings introduced",
-      requiredForSafePr: false,
-      status: "not_run",
-      detail: "Planned — full re-analysis gate in Accuracy Lab.",
+      requiredForSafePr: postPatchRan,
+      status: !postPatch
+        ? "not_run"
+        : postPatch.status === "not_run"
+          ? "not_run"
+          : postPatch.status === "partial"
+            ? "partial"
+            : postPatch.newFindingCount === 0
+              ? "passed"
+              : "failed",
+      detail: postPatchRan
+        ? `${postPatch?.newFindingCount ?? 0} new finding(s) vs baseline fingerprint set`
+        : "Full re-analysis on patched tree.",
     },
     {
       id: "api_surface",
       label: "Compare exported APIs",
       requiredForSafePr: false,
-      status: "not_run",
+      status: apiDiff
+        ? apiDiff.breaking
+          ? "failed"
+          : "passed"
+        : "not_run",
+      detail: apiDiff
+        ? apiDiff.breaking
+          ? `Removed exports: ${apiDiff.removedExports.join(", ") || "package.json fields"}`
+          : `Exports stable (${apiDiff.addedExports.length} added)`
+        : undefined,
     },
     {
       id: "import_graph",
       label: "Inspect changed dependency graph",
       requiredForSafePr: false,
-      status: "not_run",
+      status: graphDiff
+        ? graphDiff.newCycles.length > 0
+          ? "failed"
+          : "passed"
+        : "not_run",
+      detail: graphDiff
+        ? `Edges ${graphDiff.beforeEdgeCount}→${graphDiff.afterEdgeCount}, cycles ${graphDiff.beforeCycleCount}→${graphDiff.afterCycleCount}`
+        : undefined,
     },
   ];
 

@@ -12,6 +12,7 @@ export interface BundleFiles {
   findingsJson: FindingsPayload;
   patchkitSummaryJson: string;
   prEvidenceReportMd?: string;
+  sarifBaselineJson?: string;
 }
 
 export interface BundleResult {
@@ -42,6 +43,9 @@ export async function generateBundle(
   zip.file("patchkit-summary.json", files.patchkitSummaryJson);
   if (files.prEvidenceReportMd) {
     zip.file("pr-evidence-report.md", files.prEvidenceReportMd);
+  }
+  if (files.sarifBaselineJson) {
+    zip.file("findings.sarif.json", files.sarifBaselineJson);
   }
 
   const zipBuffer = await zip.generateAsync({

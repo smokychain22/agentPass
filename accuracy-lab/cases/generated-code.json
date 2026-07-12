@@ -1,0 +1,13 @@
+{
+  "id": "generated-code",
+  "category": "generated_code",
+  "description": "Generated artifacts (prisma, openapi) must be protected from deletion",
+  "repo": "accuracy-lab/fixtures/generated-code",
+  "groundTruth": {
+    "expectedFinding": false,
+    "autofixAllowed": false,
+    "expectedChangedFiles": [],
+    "requiredVerification": ["protected_paths", "knip"],
+    "remediationClass": "red"
+  }
+}

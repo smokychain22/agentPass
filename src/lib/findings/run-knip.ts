@@ -7,6 +7,7 @@ import { knipCliPath, knipVersion } from "./tool-paths";
 import { logAnalyzer, truncateLog } from "./tool-logger";
 import { finalizeAnalyzerResult, timedAnalyzer } from "./analyzer-result";
 import { isKnipOomError, knipChildEnv } from "./analyzer-child-env";
+import { runKnipFallback } from "./fallback/knip-fallback";
 
 export async function runKnip(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
   return timedAnalyzer("knip", () => runKnipInternal(rootDir));
@@ -128,12 +129,31 @@ async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipR
     }
   }
 
-  return finalizeAnalyzerResult<KnipRawReport>(
-    "knip",
-    "failed",
-    null,
-    lastError,
-    Date.now() - started,
-    knipVersion()
-  );
+  try {
+    const fallbackReport = await runKnipFallback(rootDir);
+    logAnalyzer("knip", "fallback_invoked", {
+      rootDir,
+      unusedFiles: fallbackReport.issues?.reduce((n, i) => n + (i.files?.length ?? 0), 0) ?? 0,
+      unusedDeps:
+        fallbackReport.issues?.reduce((n, i) => n + (i.dependencies?.length ?? 0), 0) ?? 0,
+    });
+    return finalizeAnalyzerResult(
+      "knip",
+      "fallback",
+      fallbackReport,
+      `Native Knip failed (${lastError}); used import-graph fallback.`,
+      Date.now() - started
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logAnalyzer("knip", "fallback_failed", { rootDir, error: message });
+    return finalizeAnalyzerResult<KnipRawReport>(
+      "knip",
+      "failed",
+      null,
+      `${lastError} Fallback also failed: ${message}`,
+      Date.now() - started,
+      knipVersion()
+    );
+  }
 }

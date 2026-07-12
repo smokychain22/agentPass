@@ -32,6 +32,7 @@ const ARTIFACT_PATHS = {
   findings: "repodiet/findings.json",
   summary: "repodiet/patchkit-summary.json",
   evidence: "repodiet/pr-evidence-report.md",
+  sarif: "repodiet/findings.sarif.json",
 } as const;
 
 async function resolveFindings(input: CreateCleanupPrInput): Promise<FindingsPayload> {
@@ -286,6 +287,14 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       path: ARTIFACT_PATHS.evidence,
       content: evidenceMd,
       message: "RepoDiet: add PR evidence report",
+    });
+  }
+
+  if (patchKit.sarifBaseline) {
+    artifactEntries.push({
+      path: ARTIFACT_PATHS.sarif,
+      content: JSON.stringify(patchKit.sarifBaseline, null, 2),
+      message: "RepoDiet: add SARIF findings export",
     });
   }
 
