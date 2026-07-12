@@ -214,11 +214,11 @@ export async function executeRepositoryCleanupInSandbox(
 
     const canonicalPatch = payload.patch ? extractApplyablePatch(payload.patch) : "";
     let patch = "";
-    let patchGenerationMethod: "git-cli" | "canonical-artifact" = "git-cli";
+    let usedCanonicalArtifact = false;
 
     if (patchHasApplyableOperations(canonicalPatch)) {
       patch = canonicalPatch.endsWith("\n") ? canonicalPatch : `${canonicalPatch}\n`;
-      patchGenerationMethod = "canonical-artifact";
+      usedCanonicalArtifact = true;
       log("patch: applying canonical cleanup.patch from patch-kit engine");
     } else {
       await updateSandboxRun(runId, { status: "applying_operations", progress: "Applying cleanup operations" });
@@ -262,7 +262,7 @@ export async function executeRepositoryCleanupInSandbox(
         ? {
             status: "passed",
             gitCliAvailable: true,
-            patchGenerationMethod,
+            patchGenerationMethod: usedCanonicalArtifact ? "pure-js" : "git-cli",
             patchHash,
             validatedPaths,
             baseCommitSha: payload.baseCommitSha,
