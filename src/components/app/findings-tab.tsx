@@ -29,6 +29,7 @@ import { DEMO_NOTICE } from "@/lib/demo/constants";
 import { FileSearch } from "lucide-react";
 import { Panel } from "@/components/design-system/panel";
 import { ProjectRootPanel } from "./findings/project-root-panel";
+import { AnalysisLineageBanner } from "@/components/app/analysis-lineage-banner";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
 import { findingsAnalyzerWarning } from "@/lib/findings/analyzer-status";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
@@ -152,7 +153,7 @@ export function FindingsTab() {
       <WorkspaceSection
         label="Analysis workspace"
         title="Findings Engine"
-        description="RepoDiet finds duplicate code, unused imports, dead files, orphan routes, and dependency drift — then applies automatic fixes where safe."
+        description="RepoDiet analyzes your scanned repository with Knip, jscpd, Madge, and RepoDiet import/backup detectors. Each finding is classified with evidence grade and file path before Quick Cleanup."
         actions={
           <>
             <Button onClick={runFindings} disabled={isLoading}>
@@ -217,6 +218,8 @@ export function FindingsTab() {
 
       {findings && (
         <>
+          <AnalysisLineageBanner scan={session.scanResult} findings={findings} />
+
           {(() => {
             const warning = findingsAnalyzerWarning(findings.rawToolReports);
             return warning ? (

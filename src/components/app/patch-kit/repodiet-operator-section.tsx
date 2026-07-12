@@ -218,6 +218,7 @@ export function RepoDietOperatorSection({
     verifiedChanges,
     validatedEditCount: patchKit?.validatedEdits?.length ?? 0,
     safeDeleteCount: safeCount,
+    filesDeletedPlanned: patchKit?.summary.filesDeleted ?? patchKit?.summary.deletedPaths?.length ?? 0,
     requireVerificationForCleanupPr: true,
     verificationStatus: repoVerificationStatus,
   });

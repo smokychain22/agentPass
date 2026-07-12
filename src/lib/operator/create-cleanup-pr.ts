@@ -9,8 +9,8 @@ import type { ClassifiedBuckets } from "@/lib/patch-kit/types";
 import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
-import { filterOperatorSafeDeletes } from "./safety";
 import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
+import { resolveValidatedDeliveryOps } from "./delivery-operations";
 
 export type CleanupPrMode = "safe_only" | "report_only";
 
@@ -68,19 +68,20 @@ function buildCleanupBranchName(): string {
   return `repodiet/cleanup-${ymd}-${nanoid(6)}`;
 }
 
-function buildPrTitle(validatedEdits: number, filesDeleted: number): string {
-  const total = validatedEdits + filesDeleted;
+function buildPrTitle(filesEdited: number, filesDeleted: number): string {
+  const total = filesEdited + filesDeleted;
   if (total <= 0) return `${PR_TITLE_PREFIX} cleanup bundle`;
   return `${PR_TITLE_PREFIX} ${total} verified repository issue${total === 1 ? "" : "s"}`;
 }
 
 function buildPrBody(
   mode: CleanupPrMode,
-  safePaths: string[],
+  deletedPaths: string[],
   findings: FindingsPayload,
   buckets: ClassifiedBuckets,
   patchKit: PatchKitPayload,
-  validatedEditPaths: string[]
+  editedPaths: string[],
+  filesDeleted: number
 ): string {
   const s = findings.summary;
   const pk = patchKit.summary;
@@ -97,19 +98,19 @@ function buildPrBody(
     `- Project root: \`${findings.repositoryModel?.primaryProjectRoot ?? "."}\``,
     "",
     "### Changes applied",
-    `- Files edited: **${pk.filesEdited ?? validatedEditPaths.length}**`,
-    `- Files deleted: **${pk.filesDeleted ?? safePaths.length}**`,
+    `- Files edited: **${pk.filesEdited ?? editedPaths.length}**`,
+    `- Files deleted: **${filesDeleted}**`,
     `- Lines added: **${pk.patchLines ? "see patch" : "—"}**`,
     `- Patch validation: **${patchKit.patchValidation?.status ?? pk.patchValidationStatus ?? "unknown"}**`,
     "",
   ];
 
-  if (validatedEditPaths.length > 0) {
-    lines.push("### Edited files", "", ...validatedEditPaths.map((p) => `- \`${p}\``), "");
+  if (editedPaths.length > 0) {
+    lines.push("### Edited files", "", ...editedPaths.map((p) => `- \`${p}\``), "");
   }
 
-  if (mode === "safe_only" && safePaths.length > 0) {
-    lines.push("### Deleted files", "", ...safePaths.map((p) => `- \`${p}\``), "");
+  if (mode === "safe_only" && deletedPaths.length > 0) {
+    lines.push("### Deleted files", "", ...deletedPaths.map((p) => `- \`${p}\``), "");
   }
 
   lines.push(
@@ -164,11 +165,21 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const findings = await resolveFindings(input);
   const patchKit = await resolvePatchKit(input, findings);
   const buckets = classifyFindingsForPatch(findings);
-  const safePaths = filterOperatorSafeDeletes(buckets.safeDelete.map((item) => item.path));
   const validatedChanges = patchKit.summary.validatedChanges ?? 0;
   const validatedEdits = patchKit.validatedEdits ?? [];
+  const deliveryOps =
+    mode === "safe_only"
+      ? resolveValidatedDeliveryOps(patchKit, validatedEdits)
+      : { contentEdits: [], deletePaths: [], skippedDeletePaths: [] };
+  const plannedDeletes = deliveryOps.deletePaths.length;
+  const plannedEdits = deliveryOps.contentEdits.length;
 
-  if (mode === "safe_only" && validatedChanges === 0 && validatedEdits.length === 0 && safePaths.length === 0) {
+  if (
+    mode === "safe_only" &&
+    validatedChanges === 0 &&
+    plannedEdits === 0 &&
+    plannedDeletes === 0
+  ) {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
       "No validated cleanup changes to apply. Generate repairs in Quick Cleanup first, or use report_only mode for an audit PR.",
@@ -195,13 +206,15 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   }
 
   const warnings: string[] = [];
+  warnings.push(...deliveryOps.skippedDeletePaths.map((p) => `Delete skipped by operator safety policy: ${p}`));
+
   const deliveryContext = await assertCleanupDeliveryContext({
     client,
     owner: parsed.owner,
     repo: parsed.repo,
     baseBranch,
     scanCommitSha: findings.repo.commitSha,
-    validatedEdits: mode === "safe_only" ? validatedEdits : [],
+    validatedEdits: mode === "safe_only" ? deliveryOps.contentEdits : [],
   });
   warnings.push(...deliveryContext.warnings);
 
@@ -252,7 +265,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   }
 
   if (mode === "safe_only") {
-    for (const edit of validatedEdits) {
+    for (const edit of deliveryOps.contentEdits) {
       await client.upsertFile(
         parsed.owner,
         parsed.repo,
@@ -263,7 +276,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       );
     }
 
-    for (const path of safePaths) {
+    for (const path of deliveryOps.deletePaths) {
       const deleted = await client.deleteFile(
         parsed.owner,
         parsed.repo,
@@ -279,8 +292,8 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     }
   }
 
-  const validatedEditPaths = validatedEdits.map((e) => e.path);
-  const prTitle = buildPrTitle(validatedEdits.length, safePaths.length);
+  const editedPaths = deliveryOps.contentEdits.map((e) => e.path);
+  const prTitle = buildPrTitle(editedPaths.length, filesDeleted);
 
   const pr = await client.createPullRequest(
     parsed.owner,
@@ -288,7 +301,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     prTitle,
     cleanupBranch,
     baseBranch,
-    buildPrBody(mode, safePaths, findings, buckets, patchKit, validatedEditPaths)
+    buildPrBody(mode, deliveryOps.deletePaths, findings, buckets, patchKit, editedPaths, filesDeleted)
   );
 
   return {
@@ -310,7 +323,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
         filesDeleted,
         artifactsAdded: artifactEntries.length,
         safeCandidatesApplied:
-          mode === "safe_only" ? validatedEdits.length + filesDeleted : 0,
+          mode === "safe_only" ? editedPaths.length + filesDeleted : 0,
         reviewFirstSkipped: buckets.reviewFirst.length,
         doNotTouchSkipped: buckets.doNotTouch.length,
       },

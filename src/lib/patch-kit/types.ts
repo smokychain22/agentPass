@@ -7,6 +7,8 @@ export interface PatchKitGenerateBody {
   branch?: string;
   findings?: FindingsPayload;
   selectedFindingIds?: string[];
+  scanId?: string;
+  projectRoot?: string;
 }
 
 export interface PatchKitRepo {
@@ -196,6 +198,8 @@ export const PatchKitGenerateBodySchema = {
       selectedFindingIds: Array.isArray(body.selectedFindingIds)
         ? body.selectedFindingIds.filter((id): id is string => typeof id === "string")
         : undefined,
+      scanId: typeof body.scanId === "string" ? body.scanId : undefined,
+      projectRoot: typeof body.projectRoot === "string" ? body.projectRoot : undefined,
     };
   },
 };

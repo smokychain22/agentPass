@@ -41,6 +41,7 @@ import {
   userFacingSandboxBanner,
   userFacingSandboxProgress,
 } from "@/lib/patch-kit/user-facing-messages";
+import { AnalysisLineageBanner } from "@/components/app/analysis-lineage-banner";
 
 const LOADING: PatchKitPhase[] = ["classifying", "patch", "validating", "bundle"];
 
@@ -328,6 +329,8 @@ export function PatchKitTab() {
           </>
         }
       />
+
+      {findings && <AnalysisLineageBanner scan={session.scanResult} findings={findings} />}
 
       <p className="font-mono text-xs text-muted-foreground">
         {session.repoUrl}

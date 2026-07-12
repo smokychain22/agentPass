@@ -48,6 +48,8 @@ export async function runPatchJob(
       branch: job.branch,
       findings,
       selectedFindingIds,
+      scanId: findings?.scanId,
+      projectRoot: findings?.repositoryModel?.primaryProjectRoot,
     });
 
     setStage("validating_patch");
