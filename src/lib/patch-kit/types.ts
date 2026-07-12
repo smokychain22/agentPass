@@ -152,6 +152,9 @@ export interface PatchKitPayload {
   workflowRunId?: string;
   /** Public repos use the same ZIP/git path as Scan — sandbox verification does not require App grant. */
   repositoryIsPublic?: boolean;
+  remediationPlan?: import("./remediation-class").RemediationPlan;
+  verificationGates?: import("./verification-gates").VerificationGateReport;
+  prEvidenceReportMd?: string;
   /** @deprecated use sandboxRunId */
   workerJobId?: string;
 }

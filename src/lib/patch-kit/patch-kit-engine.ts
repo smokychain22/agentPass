@@ -60,6 +60,9 @@ import { storePatchKit } from "./patch-kit-store";
 import { supportedTransformerFor } from "@/lib/workflow/lifecycle";
 import { buildCleanupProof, buildProofLadderCounts } from "@/lib/execution/proof-ladder";
 import { countDiffLines } from "@/lib/execution/one-fix-at-a-time";
+import { buildRemediationPlan, isGreenAutoFixAllowed } from "./remediation-class";
+import { buildVerificationGateReport } from "./verification-gates";
+import { generatePrEvidenceReport } from "./generate-pr-evidence-report";
 import type {
   ChangeManifestEntry,
   PatchKitGenerateBody,
@@ -320,6 +323,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     await copyRepoBaseline(workspace.rootDir, baselineRoot);
 
     const flatFindings = flattenFindings(findings);
+    const remediationPlan = buildRemediationPlan(flatFindings);
     const compatibleFindings = flatFindings.filter(isEligibleFinding);
 
     const { audits: preflightAudits } = await auditTransformerCompatibleFindings(
@@ -329,6 +333,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const eligibleFindingIds = preflightAudits
       .filter(isCleanupEligibleAudit)
+      .filter((a) => isGreenAutoFixAllowed(a.findingId, remediationPlan))
       .map((a) => a.findingId);
 
     const transformerCompatible = compatibleFindings.length;
@@ -808,16 +813,6 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const patchkitSummaryJson = buildPatchkitSummaryJson(id, findings.repo, summary);
 
-    const bundle = await generateBundle(findings.repo.name, findings.repo.branch, {
-      reportMd,
-      cleanupPatch: mergedPatch,
-      packageCleanupMd,
-      regressionChecklistMd,
-      cursorPromptMd,
-      findingsJson: findings,
-      patchkitSummaryJson,
-    });
-
     const changeManifest: ChangeManifestEntry[] = cleanupResult.fixLoop.attempts
       .filter((a) => a.status === "retained")
       .flatMap((a) =>
@@ -849,6 +844,71 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         });
       }
     }
+
+    const verificationGates = buildVerificationGateReport(
+      {
+        id,
+        scanId: findings.scanId,
+        repo: {
+          owner: findings.repo.owner,
+          name: findings.repo.name,
+          branch: findings.repo.branch,
+        },
+        summary,
+        patchValidation,
+        repositoryVerification: {
+          status: repositoryVerification.status,
+          outcome: repositoryVerification.outcome,
+          failureCode: repositoryVerification.failureCode,
+          error: repositoryVerification.error,
+          installAttempts: repositoryVerification.installAttempts,
+          checks: repositoryVerification.checks,
+          baseline: repositoryVerification.baseline,
+          patched: repositoryVerification.patched,
+        },
+        remediationPlan,
+        changeManifest,
+      } as PatchKitPayload,
+      findings
+    );
+
+    const prEvidenceReportMd = generatePrEvidenceReport({
+      findings,
+      patchKit: {
+        id,
+        scanId: findings.scanId,
+        repo: {
+          owner: findings.repo.owner,
+          name: findings.repo.name,
+          branch: findings.repo.branch,
+        },
+        summary,
+        patchValidation,
+        changeManifest,
+        repositoryVerification: {
+          status: repositoryVerification.status,
+          checks: repositoryVerification.checks,
+          error: repositoryVerification.error,
+        },
+        remediationPlan,
+      } as PatchKitPayload,
+      remediationPlan,
+      verificationGates,
+      buckets,
+      changedPaths,
+      deletedPaths,
+    });
+
+    const bundle = await generateBundle(findings.repo.name, findings.repo.branch, {
+      reportMd,
+      cleanupPatch: mergedPatch,
+      packageCleanupMd,
+      regressionChecklistMd,
+      cursorPromptMd,
+      findingsJson: findings,
+      patchkitSummaryJson,
+      prEvidenceReportMd,
+    });
 
     const payload: PatchKitPayload = {
       id,
@@ -907,6 +967,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       deletionProofs,
       sandboxRunId,
       workflowRunId,
+      remediationPlan,
+      verificationGates,
+      prEvidenceReportMd,
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);

@@ -19,6 +19,7 @@ export interface OperatorPrGateInput {
   filesDeletedPlanned?: number;
   requireVerificationForCleanupPr?: boolean;
   verificationStatus?: "passed" | "failed" | "partial" | "not_run" | "verified" | "blocked" | "regression_failed" | "baseline_blocked" | "improved_but_baseline_invalid" | null;
+  mandatoryGatesPassed?: boolean;
 }
 
 export function computeOperatorPrGates(input: OperatorPrGateInput) {
@@ -53,7 +54,8 @@ export function computeOperatorPrGates(input: OperatorPrGateInput) {
     (input.validatedChanges > 0 || plannedDeletes > 0) &&
     hasVerifiedWork &&
     verificationReady &&
-    githubPrPermissionsReady;
+    githubPrPermissionsReady &&
+    (input.mandatoryGatesPassed !== false);
 
   return { githubPrPermissionsReady, canCreateReportPr, canCreateSafePr };
 }

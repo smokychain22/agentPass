@@ -31,6 +31,7 @@ const ARTIFACT_PATHS = {
   cursor: "repodiet/cursor-prompt.md",
   findings: "repodiet/findings.json",
   summary: "repodiet/patchkit-summary.json",
+  evidence: "repodiet/pr-evidence-report.md",
 } as const;
 
 async function resolveFindings(input: CreateCleanupPrInput): Promise<FindingsPayload> {
@@ -127,6 +128,7 @@ function buildPrBody(
     "",
     "### Artifacts",
     "Supporting cleanup artifacts are included under `repodiet/`.",
+    "- `repodiet/pr-evidence-report.md` — what was found, why verified, gates run, rollback steps",
     ""
   );
 
@@ -205,6 +207,29 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     );
   }
 
+  if (mode === "safe_only" && findings.scanCoverageWarning) {
+    throw new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      findings.scanCoverageWarning,
+      422
+    );
+  }
+
+  if (
+    mode === "safe_only" &&
+    patchKit.verificationGates &&
+    !patchKit.verificationGates.allRequiredPassed
+  ) {
+    const failed = patchKit.verificationGates.gates
+      .filter((g) => g.requiredForSafePr && g.status === "failed")
+      .map((g) => g.label);
+    throw new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      `Mandatory verification gates failed: ${failed.join("; ") || "see pr-evidence-report"}`,
+      422
+    );
+  }
+
   const warnings: string[] = [];
   warnings.push(...deliveryOps.skippedDeletePaths.map((p) => `Delete skipped by operator safety policy: ${p}`));
 
@@ -252,6 +277,17 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       message: "RepoDiet: add patchkit summary",
     },
   ];
+
+  const evidenceMd =
+    patchKit.prEvidenceReportMd ??
+    (patchKit as { prEvidenceReportMd?: string }).prEvidenceReportMd;
+  if (evidenceMd) {
+    artifactEntries.push({
+      path: ARTIFACT_PATHS.evidence,
+      content: evidenceMd,
+      message: "RepoDiet: add PR evidence report",
+    });
+  }
 
   for (const artifact of artifactEntries) {
     await client.upsertFile(

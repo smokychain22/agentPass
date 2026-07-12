@@ -1,0 +1,15 @@
+{
+  "id": "green-unused-import",
+  "category": "true_unused_file",
+  "description": "Proven unused import in util file — green autofix",
+  "repo": "accuracy-lab/fixtures/green-unused-import",
+  "groundTruth": {
+    "expectedFinding": true,
+    "findingType": "unused_import",
+    "expectedConfidence": "verified",
+    "autofixAllowed": true,
+    "expectedChangedFiles": ["src/lib/helpers.ts"],
+    "requiredVerification": ["parse", "typecheck"],
+    "remediationClass": "green"
+  }
+}

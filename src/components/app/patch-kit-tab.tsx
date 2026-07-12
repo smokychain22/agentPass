@@ -18,6 +18,7 @@ import type { RateLimitSnapshot } from "@/lib/security/rate-limit";
 import { useRateLimitCooldown } from "@/hooks/use-rate-limit-cooldown";
 import { PatchKitSummaryCards } from "./patch-kit/summary-cards";
 import { ProofLadderPanel } from "./patch-kit/proof-ladder-panel";
+import { RemediationClassPanel, VerificationGatesPanel } from "./patch-kit/remediation-panel";
 import { SafetyPolicyCard } from "./patch-kit/safety-policy-card";
 import { SafeDeleteTable } from "./patch-kit/safe-delete-table";
 import { PatchKitWorkspace } from "./patch-kit/patch-kit-workspace";
@@ -542,6 +543,10 @@ export function PatchKitTab() {
               }
             />
           )}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <RemediationClassPanel patchKit={patchKit} />
+            <VerificationGatesPanel patchKit={patchKit} />
+          </div>
           <PatchKitSummaryCards summary={patchKit.summary} />
           {patchKit.candidateAudits && patchKit.candidateAudits.length > 0 && (
             <CandidateAuditTable
