@@ -21,8 +21,16 @@ const ACTIVE_STATUSES = new Set([
   "persisting_results",
 ]);
 
+/** Active sandbox runs older than this may be re-executed (serverless timeout recovery). */
+export const STALE_ACTIVE_SANDBOX_MS = 5 * 60 * 1000;
+
 export function isActiveSandboxStatus(status: string): boolean {
   return ACTIVE_STATUSES.has(status);
+}
+
+export function isStaleActiveSandboxRun(run: { status: string; updatedAt: string }): boolean {
+  if (!isActiveSandboxStatus(run.status)) return false;
+  return Date.now() - new Date(run.updatedAt).getTime() >= STALE_ACTIVE_SANDBOX_MS;
 }
 
 export async function runSandboxExecutionOnce(runId: string): Promise<void> {
@@ -33,7 +41,7 @@ export async function runSandboxExecutionOnce(runId: string): Promise<void> {
   if (isTerminalSandboxStatus(run.status)) {
     return;
   }
-  if (isActiveSandboxStatus(run.status)) {
+  if (isActiveSandboxStatus(run.status) && !isStaleActiveSandboxRun(run)) {
     return;
   }
 

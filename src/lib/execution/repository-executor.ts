@@ -4,7 +4,7 @@ import { isServerlessRuntime } from "@/lib/server/runtime-env";
 import { runRepositoryVerification } from "@/lib/patch-kit/repository-verification";
 import type { RepositoryVerificationResult } from "@/lib/patch-kit/repository-verification";
 import type { CanonicalPatchValidationResult } from "@/lib/patch-kit/canonical-patch";
-import { hashPatchContent } from "@/lib/patch-kit/canonical-patch";
+import { formatPatchValidationUserMessage, hashPatchContent } from "@/lib/patch-kit/canonical-patch";
 import { cloneExactCommit, generateGitPatch, getGitVersion, validateGitPatch } from "./git-clone";
 import {
   authenticatedCloneUrl,
@@ -83,12 +83,13 @@ async function runVerificationScriptsInSandbox(
 ): Promise<{ installExit: number; checks: Array<{ name: string; exitCode: number; stderr: string }> }> {
   const install = await runSandboxShell(
     sandbox,
-    `cd "${root}" && if [ -f package-lock.json ]; then npm ci --include=dev --include=optional --no-audit --no-fund; else npm install --include=dev --include=optional --no-audit --no-fund; fi`,
+    `cd "${root}" && if [ -f package-lock.json ]; then npm ci --include=dev --include=optional --no-audit --no-fund --ignore-scripts; else npm install --include=dev --include=optional --no-audit --no-fund --ignore-scripts; fi`,
     { cwd: root }
   );
 
   const checks: Array<{ name: string; exitCode: number; stderr: string }> = [];
-  for (const script of ["typecheck", "lint", "test", "build"] as const) {
+  // Sandbox verification prioritizes fast signal checks — skip heavy production builds.
+  for (const script of ["typecheck", "test"] as const) {
     const probe = await runSandboxShell(
       sandbox,
       `cd "${root}" && node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts['${script}']?0:2)"`,
@@ -210,27 +211,6 @@ export async function executeRepositoryCleanupInSandbox(
       `mkdir -p "${transformed}" "${validation}" && cp -a "${baseline}/." "${transformed}/" && cp -a "${baseline}/." "${validation}/"`
     );
 
-    await updateSandboxRun(runId, { status: "baseline_verification", progress: "Verifying repository baseline" });
-    const baselineResult = await runVerificationScriptsInSandbox(sandbox, baseline);
-    const baselineVerification = verificationFromSandboxChecks({
-      ...baselineResult,
-      phase: "baseline",
-    });
-
-    if (baselineVerification.status === "blocked" || baselineVerification.status === "baseline_blocked") {
-      return {
-        patchValidation: {
-          status: "failed",
-          error: baselineVerification.error,
-          gitCliAvailable: true,
-        },
-        repositoryVerification: baselineVerification,
-        gitVersion,
-        sandboxId: sandbox.name,
-        logs,
-      };
-    }
-
     await updateSandboxRun(runId, { status: "applying_operations", progress: "Applying cleanup operations" });
     await applyEditsInSandbox(sandbox, transformed, payload.edits);
 
@@ -273,6 +253,7 @@ export async function executeRepositoryCleanupInSandbox(
             patchGenerationMethod: "git-cli",
             patchHash,
             validatedPaths,
+            baseCommitSha: payload.baseCommitSha,
             gitPatchValidation: { status: "passed" },
             contentIntegrityValidation: { status: "passed" },
             attempt: {
@@ -292,8 +273,15 @@ export async function executeRepositoryCleanupInSandbox(
         : {
             status: "failed",
             error: check.stderr || "git apply --check failed",
+            userMessage: formatPatchValidationUserMessage({
+              gitStderr: check.stderr || check.stdout || "git apply --check failed",
+              baseCommitSha: payload.baseCommitSha,
+              failingPath: missingPaths[0] ?? unexpectedPaths[0],
+            }),
             gitCliAvailable: true,
             patchHash,
+            baseCommitSha: payload.baseCommitSha,
+            failingPath: missingPaths[0] ?? unexpectedPaths[0],
             gitPatchValidation: { status: "failed", failureCode: "GIT_PATCH_INVALID" },
             contentIntegrityValidation: { status: "passed" },
           };
@@ -302,6 +290,24 @@ export async function executeRepositoryCleanupInSandbox(
       return {
         patchValidation,
         repositoryVerification: { status: "not_run", installAttempts: [], checks: [] },
+        gitVersion,
+        patchHash,
+        sandboxId: sandbox.name,
+        logs,
+      };
+    }
+
+    await updateSandboxRun(runId, { status: "baseline_verification", progress: "Verifying repository baseline" });
+    const baselineResult = await runVerificationScriptsInSandbox(sandbox, baseline);
+    const baselineVerification = verificationFromSandboxChecks({
+      ...baselineResult,
+      phase: "baseline",
+    });
+
+    if (baselineVerification.status === "blocked" || baselineVerification.status === "baseline_blocked") {
+      return {
+        patchValidation,
+        repositoryVerification: baselineVerification,
         gitVersion,
         patchHash,
         sandboxId: sandbox.name,

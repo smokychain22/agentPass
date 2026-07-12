@@ -7,7 +7,7 @@ import {
   updateSandboxRun,
 } from "@/lib/execution/sandbox-run-store";
 import type { SandboxRun, SandboxRunPayload } from "@/lib/execution/sandbox-run-types";
-import { isActiveSandboxStatus, runSandboxExecutionOnce } from "@/lib/execution/execute-sandbox-run";
+import { isActiveSandboxStatus, isStaleActiveSandboxRun, runSandboxExecutionOnce } from "@/lib/execution/execute-sandbox-run";
 import { workerApiKeyConfigured } from "@/lib/worker/worker-auth";
 
 const REDISPATCH_MS = 30_000;
@@ -18,7 +18,7 @@ function nowIso(): string {
 
 export function shouldDispatchSandboxExecution(run: SandboxRun): boolean {
   if (isTerminalSandboxStatus(run.status)) return false;
-  if (isActiveSandboxStatus(run.status)) return false;
+  if (isActiveSandboxStatus(run.status) && !isStaleActiveSandboxRun(run)) return false;
 
   const lastDispatch = run.executionDispatchedAt
     ? new Date(run.executionDispatchedAt).getTime()

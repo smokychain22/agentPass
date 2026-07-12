@@ -569,7 +569,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
               sandboxRunId: execution.sandboxRunId,
               workflowRunId: execution.workflowRunId,
               userMessage:
-                "Real Git validation and repository verification are running in an isolated Vercel Sandbox.",
+                "Validating cleanup changes in an isolated environment.",
               gitPatchValidation: {
                 status: "pending_sandbox",
               },
@@ -646,13 +646,13 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const blockerSummary = deliveryReady
       ? `${verifiedChanges} verified file operation(s) ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} git-validated).`
       : patchValidation?.status === "pending_sandbox"
-        ? `${generatedChanges} generated file operation(s); content validation passed — Git validation and repository verification running in Vercel Sandbox.`
+        ? `${generatedChanges} generated file operation(s); validating cleanup changes.`
         : sandboxUnavailable
-          ? `${generatedChanges} generated file operation(s); content validation passed but Vercel Sandbox is unavailable on this deployment.`
+          ? `${generatedChanges} generated file operation(s); verification environment unavailable on this deployment — try Regenerate after deploy.`
           : patchValidation?.status === "blocked"
-        ? `${generatedChanges} generated file operation(s); content validation passed but git apply --check is blocked — ${patchValidation.error ?? "Git CLI unavailable"}.`
+        ? `${generatedChanges} generated file operation(s); content checks passed but Git validation is blocked on this runtime.`
         : patchValidation?.status === "passed" && repositoryVerification.status === "blocked"
-        ? `${generatedChanges} generated file operation(s); patch validation passed; repository verification blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
+        ? `${validatedChanges} git-validated file operation(s); dependency checks blocked — ${repositoryVerification.error ?? "dependency installation failed"}.`
         : patchValidation?.userMessage ??
           patchValidation?.error ??
           repositoryVerification.error ??

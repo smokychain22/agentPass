@@ -35,6 +35,12 @@ import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState, classifyPatchError } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
+import {
+  showPatchKitDeveloperTools,
+  userFacingPatchFailure,
+  userFacingSandboxBanner,
+  userFacingSandboxProgress,
+} from "@/lib/patch-kit/user-facing-messages";
 
 const LOADING: PatchKitPhase[] = ["classifying", "patch", "validating", "bundle"];
 
@@ -53,6 +59,7 @@ export function PatchKitTab() {
   const [error, setError] = useState<string | null>(null);
   const [rateLimit, setRateLimit] = useState<RateLimitSnapshot | null>(null);
   const [sandboxProgress, setSandboxProgress] = useState<string | null>(null);
+  const showDeveloperTools = showPatchKitDeveloperTools(searchParams);
   const cooldown = useRateLimitCooldown(rateLimit?.resetAt, rateLimit?.retryAfterSeconds);
 
   const isLoading = LOADING.includes(phase);
@@ -154,7 +161,7 @@ export function PatchKitTab() {
         if (!data.ok || cancelled || !patchKit) return;
 
         if (data.run?.progress) {
-          setSandboxProgress(data.run.progress);
+          setSandboxProgress(userFacingSandboxProgress(data.run.progress));
         }
 
         if (data.patchKit) {
@@ -253,10 +260,10 @@ export function PatchKitTab() {
       return detail.replace(/^GITHUB_REPOSITORY_NOT_GRANTED:\s*/, "");
     }
     if (patchKit?.repositoryIsPublic && patchKit?.patchValidation?.status === "pending_sandbox") {
-      return "Public repository — running real Git validation and verification in Vercel Sandbox (no extra grant needed for this step).";
+      return "Validating cleanup changes on this public repository.";
     }
     if (patchKit?.patchValidation?.status === "pending_sandbox") {
-      return "Real Git validation and repository verification are running in an isolated Vercel Sandbox.";
+      return "Validating cleanup changes in an isolated environment.";
     }
     if (
       patchKit?.patchValidation?.gitPatchValidation?.failureCode === "WORKER_UNAVAILABLE" ||
@@ -390,7 +397,10 @@ export function PatchKitTab() {
           {patchKit.patchValidation?.status === "pending_sandbox" && (patchKit.sandboxRunId ?? patchKit.workerJobId) && (
             <FeedbackBanner
               variant="info"
-              message={`Real Git validation and repository verification are running in an isolated Vercel Sandbox (run ${patchKit.sandboxRunId ?? patchKit.workerJobId})${sandboxProgress ? ` — ${sandboxProgress}` : ""}.`}
+              message={
+                userFacingSandboxBanner(patchKit, sandboxProgress) ??
+                "Validating cleanup changes in an isolated environment."
+              }
               dismissible={false}
             />
           )}
@@ -423,14 +433,7 @@ export function PatchKitTab() {
           {patchKit.patchValidation && patchKit.patchValidation.status === "failed" && !verificationIssue && (
             <FeedbackBanner
               variant="warning"
-              message={
-                patchKit.patchValidation.userMessage ??
-                `Patch could not be applied to the scanned commit.${
-                  patchKit.patchValidation.failingPath
-                    ? ` Affected path: ${patchKit.patchValidation.failingPath}.`
-                    : ""
-                } Click Regenerate Quick Cleanup to retry.`
-              }
+              message={userFacingPatchFailure(patchKit)}
               dismissible={false}
             />
           )}
@@ -475,7 +478,7 @@ export function PatchKitTab() {
                 dismissible={false}
               />
             )}
-          {patchKit.patchValidation?.attempt && (
+          {patchKit.patchValidation?.attempt && showDeveloperTools && (
             <Panel variant="elevated" padding="md" className="border-border/60">
               <p className="ds-label mb-2">Developer tools — patch validation</p>
               <pre className="max-h-64 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
@@ -500,7 +503,8 @@ export function PatchKitTab() {
               </pre>
             </Panel>
           )}
-          {patchKit.repositoryVerification?.installAttempts &&
+          {showDeveloperTools &&
+            patchKit.repositoryVerification?.installAttempts &&
             patchKit.repositoryVerification.installAttempts.length > 0 && (
               <Panel variant="elevated" padding="md" className="border-border/60">
                 <p className="ds-label mb-2">Developer tools — dependency install</p>

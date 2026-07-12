@@ -15,7 +15,7 @@ const STAGES: {
   { key: "executed", label: "Executed findings", description: "Eligible findings that entered transformer execution" },
   { key: "generated", label: "Generated file operations", description: "Non-empty source modifications produced" },
   { key: "contentValidated", label: "Content-validated operations", description: "Before/after content integrity passed in the isolated workspace." },
-  { key: "gitValidated", label: "Git-validated operations", description: "Real git apply --check passed in Vercel Sandbox (0 until sandbox completes)." },
+  { key: "gitValidated", label: "Git-validated operations", description: "Git apply --check passed on the scanned commit (updates when verification finishes)." },
   { key: "verified", label: "Verified file operations", description: "Repository checks passed on patched copy" },
   { key: "delivered", label: "Delivered file operations", description: "Cleanup PR opened on review branch" },
 ];
