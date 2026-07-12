@@ -184,6 +184,9 @@ export async function runFindingsEngine(
       repositoryModel,
     });
 
+    const { enrichFindingsWithEvidenceGate } = await import("@/lib/findings/enrich-evidence-gate");
+    payload = enrichFindingsWithEvidenceGate(payload);
+
     payload = enrichPayloadLifecycle(payload);
 
     const verifiedFlat = flattenPayloadFindings(payload);

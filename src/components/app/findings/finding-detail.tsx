@@ -6,6 +6,8 @@ import { Panel } from "@/components/design-system/panel";
 import { RiskBadge } from "@/components/design-system/risk-badge";
 import {
   actionLabel,
+  confidenceTierLabel,
+  confidenceTierVariant,
   formatFindingAnalyzerLabel,
   measurableEvidenceLines,
   patchPreview,
@@ -29,10 +31,12 @@ export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetai
         ? "protected"
         : "review";
 
+  const gate = finding.evidenceGate;
+  const brief = gate?.brief;
   const evidenceLines = measurableEvidenceLines(finding);
 
   return (
-    <Panel variant="elevated" padding="md" className="h-full">
+    <Panel variant="elevated" padding="md" className="h-full overflow-y-auto scrollbar-thin">
       <div className="mb-4 flex items-start justify-between gap-2">
         <div>
           <p className="ds-label">{typeLabel(finding.type)}</p>
@@ -51,40 +55,106 @@ export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetai
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
+        {finding.confidenceTier && (
+          <RiskBadge level={confidenceTierVariant(finding.confidenceTier)}>
+            {confidenceTierLabel(finding.confidenceTier)}
+          </RiskBadge>
+        )}
         <RiskBadge level={bucketLevel}>{actionLabel(finding.action)}</RiskBadge>
         <RiskBadge level="neutral">
           {formatFindingAnalyzerLabel(finding, rawToolReports)}
         </RiskBadge>
-        <span className={cn("rounded border border-border/40 px-2 py-0.5 font-mono text-[10px]", severityColor(finding.severity))}>
+        {finding.priorityScore != null && (
+          <span className="rounded border border-border/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+            Priority {finding.priorityScore.toFixed(2)}
+          </span>
+        )}
+        <span
+          className={cn(
+            "rounded border border-border/40 px-2 py-0.5 font-mono text-[10px]",
+            severityColor(finding.severity)
+          )}
+        >
           {finding.severity} severity
         </span>
       </div>
 
+      {gate && (
+        <div className="mb-4 space-y-2 rounded-md border border-border/50 bg-card/40 p-3">
+          <p className="text-xs font-medium text-foreground">Evidence pipeline</p>
+          {gate.pipelineStages.map((stage) => (
+            <div key={stage.name} className="text-xs">
+              <p className={cn(stage.passed ? "text-signal" : "text-amber-400")}>
+                {stage.passed ? "✓" : "○"} {stage.label}
+              </p>
+              <p className="text-muted-foreground pl-4">{stage.summary}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
       <dl className="space-y-4 text-sm">
-        <DetailRow label="Reason" value={finding.reason} />
+        <DetailRow label="What was detected?" value={brief?.whatDetected ?? finding.title} />
         <DetailRow
-          label="Evidence"
+          label="Where is it?"
+          value={
+            finding.files.length > 0 ? (
+              <CollapsibleFileList files={finding.files} />
+            ) : (
+              <span className="font-mono">{brief?.whereLocated ?? finding.packageName ?? "—"}</span>
+            )
+          }
+        />
+        <DetailRow label="Why is it a problem?" value={brief?.whyProblem ?? finding.reason} />
+        <DetailRow
+          label="Direct evidence"
           value={
             <ul className="space-y-1 text-muted-foreground">
-              {evidenceLines.map((line) => (
+              {(brief?.directEvidence.length ? brief.directEvidence : evidenceLines).map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
           }
         />
+        {brief && brief.contextConsidered.length > 0 && (
+          <DetailRow
+            label="Repository context considered"
+            value={
+              <ul className="space-y-1 text-muted-foreground">
+                {brief.contextConsidered.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            }
+          />
+        )}
+        {brief && brief.falsePositiveRisks.length > 0 && (
+          <DetailRow
+            label="What could make this a false positive?"
+            value={
+              <ul className="space-y-1 text-amber-400/90">
+                {brief.falsePositiveRisks.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            }
+          />
+        )}
         <DetailRow
-          label="Affected files"
+          label="How confident is RepoDiet?"
+          value={brief?.confidenceExplanation ?? finding.evidenceBundle?.decisionReason ?? "—"}
+        />
+        <DetailRow label="What would change if fixed?" value={brief?.fixImpact ?? patchPreview(finding)} />
+        <DetailRow
+          label="How will the fix be verified?"
           value={
-            finding.files.length > 0 ? (
-              <CollapsibleFileList files={finding.files} />
-            ) : (
-              finding.packageName ?? "—"
-            )
+            <ul className="space-y-1 text-muted-foreground">
+              {(brief?.verificationPlan ?? ["review"]).map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ul>
           }
         />
-        {finding.packageName && (
-          <DetailRow label="Package" value={<span className="font-mono">{finding.packageName}</span>} />
-        )}
         {finding.deletionProof && (
           <DetailRow
             label="Deletion proof"
@@ -94,9 +164,6 @@ export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetai
                 <li>
                   Dynamic refs checked:{" "}
                   {finding.deletionProof.dynamicReferencesChecked ? "yes" : "no"}
-                </li>
-                <li>
-                  Verification required: {finding.deletionProof.verificationRequired.join(", ")}
                 </li>
                 <li>
                   Auto-delete approved:{" "}
@@ -110,7 +177,10 @@ export function FindingDetail({ finding, rawToolReports, onClose }: FindingDetai
         {finding.action === "do_not_touch" && (
           <DetailRow
             label="Protection"
-            value="Protected by RepoDiet policy — routes, configs, env files, lockfiles, and API handlers are not auto-deleted."
+            value={
+              finding.protectionReason ??
+              "Protected by RepoDiet policy — routes, configs, env files, lockfiles, and API handlers are not auto-deleted."
+            }
           />
         )}
       </dl>

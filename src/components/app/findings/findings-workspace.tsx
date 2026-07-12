@@ -9,8 +9,11 @@ import { Input } from "@/components/ui/input";
 import { FindingDetail } from "./finding-detail";
 import {
   actionLabel,
+  confidenceTierLabel,
+  confidenceTierVariant,
   formatFindingAnalyzerLabel,
   findingTarget,
+  sortFindingsByPriority,
   typeLabel,
 } from "../findings/findings-utils";
 import { cn } from "@/lib/utils";
@@ -81,7 +84,7 @@ export function FindingsWorkspace({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return findings.filter((f) => {
+    const matched = findings.filter((f) => {
       if (!matchesCategory(f, category)) return false;
       if (!matchesBucket(f, bucket)) return false;
       if (!q) return true;
@@ -91,6 +94,7 @@ export function FindingsWorkspace({
         (f.packageName?.toLowerCase().includes(q) ?? false)
       );
     });
+    return sortFindingsByPriority(matched);
   }, [findings, category, bucket, search]);
 
   const selected = filtered.find((f) => f.id === selectedId) ?? filtered[0] ?? null;
@@ -197,17 +201,24 @@ export function FindingsWorkspace({
                     >
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium text-foreground">{finding.title}</p>
-                      <RiskBadge
-                        level={
-                          finding.action === "safe_candidate"
-                            ? "safe"
-                            : finding.action === "do_not_touch"
-                              ? "protected"
-                              : "review"
-                        }
-                      >
-                        {actionLabel(finding.action)}
-                      </RiskBadge>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {finding.confidenceTier && (
+                          <RiskBadge level={confidenceTierVariant(finding.confidenceTier)}>
+                            {confidenceTierLabel(finding.confidenceTier)}
+                          </RiskBadge>
+                        )}
+                        <RiskBadge
+                          level={
+                            finding.action === "safe_candidate"
+                              ? "safe"
+                              : finding.action === "do_not_touch"
+                                ? "protected"
+                                : "review"
+                          }
+                        >
+                          {actionLabel(finding.action)}
+                        </RiskBadge>
+                      </div>
                     </div>
                     <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
                       {findingTarget(finding)}
