@@ -583,6 +583,8 @@ export async function validateCanonicalPatch(
     const patchFile = path.join(validateRoot, "cleanup.patch");
     await fs.writeFile(patchFile, applyable, "utf8");
 
+    await execa("git", ["update-index", "--refresh"], { cwd: validateRoot, reject: false });
+
     const t0 = Date.now();
     const check = await execa("git", ["apply", "--check", "--index", "--verbose", patchFile], {
       cwd: validateRoot,
