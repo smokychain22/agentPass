@@ -28,6 +28,8 @@ export interface GitHubPreflightResult {
   installationOwner?: string;
   repositoryOwner: string;
   requiresRepositoryOwnerInstall: boolean;
+  /** Public repos can use scan/sandbox without App repo grant. */
+  repositoryIsPublic?: boolean;
   repositoryAuthorized: boolean;
   permissionsVerified: boolean;
   repositoryAccessible: boolean;
