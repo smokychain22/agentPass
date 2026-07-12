@@ -31,9 +31,9 @@ export async function completeInstallAccess(
   await saveInstallationSession(session);
 
   const trustGrant =
-    input.trustPendingPropagation || input.setupAction === "update" || input.quick;
-  const attempts = input.quick ? 2 : trustGrant ? 4 : 3;
-  const delayMs = input.quick ? 400 : 1000;
+    input.trustPendingPropagation === true || input.setupAction === "update";
+  const attempts = input.quick ? 2 : trustGrant ? 6 : 4;
+  const delayMs = input.quick ? 400 : 1500;
 
   const access = await installationIncludesRepositoryWithRetry(
     input.installationId,
@@ -73,14 +73,17 @@ export async function runGitHubAccessSync(input: {
   branch?: string;
   scanId?: string;
   commitSha?: string;
+  /** Fast path for background polls; explicit user sync uses full retries. */
+  quick?: boolean;
 }) {
+  const quick = input.quick === true;
   const completed = await completeInstallAccess({
     installationId: input.installationId!,
     repositoryFullName: input.repositoryFullName,
     sessionKey: input.sessionKey,
     setupAction: input.setupAction,
     trustPendingPropagation: input.trustPendingPropagation,
-    quick: true,
+    quick,
   });
 
   const preflight = await runGitHubPreflight({
@@ -89,7 +92,7 @@ export async function runGitHubAccessSync(input: {
     branch: input.branch,
     scanId: input.scanId,
     commitSha: input.commitSha,
-    quick: true,
+    quick,
   } satisfies GitHubPreflightInput);
 
   return { completed, preflight };

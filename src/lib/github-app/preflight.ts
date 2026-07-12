@@ -14,6 +14,7 @@ import {
   parseRepositoryFullName,
   requiresRepositoryOwnerInstall,
 } from "./repository";
+import { isPublicGitHubRepository } from "@/lib/github/fetch-repo-zip";
 
 export type { GitHubPreflightResult } from "./types";
 
@@ -25,6 +26,22 @@ export interface GitHubPreflightInput {
   sessionKey?: string;
   /** Fast path for UI — minimal GitHub API retries (sub-second). */
   quick?: boolean;
+}
+
+export function resolveGrantPropagationPending(input: {
+  bindingTrusted: boolean;
+  repositoryAccessible: boolean;
+  suspended: boolean;
+  repositoryIsPublic: boolean;
+  ownerMismatch: boolean;
+}): boolean {
+  return (
+    input.bindingTrusted &&
+    !input.repositoryAccessible &&
+    !input.suspended &&
+    !input.repositoryIsPublic &&
+    !input.ownerMismatch
+  );
 }
 
 function permissionsAreSufficient(permissions?: {
@@ -61,6 +78,7 @@ export async function runGitHubPreflight(
   const { owner, repo } = parseRepositoryFullName(input.repositoryFullName);
   const configured = isGitHubAppConfigured();
   const session = configured ? await readInstallationSession() : null;
+  const repositoryIsPublic = await isPublicGitHubRepository(owner, repo);
 
   let repositoryAccessible = false;
   let bindingTrusted = false;
@@ -176,7 +194,11 @@ export async function runGitHubPreflight(
   });
 
   const { accessCopyForState } = await import("./access-states");
-  const messages = accessCopyForState(accessState, repo, owner);
+  const displayState =
+    ownerMismatch && !repositoryAccessible && !repositoryIsPublic
+      ? ("wrong_account" as const)
+      : accessState;
+  const messages = accessCopyForState(displayState, repo, owner);
 
   return {
     githubUserConnected: Boolean(session),
@@ -185,8 +207,15 @@ export async function runGitHubPreflight(
     installationOwner,
     repositoryOwner: owner,
     requiresRepositoryOwnerInstall: ownerMismatch,
+    repositoryIsPublic,
     repositoryAuthorized: repositoryAccessible && permissionsVerified && !suspended,
-    grantPropagationPending: bindingTrusted && !repositoryAccessible && !suspended,
+    grantPropagationPending: resolveGrantPropagationPending({
+      bindingTrusted,
+      repositoryAccessible,
+      suspended,
+      repositoryIsPublic,
+      ownerMismatch,
+    }),
     permissionsVerified,
     repositoryAccessible,
     canCreateBranch,

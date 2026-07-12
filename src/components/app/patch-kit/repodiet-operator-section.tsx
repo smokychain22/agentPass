@@ -181,7 +181,8 @@ export function RepoDietOperatorSection({
       ? "verified"
       : patchKit?.repositoryVerification?.status ?? null);
   const githubAccountConnected = Boolean(githubStatus?.connected);
-  const repositoryIsPublic = patchKit?.repositoryIsPublic === true;
+  const repositoryIsPublic =
+    patchKit?.repositoryIsPublic === true || preflight?.repositoryIsPublic === true;
   const sandboxAccessBlocked =
     !repositoryIsPublic &&
     (patchKit?.patchValidation?.gitPatchValidation?.failureCode === "GITHUB_REPOSITORY_NOT_GRANTED" ||
@@ -241,6 +242,7 @@ export function RepoDietOperatorSection({
     async (opts?: {
       sync?: boolean;
       trustPending?: boolean;
+      quick?: boolean;
       installationId?: number;
       setupAction?: "install" | "update";
     }) => {
@@ -266,7 +268,7 @@ export function RepoDietOperatorSection({
             typeof window !== "undefined" &&
             window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
           const useSync = opts?.sync ?? pendingGrant;
-          const trustPending = opts?.trustPending ?? useSync;
+          const trustPending = opts?.trustPending ?? false;
           const preflightInput = {
             repositoryFullName,
             branch,
@@ -282,6 +284,7 @@ export function RepoDietOperatorSection({
                   installationId: opts?.installationId,
                   setupAction: opts?.setupAction,
                   trustPendingPropagation: trustPending,
+                  quick: opts?.quick,
                 })
               : await fetchGitHubPreflight(preflightInput);
           } catch {
@@ -292,7 +295,10 @@ export function RepoDietOperatorSection({
 
           setPreflight(result);
 
-          if (result.repositoryAuthorized && typeof window !== "undefined") {
+          if (
+            (result.repositoryAuthorized || result.repositoryIsPublic) &&
+            typeof window !== "undefined"
+          ) {
             window.sessionStorage.removeItem(PENDING_GITHUB_GRANT_KEY);
           }
 
@@ -361,7 +367,7 @@ export function RepoDietOperatorSection({
       const pending =
         window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repositoryFullName;
       if (!pending) return;
-      void loadRepositoryAccess({ sync: true, trustPending: true });
+      void loadRepositoryAccess({ sync: true, trustPending: false });
     };
 
     document.addEventListener("visibilitychange", onVisible);
@@ -371,6 +377,24 @@ export function RepoDietOperatorSection({
       window.removeEventListener("focus", onVisible);
     };
   }, [useDemoAuth, repositoryReady, repositoryFullName, loadRepositoryAccess]);
+
+  useEffect(() => {
+    if (useDemoAuth || repositoryReady || repositoryIsPublic || !repositoryFullName) return;
+    if (!grantPropagationPending) return;
+
+    const poll = () => {
+      void loadRepositoryAccess({ sync: true, trustPending: false });
+    };
+    const id = window.setInterval(poll, 8_000);
+    return () => window.clearInterval(id);
+  }, [
+    useDemoAuth,
+    repositoryReady,
+    repositoryIsPublic,
+    repositoryFullName,
+    grantPropagationPending,
+    loadRepositoryAccess,
+  ]);
 
   const grantAccess = async () => {
     if (!repositoryFullName) return;
@@ -632,7 +656,7 @@ export function RepoDietOperatorSection({
                     <Button
                       variant="secondary"
                       disabled={preflightLoading || !repositoryFullName}
-                      onClick={() => void loadRepositoryAccess({ sync: true, trustPending: true })}
+                      onClick={() => void loadRepositoryAccess({ sync: true, trustPending: false })}
                     >
                       {preflightLoading ? (
                         <>

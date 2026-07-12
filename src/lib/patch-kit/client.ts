@@ -105,13 +105,15 @@ export async function syncGitHubRepositoryAccess(
     installationId?: number;
     setupAction?: "install" | "update";
     trustPendingPropagation?: boolean;
+    quick?: boolean;
     branch?: string;
     scanId?: string;
     commitSha?: string;
   },
   opts?: { timeoutMs?: number }
 ): Promise<GitHubPreflightResult> {
-  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const quick = input.quick === true;
+  const timeoutMs = opts?.timeoutMs ?? (quick ? 15_000 : 45_000);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 

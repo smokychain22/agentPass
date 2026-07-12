@@ -5,6 +5,7 @@ import {
   isTerminalSandboxStatus,
   reconcileSandboxRun,
 } from "@/lib/execution/reconcile-sandbox-run";
+import { isPublicGitHubRepository } from "@/lib/github/fetch-repo-zip";
 
 export const runtime = "nodejs";
 
@@ -24,11 +25,22 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Patch kit not found." }, { status: 404 });
     }
 
+    let patchKit = stored.payload;
+    if (patchKit.repositoryIsPublic === undefined) {
+      patchKit = {
+        ...patchKit,
+        repositoryIsPublic: await isPublicGitHubRepository(
+          patchKit.repo.owner,
+          patchKit.repo.name
+        ),
+      };
+    }
+
     const run = sandboxRun ? await reconcileSandboxRun(sandboxRun) : undefined;
 
     return NextResponse.json({
       ok: true,
-      patchKit: stored.payload,
+      patchKit,
       sandboxRun: run
         ? {
             id: run.id,

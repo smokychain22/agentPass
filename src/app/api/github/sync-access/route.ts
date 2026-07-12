@@ -13,6 +13,7 @@ export async function POST(request: Request) {
     installationId?: number;
     setupAction?: "install" | "update";
     trustPendingPropagation?: boolean;
+    quick?: boolean;
     branch?: string;
     scanId?: string;
     commitSha?: string;
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
       installationId,
       setupAction: body.setupAction,
       trustPendingPropagation: body.trustPendingPropagation === true,
+      quick: body.quick === true,
       branch: body.branch,
       scanId: body.scanId,
       commitSha: body.commitSha,
