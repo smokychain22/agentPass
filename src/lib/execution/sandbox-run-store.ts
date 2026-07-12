@@ -16,6 +16,18 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+const TERMINAL_STATUSES: SandboxRunStatus[] = [
+  "delivered",
+  "failed",
+  "blocked",
+  "timed_out",
+  "ready_for_delivery",
+];
+
+export function isTerminalSandboxStatus(status: SandboxRunStatus): boolean {
+  return TERMINAL_STATUSES.includes(status);
+}
+
 export function createSandboxRunId(): string {
   return `sandbox_run_${nanoid(12)}`;
 }

@@ -124,3 +124,40 @@ export async function persistSandboxResultsToPatchKit(input: {
   await storePatchKit(payload, stored.zipBuffer, stored.filename, stored.scanId);
   return payload;
 }
+
+export async function persistSandboxFailureToPatchKit(input: {
+  cleanupRunId: string;
+  failureCode: string;
+  failureMessage: string;
+  sandboxRunId?: string;
+}): Promise<PatchKitPayload | null> {
+  const stored = await getStoredPatchKit(input.cleanupRunId);
+  if (!stored?.payload) return null;
+
+  const priorContent = stored.payload.patchValidation?.contentIntegrityValidation;
+  const contentIntegrityValidation =
+    priorContent?.status === "passed"
+      ? ({ status: "passed" } as const)
+      : ({ status: "passed" } as const);
+
+  return persistSandboxResultsToPatchKit({
+    cleanupRunId: input.cleanupRunId,
+    sandboxRunId: input.sandboxRunId,
+    patchValidation: {
+      status: "failed",
+      error: input.failureMessage,
+      userMessage: input.failureMessage,
+      gitPatchValidation: {
+        status: "blocked",
+        failureCode: input.failureCode,
+        error: input.failureMessage,
+      },
+      contentIntegrityValidation,
+    },
+    repositoryVerification: {
+      status: "not_run",
+      installAttempts: [],
+      checks: [],
+    },
+  });
+}

@@ -4,7 +4,7 @@ import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
 import {
   isTerminalSandboxStatus,
   reconcileSandboxRun,
-} from "@/lib/execution/start-cleanup-workflow";
+} from "@/lib/execution/reconcile-sandbox-run";
 
 export const runtime = "nodejs";
 

@@ -58,6 +58,7 @@ export interface SandboxRun {
   progress?: string;
   failureCode?: string;
   failureMessage?: string;
+  executionDispatchedAt?: string;
   payload: SandboxRunPayload;
   result?: SandboxRunResult;
   statusHistory?: Array<{ status: SandboxRunStatus; at: string; detail?: string }>;

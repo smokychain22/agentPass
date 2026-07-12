@@ -4,7 +4,7 @@ import { getSandboxRunByCleanupRunId } from "@/lib/execution/sandbox-run-store";
 import {
   isTerminalSandboxStatus,
   reconcileSandboxRun,
-} from "@/lib/execution/start-cleanup-workflow";
+} from "@/lib/execution/reconcile-sandbox-run";
 
 export const runtime = "nodejs";
 

@@ -12,6 +12,12 @@
     },
     "src/app/api/tools/run_cleanup/**": {
       "maxDuration": 300
+    },
+    "src/app/api/patch-kit/generate/**": {
+      "maxDuration": 300
+    },
+    "src/app/api/internal/sandbox-runs/execute/**": {
+      "maxDuration": 300
     }
   }
 }

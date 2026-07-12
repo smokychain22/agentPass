@@ -68,7 +68,7 @@ function testGitValidatedRequiresPassedPatchStatus(): void {
 }
 
 function testIsTerminalSandboxStatus(): void {
-  const { isTerminalSandboxStatus } = require("../src/lib/execution/start-cleanup-workflow") as typeof import("../src/lib/execution/start-cleanup-workflow");
+  const { isTerminalSandboxStatus } = require("../src/lib/execution/sandbox-run-store") as typeof import("../src/lib/execution/sandbox-run-store");
   assert.equal(isTerminalSandboxStatus("ready_for_delivery"), true);
   assert.equal(isTerminalSandboxStatus("starting"), false);
 }

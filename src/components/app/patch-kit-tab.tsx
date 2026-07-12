@@ -52,6 +52,7 @@ export function PatchKitTab() {
   const [phase, setPhase] = useState<PatchKitPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [rateLimit, setRateLimit] = useState<RateLimitSnapshot | null>(null);
+  const [sandboxProgress, setSandboxProgress] = useState<string | null>(null);
   const cooldown = useRateLimitCooldown(rateLimit?.resetAt, rateLimit?.retryAfterSeconds);
 
   const isLoading = LOADING.includes(phase);
@@ -152,8 +153,15 @@ export function PatchKitTab() {
         };
         if (!data.ok || cancelled || !patchKit) return;
 
+        if (data.run?.progress) {
+          setSandboxProgress(data.run.progress);
+        }
+
         if (data.patchKit) {
           setPatchKit(data.patchKit);
+          if (data.patchKit.patchValidation?.status !== "pending_sandbox") {
+            setSandboxProgress(null);
+          }
           return;
         }
 
@@ -367,7 +375,19 @@ export function PatchKitTab() {
           {patchKit.patchValidation?.status === "pending_sandbox" && (patchKit.sandboxRunId ?? patchKit.workerJobId) && (
             <FeedbackBanner
               variant="info"
-              message={`Real Git validation and repository verification are running in an isolated Vercel Sandbox (run ${patchKit.sandboxRunId ?? patchKit.workerJobId}).`}
+              message={`Real Git validation and repository verification are running in an isolated Vercel Sandbox (run ${patchKit.sandboxRunId ?? patchKit.workerJobId})${sandboxProgress ? ` — ${sandboxProgress}` : ""}.`}
+              dismissible={false}
+            />
+          )}
+          {patchKit.patchValidation?.status === "failed" &&
+            patchKit.sandboxRunId && (
+            <FeedbackBanner
+              variant="warning"
+              message={
+                patchKit.patchValidation.userMessage ??
+                patchKit.patchValidation.error ??
+                "Vercel Sandbox verification failed. Click Regenerate Quick Cleanup to retry."
+              }
               dismissible={false}
             />
           )}
