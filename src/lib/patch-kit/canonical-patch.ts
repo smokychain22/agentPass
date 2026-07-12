@@ -42,13 +42,13 @@ export interface PatchValidationAttempt {
 }
 
 export interface PatchValidationLayer {
-  status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
+  status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_sandbox";
   failureCode?: string;
   error?: string;
 }
 
 export interface CanonicalPatchValidationResult {
-  status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_worker";
+  status: "passed" | "failed" | "blocked" | "skipped" | "not_generated" | "pending_sandbox";
   error?: string;
   userMessage?: string;
   baseCommitSha?: string;

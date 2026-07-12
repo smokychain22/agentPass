@@ -150,7 +150,7 @@ function recordAttempt(
   });
   const displayReason =
     input.status === "retained"
-      ? formatProductOutcomeLabel("verified_fix")
+      ? formatProductOutcomeLabel("generated_pending")
       : exactReason;
   const { added, removed } = countDiffLines(input.unifiedDiff);
   const hasRealChange =

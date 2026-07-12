@@ -122,50 +122,59 @@ export function PatchKitTab() {
   };
 
   useEffect(() => {
-    const jobId = patchKit?.workerJobId;
-    if (!jobId) return;
-    const terminal = new Set(["delivered", "failed", "blocked", "timed_out", "ready_for_delivery"]);
+    const runId = patchKit?.sandboxRunId ?? patchKit?.workerJobId;
+    if (!runId) return;
+    const pending =
+      patchKit?.patchValidation?.status === "pending_sandbox" ||
+      patchKit?.patchValidation?.gitPatchValidation?.status === "pending_sandbox";
+    if (!pending) return;
     let cancelled = false;
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/repository-jobs/${jobId}`);
+        const res = await fetch(`/api/sandbox-runs/${runId}`);
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as {
           ok: boolean;
-          job?: { status: string; result?: PatchKitPayload["patchValidation"] };
           terminal?: boolean;
+          run?: {
+            status: string;
+            progress?: string;
+            result?: {
+              patchValidation?: PatchKitPayload["patchValidation"];
+              repositoryVerification?: PatchKitPayload["repositoryVerification"];
+            };
+          };
         };
-        if (!data.ok || cancelled) return;
-        if (data.terminal && patchKit) {
-          const result = data.job as { status: string; result?: { patchValidation?: PatchKitPayload["patchValidation"]; repositoryVerification?: PatchKitPayload["repositoryVerification"] } };
-          if (result?.result?.patchValidation || result?.result?.repositoryVerification) {
-            setPatchKit({
-              ...patchKit,
-              patchValidation: result.result.patchValidation ?? patchKit.patchValidation,
-              repositoryVerification: result.result.repositoryVerification ?? patchKit.repositoryVerification,
-              summary: {
-                ...patchKit.summary,
-                patchValidationStatus: result.result.patchValidation?.status ?? patchKit.summary.patchValidationStatus,
-                verifiedChanges:
-                  result.result.repositoryVerification?.status === "verified"
-                    ? patchKit.summary.generatedChanges
-                    : patchKit.summary.verifiedChanges,
-                verifiedFileOperations:
-                  result.result.repositoryVerification?.status === "verified"
-                    ? patchKit.summary.generatedChanges
-                    : patchKit.summary.verifiedFileOperations,
-                gitValidatedOperations:
-                  result.result.patchValidation?.status === "passed"
-                    ? patchKit.summary.generatedChanges
-                    : patchKit.summary.gitValidatedOperations,
-                validatedChanges:
-                  result.result.patchValidation?.status === "passed"
-                    ? patchKit.summary.generatedChanges
-                    : patchKit.summary.validatedChanges,
-              },
-            });
-          }
+        if (!data.ok || cancelled || !patchKit) return;
+
+        if (data.terminal && data.run?.result) {
+          const result = data.run.result;
+          setPatchKit({
+            ...patchKit,
+            patchValidation: result.patchValidation ?? patchKit.patchValidation,
+            repositoryVerification: result.repositoryVerification ?? patchKit.repositoryVerification,
+            summary: {
+              ...patchKit.summary,
+              patchValidationStatus: result.patchValidation?.status ?? patchKit.summary.patchValidationStatus,
+              verifiedChanges:
+                result.repositoryVerification?.status === "verified"
+                  ? patchKit.summary.generatedChanges
+                  : patchKit.summary.verifiedChanges,
+              verifiedFileOperations:
+                result.repositoryVerification?.status === "verified"
+                  ? patchKit.summary.generatedChanges
+                  : patchKit.summary.verifiedFileOperations,
+              gitValidatedOperations:
+                result.patchValidation?.status === "passed"
+                  ? patchKit.summary.generatedChanges
+                  : patchKit.summary.gitValidatedOperations,
+              validatedChanges:
+                result.patchValidation?.status === "passed"
+                  ? patchKit.summary.generatedChanges
+                  : patchKit.summary.validatedChanges,
+            },
+          });
         }
       } catch {
         /* polling is best-effort */
@@ -178,7 +187,7 @@ export function PatchKitTab() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [patchKit?.workerJobId, patchKit, setPatchKit]);
+  }, [patchKit?.sandboxRunId, patchKit?.workerJobId, patchKit?.patchValidation?.status, patchKit, setPatchKit]);
 
   const safeDeleteRows = useMemo(
     () => (findings ? buildSafeDeleteRows(findings) : []),
@@ -195,6 +204,15 @@ export function PatchKitTab() {
   const fixPrDescription = useMemo(() => {
     if (supportedCount === 0) {
       return "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available.";
+    }
+    if (patchKit?.patchValidation?.status === "pending_sandbox") {
+      return "Real Git validation and repository verification are running in an isolated Vercel Sandbox.";
+    }
+    if (
+      patchKit?.patchValidation?.gitPatchValidation?.failureCode === "WORKER_UNAVAILABLE" ||
+      patchKit?.patchValidation?.userMessage?.includes("Docker worker")
+    ) {
+      return "This cleanup run used a deprecated Docker worker path. Regenerate Quick Cleanup after the latest deployment to run verification in Vercel Sandbox.";
     }
     if (verificationIssue) {
       return verificationIssue;
@@ -311,15 +329,23 @@ export function PatchKitTab() {
           {verificationIssue && (
             <FeedbackBanner variant="warning" message={verificationIssue} dismissible={false} />
           )}
-          {patchKit.workerJobId && patchKit.patchValidation?.status === "pending_worker" && (
+          {(patchKit.patchValidation?.gitPatchValidation?.failureCode === "WORKER_UNAVAILABLE" ||
+            patchKit.patchValidation?.userMessage?.includes("Docker worker")) && (
+            <FeedbackBanner
+              variant="warning"
+              message="This run targeted a deprecated external Docker worker. Click Regenerate Quick Cleanup to queue verification in Vercel Sandbox."
+              dismissible={false}
+            />
+          )}
+          {patchKit.patchValidation?.status === "pending_sandbox" && (patchKit.sandboxRunId ?? patchKit.workerJobId) && (
             <FeedbackBanner
               variant="info"
-              message={`Real Git patch validation is queued on RepoDiet's isolated worker (job ${patchKit.workerJobId}). Waiting for worker…`}
+              message={`Real Git validation and repository verification are running in an isolated Vercel Sandbox (run ${patchKit.sandboxRunId ?? patchKit.workerJobId}).`}
               dismissible={false}
             />
           )}
           {patchKit.patchValidation?.status === "blocked" &&
-            patchKit.patchValidation.gitPatchValidation?.failureCode !== "WORKER_UNAVAILABLE" &&
+            patchKit.patchValidation.gitPatchValidation?.failureCode !== "SANDBOX_UNAVAILABLE" &&
             !verificationIssue && (
             <FeedbackBanner
               variant="warning"
@@ -430,6 +456,8 @@ export function PatchKitTab() {
                       attempted: patchKit.cleanupRunSummary.executed,
                       generated: patchKit.cleanupRunSummary.generated,
                       validated: patchKit.cleanupRunSummary.validated,
+                      contentValidated: patchKit.cleanupRunSummary.contentValidatedOperations,
+                      gitValidated: patchKit.cleanupRunSummary.gitValidatedOperations,
                       verified: patchKit.cleanupRunSummary.verified,
                       delivered: patchKit.cleanupRunSummary.delivered,
                       noop: patchKit.cleanupRunSummary.noOp,

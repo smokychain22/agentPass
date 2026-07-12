@@ -62,7 +62,7 @@ export function computeWorkflowGates(input: {
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
   const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
-  const workerPending = patchKit?.patchValidation?.status === "pending_worker";
+  const sandboxPending = patchKit?.patchValidation?.status === "pending_sandbox";
   const patchKitReady = Boolean(patchKit?.id);
   const verificationPassed = input.verificationStatus === "passed";
 
@@ -70,7 +70,7 @@ export function computeWorkflowGates(input: {
   if (input.quickCleanupRunning) {
     quickCleanupState = "running";
   } else if (patchKitReady) {
-    if (workerPending) {
+    if (sandboxPending) {
       quickCleanupState = "running";
     } else if (validatedChanges > 0 && patchValidated) {
       quickCleanupState = "complete";
@@ -106,7 +106,7 @@ export function computeWorkflowGates(input: {
       validatedChanges > 0 &&
       generatedChanges > 0 &&
       verificationPassed &&
-      !workerPending,
+      !sandboxPending,
     reportOnlyPrAvailable: findingsReady,
   };
 }

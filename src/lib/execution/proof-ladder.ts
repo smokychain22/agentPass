@@ -20,7 +20,10 @@ export interface ProofLadderCounts {
   /** @deprecated Use executed */
   attempted: number;
   generated: number;
+  /** @deprecated Use contentValidated */
   validated: number;
+  contentValidated: number;
+  gitValidated: number;
   verified: number;
   delivered: number;
   noop: number;
@@ -57,6 +60,7 @@ export function buildProofLadderCounts(input: {
   pullRequestUrl?: string;
 }): ProofLadderCounts {
   const detected =
+    input.summary.detectedFindings ??
     input.findings?.summary.detectedFindings ??
     input.findings?.summary.verifiedFindings ??
     input.findings?.summary.totalFindings ??
@@ -67,7 +71,17 @@ export function buildProofLadderCounts(input: {
     input.summary.executedFindings ?? input.summary.attemptedTransformations ?? 0;
   const attempted = executed;
   const generated = input.summary.generatedChanges ?? 0;
-  const validated = input.summary.validatedChanges ?? 0;
+  const contentValidated =
+    input.summary.contentValidatedOperations ??
+    (input.summary.patchValidationStatus === "passed" ||
+    input.summary.patchValidationStatus === "blocked" ||
+    input.summary.patchValidationStatus === "pending_sandbox"
+      ? generated
+      : 0);
+  const gitValidated =
+    input.summary.gitValidatedOperations ??
+    (input.summary.patchValidationStatus === "passed" ? generated : 0);
+  const validated = gitValidated;
   const verified = input.summary.verifiedChanges ?? 0;
   const noop = input.summary.noopTransformations ?? 0;
   const failed = input.summary.failedTransformations ?? 0;
@@ -88,6 +102,8 @@ export function buildProofLadderCounts(input: {
     attempted,
     generated,
     validated,
+    contentValidated,
+    gitValidated,
     verified,
     delivered,
     noop,

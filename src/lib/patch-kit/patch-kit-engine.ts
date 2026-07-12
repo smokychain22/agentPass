@@ -40,7 +40,7 @@ import {
 } from "./canonical-patch";
 import { buildApplyablePatchFromEdits } from "./applyable-patch-builder";
 import { isGitCliAvailable } from "./git-runtime";
-import { createRepositoryJob, WorkerUnavailableError } from "@/lib/worker/repository-job-store";
+import { startRepositoryCleanupExecution, SandboxUnavailableError } from "@/lib/execution/start-cleanup-workflow";
 import { runRepositoryVerification } from "./repository-verification";
 import type { RepositoryVerificationResult } from "./repository-verification";
 import { buildCleanupRunSummary } from "./cleanup-summary";
@@ -166,13 +166,16 @@ function buildTransformerResults(
     if (attempt?.status === "retained") {
       const original = filePath ? attempt.originalSources?.[filePath] : undefined;
       const modified = filePath ? attempt.modifiedSources?.[filePath] : undefined;
+      const pendingMessage =
+        "Generated; pending Git validation and repository verification.";
       return {
         findingId: finding.id,
         transformer: attempt.pluginId || transformer,
         status: "generated",
         reason:
-          attempt.displayReason ||
-          "Generated; pending Git validation and repository verification.",
+          attempt.displayReason && !/verified and retained/i.test(attempt.displayReason)
+            ? attempt.displayReason
+            : pendingMessage,
         filePath,
         originalHash: original ? hashContent(original) : undefined,
         resultingDiff:
@@ -517,13 +520,14 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     let validatedEdits: typeof generatedEdits = [];
     let validatedChanges = 0;
     let verifiedChanges = 0;
-    let workerJobId: string | undefined;
-    let workerUnavailable = false;
+    let sandboxRunId: string | undefined;
+    let workflowRunId: string | undefined;
+    let sandboxUnavailable = false;
 
     const contentIntegrityPassed =
       patchValidation?.contentIntegrityValidation?.status === "passed" ||
       (patchValidation?.status === "blocked" && generatedChanges > 0) ||
-      patchValidation?.status === "pending_worker";
+      patchValidation?.status === "pending_sandbox";
     const gitValidationPassed = patchValidation?.status === "passed";
 
     if (contentIntegrityPassed && generatedEdits.length > 0) {
@@ -542,7 +546,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
       if (isServerlessRuntime() && contentIntegrityPassed && !gitValidationPassed && generatedChanges > 0) {
         try {
-          const job = await createRepositoryJob({
+          const execution = await startRepositoryCleanupExecution({
             cleanupRunId,
             scanId: findings.scanId,
             repositoryOwner: findings.repo.owner,
@@ -554,17 +558,19 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             changeOperations,
             patch: mergedPatch,
           });
-          workerJobId = job.id;
+          sandboxRunId = execution.sandboxRunId;
+          workflowRunId = execution.workflowRunId;
           if (patchValidation) {
             patchValidation = {
               ...patchValidation,
-              status: "pending_worker",
-              executionPlane: "docker_worker",
-              workerJobId: job.id,
+              status: "pending_sandbox",
+              executionPlane: "vercel_sandbox",
+              sandboxRunId: execution.sandboxRunId,
+              workflowRunId: execution.workflowRunId,
               userMessage:
-                "Real Git patch validation is queued on RepoDiet's isolated worker.",
+                "Real Git validation and repository verification are running in an isolated Vercel Sandbox.",
               gitPatchValidation: {
-                status: "pending_worker",
+                status: "pending_sandbox",
               },
               contentIntegrityValidation: patchValidation.contentIntegrityValidation ?? {
                 status: "passed",
@@ -572,15 +578,15 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             };
           }
         } catch (err) {
-          if (err instanceof WorkerUnavailableError) {
-            workerUnavailable = true;
+          if (err instanceof SandboxUnavailableError) {
+            sandboxUnavailable = true;
             if (patchValidation) {
               patchValidation = {
                 ...patchValidation,
                 userMessage: err.message,
                 gitPatchValidation: {
                   status: "blocked",
-                  failureCode: "WORKER_UNAVAILABLE",
+                  failureCode: "SANDBOX_UNAVAILABLE",
                   error: err.message,
                 },
               };
@@ -631,8 +637,6 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const filesAdded = 0;
     const blockerBreakdown = summarizeBlockers(candidateAudits);
     const attemptStats = summarizeCleanupAttempts(candidateAudits);
-    const detectedFindings =
-      findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? flatFindings.length;
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
       context,
@@ -640,10 +644,10 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     );
     const blockerSummary = deliveryReady
       ? `${verifiedChanges} verified file operation(s) ready for cleanup PR (${generatedChanges} generated, ${validatedChanges} git-validated).`
-      : patchValidation?.status === "pending_worker"
-        ? `${generatedChanges} generated file operation(s); content validation passed — Git validation and repository verification queued on Docker worker.`
-        : workerUnavailable
-          ? `${generatedChanges} generated file operation(s); content validation passed but no Docker worker is online — deploy the worker and retry.`
+      : patchValidation?.status === "pending_sandbox"
+        ? `${generatedChanges} generated file operation(s); content validation passed — Git validation and repository verification running in Vercel Sandbox.`
+        : sandboxUnavailable
+          ? `${generatedChanges} generated file operation(s); content validation passed but Vercel Sandbox is unavailable on this deployment.`
           : patchValidation?.status === "blocked"
         ? `${generatedChanges} generated file operation(s); content validation passed but git apply --check is blocked — ${patchValidation.error ?? "Git CLI unavailable"}.`
         : patchValidation?.status === "passed" && repositoryVerification.status === "blocked"
@@ -680,7 +684,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       supportedFixesDetected: transformerCompatible,
       transformerCompatible,
       dryRunPassed,
-      detectedFindings,
+      detectedFindings: cleanupRunSummary.detectedFindings,
       preflightCheckedFindings: cleanupRunSummary.preflightCheckedFindings,
       eligibleFindings: cleanupRunSummary.eligibleFindings,
       ineligibleFindings: cleanupRunSummary.ineligibleFindings,
@@ -728,20 +732,23 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
             ? "partial"
             : repositoryVerification.status === "failed"
               ? "failed"
-              : workerJobId
+              : sandboxRunId
                 ? "pending"
-                : workerUnavailable
+                : sandboxUnavailable
                   ? "partial"
                   : "pending",
     });
 
     summary.proofLadder = {
       ...summary.proofLadder,
+      detected: cleanupRunSummary.detectedFindings,
       eligible: cleanupRunSummary.eligibleFindings,
       executed: cleanupRunSummary.executedFindings,
       attempted: cleanupRunSummary.executedFindings,
       generated: cleanupRunSummary.generatedOperations,
       validated: cleanupRunSummary.gitValidatedOperations,
+      contentValidated: cleanupRunSummary.contentValidatedOperations,
+      gitValidated: cleanupRunSummary.gitValidatedOperations,
       verified: cleanupRunSummary.verifiedOperations,
       delivered: cleanupRunSummary.deliveredOperations,
       noop: cleanupRunSummary.noChangeExecutions,
@@ -851,7 +858,8 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       },
       cleanupRunSummary,
       deletionProofs,
-      workerJobId,
+      sandboxRunId,
+      workflowRunId,
     };
 
     await storePatchKit(payload, bundle.zipBuffer, bundle.filename, findings.scanId);

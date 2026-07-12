@@ -10,11 +10,12 @@ const STAGES: {
   label: string;
   description: string;
 }[] = [
-  { key: "detected", label: "Detected", description: "Evidence-backed signals from native analyzers" },
+  { key: "detected", label: "Detected", description: "Evidence-backed signals from native analyzers plus execution-discovered backup candidates." },
   { key: "eligible", label: "Eligible", description: "Supported by a deterministic transformer" },
   { key: "executed", label: "Executed findings", description: "Eligible findings that entered transformer execution" },
   { key: "generated", label: "Generated file operations", description: "Non-empty source modifications produced" },
-  { key: "validated", label: "Validated file operations", description: "Patch passed git apply --check --index when Git CLI is available; otherwise content integrity only (blocked for PR)." },
+  { key: "contentValidated", label: "Content-validated operations", description: "Before/after content integrity passed in the isolated workspace." },
+  { key: "gitValidated", label: "Git-validated operations", description: "Real git apply --check passed in Vercel Sandbox (0 until sandbox completes)." },
   { key: "verified", label: "Verified file operations", description: "Repository checks passed on patched copy" },
   { key: "delivered", label: "Delivered file operations", description: "Cleanup PR opened on review branch" },
 ];
@@ -44,8 +45,8 @@ export function ProofLadderPanel({
           const value =
             stage.key === "executed"
               ? (ladder.executed ?? ladder.attempted)
-              : ladder[stage.key];
-          const active = value > 0;
+              : (ladder[stage.key] ?? 0);
+          const active = typeof value === "number" && value > 0;
           return (
             <div
               key={stage.key}
@@ -59,7 +60,7 @@ export function ProofLadderPanel({
               <div className="mt-2 h-1 rounded-full bg-border/60 overflow-hidden">
                 <div
                   className={cn("h-full rounded-full", active ? "bg-signal" : "bg-transparent")}
-                  style={{ width: `${Math.min(100, (value / maxStage) * 100)}%` }}
+                  style={{ width: `${Math.min(100, ((value as number) / maxStage) * 100)}%` }}
                 />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">{stage.description}</p>
