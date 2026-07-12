@@ -40,7 +40,7 @@ export interface CreateCleanupPrResponse {
 
 export function buildPrSummaryText(result: CreateCleanupPrResponse): string {
   const { repo, actionSummary } = result;
-  return `RepoDiet created a review-ready cleanup PR for ${repo.owner}/${repo.name}. It applied ${actionSummary.filesDeleted} safe candidate removals, added ${actionSummary.artifactsAdded} cleanup artifacts, skipped ${actionSummary.reviewFirstSkipped} review-first items, protected ${actionSummary.doNotTouchSkipped} do-not-touch items, and did not mutate main.`;
+  return `RepoDiet created a review-ready cleanup PR for ${repo.owner}/${repo.name}. It removed ${actionSummary.filesDeleted} file(s), applied ${Math.max(0, actionSummary.safeCandidatesApplied - actionSummary.filesDeleted)} source edit(s), added ${actionSummary.artifactsAdded} cleanup artifacts, skipped ${actionSummary.reviewFirstSkipped} review-first items, protected ${actionSummary.doNotTouchSkipped} do-not-touch items, and did not mutate main.`;
 }
 
 export interface GitHubConnectionStatus {
@@ -310,6 +310,7 @@ export async function runPatchKitGeneration(
       branch: branch?.trim() || undefined,
       findings,
       scanId: findings.scanId,
+      projectRoot: findings.repositoryModel?.primaryProjectRoot,
       selectedFindingIds,
     });
 

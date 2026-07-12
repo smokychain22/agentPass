@@ -15,12 +15,15 @@ import { unzipRepoToDir } from "@/lib/scanner/unzip-repo";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import type { ScanJobStage } from "@/lib/jobs/types";
 
+export type WorkspaceSource = "github_zip" | "local_demo" | "e2e_fixture";
+
 export interface RepoInfo {
   owner: string;
   name: string;
   branch: string;
   url: string;
   commitSha?: string;
+  workspaceSource?: WorkspaceSource;
 }
 
 export interface RepoWorkspace {
@@ -50,7 +53,7 @@ async function prepareFromGithubZip(
     onStage?.("extracting_archive");
     const rootDir = await unzipRepoToDir(buffer, workspace.extractPath);
 
-    const repo: RepoInfo = { owner, name, branch, url, commitSha };
+    const repo: RepoInfo = { owner, name, branch, url, commitSha, workspaceSource: "github_zip" };
     const capturedRoot = workspace.root;
     return {
       rootDir,
@@ -70,7 +73,8 @@ async function prepareFromGithubZip(
 async function prepareLocalCopyWorkspace(
   sourceDir: string,
   repo: RepoInfo,
-  prefix: string
+  prefix: string,
+  workspaceSource: WorkspaceSource
 ): Promise<RepoWorkspace> {
   await fs.access(sourceDir);
   const workspace = await createScanWorkspace(prefix);
@@ -81,7 +85,7 @@ async function prepareLocalCopyWorkspace(
   return {
     rootDir,
     workDir: capturedRoot,
-    repo,
+    repo: { ...repo, workspaceSource },
     cleanup: async () => {
       await removeWorkspace(capturedRoot).catch(() => {});
     },
@@ -109,7 +113,8 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
       branch: DEMO_REPO_BRANCH,
       url: DEMO_REPO_URL,
     },
-    "demo"
+    "demo",
+    "local_demo"
   );
 }
 
@@ -137,7 +142,8 @@ async function prepareE2eFixtureWorkspace(repoUrl: string): Promise<RepoWorkspac
       branch: parsed?.branch || "main",
       url: repoUrl,
     },
-    "e2e-fixture"
+    "e2e-fixture",
+    "e2e_fixture"
   );
 }
 

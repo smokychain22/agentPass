@@ -27,6 +27,7 @@ import { ErrorState, classifyScanError } from "@/components/app/ui/error-state";
 import { ScanEmptyIllustration } from "@/components/app/ui/scan-empty-illustration";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { ProjectRootSelectionPanel } from "@/components/app/scan/project-root-selection-panel";
+import { AnalysisLineageBanner } from "@/components/app/analysis-lineage-banner";
 
 const LOADING_PHASES: ScanPhase[] = [
   "validating",
@@ -142,7 +143,7 @@ export function ScanTab() {
       <WorkspaceSection
         label="Repository connection"
         title="Scan a public repository"
-        description="RepoDiet downloads the archive ZIP and maps structure (read-only). Quick Cleanup applies verified file edits and deletions in an isolated workspace, then opens a PR."
+        description="RepoDiet downloads your public GitHub repository archive (read-only), pins the branch commit, and maps structure before findings analysis."
       />
 
       <Panel variant="elevated" padding="lg">
@@ -296,6 +297,8 @@ export function ScanTab() {
               </div>
             </div>
           </Panel>
+
+          <AnalysisLineageBanner scan={displayResult} />
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard label="Framework" value={displayResult.framework.name} accent="cyan" />

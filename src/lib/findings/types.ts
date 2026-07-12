@@ -264,6 +264,12 @@ export interface FindingsPayload {
     findingsJson: boolean;
   };
   mode: "demo" | "live";
+  analysisLineage?: {
+    workspaceSource: "github_zip" | "local_demo" | "e2e_fixture";
+    analyzedAt: string;
+    projectRoot?: string;
+    scanId?: string;
+  };
   repositoryModel?: {
     projects: Array<Record<string, unknown>>;
     workspaces: string[];

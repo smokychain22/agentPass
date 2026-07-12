@@ -130,4 +130,28 @@ test("enables cleanup PR when verifiedChanges are present without explicit verif
   assert.equal(gates.canCreateSafePr, true);
 });
 
+test("enables cleanup PR for delete-only plans when validatedChanges include deletes", () => {
+  const gates = computeOperatorPrGates({
+    locked: false,
+    statusLoading: false,
+    preflightLoading: false,
+    repositoryAuthorized: true,
+    permissionsVerified: true,
+    canCreateBranch: true,
+    canCreatePullRequest: true,
+    useDemoAuth: false,
+    manualTokenReady: false,
+    patchValidated: true,
+    generatedChanges: 1,
+    validatedChanges: 1,
+    verifiedChanges: 1,
+    validatedEditCount: 0,
+    safeDeleteCount: 1,
+    filesDeletedPlanned: 1,
+    requireVerificationForCleanupPr: true,
+    verificationStatus: "verified",
+  });
+  assert.equal(gates.canCreateSafePr, true);
+});
+
 console.log("operator-pr-gates: all passed");

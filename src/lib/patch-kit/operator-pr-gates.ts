@@ -16,6 +16,7 @@ export interface OperatorPrGateInput {
   verifiedChanges: number;
   validatedEditCount: number;
   safeDeleteCount: number;
+  filesDeletedPlanned?: number;
   requireVerificationForCleanupPr?: boolean;
   verificationStatus?: "passed" | "failed" | "partial" | "not_run" | "verified" | "blocked" | "regression_failed" | "baseline_blocked" | "improved_but_baseline_invalid" | null;
 }
@@ -41,13 +42,15 @@ export function computeOperatorPrGates(input: OperatorPrGateInput) {
 
   const hasVerifiedWork = input.verifiedChanges > 0;
   const hasGeneratedWork = input.generatedChanges > 0;
-  const gitValidated = input.patchValidated && input.validatedChanges > 0;
+  const plannedDeletes = input.filesDeletedPlanned ?? input.safeDeleteCount;
+  const gitValidated =
+    input.patchValidated && (input.validatedChanges > 0 || plannedDeletes > 0);
 
   const canCreateSafePr =
     canCreateReportPr &&
     hasGeneratedWork &&
     gitValidated &&
-    input.validatedChanges > 0 &&
+    (input.validatedChanges > 0 || plannedDeletes > 0) &&
     hasVerifiedWork &&
     verificationReady &&
     githubPrPermissionsReady;

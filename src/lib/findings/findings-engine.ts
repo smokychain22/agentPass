@@ -207,6 +207,16 @@ export async function runFindingsEngine(
       payload = applyRepositoryIdentity(payload, identity);
     }
 
+    payload.analysisLineage = {
+      workspaceSource: workspace.repo.workspaceSource ?? "github_zip",
+      analyzedAt: new Date().toISOString(),
+      projectRoot: payload.repositoryModel?.primaryProjectRoot,
+      scanId: payload.scanId,
+    };
+    if (workspace.repo.commitSha && !payload.repo.commitSha) {
+      payload.repo = { ...payload.repo, commitSha: workspace.repo.commitSha };
+    }
+
     onStage?.("complete");
     return payload;
   } finally {
