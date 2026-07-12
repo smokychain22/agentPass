@@ -186,6 +186,7 @@ function testProofLadderCounts(): void {
       noopTransformations: 1,
       failedTransformations: 0,
       notAttempted: 1,
+      patchValidationStatus: "passed",
     },
     verificationStatus: "passed",
   });
@@ -193,6 +194,8 @@ function testProofLadderCounts(): void {
   assert.equal(ladder.detected, 12);
   assert.equal(ladder.eligible, 2);
   assert.equal(ladder.generated, 1);
+  assert.equal(ladder.contentValidated, 1);
+  assert.equal(ladder.gitValidated, 1);
   assert.equal(ladder.validated, 1);
   assert.equal(ladder.delivered, 1);
   assert.equal(ladder.rejectedForSafety, 10);
@@ -231,6 +234,8 @@ function testFormatSummary(): void {
     attempted: 2,
     generated: 1,
     validated: 1,
+    contentValidated: 1,
+    gitValidated: 1,
     verified: 1,
     delivered: 1,
     noop: 1,
@@ -239,8 +244,8 @@ function testFormatSummary(): void {
     rejectedForSafety: 10,
   });
 
-  assert.match(text, /12 signals detected/);
-  assert.match(text, /1 patches validated/);
+  assert.match(text, /12 detected findings/);
+  assert.match(text, /1 validated file operations/);
   assert.match(text, /10 review-first or protected/);
 }
 

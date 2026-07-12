@@ -55,7 +55,7 @@ export function formatRejectionReason(input: {
   rollbackStatus?: string;
 }): string {
   if (input.status === "retained") {
-    return "Verified and retained — all required checks passed or showed no new regression.";
+    return "Generated; pending Git validation and repository verification.";
   }
 
   const outcome =

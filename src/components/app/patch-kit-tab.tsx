@@ -124,7 +124,10 @@ export function PatchKitTab() {
   useEffect(() => {
     const runId = patchKit?.sandboxRunId ?? patchKit?.workerJobId;
     if (!runId) return;
-    if (patchKit?.patchValidation?.status !== "pending_sandbox") return;
+    const pending =
+      patchKit?.patchValidation?.status === "pending_sandbox" ||
+      patchKit?.patchValidation?.gitPatchValidation?.status === "pending_sandbox";
+    if (!pending) return;
     let cancelled = false;
 
     const poll = async () => {
@@ -201,6 +204,15 @@ export function PatchKitTab() {
   const fixPrDescription = useMemo(() => {
     if (supportedCount === 0) {
       return "No auto-fixable findings in this scan. Duplicates and orphans still need review — report-only PR available.";
+    }
+    if (patchKit?.patchValidation?.status === "pending_sandbox") {
+      return "Real Git validation and repository verification are running in an isolated Vercel Sandbox.";
+    }
+    if (
+      patchKit?.patchValidation?.gitPatchValidation?.failureCode === "WORKER_UNAVAILABLE" ||
+      patchKit?.patchValidation?.userMessage?.includes("Docker worker")
+    ) {
+      return "This cleanup run used a deprecated Docker worker path. Regenerate Quick Cleanup after the latest deployment to run verification in Vercel Sandbox.";
     }
     if (verificationIssue) {
       return verificationIssue;
@@ -316,6 +328,14 @@ export function PatchKitTab() {
         <>
           {verificationIssue && (
             <FeedbackBanner variant="warning" message={verificationIssue} dismissible={false} />
+          )}
+          {(patchKit.patchValidation?.gitPatchValidation?.failureCode === "WORKER_UNAVAILABLE" ||
+            patchKit.patchValidation?.userMessage?.includes("Docker worker")) && (
+            <FeedbackBanner
+              variant="warning"
+              message="This run targeted a deprecated external Docker worker. Click Regenerate Quick Cleanup to queue verification in Vercel Sandbox."
+              dismissible={false}
+            />
           )}
           {patchKit.patchValidation?.status === "pending_sandbox" && (patchKit.sandboxRunId ?? patchKit.workerJobId) && (
             <FeedbackBanner
@@ -436,6 +456,8 @@ export function PatchKitTab() {
                       attempted: patchKit.cleanupRunSummary.executed,
                       generated: patchKit.cleanupRunSummary.generated,
                       validated: patchKit.cleanupRunSummary.validated,
+                      contentValidated: patchKit.cleanupRunSummary.contentValidatedOperations,
+                      gitValidated: patchKit.cleanupRunSummary.gitValidatedOperations,
                       verified: patchKit.cleanupRunSummary.verified,
                       delivered: patchKit.cleanupRunSummary.delivered,
                       noop: patchKit.cleanupRunSummary.noOp,

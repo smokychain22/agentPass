@@ -71,11 +71,22 @@ export function buildAuthoritativeCleanupRunSummary(input: {
   patchValidationStatus?: PatchKitSummary["patchValidationStatus"];
   pullRequestUrl?: string;
 }): AuthoritativeCleanupRunSummary {
-  const detectedFindings =
+  const scanDetected =
     input.findings.summary.detectedFindings ??
     input.findings.summary.verifiedFindings ??
     input.findings.summary.totalFindings ??
     0;
+
+  const auditDetected = input.candidateAudits
+    ? new Set(input.candidateAudits.map((a) => a.findingId)).size
+    : 0;
+
+  const ops = input.changeOperations ?? [];
+  const operationFindingCount = new Set(
+    ops.flatMap((op) => op.findingIds).filter(Boolean)
+  ).size;
+
+  const detectedFindings = Math.max(scanDetected, auditDetected, operationFindingCount);
 
   const preflightCheckedFindings =
     input.candidateAudits?.length ?? input.summary.preflightCheckedFindings ?? detectedFindings;
@@ -90,7 +101,6 @@ export function buildAuthoritativeCleanupRunSummary(input: {
     ? input.candidateAudits.filter((a) => a.transformAttempted && isCleanupEligibleAudit(a)).length
     : (input.summary.executedFindings ?? 0);
 
-  const ops = input.changeOperations ?? [];
   const editedPaths = ops.filter((o) => o.type === "edit").map((o) => o.filePath);
   const deletedPaths = ops.filter((o) => o.type === "delete").map((o) => o.filePath);
   const addedPaths = ops.filter((o) => o.type === "add").map((o) => o.filePath);

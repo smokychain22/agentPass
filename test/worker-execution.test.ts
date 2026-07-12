@@ -81,7 +81,39 @@ async function run() {
     assert.equal(summary.reviewRequiredFindings, 1);
   });
 
-  await test("pending_sandbox keeps git validation at zero while content validation passes", () => {
+  await test("detected findings includes execution-discovered backup candidates", () => {
+    const summary = buildAuthoritativeCleanupRunSummary({
+      findings: {
+        summary: { detectedFindings: 2 },
+        riskBuckets: { reviewFirst: [], doNotTouch: [], safeDelete: [] },
+      } as never,
+      summary: { patchValidationStatus: "pending_sandbox" } as never,
+      candidateAudits: [
+        { findingId: "a", scanEligible: true, transformAttempted: true, retained: true } as never,
+        { findingId: "b", scanEligible: true, transformAttempted: true, retained: true } as never,
+        { findingId: "c", scanEligible: true, transformAttempted: true, retained: true } as never,
+      ],
+      changeOperations: [
+        {
+          id: "1",
+          findingIds: ["a"],
+          transformerId: "t",
+          type: "edit",
+          filePath: "src/a.ts",
+          baseBlobSha: null,
+          baseContentHash: null,
+          beforeContent: "a",
+          afterContent: "b",
+          linesAdded: 1,
+          linesRemoved: 0,
+        },
+      ],
+      verification: { status: "not_run", installAttempts: [], checks: [] },
+    });
+    assert.equal(summary.detectedFindings, 3);
+  });
+
+  await test("pending_sandbox keeps git validation at zero", () => {
     const summary = buildAuthoritativeCleanupRunSummary({
       findings: { summary: {}, riskBuckets: { reviewFirst: [], doNotTouch: [], safeDelete: [] } } as never,
       summary: { patchValidationStatus: "pending_sandbox" } as never,

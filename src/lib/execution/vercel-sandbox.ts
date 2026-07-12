@@ -2,12 +2,7 @@ import { Sandbox } from "@vercel/sandbox";
 import { SANDBOX_TIMEOUT_MS } from "./sandbox-run-types";
 
 export function isVercelSandboxAvailable(): boolean {
-  if (!process.env.VERCEL) return false;
-  return Boolean(
-    process.env.VERCEL_OIDC_TOKEN?.trim() ||
-      process.env.VERCEL_ACCESS_TOKEN?.trim() ||
-      (process.env.VERCEL_TEAM_ID?.trim() && process.env.VERCEL_PROJECT_ID?.trim())
-  );
+  return Boolean(process.env.VERCEL);
 }
 
 export interface CreateCleanupSandboxInput {

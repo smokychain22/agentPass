@@ -1,7 +1,10 @@
+import { after } from "next/server";
 import { start } from "workflow/api";
 import { readInstallationSession } from "@/lib/github-app/session";
 import {
+  completeSandboxRun,
   createSandboxRun,
+  failSandboxRun,
   getSandboxRunByCleanupRunId,
   updateSandboxRun,
 } from "@/lib/execution/sandbox-run-store";
@@ -10,18 +13,17 @@ import { repositoryCleanupWorkflow } from "@/app/workflows/repository-cleanup-wo
 import { isVercelSandboxAvailable } from "@/lib/execution/vercel-sandbox";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
 import { executeRepositoryCleanup } from "@/lib/execution/repository-executor";
-import { completeSandboxRun, failSandboxRun } from "@/lib/execution/sandbox-run-store";
 import { getStoredPatchKit, storePatchKit } from "@/lib/patch-kit/patch-kit-store";
 import { buildCleanupRunSummary } from "@/lib/patch-kit/cleanup-summary";
 
 export class SandboxUnavailableError extends Error {
   code = "SANDBOX_UNAVAILABLE" as const;
-  constructor() {
-    super("Vercel Sandbox is not available in this deployment.");
+  constructor(message = "Vercel Sandbox is not available in this deployment.") {
+    super(message);
   }
 }
 
-async function persistWorkflowResults(runId: string, cleanupRunId: string): Promise<void> {
+async function persistWorkflowResults(cleanupRunId: string): Promise<void> {
   const stored = await getStoredPatchKit(cleanupRunId);
   const run = await getSandboxRunByCleanupRunId(cleanupRunId);
   if (!stored?.payload || !run?.result) return;
@@ -41,12 +43,13 @@ async function persistWorkflowResults(runId: string, cleanupRunId: string): Prom
       ...stored.payload,
       patchValidation,
       repositoryVerification,
-      sandboxRunId: runId,
+      sandboxRunId: run.id,
       workflowRunId: run.workflowRunId,
       cleanupRunSummary,
       summary: {
         ...stored.payload.summary,
         patchValidationStatus: patchValidation.status,
+        detectedFindings: cleanupRunSummary.detectedFindings,
         generatedChanges: cleanupRunSummary.generatedOperations,
         generatedFileOperations: cleanupRunSummary.generatedOperations,
         contentValidatedOperations: cleanupRunSummary.contentValidatedOperations,
@@ -58,7 +61,6 @@ async function persistWorkflowResults(runId: string, cleanupRunId: string): Prom
         deliveredFileOperations: cleanupRunSummary.deliveredOperations,
         executedFindings: cleanupRunSummary.executedFindings,
         eligibleFindings: cleanupRunSummary.eligibleFindings,
-        detectedFindings: cleanupRunSummary.detectedFindings,
         blockerSummary:
           repositoryVerification.status === "verified"
             ? `${cleanupRunSummary.verifiedOperations} verified file operation(s) ready for cleanup PR.`
@@ -69,6 +71,42 @@ async function persistWorkflowResults(runId: string, cleanupRunId: string): Prom
     stored.filename,
     stored.scanId
   );
+}
+
+function scheduleBackgroundExecution(runId: string, payload: SandboxRunPayload): void {
+  const task = async () => {
+    try {
+      const result = await executeRepositoryCleanup(runId, payload);
+      await completeSandboxRun(
+        runId,
+        {
+          patchValidation: result.patchValidation,
+          repositoryVerification: result.repositoryVerification,
+          gitVersion: result.gitVersion,
+          nodeVersion: result.nodeVersion,
+          npmVersion: result.npmVersion,
+          patchHash: result.patchHash,
+          sandboxId: result.sandboxId,
+          logs: result.logs,
+        },
+        result.repositoryVerification.status === "verified" ? "ready_for_delivery" : "blocked"
+      );
+      await persistWorkflowResults(payload.cleanupRunId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sandbox execution failed";
+      await failSandboxRun(
+        runId,
+        message.includes("SANDBOX") ? "SANDBOX_UNAVAILABLE" : "SANDBOX_EXECUTION_FAILED",
+        message
+      );
+    }
+  };
+
+  if (isServerlessRuntime()) {
+    after(task);
+  } else {
+    void task();
+  }
 }
 
 export async function startRepositoryCleanupExecution(
@@ -83,36 +121,26 @@ export async function startRepositoryCleanupExecution(
   const run = await createSandboxRun(enriched);
 
   if (isVercelSandboxAvailable()) {
-    const workflowRun = await start(repositoryCleanupWorkflow, [run.id, enriched]);
-    await updateSandboxRun(run.id, {
-      workflowRunId: workflowRun.runId,
-      status: "starting",
-      progress: "Workflow started",
-    });
-    return { sandboxRunId: run.id, workflowRunId: workflowRun.runId };
+    try {
+      const workflowRun = await start(repositoryCleanupWorkflow, [run.id, enriched]);
+      await updateSandboxRun(run.id, {
+        workflowRunId: workflowRun.runId,
+        status: "starting",
+        progress: "Workflow started",
+      });
+      return { sandboxRunId: run.id, workflowRunId: workflowRun.runId };
+    } catch (err) {
+      await updateSandboxRun(run.id, {
+        status: "starting",
+        progress: "Workflow unavailable — running sandbox execution directly",
+      });
+      scheduleBackgroundExecution(run.id, enriched);
+      return { sandboxRunId: run.id };
+    }
   }
 
   if (!isServerlessRuntime()) {
-    void (async () => {
-      try {
-        const result = await executeRepositoryCleanup(run.id, enriched);
-        await completeSandboxRun(
-          run.id,
-          {
-            patchValidation: result.patchValidation,
-            repositoryVerification: result.repositoryVerification,
-            gitVersion: result.gitVersion,
-            patchHash: result.patchHash,
-            logs: result.logs,
-          },
-          result.repositoryVerification.status === "verified" ? "ready_for_delivery" : "blocked"
-        );
-        await persistWorkflowResults(run.id, payload.cleanupRunId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Execution failed";
-        await failSandboxRun(run.id, "LOCAL_EXECUTION_FAILED", message);
-      }
-    })();
+    scheduleBackgroundExecution(run.id, enriched);
     return { sandboxRunId: run.id };
   }
 

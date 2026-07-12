@@ -166,13 +166,16 @@ function buildTransformerResults(
     if (attempt?.status === "retained") {
       const original = filePath ? attempt.originalSources?.[filePath] : undefined;
       const modified = filePath ? attempt.modifiedSources?.[filePath] : undefined;
+      const pendingMessage =
+        "Generated; pending Git validation and repository verification.";
       return {
         findingId: finding.id,
         transformer: attempt.pluginId || transformer,
         status: "generated",
         reason:
-          attempt.displayReason ||
-          "Generated; pending Git validation and repository verification.",
+          attempt.displayReason && !/verified and retained/i.test(attempt.displayReason)
+            ? attempt.displayReason
+            : pendingMessage,
         filePath,
         originalHash: original ? hashContent(original) : undefined,
         resultingDiff:
@@ -634,8 +637,6 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const filesAdded = 0;
     const blockerBreakdown = summarizeBlockers(candidateAudits);
     const attemptStats = summarizeCleanupAttempts(candidateAudits);
-    const detectedFindings =
-      findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? flatFindings.length;
     const packageCleanupMd = generatePackageCleanup(findings, context.packageManager);
     const { markdown: regressionChecklistMd, checkCount } = generateRegressionChecklist(
       context,
@@ -683,7 +684,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       supportedFixesDetected: transformerCompatible,
       transformerCompatible,
       dryRunPassed,
-      detectedFindings,
+      detectedFindings: cleanupRunSummary.detectedFindings,
       preflightCheckedFindings: cleanupRunSummary.preflightCheckedFindings,
       eligibleFindings: cleanupRunSummary.eligibleFindings,
       ineligibleFindings: cleanupRunSummary.ineligibleFindings,
@@ -740,11 +741,14 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     summary.proofLadder = {
       ...summary.proofLadder,
+      detected: cleanupRunSummary.detectedFindings,
       eligible: cleanupRunSummary.eligibleFindings,
       executed: cleanupRunSummary.executedFindings,
       attempted: cleanupRunSummary.executedFindings,
       generated: cleanupRunSummary.generatedOperations,
       validated: cleanupRunSummary.gitValidatedOperations,
+      contentValidated: cleanupRunSummary.contentValidatedOperations,
+      gitValidated: cleanupRunSummary.gitValidatedOperations,
       verified: cleanupRunSummary.verifiedOperations,
       delivered: cleanupRunSummary.deliveredOperations,
       noop: cleanupRunSummary.noChangeExecutions,
