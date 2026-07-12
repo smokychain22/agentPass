@@ -5,6 +5,7 @@ import { runRepositoryVerification } from "@/lib/patch-kit/repository-verificati
 import type { RepositoryVerificationResult } from "@/lib/patch-kit/repository-verification";
 import type { CanonicalPatchValidationResult } from "@/lib/patch-kit/canonical-patch";
 import { formatPatchValidationUserMessage, hashPatchContent } from "@/lib/patch-kit/canonical-patch";
+import { extractApplyablePatch, patchHasApplyableOperations } from "@/lib/patch-kit/validate-patch";
 import { cloneExactCommit, generateGitPatch, getGitVersion, validateGitPatch } from "./git-clone";
 import {
   authenticatedCloneUrl,
@@ -211,19 +212,30 @@ export async function executeRepositoryCleanupInSandbox(
       `mkdir -p "${transformed}" "${validation}" && cp -a "${baseline}/." "${transformed}/" && cp -a "${baseline}/." "${validation}/"`
     );
 
-    await updateSandboxRun(runId, { status: "applying_operations", progress: "Applying cleanup operations" });
-    await applyEditsInSandbox(sandbox, transformed, payload.edits);
+    const canonicalPatch = payload.patch ? extractApplyablePatch(payload.patch) : "";
+    let patch = "";
+    let patchGenerationMethod: "git-cli" | "canonical-artifact" = "git-cli";
 
-    await updateSandboxRun(runId, { status: "generating_patch", progress: "Generating Git patch" });
-    const patchGen = await runSandboxShell(
-      sandbox,
-      `cd "${transformed}" && git add -A && git diff --cached --binary --full-index --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ HEAD`,
-      { cwd: transformed }
-    );
-    const patch = patchGen.stdout.trim() ? `${patchGen.stdout.trim()}\n` : "";
-    if (!patch.includes("diff --git")) {
-      throw new Error("PATCH_GENERATION_FAILED");
+    if (patchHasApplyableOperations(canonicalPatch)) {
+      patch = canonicalPatch.endsWith("\n") ? canonicalPatch : `${canonicalPatch}\n`;
+      patchGenerationMethod = "canonical-artifact";
+      log("patch: applying canonical cleanup.patch from patch-kit engine");
+    } else {
+      await updateSandboxRun(runId, { status: "applying_operations", progress: "Applying cleanup operations" });
+      await applyEditsInSandbox(sandbox, transformed, payload.edits);
+
+      await updateSandboxRun(runId, { status: "generating_patch", progress: "Generating Git patch" });
+      const patchGen = await runSandboxShell(
+        sandbox,
+        `cd "${transformed}" && git add -A && git diff --cached --binary --full-index --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ HEAD`,
+        { cwd: transformed }
+      );
+      patch = patchGen.stdout.trim() ? `${patchGen.stdout.trim()}\n` : "";
+      if (!patch.includes("diff --git")) {
+        throw new Error("PATCH_GENERATION_FAILED");
+      }
     }
+
     const patchHash = hashPatchContent(patch);
 
     await updateSandboxRun(runId, { status: "git_validation", progress: "Running git apply --check" });
@@ -250,7 +262,7 @@ export async function executeRepositoryCleanupInSandbox(
         ? {
             status: "passed",
             gitCliAvailable: true,
-            patchGenerationMethod: "git-cli",
+            patchGenerationMethod,
             patchHash,
             validatedPaths,
             baseCommitSha: payload.baseCommitSha,
@@ -370,7 +382,12 @@ export async function executeRepositoryCleanupLocal(
     workDir: workRoot,
   });
 
-  const { patch } = await generateGitPatch(baselineRoot, payload.edits);
+  const canonicalPatch = payload.patch ? extractApplyablePatch(payload.patch) : "";
+  const patch = patchHasApplyableOperations(canonicalPatch)
+    ? canonicalPatch.endsWith("\n")
+      ? canonicalPatch
+      : `${canonicalPatch}\n`
+    : (await generateGitPatch(baselineRoot, payload.edits)).patch;
   const expectedPaths = payload.changeOperations.map((op) => op.filePath);
   const gitValidation = await validateGitPatch(baselineRoot, patch, expectedPaths);
   const patchHash = hashPatchContent(patch);

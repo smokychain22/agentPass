@@ -17,6 +17,8 @@ export async function persistSandboxResultsToPatchKit(input: {
 
   const { patchValidation, repositoryVerification } = input;
   const patchValidationStatus = patchValidation.status;
+  const contentIntegrityPassed =
+    patchValidation.contentIntegrityValidation?.status === "passed";
 
   const cleanupRunSummary = buildCleanupRunSummary({
     findings: stored.payload.artifacts.findingsJson!,
@@ -25,6 +27,7 @@ export async function persistSandboxResultsToPatchKit(input: {
     changeOperations: stored.payload.changeOperations,
     verification: repositoryVerification,
     patchValidationStatus,
+    contentIntegrityPassed,
   });
 
   const verified = repositoryVerification.status === "verified";
@@ -158,7 +161,7 @@ export async function persistSandboxFailureToPatchKit(input: {
         failureCode: input.failureCode,
         error: userMessage,
       },
-      contentIntegrityValidation,
+      contentIntegrityValidation: contentIntegrityValidation,
     },
     repositoryVerification: {
       status: "not_run",

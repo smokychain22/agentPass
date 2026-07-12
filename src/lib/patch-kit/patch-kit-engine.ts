@@ -678,6 +678,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       candidateAudits,
       changeOperations,
       verification: repositoryVerification,
+      contentIntegrityPassed:
+        patchValidation?.contentIntegrityValidation?.status === "passed" ||
+        contentIntegrityPassed,
     });
 
     const summary: PatchKitSummary = {

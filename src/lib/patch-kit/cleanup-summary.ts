@@ -69,6 +69,8 @@ export function buildAuthoritativeCleanupRunSummary(input: {
   changeOperations?: ChangeOperation[];
   verification?: RepositoryVerificationResult | null;
   patchValidationStatus?: PatchKitSummary["patchValidationStatus"];
+  /** When true, content-validated count stays even if Git validation later fails. */
+  contentIntegrityPassed?: boolean;
   pullRequestUrl?: string;
 }): AuthoritativeCleanupRunSummary {
   const scanDetected =
@@ -108,10 +110,12 @@ export function buildAuthoritativeCleanupRunSummary(input: {
     ops.length > 0 ? uniquePaths(ops).length : (input.summary.generatedChanges ?? 0);
 
   const patchStatus = input.patchValidationStatus ?? input.summary.patchValidationStatus;
-  const contentValidatedOperations =
-    patchStatus === "passed" || patchStatus === "blocked" || patchStatus === "pending_sandbox"
-      ? generatedOperations
-      : 0;
+  const contentIntegrityOk =
+    input.contentIntegrityPassed === true ||
+    patchStatus === "passed" ||
+    patchStatus === "blocked" ||
+    patchStatus === "pending_sandbox";
+  const contentValidatedOperations = contentIntegrityOk ? generatedOperations : 0;
   const gitValidatedOperations = patchStatus === "passed" ? generatedOperations : 0;
 
   const verifiedOperations =

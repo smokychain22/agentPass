@@ -65,6 +65,17 @@ function testGitValidatedRequiresPassedPatchStatus(): void {
   assert.equal(pending.contentValidatedOperations, 3);
   assert.equal(passed.gitValidatedOperations, 3);
   assert.equal(passed.verifiedOperations, 3);
+
+  const gitFailedContentOk = buildCleanupRunSummary({
+    findings: { summary: {}, riskBuckets: { reviewFirst: [], doNotTouch: [], safeDelete: [] } } as never,
+    summary: { patchValidationStatus: "failed" } as never,
+    changeOperations: ops,
+    verification: { status: "not_run", installAttempts: [], checks: [] },
+    patchValidationStatus: "failed",
+    contentIntegrityPassed: true,
+  });
+  assert.equal(gitFailedContentOk.contentValidatedOperations, 3);
+  assert.equal(gitFailedContentOk.gitValidatedOperations, 0);
 }
 
 function testIsTerminalSandboxStatus(): void {
