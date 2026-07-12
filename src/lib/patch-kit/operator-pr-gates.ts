@@ -36,8 +36,8 @@ export function computeOperatorPrGates(input: OperatorPrGateInput) {
 
   const verificationReady =
     input.verificationStatus === "verified" ||
-    (!input.requireVerificationForCleanupPr &&
-      (input.verificationStatus === "passed" || input.verifiedChanges > 0));
+    input.verificationStatus === "passed" ||
+    input.verifiedChanges > 0;
 
   const hasVerifiedWork = input.verifiedChanges > 0;
   const hasGeneratedWork = input.generatedChanges > 0;

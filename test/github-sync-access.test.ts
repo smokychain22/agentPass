@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { parseInstallCallbackParams } from "../src/lib/github-app/install-callback";
-import { resolveGrantPropagationPending } from "../src/lib/github-app/preflight";
+import { resolveGrantPropagationPending, resolveRepositoryAuthorized } from "../src/lib/github-app/preflight";
 
 function test(name: string, fn: () => void) {
   try {
@@ -65,6 +65,30 @@ test("grant propagation pending stays true only for trusted private grants still
       ownerMismatch: false,
     }),
     true
+  );
+});
+
+test("repository authorized when grant binding is trusted even before GitHub lists the repo", () => {
+  assert.equal(
+    resolveRepositoryAuthorized({
+      bindingTrusted: true,
+      repositoryAccessible: false,
+      permissionsVerified: true,
+      suspended: false,
+    }),
+    true
+  );
+});
+
+test("repository not authorized without access, binding, or permissions", () => {
+  assert.equal(
+    resolveRepositoryAuthorized({
+      bindingTrusted: false,
+      repositoryAccessible: false,
+      permissionsVerified: true,
+      suspended: false,
+    }),
+    false
   );
 });
 
