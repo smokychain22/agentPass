@@ -92,6 +92,10 @@ export async function validateGitPatch(
   const patchFile = path.join(validationRoot, "cleanup.patch");
   await fs.writeFile(patchFile, patch, "utf8");
 
+  // Fresh copies of a cloned repo can have a stale index vs working tree; refresh
+  // before --index apply or git reports "does not match index" despite correct blobs.
+  await execa("git", ["update-index", "--refresh"], { cwd: validationRoot, reject: false });
+
   const command = ["git", "apply", "--check", "--index", "--verbose", "cleanup.patch"];
   const check = await execa("git", ["apply", "--check", "--index", "--verbose", patchFile], {
     cwd: validationRoot,

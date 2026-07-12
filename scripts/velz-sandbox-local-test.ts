@@ -14,12 +14,10 @@ async function main() {
   console.log("changeOps", patchKit.changeOperations?.map((o) => o.filePath));
 
   const edits =
-    patchKit.validatedEdits ??
     patchKit.changeOperations?.map((op) => ({
       path: op.filePath,
-      content: op.type === "delete" ? "" : "",
-    })) ??
-    [];
+      content: op.type === "delete" ? "" : (op.afterContent ?? ""),
+    })) ?? [];
 
   if (!findings.repo.commitSha || !patchKit.changeOperations?.length) {
     console.log("missing data, abort");

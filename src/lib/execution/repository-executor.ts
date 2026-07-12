@@ -1,11 +1,11 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import type { Sandbox } from "@vercel/sandbox";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
 import { runRepositoryVerification } from "@/lib/patch-kit/repository-verification";
 import type { RepositoryVerificationResult } from "@/lib/patch-kit/repository-verification";
 import type { CanonicalPatchValidationResult } from "@/lib/patch-kit/canonical-patch";
 import { formatPatchValidationUserMessage, hashPatchContent } from "@/lib/patch-kit/canonical-patch";
-import { extractApplyablePatch, patchHasApplyableOperations } from "@/lib/patch-kit/validate-patch";
 import { cloneExactCommit, generateGitPatch, getGitVersion, validateGitPatch } from "./git-clone";
 import {
   authenticatedCloneUrl,
@@ -212,28 +212,21 @@ export async function executeRepositoryCleanupInSandbox(
       `mkdir -p "${transformed}" "${validation}" && cp -a "${baseline}/." "${transformed}/" && cp -a "${baseline}/." "${validation}/"`
     );
 
-    const canonicalPatch = payload.patch ? extractApplyablePatch(payload.patch) : "";
-    let patch = "";
-    let usedCanonicalArtifact = false;
+    // Always regenerate the patch from the cloned commit. Scan-time canonical patches
+    // carry index blob SHAs from the local scan workspace and fail git apply --index
+    // against the real GitHub tree ("does not match index").
+    await updateSandboxRun(runId, { status: "applying_operations", progress: "Applying cleanup operations" });
+    await applyEditsInSandbox(sandbox, transformed, payload.edits);
 
-    if (patchHasApplyableOperations(canonicalPatch)) {
-      patch = canonicalPatch.endsWith("\n") ? canonicalPatch : `${canonicalPatch}\n`;
-      usedCanonicalArtifact = true;
-      log("patch: applying canonical cleanup.patch from patch-kit engine");
-    } else {
-      await updateSandboxRun(runId, { status: "applying_operations", progress: "Applying cleanup operations" });
-      await applyEditsInSandbox(sandbox, transformed, payload.edits);
-
-      await updateSandboxRun(runId, { status: "generating_patch", progress: "Generating Git patch" });
-      const patchGen = await runSandboxShell(
-        sandbox,
-        `cd "${transformed}" && git add -A && git diff --cached --binary --full-index --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ HEAD`,
-        { cwd: transformed }
-      );
-      patch = patchGen.stdout.trim() ? `${patchGen.stdout.trim()}\n` : "";
-      if (!patch.includes("diff --git")) {
-        throw new Error("PATCH_GENERATION_FAILED");
-      }
+    await updateSandboxRun(runId, { status: "generating_patch", progress: "Generating Git patch" });
+    const patchGen = await runSandboxShell(
+      sandbox,
+      `cd "${transformed}" && git add -A && git diff --cached --binary --full-index --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ HEAD`,
+      { cwd: transformed }
+    );
+    const patch = patchGen.stdout.trim() ? `${patchGen.stdout.trim()}\n` : "";
+    if (!patch.includes("diff --git")) {
+      throw new Error("PATCH_GENERATION_FAILED");
     }
 
     const patchHash = hashPatchContent(patch);
@@ -243,7 +236,7 @@ export async function executeRepositoryCleanupInSandbox(
     const expectedPaths = payload.changeOperations.map((op) => op.filePath);
     const check = await runSandboxShell(
       sandbox,
-      `cd "${validation}" && git apply --check --index --verbose cleanup.patch && git apply --index cleanup.patch && git diff --cached --check`,
+      `cd "${validation}" && git update-index --refresh && git apply --check --index --verbose cleanup.patch && git apply --index cleanup.patch && git diff --cached --check`,
       { cwd: validation }
     );
 
@@ -262,7 +255,7 @@ export async function executeRepositoryCleanupInSandbox(
         ? {
             status: "passed",
             gitCliAvailable: true,
-            patchGenerationMethod: usedCanonicalArtifact ? "pure-js" : "git-cli",
+            patchGenerationMethod: "git-cli",
             patchHash,
             validatedPaths,
             baseCommitSha: payload.baseCommitSha,
@@ -382,12 +375,9 @@ export async function executeRepositoryCleanupLocal(
     workDir: workRoot,
   });
 
-  const canonicalPatch = payload.patch ? extractApplyablePatch(payload.patch) : "";
-  const patch = patchHasApplyableOperations(canonicalPatch)
-    ? canonicalPatch.endsWith("\n")
-      ? canonicalPatch
-      : `${canonicalPatch}\n`
-    : (await generateGitPatch(baselineRoot, payload.edits)).patch;
+  const transformedRoot = path.join(workRoot, "transformed");
+  await fs.cp(baselineRoot, transformedRoot, { recursive: true, force: true });
+  const { patch } = await generateGitPatch(transformedRoot, payload.edits);
   const expectedPaths = payload.changeOperations.map((op) => op.filePath);
   const gitValidation = await validateGitPatch(baselineRoot, patch, expectedPaths);
   const patchHash = hashPatchContent(patch);
