@@ -14,6 +14,8 @@ import {
   needsProjectRootSelection,
   resolveSelectedProjectRoot,
 } from "@/lib/repository-model/project-root-selection";
+import type { ScanCoverageReport, RepositoryIntelligenceManifest } from "@/lib/scanner/intelligence-manifest";
+import { buildRepositoryIntelligenceManifest } from "@/lib/scanner/intelligence-manifest";
 import type { ScanResult } from "@/lib/scanner/types";
 
 export interface ScanRepositoryModel {
@@ -36,6 +38,8 @@ export interface ScanRepositoryModel {
 export interface ScanPayload extends ScanResult {
   id: string;
   repositoryModel?: ScanRepositoryModel;
+  intelligenceManifest?: RepositoryIntelligenceManifest;
+  scanCoverage?: ScanCoverageReport;
 }
 
 export async function runBasicScan(
@@ -68,8 +72,31 @@ export async function runBasicScan(
     ).length;
     const protectedFileCount = tree.allRelativePaths.filter((p) => isDoNotTouchPath(p)).length;
 
+    const scanId = createScanId();
+    const intelligenceManifest = await buildRepositoryIntelligenceManifest({
+      scanId,
+      repo: {
+        owner: workspace.repo.owner,
+        name: workspace.repo.name,
+        branch: workspace.repo.branch,
+        url: workspace.repo.url,
+        commitSha: workspace.repo.commitSha,
+        workspaceSource: workspace.repo.workspaceSource,
+      },
+      tree,
+      framework,
+      packageManager: pm.packageManager,
+      lockfile: pm.lockfile,
+      configFiles: configs.configFiles,
+      warnings: configs.warnings,
+      repositoryModel,
+      projects,
+      primaryProjectRoot,
+      rootDir: workspace.rootDir,
+    });
+
     return {
-      id: createScanId(),
+      id: scanId,
       repo: {
         ...workspace.repo,
         commitSha: workspace.repo.commitSha,
@@ -99,6 +126,8 @@ export async function runBasicScan(
         needsProjectRootSelection: needsRootSelection,
         selectableApplications,
       },
+      intelligenceManifest,
+      scanCoverage: intelligenceManifest.coverage,
     };
   } catch (err) {
     const message =

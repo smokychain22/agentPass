@@ -270,6 +270,7 @@ export interface FindingsPayload {
     projectRoot?: string;
     scanId?: string;
   };
+  scanIntelligence?: import("@/lib/scanner/intelligence-manifest").RepositoryIntelligenceManifest;
   repositoryModel?: {
     projects: Array<Record<string, unknown>>;
     workspaces: string[];
