@@ -1,7 +1,8 @@
 import { OPERATOR_ID, RECEIPT_VERSION, X402_NETWORK, X402_RECIPIENT } from "@/lib/payment/constants";
+import { aspAgentId, a2aServiceId, a2mcpServiceId } from "@/lib/okx/env-config";
 
 export function getOperatorAgentId(): string {
-  return process.env.REPODIET_OKX_AGENT_ID || process.env.OKX_AGENT_ID || OPERATOR_ID;
+  return aspAgentId() || OPERATOR_ID;
 }
 
 export function getOperatorWallet(): string {
@@ -26,6 +27,8 @@ export function buildOperatorProfile() {
     network: getOperatorNetwork(),
     serviceTypes: ["A2MCP", "A2A"],
     receiptVersion: getReceiptVersion(),
-    aspRegistration: "pending_onchain_os",
+    aspRegistration: aspAgentId() ? "registered" : "pending_onchain_os",
+    a2aServiceId: a2aServiceId(),
+    a2mcpServiceId: a2mcpServiceId(),
   };
 }

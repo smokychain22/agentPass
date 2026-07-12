@@ -19,7 +19,7 @@ function readEnvAny(names: string[]): string | undefined {
 function decodePrivateKey(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.includes("BEGIN")) {
-    return trimmed;
+    return trimmed.replace(/\\n/g, "\n");
   }
   return Buffer.from(trimmed, "base64").toString("utf8");
 }
@@ -41,6 +41,7 @@ export function getGitHubAppConfig() {
   const privateKeyRaw = readEnvAny([
     "GITHUB_APP_PRIVATE_KEY_BASE64",
     "REPODIET_OPERATOR_PRIVATE_KEY",
+    "GITHUB_APP_PRIVATE_KEY",
   ]);
   const slug = readEnv("GITHUB_APP_SLUG");
 
@@ -56,7 +57,7 @@ export function getGitHubAppConfig() {
     clientSecret,
     privateKey,
     slug,
-    webhookSecret: readEnv("GITHUB_APP_WEBHOOK_SECRET"),
+    webhookSecret: readEnvAny(["GITHUB_APP_WEBHOOK_SECRET", "GITHUB_WEBHOOK_SECRET"]),
   };
 }
 
