@@ -89,7 +89,7 @@ export async function POST(request: Request) {
           ok: false,
           code: "GIT_PATCH_VALIDATION_REQUIRED",
           error:
-            "Real Git patch validation must pass before PR delivery. A Docker worker must complete git apply --check and repository verification.",
+            "Real Git patch validation must pass before PR delivery. Wait for Vercel Sandbox verification to complete.",
         },
         { status: 422 }
       );

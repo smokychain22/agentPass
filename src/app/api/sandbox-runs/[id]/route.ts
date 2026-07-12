@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSandboxRun, getSandboxRunByCleanupRunId } from "@/lib/execution/sandbox-run-store";
+import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
+import {
+  isTerminalSandboxStatus,
+  reconcileSandboxRun,
+} from "@/lib/execution/start-cleanup-workflow";
 
 export const runtime = "nodejs";
 
@@ -17,9 +22,9 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Sandbox run not found." }, { status: 404 });
     }
 
-    const terminal = ["delivered", "failed", "blocked", "timed_out", "ready_for_delivery"].includes(
-      run.status
-    );
+    run = await reconcileSandboxRun(run);
+    const terminal = isTerminalSandboxStatus(run.status);
+    const stored = await getStoredPatchKit(run.cleanupRunId);
 
     return NextResponse.json({
       ok: true,
@@ -39,6 +44,7 @@ export async function GET(
         completedAt: run.completedAt,
       },
       terminal,
+      patchKit: stored?.payload,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load sandbox run.";

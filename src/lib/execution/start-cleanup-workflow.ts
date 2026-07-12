@@ -1,20 +1,18 @@
 import { after } from "next/server";
-import { start } from "workflow/api";
-import { readInstallationSession } from "@/lib/github-app/session";
 import {
   completeSandboxRun,
   createSandboxRun,
   failSandboxRun,
+  getSandboxRun,
   getSandboxRunByCleanupRunId,
   updateSandboxRun,
 } from "@/lib/execution/sandbox-run-store";
-import type { SandboxRunPayload } from "@/lib/execution/sandbox-run-types";
-import { repositoryCleanupWorkflow } from "@/app/workflows/repository-cleanup-workflow";
+import type { SandboxRun, SandboxRunPayload } from "@/lib/execution/sandbox-run-types";
 import { isVercelSandboxAvailable } from "@/lib/execution/vercel-sandbox";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
 import { executeRepositoryCleanup } from "@/lib/execution/repository-executor";
-import { getStoredPatchKit, storePatchKit } from "@/lib/patch-kit/patch-kit-store";
-import { buildCleanupRunSummary } from "@/lib/patch-kit/cleanup-summary";
+import { persistSandboxResultsToPatchKit } from "@/lib/execution/persist-sandbox-results";
+import { readInstallationSession } from "@/lib/github-app/session";
 
 export class SandboxUnavailableError extends Error {
   code = "SANDBOX_UNAVAILABLE" as const;
@@ -23,60 +21,27 @@ export class SandboxUnavailableError extends Error {
   }
 }
 
-async function persistWorkflowResults(cleanupRunId: string): Promise<void> {
-  const stored = await getStoredPatchKit(cleanupRunId);
-  const run = await getSandboxRunByCleanupRunId(cleanupRunId);
-  if (!stored?.payload || !run?.result) return;
+const TERMINAL_STATUSES = new Set([
+  "delivered",
+  "failed",
+  "blocked",
+  "timed_out",
+  "ready_for_delivery",
+]);
 
-  const repositoryVerification = run.result.repositoryVerification!;
-  const patchValidation = run.result.patchValidation!;
-  const cleanupRunSummary = buildCleanupRunSummary({
-    findings: stored.payload.artifacts.findingsJson!,
-    summary: stored.payload.summary,
-    candidateAudits: stored.payload.candidateAudits,
-    changeOperations: stored.payload.changeOperations,
-    verification: repositoryVerification,
-  });
+const STALE_KICK_MS = 90_000;
 
-  await storePatchKit(
-    {
-      ...stored.payload,
-      patchValidation,
-      repositoryVerification,
-      sandboxRunId: run.id,
-      workflowRunId: run.workflowRunId,
-      cleanupRunSummary,
-      summary: {
-        ...stored.payload.summary,
-        patchValidationStatus: patchValidation.status,
-        detectedFindings: cleanupRunSummary.detectedFindings,
-        generatedChanges: cleanupRunSummary.generatedOperations,
-        generatedFileOperations: cleanupRunSummary.generatedOperations,
-        contentValidatedOperations: cleanupRunSummary.contentValidatedOperations,
-        gitValidatedOperations: cleanupRunSummary.gitValidatedOperations,
-        validatedChanges: cleanupRunSummary.gitValidatedOperations,
-        validatedFileOperations: cleanupRunSummary.gitValidatedOperations,
-        verifiedChanges: cleanupRunSummary.verifiedOperations,
-        verifiedFileOperations: cleanupRunSummary.verifiedOperations,
-        deliveredFileOperations: cleanupRunSummary.deliveredOperations,
-        executedFindings: cleanupRunSummary.executedFindings,
-        eligibleFindings: cleanupRunSummary.eligibleFindings,
-        blockerSummary:
-          repositoryVerification.status === "verified"
-            ? `${cleanupRunSummary.verifiedOperations} verified file operation(s) ready for cleanup PR.`
-            : stored.payload.summary.blockerSummary,
-      },
-    },
-    stored.zipBuffer,
-    stored.filename,
-    stored.scanId
-  );
+export function isTerminalSandboxStatus(status: SandboxRun["status"]): boolean {
+  return TERMINAL_STATUSES.has(status);
 }
 
 function scheduleBackgroundExecution(runId: string, payload: SandboxRunPayload): void {
   const task = async () => {
     try {
       const result = await executeRepositoryCleanup(runId, payload);
+      const terminalStatus =
+        result.repositoryVerification.status === "verified" ? "ready_for_delivery" : "blocked";
+
       await completeSandboxRun(
         runId,
         {
@@ -89,9 +54,15 @@ function scheduleBackgroundExecution(runId: string, payload: SandboxRunPayload):
           sandboxId: result.sandboxId,
           logs: result.logs,
         },
-        result.repositoryVerification.status === "verified" ? "ready_for_delivery" : "blocked"
+        terminalStatus
       );
-      await persistWorkflowResults(payload.cleanupRunId);
+
+      await persistSandboxResultsToPatchKit({
+        cleanupRunId: payload.cleanupRunId,
+        patchValidation: result.patchValidation,
+        repositoryVerification: result.repositoryVerification,
+        sandboxRunId: runId,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Sandbox execution failed";
       await failSandboxRun(
@@ -109,38 +80,71 @@ function scheduleBackgroundExecution(runId: string, payload: SandboxRunPayload):
   }
 }
 
+export async function kickSandboxExecution(
+  runId: string,
+  payload: SandboxRunPayload
+): Promise<void> {
+  scheduleBackgroundExecution(runId, payload);
+  await updateSandboxRun(runId, {
+    status: "starting",
+    progress: "Sandbox execution queued",
+    progressDetail: "execution_kicked",
+  });
+}
+
+function isStaleSandboxRun(run: SandboxRun): boolean {
+  if (isTerminalSandboxStatus(run.status)) return false;
+  const ageMs = Date.now() - new Date(run.updatedAt).getTime();
+  if (ageMs < STALE_KICK_MS) return false;
+  return ["queued", "starting", "resolving_repository"].includes(run.status);
+}
+
+export async function reconcileSandboxRun(run: SandboxRun): Promise<SandboxRun> {
+  if (run.result && isTerminalSandboxStatus(run.status)) {
+    const patchValidation = run.result.patchValidation;
+    const repositoryVerification = run.result.repositoryVerification;
+    if (patchValidation && repositoryVerification) {
+      await persistSandboxResultsToPatchKit({
+        cleanupRunId: run.cleanupRunId,
+        patchValidation,
+        repositoryVerification,
+        sandboxRunId: run.id,
+        workflowRunId: run.workflowRunId,
+      });
+    }
+    return run;
+  }
+
+  if (isStaleSandboxRun(run)) {
+    await kickSandboxExecution(run.id, run.payload);
+    const refreshed = await getSandboxRun(run.id);
+    return refreshed ?? run;
+  }
+
+  return run;
+}
+
 export async function startRepositoryCleanupExecution(
   payload: SandboxRunPayload
 ): Promise<{ sandboxRunId: string; workflowRunId?: string }> {
   const session = await readInstallationSession();
   const enriched: SandboxRunPayload = {
     ...payload,
-    installationId: session?.installationId,
+    installationId: payload.installationId ?? session?.installationId,
   };
+
+  const existing = await getSandboxRunByCleanupRunId(payload.cleanupRunId);
+  if (existing && !isTerminalSandboxStatus(existing.status)) {
+    if (isStaleSandboxRun(existing)) {
+      await kickSandboxExecution(existing.id, existing.payload);
+    }
+    return { sandboxRunId: existing.id, workflowRunId: existing.workflowRunId };
+  }
 
   const run = await createSandboxRun(enriched);
 
-  if (isVercelSandboxAvailable()) {
-    try {
-      const workflowRun = await start(repositoryCleanupWorkflow, [run.id, enriched]);
-      await updateSandboxRun(run.id, {
-        workflowRunId: workflowRun.runId,
-        status: "starting",
-        progress: "Workflow started",
-      });
-      return { sandboxRunId: run.id, workflowRunId: workflowRun.runId };
-    } catch (err) {
-      await updateSandboxRun(run.id, {
-        status: "starting",
-        progress: "Workflow unavailable — running sandbox execution directly",
-      });
-      scheduleBackgroundExecution(run.id, enriched);
-      return { sandboxRunId: run.id };
-    }
-  }
-
-  if (!isServerlessRuntime()) {
-    scheduleBackgroundExecution(run.id, enriched);
+  if (isVercelSandboxAvailable() || !isServerlessRuntime()) {
+    await kickSandboxExecution(run.id, enriched);
     return { sandboxRunId: run.id };
   }
 

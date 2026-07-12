@@ -49,10 +49,16 @@ export async function createFreshGitHubInstallationToken(input: {
     }
   }
 
-  const session = await readInstallationSession();
-  const installationId = input.installationId ?? session?.installationId;
+  const installationId = input.installationId;
   if (!installationId) {
-    throw new Error("GITHUB_APP_NOT_CONNECTED");
+    const session = await readInstallationSession();
+    if (!session?.installationId) {
+      throw new Error("GITHUB_APP_NOT_CONNECTED");
+    }
+    return createFreshGitHubInstallationToken({
+      ...input,
+      installationId: session.installationId,
+    });
   }
 
   const details = await getInstallationDetails(installationId);

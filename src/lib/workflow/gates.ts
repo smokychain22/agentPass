@@ -63,8 +63,10 @@ export function computeWorkflowGates(input: {
   const verifiedChanges = patchKit?.summary.verifiedChanges ?? 0;
   const patchValidated = patchKit?.patchValidation?.status === "passed";
   const sandboxPending = patchKit?.patchValidation?.status === "pending_sandbox";
+  const repositoryVerified = patchKit?.repositoryVerification?.status === "verified";
+  const verificationPassed =
+    input.verificationStatus === "passed" || repositoryVerified;
   const patchKitReady = Boolean(patchKit?.id);
-  const verificationPassed = input.verificationStatus === "passed";
 
   let quickCleanupState: QuickCleanupWorkflowState = "inactive";
   if (input.quickCleanupRunning) {

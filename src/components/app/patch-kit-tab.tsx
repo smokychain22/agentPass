@@ -123,7 +123,8 @@ export function PatchKitTab() {
 
   useEffect(() => {
     const runId = patchKit?.sandboxRunId ?? patchKit?.workerJobId;
-    if (!runId) return;
+    const cleanupRunId = patchKit?.id;
+    if (!runId && !cleanupRunId) return;
     const pending =
       patchKit?.patchValidation?.status === "pending_sandbox" ||
       patchKit?.patchValidation?.gitPatchValidation?.status === "pending_sandbox";
@@ -132,14 +133,17 @@ export function PatchKitTab() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/sandbox-runs/${runId}`);
+        const res = await fetch(`/api/sandbox-runs/${runId ?? cleanupRunId}`);
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as {
           ok: boolean;
           terminal?: boolean;
+          patchKit?: PatchKitPayload;
           run?: {
             status: string;
             progress?: string;
+            failureCode?: string;
+            failureMessage?: string;
             result?: {
               patchValidation?: PatchKitPayload["patchValidation"];
               repositoryVerification?: PatchKitPayload["repositoryVerification"];
@@ -148,8 +152,24 @@ export function PatchKitTab() {
         };
         if (!data.ok || cancelled || !patchKit) return;
 
+        if (data.patchKit) {
+          setPatchKit(data.patchKit);
+          return;
+        }
+
         if (data.terminal && data.run?.result) {
           const result = data.run.result;
+          const statusRes = cleanupRunId
+            ? await fetch(`/api/patch-kit/status/${cleanupRunId}`)
+            : null;
+          if (statusRes?.ok && !cancelled) {
+            const statusData = (await statusRes.json()) as { patchKit?: PatchKitPayload };
+            if (statusData.patchKit) {
+              setPatchKit(statusData.patchKit);
+              return;
+            }
+          }
+
           setPatchKit({
             ...patchKit,
             patchValidation: result.patchValidation ?? patchKit.patchValidation,
@@ -187,7 +207,14 @@ export function PatchKitTab() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [patchKit?.sandboxRunId, patchKit?.workerJobId, patchKit?.patchValidation?.status, patchKit, setPatchKit]);
+  }, [
+    patchKit?.id,
+    patchKit?.sandboxRunId,
+    patchKit?.workerJobId,
+    patchKit?.patchValidation?.status,
+    patchKit,
+    setPatchKit,
+  ]);
 
   const safeDeleteRows = useMemo(
     () => (findings ? buildSafeDeleteRows(findings) : []),

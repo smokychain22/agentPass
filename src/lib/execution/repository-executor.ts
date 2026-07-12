@@ -190,7 +190,10 @@ export async function executeRepositoryCleanupInSandbox(
 
     await runSandboxShell(sandbox, `mkdir -p "${workspace}"`);
     await cloneInSandbox(sandbox, baseline, payload.repoUrl, payload.baseCommitSha, token);
-    await runSandboxShell(sandbox, `cp -a "${baseline}/." "${transformed}" && cp -a "${baseline}/." "${validation}"`);
+    await runSandboxShell(
+      sandbox,
+      `mkdir -p "${transformed}" "${validation}" && cp -a "${baseline}/." "${transformed}/" && cp -a "${baseline}/." "${validation}/"`
+    );
 
     await updateSandboxRun(runId, { status: "baseline_verification", progress: "Verifying repository baseline" });
     const baselineResult = await runVerificationScriptsInSandbox(sandbox, baseline);

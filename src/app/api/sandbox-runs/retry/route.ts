@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { retrySandboxRun } from "@/lib/execution/sandbox-run-store";
-import { startRepositoryCleanupExecution } from "@/lib/execution/start-cleanup-workflow";
+import { kickSandboxExecution } from "@/lib/execution/start-cleanup-workflow";
 import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
 
 export const runtime = "nodejs";
@@ -32,20 +32,16 @@ export async function POST(request: Request) {
             content: op.afterContent ?? "",
           }));
 
-    const execution = await startRepositoryCleanupExecution({
-      cleanupRunId,
-      scanId: stored.payload.scanId,
-      repositoryOwner: stored.payload.repo.owner,
-      repositoryName: stored.payload.repo.name,
-      branch: stored.payload.repo.branch,
-      baseCommitSha: stored.payload.patchValidation?.baseCommitSha ?? "unknown",
-      repoUrl: `https://github.com/${stored.payload.repo.owner}/${stored.payload.repo.name}`,
+    const payload = {
+      ...run.payload,
       edits,
       changeOperations: ops,
       patch: stored.payload.artifacts.cleanupPatch,
-    });
+    };
 
-    return NextResponse.json({ ok: true, run, ...execution });
+    await kickSandboxExecution(run.id, payload);
+
+    return NextResponse.json({ ok: true, run, sandboxRunId: run.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Retry failed.";
     const code = message.includes("SANDBOX_UNAVAILABLE") ? "SANDBOX_UNAVAILABLE" : "RETRY_FAILED";

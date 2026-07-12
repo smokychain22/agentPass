@@ -172,6 +172,7 @@ export function buildCleanupRunSummary(input: {
   candidateAudits?: CandidateAuditRecord[];
   changeOperations?: ChangeOperation[];
   verification?: RepositoryVerificationResult | null;
+  patchValidationStatus?: PatchKitSummary["patchValidationStatus"];
   pullRequestUrl?: string;
 }): CleanupRunSummary {
   const auth = buildAuthoritativeCleanupRunSummary(input);

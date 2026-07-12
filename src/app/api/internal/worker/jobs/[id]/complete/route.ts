@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { completeRepositoryJob, getRepositoryJob } from "@/lib/worker/repository-job-store";
 import { assertWorkerAuthorized, validateWorkerCallbackSecret } from "@/lib/worker/worker-auth";
-import { getStoredPatchKit, storePatchKit } from "@/lib/patch-kit/patch-kit-store";
-import { buildCleanupRunSummary } from "@/lib/patch-kit/cleanup-summary";
+import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
+import { persistSandboxResultsToPatchKit } from "@/lib/execution/persist-sandbox-results";
 import type { RepositoryJobResult, RepositoryJobStatus } from "@/lib/worker/types";
 import { setWorkerStatus } from "@/lib/worker/worker-instance-store";
 
@@ -48,49 +48,13 @@ export async function POST(
     }
 
     const stored = await getStoredPatchKit(job.cleanupRunId);
-    if (stored?.payload) {
-      const patchValidation = body.result.patchValidation ?? stored.payload.patchValidation;
-      const repositoryVerification =
-        body.result.repositoryVerification ?? stored.payload.repositoryVerification;
-      const cleanupRunSummary = buildCleanupRunSummary({
-        findings: stored.payload.artifacts.findingsJson!,
-        summary: stored.payload.summary,
-        candidateAudits: stored.payload.candidateAudits,
-        changeOperations: stored.payload.changeOperations,
-        verification: repositoryVerification as import("@/lib/patch-kit/repository-verification").RepositoryVerificationResult | null,
-        pullRequestUrl: stored.payload.summary.blockerSummary?.includes("github.com")
-          ? stored.payload.summary.blockerSummary
-          : undefined,
+    if (stored?.payload && body.result.patchValidation && body.result.repositoryVerification) {
+      await persistSandboxResultsToPatchKit({
+        cleanupRunId: job.cleanupRunId,
+        patchValidation: body.result.patchValidation,
+        repositoryVerification: body.result.repositoryVerification,
+        sandboxRunId: job.id,
       });
-
-      const payload = {
-        ...stored.payload,
-        patchValidation,
-        repositoryVerification,
-        workerJobId: job.id,
-        cleanupRunSummary,
-        summary: {
-          ...stored.payload.summary,
-          patchValidationStatus: patchValidation?.status,
-          generatedChanges: cleanupRunSummary.generatedOperations,
-          generatedFileOperations: cleanupRunSummary.generatedOperations,
-          contentValidatedOperations: cleanupRunSummary.contentValidatedOperations,
-          gitValidatedOperations: cleanupRunSummary.gitValidatedOperations,
-          validatedChanges: cleanupRunSummary.gitValidatedOperations,
-          validatedFileOperations: cleanupRunSummary.gitValidatedOperations,
-          verifiedChanges: cleanupRunSummary.verifiedOperations,
-          verifiedFileOperations: cleanupRunSummary.verifiedOperations,
-          deliveredFileOperations: cleanupRunSummary.deliveredOperations,
-          executedFindings: cleanupRunSummary.executedFindings,
-          eligibleFindings: cleanupRunSummary.eligibleFindings,
-          detectedFindings: cleanupRunSummary.detectedFindings,
-          blockerSummary:
-            repositoryVerification?.status === "verified"
-              ? `${cleanupRunSummary.verifiedOperations} verified file operation(s) ready for cleanup PR.`
-              : stored.payload.summary.blockerSummary,
-        },
-      };
-      await storePatchKit(payload, stored.zipBuffer, stored.filename, stored.scanId);
     }
 
     await setWorkerStatus(workerId, "online");
