@@ -10,7 +10,9 @@ import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
 import {
   PATCH_KIT_STEPS,
   downloadPatchKitZip,
+  repodietInstallReturnPath,
   runPatchKitGeneration,
+  startGitHubGrantAccess,
   type PatchKitPhase,
 } from "@/lib/patch-kit/client";
 import { RateLimitHttpError } from "@/lib/jobs/client";
@@ -111,6 +113,8 @@ export function PatchKitTab() {
   }, [findings]);
 
   const [githubStatus, setGithubStatus] = useState<RepositoryConnectionStatus | null>(null);
+  const [githubGrantLoading, setGithubGrantLoading] = useState(false);
+  const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
 
   const repository =
     findings?.repo.owner && findings?.repo.name
@@ -154,6 +158,24 @@ export function PatchKitTab() {
   );
 
   const canContinueToVerify = gates.verifyUnlocked;
+
+  const connectGitHub = useCallback(async () => {
+    if (!repository) return;
+    setGithubGrantLoading(true);
+    setGithubGrantError(null);
+    try {
+      await startGitHubGrantAccess({
+        repositoryFullName: repository,
+        scanId: findings?.scanId,
+        returnPath: repodietInstallReturnPath(findings?.scanId),
+      });
+    } catch (err) {
+      setGithubGrantLoading(false);
+      setGithubGrantError(
+        err instanceof Error ? err.message : "Could not start GitHub connection."
+      );
+    }
+  }, [findings?.scanId, repository]);
 
   const handleCopy = async (text: string, label: string) => {
     await navigator.clipboard.writeText(text);
@@ -341,10 +363,33 @@ export function PatchKitTab() {
           title={gates.fixPrLockTitle}
           description={gates.fixPrLockBody}
         />
-        {gates.fixPrPrimaryAction && (
-          <Button asChild variant="secondary">
-            <Link href="/app?tab=findings">{gates.fixPrPrimaryAction}</Link>
-          </Button>
+        <div className="flex flex-wrap gap-2">
+          {!gates.githubConnected ? (
+            <Button onClick={() => void connectGitHub()} disabled={githubGrantLoading}>
+              {githubGrantLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Redirecting…
+                </>
+              ) : (
+                gates.fixPrPrimaryAction ?? "Connect GitHub"
+              )}
+            </Button>
+          ) : (
+            gates.fixPrPrimaryAction && (
+              <Button asChild variant="secondary">
+                <Link href="/app?tab=findings">{gates.fixPrPrimaryAction}</Link>
+              </Button>
+            )
+          )}
+          {gates.fixPrSecondaryAction && (
+            <Button asChild variant="secondary">
+              <Link href="/app?tab=findings">{gates.fixPrSecondaryAction}</Link>
+            </Button>
+          )}
+        </div>
+        {githubGrantError && (
+          <p className="text-sm text-destructive">{githubGrantError}</p>
         )}
       </div>
     );

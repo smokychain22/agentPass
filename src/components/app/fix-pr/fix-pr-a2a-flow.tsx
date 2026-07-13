@@ -20,6 +20,7 @@ import {
 } from "@/lib/workflow/client";
 import { flattenFindings } from "@/lib/findings/client";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import { repodietInstallReturnPath, startGitHubGrantAccess } from "@/lib/patch-kit/client";
 
 interface FixPrA2AFlowProps {
   repoUrl: string;
@@ -45,6 +46,8 @@ export function FixPrA2AFlow({
   const [github, setGithub] = useState<RepositoryConnectionStatus | null>(null);
   const [quote, setQuote] = useState<WorkflowQuote | null>(null);
   const [loading, setLoading] = useState(false);
+  const [githubGrantLoading, setGithubGrantLoading] = useState(false);
+  const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [payer, setPayer] = useState("");
   const [paymentRef, setPaymentRef] = useState("");
@@ -135,6 +138,23 @@ export function FixPrA2AFlow({
     }
   }, [a2aTask?.taskId, onTaskUpdate, payer, paymentRef, quote]);
 
+  const connectGitHub = useCallback(async () => {
+    setGithubGrantLoading(true);
+    setGithubGrantError(null);
+    try {
+      await startGitHubGrantAccess({
+        repositoryFullName: repository,
+        scanId: findings.scanId,
+        returnPath: repodietInstallReturnPath(findings.scanId),
+      });
+    } catch (err) {
+      setGithubGrantLoading(false);
+      setGithubGrantError(
+        err instanceof Error ? err.message : "Could not start GitHub connection."
+      );
+    }
+  }, [findings.scanId, repository]);
+
   return (
     <div className="space-y-4">
       <Panel variant="elevated" padding="md">
@@ -161,11 +181,23 @@ export function FixPrA2AFlow({
               {github?.messages?.body ??
                 "Authorize RepoDiet on this repository to create an isolated cleanup branch and pull request."}
             </p>
-            <Button asChild size="sm">
-              <a href="/api/github/install/start">
-                {github?.messages?.primaryAction ?? "Connect GitHub"}
-              </a>
+            <Button
+              size="sm"
+              onClick={() => void connectGitHub()}
+              disabled={githubGrantLoading}
+            >
+              {githubGrantLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Redirecting…
+                </>
+              ) : (
+                github?.messages?.primaryAction ?? "Connect GitHub"
+              )}
             </Button>
+            {githubGrantError && (
+              <p className="text-sm text-destructive">{githubGrantError}</p>
+            )}
           </div>
         )}
       </Panel>
