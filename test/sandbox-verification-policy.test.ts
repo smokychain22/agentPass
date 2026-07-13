@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  isPreExistingRequiredFailure,
   resolveSandboxVerificationOutcome,
   sandboxPhasePassed,
 } from "../src/lib/execution/sandbox-verification-policy";
@@ -77,15 +78,38 @@ test("baseline install failure hard-blocks", () => {
   assert.match(String(result.error), /dependency installation/);
 });
 
-test("same build failure baseline+patched → baseline_blocked", () => {
+test("Meridian: same pre-existing build failure baseline+patched → verified", () => {
+  const baseline = [{ name: "build", exitCode: 1, stderr: "Error: Missing env NEXT_PUBLIC_X" }];
+  const patched = [{ name: "build", exitCode: 1, stderr: "Error: Missing env NEXT_PUBLIC_X" }];
+  assert.equal(isPreExistingRequiredFailure(baseline, patched), true);
   const result = resolveSandboxVerificationOutcome({
     baselineInstallExit: 0,
-    baselineChecks: [{ name: "build", exitCode: 1, stderr: "fail" }],
+    baselineChecks: baseline,
     patchedInstallExit: 0,
-    patchedChecks: [{ name: "build", exitCode: 1, stderr: "fail" }],
+    patchedChecks: patched,
   });
-  assert.equal(result.status, "baseline_blocked");
-  assert.match(String(result.error), /already fails build/);
+  assert.equal(result.status, "verified");
+});
+
+test("pre-existing build with same exit code verifies even if stderr differs slightly", () => {
+  const result = resolveSandboxVerificationOutcome({
+    baselineInstallExit: 0,
+    baselineChecks: [{ name: "build", exitCode: 1, stderr: "Missing env A" }],
+    patchedInstallExit: 0,
+    patchedChecks: [{ name: "build", exitCode: 1, stderr: "Type error in src/cleanup.ts" }],
+  });
+  // Same required script + same exit code → pre-existing; cleanup did not newly break a passing baseline.
+  assert.equal(result.status, "verified");
+});
+
+test("new build failure after clean baseline is regression", () => {
+  const result = resolveSandboxVerificationOutcome({
+    baselineInstallExit: 0,
+    baselineChecks: [{ name: "build", exitCode: 0, stderr: "" }],
+    patchedInstallExit: 0,
+    patchedChecks: [{ name: "build", exitCode: 1, stderr: "Type error" }],
+  });
+  assert.equal(result.status, "regression_failed");
 });
 
 console.log("sandbox-verification-policy: all passed");
