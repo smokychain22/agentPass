@@ -11,6 +11,8 @@ import { SummaryCards } from "./findings/summary-cards";
 import { AnalyzerSourcesPanel } from "./findings/analyzer-sources-panel";
 import { RiskSummaryPanel } from "./findings/risk-summary-panel";
 import { FindingsWorkspace } from "./findings/findings-workspace";
+import { FindingsProgressionBanner } from "./findings/findings-progression-banner";
+import { DeveloperToolsA2Mcp } from "@/components/app/developer-tools-a2mcp";
 import { RepositoryMap } from "./findings/repository-map";
 import { JsonExportCard } from "./findings/json-export";
 import {
@@ -50,7 +52,7 @@ function phaseIndex(phase: FindingsPhase): number {
 
 export function FindingsTab() {
   const searchParams = useSearchParams();
-  const { session, findings, setFindings, selectedFindingIds, toggleFindingSelection } =
+  const { session, findings, setFindings, selectedFindingIds, toggleFindingSelection, selectAllSafeFindings } =
     useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<FindingsPhase>("idle");
@@ -279,6 +281,12 @@ export function FindingsTab() {
             />
           )}
 
+          <FindingsProgressionBanner
+            findings={findings}
+            selectedCount={selectedFindingIds.length}
+            onSelectAllSafe={selectAllSafeFindings}
+          />
+
           <SummaryCards payload={findings} />
           <AnalyzerSourcesPanel payload={findings} />
           <ProjectRootPanel payload={findings} />
@@ -291,6 +299,7 @@ export function FindingsTab() {
             onTogglePatchSelection={toggleFindingSelection}
           />
           <JsonExportCard payload={findings} />
+          <DeveloperToolsA2Mcp />
 
           <PanelCTA findings={allFindings} supportedCount={supportedCount} />
         </>
@@ -318,14 +327,13 @@ function PanelCTA({
   if (supportedCount > 0) {
     return (
       <Panel variant="elevated" padding="md">
-        <p className="ds-label mb-2">Automatic fixes available</p>
+        <p className="ds-label mb-2">Automatic cleanup available</p>
         <p className="mb-4 text-sm text-muted-foreground">
-          RepoDiet can automatically fix {supportedCount} finding
-          {supportedCount === 1 ? "" : "s"} in this scan — remove unused imports, delete temp/archive
-          files, uninstall unused packages — then validate the patch and open a cleanup PR.
+          {supportedCount} finding{supportedCount === 1 ? "" : "s"} passed eligibility preflight and
+          can be included in a paid A2A cleanup pull request.
         </p>
         <Button asChild>
-          <Link href="/app?tab=patch">Apply fixes in Quick Cleanup</Link>
+          <Link href="/app?tab=patch">Review cleanup scope</Link>
         </Button>
       </Panel>
     );
@@ -333,15 +341,20 @@ function PanelCTA({
 
   return (
     <Panel variant="elevated" padding="md">
-      <p className="ds-label mb-2">Review findings</p>
+      <p className="ds-label mb-2">No findings are ready for automatic cleanup</p>
       <p className="mb-4 text-sm text-muted-foreground">
-        RepoDiet found issues for review, but no deterministic cleanup transformation is available
-        for this scan. You can export findings or create a report-only PR after Quick Cleanup
-        artifacts are generated.
+        RepoDiet found issues, but none currently have enough evidence for an automatic change.
+        Review a finding, run eligibility preflight, or reconnect GitHub if repository access is
+        missing.
       </p>
-      <Button variant="secondary" asChild>
-        <Link href="/app?tab=patch">View Quick Cleanup options</Link>
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" asChild>
+          <Link href="/app?tab=findings#workspace">Review eligibility</Link>
+        </Button>
+        <Button variant="outline" asChild>
+          <Link href="/app?tab=findings">Re-run findings</Link>
+        </Button>
+      </div>
     </Panel>
   );
 }

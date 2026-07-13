@@ -9,6 +9,16 @@ function isEmptySource(content: string): boolean {
   return content.trim().length === 0;
 }
 
+/** Whitespace or comment-only source (no executable statements). */
+function isEffectivelyEmptySource(content: string): boolean {
+  if (isEmptySource(content)) return true;
+  const withoutComments = content
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .trim();
+  return withoutComments.length === 0;
+}
+
 export async function enrichFileHygieneFindings(
   rootDir: string,
   findings: Finding[]
@@ -25,7 +35,7 @@ export async function enrichFileHygieneFindings(
       ];
       try {
         const content = await fs.readFile(path.join(rootDir, rel), "utf8");
-        if (isEmptySource(content) && !signals.includes("empty_file=true")) {
+        if (isEffectivelyEmptySource(content) && !signals.includes("empty_file=true")) {
           signals.push("empty_file=true");
         }
       } catch {
@@ -66,7 +76,7 @@ export async function enrichFileHygieneFindings(
       } catch {
         continue;
       }
-      if (!isEmptySource(content)) continue;
+      if (!isEffectivelyEmptySource(content)) continue;
       const inbound = await countInboundReferences(rootDir, rel);
       if (inbound > 0) continue;
       seen.add(rel);
@@ -84,7 +94,7 @@ export async function enrichFileHygieneFindings(
         sourceMode: "native",
         evidence: {
           summary: "Empty source file detected.",
-          signals: ["empty_file=true", `inbound_refs=${inbound}`, "classification=actionable_candidate"],
+          signals: ["empty_file=true", `inbound_refs=${inbound}`],
         },
       });
     }

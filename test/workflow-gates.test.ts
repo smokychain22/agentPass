@@ -131,8 +131,20 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
           },
         ],
       },
+      riskBuckets: { safeDelete: ["f1"], reviewFirst: [], doNotTouch: [] },
     }),
     patchKit: minimalPatchKit(),
+    selectedFindingIds: ["f1"],
+    commitSha: "abc",
+    githubStatus: {
+      connected: true,
+      configured: true,
+      repository: "o/r",
+      owner: "o",
+      canRead: true,
+      canCreateBranch: true,
+      canCreatePullRequest: true,
+    },
   });
   assert.equal(gates.quickCleanupAvailable, true);
   assert.equal(gates.verifyUnlocked, true);

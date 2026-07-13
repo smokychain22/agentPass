@@ -5,6 +5,8 @@ import {
   isActionableFinding,
 } from "@/lib/findings/actionability-signals";
 import { flattenFindings } from "@/lib/findings/client";
+import type { RepositoryConnectionStatus } from "./github-repository-status";
+import { resolveFixPrUnlock } from "./unlock-reasons";
 
 export type QuickCleanupWorkflowState =
   | "inactive"
@@ -13,12 +15,40 @@ export type QuickCleanupWorkflowState =
   | "failed"
   | "complete";
 
+export type A2AWorkflowPhase =
+  | "inactive"
+  | "scope_ready"
+  | "quote_required"
+  | "payment_pending"
+  | "funded"
+  | "executing"
+  | "delivery_ready"
+  | "completed"
+  | "failed";
+
+export interface WorkflowA2ATaskSnapshot {
+  id: string;
+  status: string;
+}
+
+const EXECUTING_STATUSES = new Set([
+  "funded",
+  "generating_changes",
+  "validating_patch",
+  "creating_branch",
+  "verifying",
+  "creating_pull_request",
+  "awaiting_approval",
+]);
+
 export interface WorkflowGates {
   scanComplete: boolean;
   projectRootConfirmed: boolean;
   findingsUnlocked: boolean;
   findingsReady: boolean;
   eligibleFindingsCount: number;
+  safeCandidateCount: number;
+  reviewFirstCount: number;
   transformedFindingsCount: number;
   /** @deprecated */
   transformerCompatibleCount: number;
@@ -36,6 +66,37 @@ export interface WorkflowGates {
   verificationPassed: boolean;
   cleanupPrAvailable: boolean;
   reportOnlyPrAvailable: boolean;
+  fixPrUnlocked: boolean;
+  fixPrLockTitle: string;
+  fixPrLockBody: string;
+  fixPrPrimaryAction?: string;
+  fixPrSecondaryAction?: string;
+  githubConnected: boolean;
+  a2aPhase: A2AWorkflowPhase;
+  a2aTaskId?: string;
+}
+
+function mapA2aPhase(task: WorkflowA2ATaskSnapshot | null | undefined): A2AWorkflowPhase {
+  if (!task) return "inactive";
+  switch (task.status) {
+    case "quote_required":
+      return "quote_required";
+    case "awaiting_payment":
+      return "payment_pending";
+    case "funded":
+      return "funded";
+    case "completed":
+      return "completed";
+    case "payment_failed":
+    case "verification_failed":
+    case "delivery_failed":
+    case "analysis_failed":
+      return "failed";
+    default:
+      if (EXECUTING_STATUSES.has(task.status)) return "executing";
+      if (task.status === "awaiting_approval") return "delivery_ready";
+      return "scope_ready";
+  }
 }
 
 export function computeWorkflowGates(input: {
@@ -45,18 +106,49 @@ export function computeWorkflowGates(input: {
   patchKit: PatchKitPayload | null;
   quickCleanupRunning?: boolean;
   verificationStatus?: "passed" | "failed" | "partial" | "not_run" | null;
+  commitSha?: string;
+  githubStatus?: RepositoryConnectionStatus | null;
+  selectedFindingIds?: string[];
+  scopeReviewed?: boolean;
+  a2aTask?: WorkflowA2ATaskSnapshot | null;
+  workerAvailable?: boolean;
+  commitStale?: boolean;
 }): WorkflowGates {
   const findings = input.findings;
   const patchKit = input.patchKit;
   const projectRootConfirmed = input.projectRootConfirmed ?? true;
+  const selectedFindingIds = input.selectedFindingIds ?? [];
 
   const flat = findings ? flattenFindings(findings) : [];
   const eligibleFindingsCount =
     findings?.summary.eligibleFindings ?? countEligibleFindings(flat);
+  const safeCandidateCount = flat.filter(
+    (f) => f.action === "safe_candidate" && isActionableFinding(f)
+  ).length;
+  const reviewFirstCount = flat.filter((f) => f.action === "review_first").length;
   const transformedFindingsCount = findings?.summary.transformedFindings ?? 0;
   const supportedFixCount = flat.filter(isActionableFinding).length;
   const findingsReady = Boolean(findings);
   const findingsUnlocked = input.scanComplete && projectRootConfirmed;
+
+  const selectedSafeCount = flat.filter(
+    (f) => selectedFindingIds.includes(f.id) && isActionableFinding(f)
+  ).length;
+
+  const githubConnected = Boolean(input.githubStatus?.connected);
+  const fixPrUnlock = resolveFixPrUnlock({
+    scanComplete: input.scanComplete,
+    commitSha: input.commitSha ?? findings?.repo.commitSha,
+    github: input.githubStatus ?? null,
+    selectedFindingIds,
+    safeCandidateCount: selectedSafeCount,
+    scopeReviewed: input.scopeReviewed,
+    workerAvailable: input.workerAvailable,
+    commitStale: input.commitStale,
+  });
+
+  const a2aPhase = mapA2aPhase(input.a2aTask);
+  const a2aActive = a2aPhase !== "inactive" && a2aPhase !== "failed";
 
   const generatedChanges = patchKit?.summary.generatedChanges ?? 0;
   const validatedChanges = patchKit?.summary.validatedChanges ?? 0;
@@ -65,7 +157,9 @@ export function computeWorkflowGates(input: {
   const sandboxPending = patchKit?.patchValidation?.status === "pending_sandbox";
   const repositoryVerified = patchKit?.repositoryVerification?.status === "verified";
   const verificationPassed =
-    input.verificationStatus === "passed" || repositoryVerified;
+    input.verificationStatus === "passed" ||
+    repositoryVerified ||
+    input.a2aTask?.status === "completed";
   const patchKitReady = Boolean(patchKit?.id);
 
   let quickCleanupState: QuickCleanupWorkflowState = "inactive";
@@ -83,24 +177,35 @@ export function computeWorkflowGates(input: {
     }
   }
 
+  const fixPrUnlocked = fixPrUnlock.unlocked || a2aActive;
+  const verifyFromA2a =
+    Boolean(input.a2aTask) &&
+    (EXECUTING_STATUSES.has(input.a2aTask!.status) ||
+      input.a2aTask!.status === "completed" ||
+      input.a2aTask!.status === "awaiting_approval");
+
   return {
     scanComplete: input.scanComplete,
     projectRootConfirmed,
     findingsUnlocked,
     findingsReady,
     eligibleFindingsCount,
+    safeCandidateCount,
+    reviewFirstCount,
     transformedFindingsCount,
     transformerCompatibleCount: eligibleFindingsCount,
     dryRunPassedCount: transformedFindingsCount,
     supportedFixCount,
-    quickCleanupAvailable: findingsReady && eligibleFindingsCount > 0,
+    quickCleanupAvailable: findingsReady && safeCandidateCount > 0,
     quickCleanupState,
     patchKitReady,
     generatedChanges,
     validatedChanges,
     verifiedChanges,
     patchValidated,
-    verifyUnlocked: patchKitReady && patchValidated && validatedChanges > 0,
+    verifyUnlocked:
+      verifyFromA2a ||
+      (patchKitReady && patchValidated && validatedChanges > 0),
     verificationPassed,
     cleanupPrAvailable:
       patchKitReady &&
@@ -110,5 +215,13 @@ export function computeWorkflowGates(input: {
       verificationPassed &&
       !sandboxPending,
     reportOnlyPrAvailable: findingsReady,
+    fixPrUnlocked,
+    fixPrLockTitle: fixPrUnlock.title,
+    fixPrLockBody: fixPrUnlock.body,
+    fixPrPrimaryAction: fixPrUnlock.primaryAction,
+    fixPrSecondaryAction: fixPrUnlock.secondaryAction,
+    githubConnected,
+    a2aPhase,
+    a2aTaskId: input.a2aTask?.id,
   };
 }

@@ -9,6 +9,8 @@ export interface PersistedSession {
   selectedFindingIds: string[];
   patchKitId?: string;
   cleanupRunId?: string;
+  a2aTaskId?: string;
+  scopeReviewed?: boolean;
   selectedProjectRoot?: string;
   projectRootConfirmed?: boolean;
 }

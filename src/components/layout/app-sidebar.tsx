@@ -24,7 +24,7 @@ const mainNav = [
     lockReason: undefined as string | undefined,
     needsScan: false,
     needsFindings: false,
-    needsQuickCleanup: false,
+    needsFixPr: false,
     needsVerify: false,
   },
   {
@@ -35,7 +35,7 @@ const mainNav = [
     lockReason: "Complete repository scan first",
     needsScan: true,
     needsFindings: false,
-    needsQuickCleanup: false,
+    needsFixPr: false,
     needsVerify: false,
   },
   {
@@ -43,10 +43,10 @@ const mainNav = [
     label: "Fix & PR",
     icon: Package,
     tab: "patch",
-    lockReason: "Run findings analysis first",
+    lockReason: "Select safe scope and confirm GitHub access",
     needsScan: true,
     needsFindings: true,
-    needsQuickCleanup: true,
+    needsFixPr: true,
     needsVerify: false,
   },
   {
@@ -54,10 +54,10 @@ const mainNav = [
     label: "Verify",
     icon: ShieldCheck,
     tab: "verify",
-    lockReason: "Generate and validate cleanup changes first",
+    lockReason: "Paid cleanup execution must start first",
     needsScan: true,
     needsFindings: true,
-    needsQuickCleanup: false,
+    needsFixPr: false,
     needsVerify: true,
   },
 ];
@@ -71,8 +71,8 @@ interface AppSidebarProps {
   scanComplete?: boolean;
   findingsUnlocked?: boolean;
   findingsReady?: boolean;
-  quickCleanupAvailable?: boolean;
-  patchKitReady?: boolean;
+  fixPrUnlocked?: boolean;
+  fixPrLockBody?: string;
   verifyUnlocked?: boolean;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
@@ -82,8 +82,8 @@ export function AppSidebar({
   scanComplete = false,
   findingsUnlocked = false,
   findingsReady = false,
-  quickCleanupAvailable = false,
-  patchKitReady = false,
+  fixPrUnlocked = false,
+  fixPrLockBody,
   verifyUnlocked = false,
   mobileOpen = false,
   onMobileClose,
@@ -127,16 +127,13 @@ export function AppSidebar({
                 lockReason = scanComplete
                   ? "Select which application RepoDiet should analyze"
                   : item.lockReason;
-              } else if (item.needsFindings && !findingsReady && item.tab === "patch") locked = true;
-              else if (item.needsQuickCleanup && !quickCleanupAvailable) {
+              }               else if (item.needsFindings && !findingsReady && item.tab === "patch") locked = true;
+              else if ("needsFixPr" in item && item.needsFixPr && !fixPrUnlocked) {
                 locked = true;
-                lockReason =
-                  "No auto-fixable findings — duplicates and orphans need review";
+                lockReason = fixPrLockBody ?? item.lockReason;
               } else if (item.needsVerify && !verifyUnlocked) {
                 locked = true;
-                lockReason = patchKitReady
-                  ? "Verify unlocks after validated changes are generated"
-                  : "Apply fixes in Fix & PR first";
+                lockReason = item.lockReason;
               }
 
               const active = pathname === "/app" && activeTab === item.tab;

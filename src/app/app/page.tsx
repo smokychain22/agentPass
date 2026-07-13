@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { ScanTab } from "@/components/app/scan-tab";
@@ -14,13 +14,32 @@ import { WorkflowRail, type WorkflowStepId } from "@/components/app/shell/workfl
 import { Container } from "@/components/design-system/container";
 import { GridBackground } from "@/components/design-system/grid-background";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
+import { fetchRepositoryStatus } from "@/lib/workflow/client";
+import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
 
 function AppWorkspace() {
   const searchParams = useSearchParams();
   const tab = (searchParams.get("tab") || "scan") as WorkflowStepId;
   const isDemo = searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
-  const { session, findings, patchKit } = useAppSession();
+  const { session, findings, patchKit, a2aTask, selectedFindingIds, scopeReviewed } = useAppSession();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [githubStatus, setGithubStatus] = useState<RepositoryConnectionStatus | null>(null);
+
+  const repository =
+    findings?.repo.owner && findings?.repo.name
+      ? `${findings.repo.owner}/${findings.repo.name}`
+      : session.repoUrl.replace(/^https:\/\/github\.com\//, "");
+
+  useEffect(() => {
+    if (!repository) return;
+    void fetchRepositoryStatus({
+      repository,
+      branch: session.branch || findings?.repo.branch,
+      commitSha: findings?.repo.commitSha,
+    })
+      .then(setGithubStatus)
+      .catch(() => setGithubStatus(null));
+  }, [repository, session.branch, findings?.repo.branch, findings?.repo.commitSha]);
 
   const gates = useMemo(
     () =>
@@ -29,8 +48,22 @@ function AppWorkspace() {
         projectRootConfirmed: session.projectRootConfirmed,
         findings,
         patchKit,
+        commitSha: findings?.repo.commitSha,
+        githubStatus,
+        selectedFindingIds,
+        scopeReviewed,
+        a2aTask: a2aTask ? { id: a2aTask.taskId, status: a2aTask.status } : null,
       }),
-    [session.scanComplete, session.projectRootConfirmed, findings, patchKit]
+    [
+      session.scanComplete,
+      session.projectRootConfirmed,
+      findings,
+      patchKit,
+      githubStatus,
+      selectedFindingIds,
+      scopeReviewed,
+      a2aTask,
+    ]
   );
 
   const scanStatus = session.scanComplete ? "complete" : "idle";
@@ -43,9 +76,9 @@ function AppWorkspace() {
         scanComplete={gates.scanComplete}
         findingsUnlocked={gates.findingsUnlocked}
         findingsReady={gates.findingsReady}
-        quickCleanupAvailable={gates.quickCleanupAvailable}
-        patchKitReady={gates.patchKitReady}
+        fixPrUnlocked={gates.fixPrUnlocked}
         verifyUnlocked={gates.verifyUnlocked}
+        fixPrLockBody={gates.fixPrLockBody}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
       />
@@ -66,10 +99,14 @@ function AppWorkspace() {
               scanComplete={gates.scanComplete}
               findingsUnlocked={gates.findingsUnlocked}
               findingsReady={gates.findingsReady}
-              quickCleanupAvailable={gates.quickCleanupAvailable}
-              quickCleanupState={gates.quickCleanupState}
-              patchKitReady={gates.patchKitReady}
+              fixPrUnlocked={gates.fixPrUnlocked}
+              fixPrLockBody={gates.fixPrLockBody}
               verifyUnlocked={gates.verifyUnlocked}
+              verifyLockBody={
+                gates.verifyUnlocked
+                  ? undefined
+                  : "Verify unlocks after paid cleanup execution starts"
+              }
               className="mb-6"
             />
 

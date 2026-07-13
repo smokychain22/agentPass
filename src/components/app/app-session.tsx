@@ -12,6 +12,7 @@ import {
 import type { ScanPayload } from "@/lib/scanner/run-scan";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
+import type { WorkflowA2ATask } from "@/lib/workflow/client";
 import {
   clearPersistedSession,
   fetchPersistedFindings,
@@ -36,6 +37,10 @@ function defaultSelectedFindingIds(payload: FindingsPayload): string[] {
     .map((f) => f.id);
 }
 
+function defaultSafeSelectedIds(payload: FindingsPayload): string[] {
+  return defaultSelectedFindingIds(payload);
+}
+
 export interface ScanSession {
   repoUrl: string;
   branch: string;
@@ -50,14 +55,19 @@ interface AppSessionContextValue {
   session: ScanSession;
   findings: FindingsPayload | null;
   patchKit: PatchKitPayload | null;
+  a2aTask: WorkflowA2ATask | null;
   selectedFindingIds: string[];
+  scopeReviewed: boolean;
   hydrating: boolean;
   setScanComplete: (repoUrl: string, branch: string, result: ScanPayload) => void;
   setSelectedProjectRoot: (projectRoot: string) => void;
   setFindings: (findings: FindingsPayload | null) => void;
   setPatchKit: (patchKit: PatchKitPayload | null) => void;
+  setA2aTask: (task: WorkflowA2ATask | null) => void;
+  setScopeReviewed: (reviewed: boolean) => void;
   toggleFindingSelection: (findingId: string) => void;
   setSelectedFindingIds: (ids: string[]) => void;
+  selectAllSafeFindings: () => void;
   resetSession: () => void;
 }
 
@@ -75,7 +85,9 @@ function persist(
   session: ScanSession,
   findings: FindingsPayload | null,
   selectedFindingIds: string[],
-  patchKit: PatchKitPayload | null
+  patchKit: PatchKitPayload | null,
+  a2aTaskId?: string,
+  scopeReviewed?: boolean
 ) {
   const data: PersistedSession = {
     repoUrl: session.repoUrl,
@@ -85,6 +97,8 @@ function persist(
     scanComplete: session.scanComplete,
     selectedFindingIds,
     patchKitId: patchKit?.id,
+    a2aTaskId,
+    scopeReviewed,
     selectedProjectRoot: session.selectedProjectRoot,
     projectRootConfirmed: session.projectRootConfirmed,
   };
@@ -95,7 +109,9 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<ScanSession>(emptySession);
   const [findings, setFindings] = useState<FindingsPayload | null>(null);
   const [patchKit, setPatchKit] = useState<PatchKitPayload | null>(null);
+  const [a2aTask, setA2aTaskState] = useState<WorkflowA2ATask | null>(null);
   const [selectedFindingIds, setSelectedFindingIdsState] = useState<string[]>([]);
+  const [scopeReviewed, setScopeReviewedState] = useState(false);
   const [hydrating, setHydrating] = useState(true);
 
   useEffect(() => {
@@ -117,13 +133,17 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       projectRootConfirmed: stored.projectRootConfirmed ?? true,
     });
     setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
+    setScopeReviewedState(stored.scopeReviewed ?? false);
 
     void Promise.all([
       fetchPersistedFindings(scanKey).catch(() => null),
       stored.scanRecordId ? fetchPersistedScan(stored.scanRecordId) : fetchPersistedScan(scanKey),
       fetchPersistedPatchKit(scanKey),
+      stored.a2aTaskId
+        ? import("@/lib/workflow/client").then((m) => m.fetchWorkflowA2ATask(stored.a2aTaskId!)).catch(() => null)
+        : Promise.resolve(null),
     ])
-      .then(([findingsPayload, scanPayload, patchPayload]) => {
+      .then(([findingsPayload, scanPayload, patchPayload, taskPayload]) => {
         if (findingsPayload) {
           setFindings(findingsPayload);
           if (!stored.selectedFindingIds?.length) {
@@ -146,6 +166,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           }));
         }
         if (patchPayload) setPatchKit(patchPayload);
+        if (taskPayload?.task) setA2aTaskState(taskPayload.task);
       })
       .catch(() => clearPersistedSession())
       .finally(() => setHydrating(false));
@@ -154,8 +175,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const setFindingsState = useCallback((next: FindingsPayload | null) => {
     setFindings(next);
     if (next) {
-      const defaults = defaultSelectedFindingIds(next);
+      const defaults = defaultSafeSelectedIds(next);
       setSelectedFindingIdsState(defaults);
+      setScopeReviewedState(false);
+      setA2aTaskState(null);
       setSession((prev) => {
         const updated = {
           ...prev,
@@ -164,7 +187,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           scanComplete: true,
           scanRecordId: prev.scanRecordId ?? next.scanId,
         };
-        persist(updated, next, defaults, null);
+        persist(updated, next, defaults, null, undefined, false);
         return updated;
       });
       setPatchKit(null);
@@ -186,8 +209,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       setSession(nextSession);
       setFindings(null);
       setPatchKit(null);
+      setA2aTaskState(null);
+      setScopeReviewedState(false);
       setSelectedFindingIdsState([]);
-      persist(nextSession, null, [], null);
+      persist(nextSession, null, [], null, undefined, false);
     },
     []
   );
@@ -210,22 +235,44 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
             }
           : prev.scanResult,
       };
-      persist(updated, findings, selectedFindingIds, patchKit);
+      persist(updated, findings, selectedFindingIds, patchKit, a2aTask?.taskId, scopeReviewed);
       return updated;
     });
     setFindings(null);
     setPatchKit(null);
-  }, [findings, selectedFindingIds, patchKit]);
+  }, [findings, selectedFindingIds, patchKit, a2aTask?.taskId, scopeReviewed]);
 
   const setPatchKitState = useCallback(
     (next: PatchKitPayload | null) => {
       setPatchKit(next);
       setSession((prev) => {
-        persist(prev, findings, selectedFindingIds, next);
+        persist(prev, findings, selectedFindingIds, next, a2aTask?.taskId, scopeReviewed);
         return prev;
       });
     },
-    [findings, selectedFindingIds]
+    [findings, selectedFindingIds, a2aTask?.taskId, scopeReviewed]
+  );
+
+  const setA2aTask = useCallback(
+    (next: WorkflowA2ATask | null) => {
+      setA2aTaskState(next);
+      setSession((prev) => {
+        persist(prev, findings, selectedFindingIds, patchKit, next?.taskId, scopeReviewed);
+        return prev;
+      });
+    },
+    [findings, selectedFindingIds, patchKit, scopeReviewed]
+  );
+
+  const setScopeReviewed = useCallback(
+    (reviewed: boolean) => {
+      setScopeReviewedState(reviewed);
+      setSession((prev) => {
+        persist(prev, findings, selectedFindingIds, patchKit, a2aTask?.taskId, reviewed);
+        return prev;
+      });
+    },
+    [findings, selectedFindingIds, patchKit, a2aTask?.taskId]
   );
 
   const toggleFindingSelection = useCallback(
@@ -234,25 +281,37 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         const next = prev.includes(findingId)
           ? prev.filter((id) => id !== findingId)
           : [...prev, findingId];
-        persist(session, findings, next, patchKit);
+        setScopeReviewedState(false);
+        persist(session, findings, next, patchKit, a2aTask?.taskId, false);
         return next;
       });
     },
-    [session, findings, patchKit]
+    [session, findings, patchKit, a2aTask?.taskId]
   );
 
   const setSelectedFindingIds = useCallback(
     (ids: string[]) => {
       setSelectedFindingIdsState(ids);
-      persist(session, findings, ids, patchKit);
+      setScopeReviewedState(false);
+      persist(session, findings, ids, patchKit, a2aTask?.taskId, false);
     },
-    [session, findings, patchKit]
+    [session, findings, patchKit, a2aTask?.taskId]
   );
+
+  const selectAllSafeFindings = useCallback(() => {
+    if (!findings) return;
+    const ids = defaultSafeSelectedIds(findings);
+    setSelectedFindingIdsState(ids);
+    setScopeReviewedState(false);
+    persist(session, findings, ids, patchKit, a2aTask?.taskId, false);
+  }, [findings, session, patchKit, a2aTask?.taskId]);
 
   const resetSession = useCallback(() => {
     setSession(emptySession);
     setFindings(null);
     setPatchKit(null);
+    setA2aTaskState(null);
+    setScopeReviewedState(false);
     setSelectedFindingIdsState([]);
     clearPersistedSession();
   }, []);
@@ -262,28 +321,38 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       session,
       findings,
       patchKit,
+      a2aTask,
       selectedFindingIds,
+      scopeReviewed,
       hydrating,
       setScanComplete,
       setSelectedProjectRoot,
       setFindings: setFindingsState,
       setPatchKit: setPatchKitState,
+      setA2aTask,
+      setScopeReviewed,
       toggleFindingSelection,
       setSelectedFindingIds,
+      selectAllSafeFindings,
       resetSession,
     }),
     [
       session,
       findings,
       patchKit,
+      a2aTask,
       selectedFindingIds,
+      scopeReviewed,
       hydrating,
       setScanComplete,
       setSelectedProjectRoot,
       setFindingsState,
       setPatchKitState,
+      setA2aTask,
+      setScopeReviewed,
       toggleFindingSelection,
       setSelectedFindingIds,
+      selectAllSafeFindings,
       resetSession,
     ]
   );

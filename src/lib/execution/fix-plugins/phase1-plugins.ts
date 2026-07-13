@@ -84,13 +84,16 @@ function inboundRefCount(finding: Finding): number {
   return Number.isFinite(n) ? n : -1;
 }
 
-function isConfirmedUnusedFile(finding: Finding): boolean {
+function isKnipUnusedStructuralCandidate(finding: Finding): boolean {
   if (finding.type !== "unused_file") return false;
   if (finding.sourceMode !== "native" || finding.source !== "knip") return false;
   const file = finding.files[0];
   if (!file || isTempFilePath(file)) return false;
-  if (!hasActionablePreflight(finding)) return false;
   return inboundRefCount(finding) === 0;
+}
+
+function isConfirmedUnusedFile(finding: Finding): boolean {
+  return isKnipUnusedStructuralCandidate(finding) && hasActionablePreflight(finding);
 }
 
 /** Structural eligibility before dry-run preflight. */
@@ -117,7 +120,7 @@ export function isPhase1StructuralCandidate(finding: Finding): boolean {
     const file = finding.files[0];
     if (hasEmptyFileEvidence(finding) && file) return true;
     if (file && isTempFilePath(file) && finding.files.length === 1) return true;
-    if (isConfirmedUnusedFile(finding)) return true;
+    if (isKnipUnusedStructuralCandidate(finding)) return true;
   }
   return false;
 }
@@ -204,7 +207,8 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
     supports(finding) {
       if (finding.type !== "unused_file" && finding.type !== "ai_slop_signal") return false;
       if (!hasEmptyFileEvidence(finding)) return false;
-      if (!baseEligible(finding)) return false;
+      if (finding.files.some(isProtectedPath)) return false;
+      if (finding.confidence < MIN_CONFIDENCE) return false;
       return inboundRefCount(finding) === 0;
     },
     eligibilityReason() {
@@ -278,7 +282,7 @@ export function resolvePhase1TransformPlugin(finding: Finding): Phase1FixPlugin 
   if (hasEmptyFileEvidence(finding)) {
     return PHASE1_PLUGINS.find((p) => p.id === "remove_empty_file")!;
   }
-  if (isConfirmedUnusedFile(finding)) {
+  if (isKnipUnusedStructuralCandidate(finding)) {
     return PHASE1_PLUGINS.find((p) => p.id === "remove_confirmed_unused_file")!;
   }
   if (isPhase1StructuralCandidate(finding)) {

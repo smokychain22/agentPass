@@ -22,11 +22,11 @@ interface WorkflowRailProps {
   scanComplete: boolean;
   findingsUnlocked: boolean;
   findingsReady: boolean;
-  quickCleanupAvailable: boolean;
-  quickCleanupState: QuickCleanupWorkflowState;
-  patchKitReady: boolean;
+  fixPrUnlocked: boolean;
+  fixPrLockBody?: string;
   verifyUnlocked: boolean;
-  failedStep?: WorkflowStepId;
+  verifyLockBody?: string;
+  quickCleanupState?: QuickCleanupWorkflowState;
   className?: string;
 }
 
@@ -36,14 +36,11 @@ function resolveState(
   scanComplete: boolean,
   findingsUnlocked: boolean,
   findingsReady: boolean,
-  quickCleanupAvailable: boolean,
-  quickCleanupState: QuickCleanupWorkflowState,
-  patchKitReady: boolean,
+  fixPrUnlocked: boolean,
+  fixPrLockBody: string | undefined,
   verifyUnlocked: boolean,
-  failedStep?: WorkflowStepId
+  verifyLockBody: string | undefined
 ): { state: StepState; lockReason?: string } {
-  if (failedStep === stepId) return { state: "failed" };
-
   const order: WorkflowStepId[] = ["scan", "findings", "patch", "verify"];
   const idx = order.indexOf(stepId);
   const activeIdx = order.indexOf(activeStep);
@@ -66,42 +63,20 @@ function resolveState(
   }
   if (stepId === "patch") {
     if (!findingsReady) return { state: "locked", lockReason: "Run findings analysis first" };
-    if (!quickCleanupAvailable) {
+    if (!fixPrUnlocked) {
       return {
         state: "locked",
-        lockReason: "No auto-fixable findings — duplicates and orphans need review; try report-only PR",
+        lockReason: fixPrLockBody ?? "Select safe scope and confirm GitHub access",
       };
-    }
-    if (quickCleanupState === "running") {
-      return { state: "active", lockReason: "Generating changes…" };
-    }
-    if (quickCleanupState === "blocked") {
-      return {
-        state: "blocked",
-        lockReason:
-          patchKitReady
-            ? "Supported findings detected, but no changes were generated or validated"
-            : "Generate cleanup changes to continue",
-      };
-    }
-    if (quickCleanupState === "complete") {
-      if (activeStep === "patch") return { state: "completed" };
-      return { state: "completed" };
     }
     if (activeStep === "patch") return { state: "active" };
-    return { state: "inactive" };
+    return { state: idx < activeIdx ? "completed" : "inactive" };
   }
   if (stepId === "verify") {
-    if (!patchKitReady) {
-      return { state: "locked", lockReason: "Generate cleanup changes in Quick Cleanup first" };
-    }
     if (!verifyUnlocked) {
       return {
         state: "locked",
-        lockReason:
-          quickCleanupState === "blocked"
-            ? "Supported findings were detected, but change generation failed or produced no patch. Review transformer errors or retry generation."
-            : "Verify unlocks after validated changes are generated",
+        lockReason: verifyLockBody ?? "Verify unlocks after paid cleanup execution starts",
       };
     }
     if (activeStep === "verify") return { state: "active" };
@@ -115,11 +90,10 @@ export function WorkflowRail({
   scanComplete,
   findingsUnlocked,
   findingsReady,
-  quickCleanupAvailable,
-  quickCleanupState,
-  patchKitReady,
+  fixPrUnlocked,
+  fixPrLockBody,
   verifyUnlocked,
-  failedStep,
+  verifyLockBody,
   className,
 }: WorkflowRailProps) {
   const steps: WorkflowStep[] = [
@@ -133,11 +107,10 @@ export function WorkflowRail({
         scanComplete,
         findingsUnlocked,
         findingsReady,
-        quickCleanupAvailable,
-        quickCleanupState,
-        patchKitReady,
+        fixPrUnlocked,
+        fixPrLockBody,
         verifyUnlocked,
-        failedStep
+        verifyLockBody
       ),
     },
     {
@@ -150,11 +123,10 @@ export function WorkflowRail({
         scanComplete,
         findingsUnlocked,
         findingsReady,
-        quickCleanupAvailable,
-        quickCleanupState,
-        patchKitReady,
+        fixPrUnlocked,
+        fixPrLockBody,
         verifyUnlocked,
-        failedStep
+        verifyLockBody
       ),
     },
     {
@@ -167,11 +139,10 @@ export function WorkflowRail({
         scanComplete,
         findingsUnlocked,
         findingsReady,
-        quickCleanupAvailable,
-        quickCleanupState,
-        patchKitReady,
+        fixPrUnlocked,
+        fixPrLockBody,
         verifyUnlocked,
-        failedStep
+        verifyLockBody
       ),
     },
     {
@@ -184,11 +155,10 @@ export function WorkflowRail({
         scanComplete,
         findingsUnlocked,
         findingsReady,
-        quickCleanupAvailable,
-        quickCleanupState,
-        patchKitReady,
+        fixPrUnlocked,
+        fixPrLockBody,
         verifyUnlocked,
-        failedStep
+        verifyLockBody
       ),
     },
   ];
@@ -219,7 +189,7 @@ function WorkflowStepLink({ step }: { step: WorkflowStep }) {
   const isLocked = step.state === "locked";
   const isBlocked = step.state === "blocked";
   const content = (
-  <>
+    <>
       <StepIcon state={step.state} />
       <span className="truncate font-mono text-[10px] uppercase tracking-wide sm:text-[11px]">
         {step.label}

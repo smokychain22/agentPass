@@ -61,6 +61,8 @@ function gradeForFinding(input: DecisionInput): FusionEvidenceGrade {
   if (finding.type === "unused_file") {
     const inbound = finding.evidence.signals.find((s) => s.startsWith("inbound_refs="));
     const inboundZero = inbound?.endsWith("=0");
+    const emptyFile = finding.evidence.signals.some((s) => s === "empty_file=true");
+    if (emptyFile && inboundZero && hasPreflightActionable) return "strong";
     if (nativeAnalyzer(finding) && inboundZero && hasPreflightActionable) return "strong";
     if (nativeAnalyzer(finding) && inboundZero) return "moderate";
     return "weak";

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import type { Finding } from "@/lib/findings/types";
 import {
   convertSymbolToTypeOnlyImport,
@@ -226,22 +227,25 @@ async function dryRunDeleteFile(
       originals[file] = "";
     }
   }
-  const scratch = path.join(rootDir, ".repodiet-scratch");
-  await fs.mkdir(scratch, { recursive: true });
-  const { patch, deletedPaths } = await previewUnifiedDeletePatch(rootDir, safeItems, scratch);
-  if (!patch.trim() || deletedPaths.length === 0) return null;
-  const { additions, deletions } = countDiffStats(patch);
-  const deleted = deletedPaths[0] ?? rel;
-  return {
-    originalSource: originals[deleted] ?? "",
-    modifiedSource: "",
-    originalHash: hashSource(originals[deleted] ?? ""),
-    modifiedHash: hashSource(""),
-    unifiedDiff: patch,
-    changedFiles: deletedPaths,
-    additions,
-    deletions,
-  };
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-preflight-"));
+  try {
+    const { patch, deletedPaths } = await previewUnifiedDeletePatch(rootDir, safeItems, scratch);
+    if (!patch.trim() || deletedPaths.length === 0) return null;
+    const { additions, deletions } = countDiffStats(patch);
+    const deleted = deletedPaths[0] ?? rel;
+    return {
+      originalSource: originals[deleted] ?? "",
+      modifiedSource: "",
+      originalHash: hashSource(originals[deleted] ?? ""),
+      modifiedHash: hashSource(""),
+      unifiedDiff: patch,
+      changedFiles: deletedPaths,
+      additions,
+      deletions,
+    };
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 export async function dryRunPhase1Fix(
