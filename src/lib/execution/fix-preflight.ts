@@ -210,15 +210,8 @@ async function dryRunDeleteFile(
   rootDir: string,
   finding: Finding
 ): Promise<GeneratedChangePayload | null> {
-  const { previewUnifiedDeletePatch } = await import("@/lib/patch-kit/generate-unified-diff");
   const rel = finding.files[0];
   if (!rel) return null;
-  const safeItems = finding.files.map((file) => ({
-    path: file,
-    reason: finding.reason,
-    findingId: finding.id,
-    findingType: finding.type,
-  }));
   const originals: Record<string, string> = {};
   for (const file of finding.files) {
     try {
@@ -227,6 +220,33 @@ async function dryRunDeleteFile(
       originals[file] = "";
     }
   }
+
+  // Single-file deletes use inline diff — avoids full-repo copy (fails on some serverless runtimes).
+  if (finding.files.length === 1) {
+    const original = originals[rel] ?? "";
+    const unifiedDiff = buildTextDiff(rel, original, "");
+    const { additions, deletions } = countDiffStats(unifiedDiff);
+    if (additions + deletions > 0) {
+      return {
+        originalSource: original,
+        modifiedSource: "",
+        originalHash: hashSource(original),
+        modifiedHash: hashSource(""),
+        unifiedDiff,
+        changedFiles: [rel],
+        additions,
+        deletions,
+      };
+    }
+  }
+
+  const { previewUnifiedDeletePatch } = await import("@/lib/patch-kit/generate-unified-diff");
+  const safeItems = finding.files.map((file) => ({
+    path: file,
+    reason: finding.reason,
+    findingId: finding.id,
+    findingType: finding.type,
+  }));
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-preflight-"));
   try {
     const { patch, deletedPaths } = await previewUnifiedDeletePatch(rootDir, safeItems, scratch);

@@ -157,6 +157,37 @@ test("empty file with preflight actionable promotes to strong safe candidate", (
   assert.equal(decision.autoFixAllowed, true);
 });
 
+test("single-file delete preflight uses inline diff path", async () => {
+  const { dryRunPhase1Fix } = await import("../src/lib/execution/fix-preflight");
+  const { prepareRepoWorkspace } = await import("../src/lib/scanner/prepare-workspace");
+  const w = await prepareRepoWorkspace("https://github.com/velz-cmd/repodiet-e2e-test", "main");
+  try {
+    const change = await dryRunPhase1Fix(
+      w.rootDir,
+      {
+        id: "t",
+        type: "unused_file",
+        title: "empty",
+        files: ["src/unused/empty-module.ts"],
+        confidence: 0.9,
+        confidenceReason: "x",
+        severity: "low",
+        action: "review_first",
+        reason: "x",
+        source: "knip",
+        sourceMode: "native",
+        evidence: { summary: "x", signals: ["empty_file=true", "inbound_refs=0"] },
+      },
+      "delete_file"
+    );
+    assert.ok(change);
+    assert.ok(change!.unifiedDiff.includes("empty-module.ts"));
+    assert.ok(change!.deletions > 0);
+  } finally {
+    await w.cleanup();
+  }
+});
+
 test("protected finding cannot be auto-fix allowed", () => {
   const finding: Finding = {
     id: "f_prot",
