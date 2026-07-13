@@ -5,7 +5,6 @@ import {
   executeFreeProof,
   runQuickCleanup,
   scanRepository,
-  selectSafeFixes,
 } from "@/lib/execution";
 import {
   createQuoteForOperation,
@@ -50,6 +49,13 @@ import {
   type A2ATaskRecord,
   type A2ATaskType,
 } from "./types";
+import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
+import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
+import {
+  patchKitDeliveryBlocker,
+  patchKitHasDeliverableChanges,
+  waitForPatchKitSandbox,
+} from "./patch-kit-delivery";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -99,8 +105,14 @@ async function failTask(
   };
   await saveA2ATask(finalized);
   await deliverTaskCallback(finalized);
-  if (task.input.quoteId && status === "verification_failed") {
-    await handleExecutionFailure(task.input.quoteId, "verification_failed");
+  if (
+    task.input.quoteId &&
+    (status === "verification_failed" || status === "delivery_failed")
+  ) {
+    await handleExecutionFailure(
+      task.input.quoteId,
+      status === "delivery_failed" ? "platform_failure" : "verification_failed"
+    );
   }
   return finalized;
 }
@@ -150,7 +162,34 @@ async function runAnalysisPhase(
 
   let findings: FindingsPayload;
   try {
-    findings = await scanRepository(task.input.repoUrl, task.input.branch);
+    if (task.input.scanId) {
+      const stored = await getStoredFindings(task.input.scanId);
+      if (!stored) {
+        return failTask(
+          task,
+          sm,
+          "analysis_failed",
+          "Stored scan findings were not found. Re-run Findings and try again.",
+          "repository_analyzer"
+        );
+      }
+      if (
+        task.input.commitSha?.trim() &&
+        stored.repo.commitSha &&
+        stored.repo.commitSha !== task.input.commitSha
+      ) {
+        return failTask(
+          task,
+          sm,
+          "analysis_failed",
+          "Scan commit no longer matches the pinned repository commit. Re-run Findings on the current commit.",
+          "repository_analyzer"
+        );
+      }
+      findings = stored;
+    } else {
+      findings = await scanRepository(task.input.repoUrl, task.input.branch);
+    }
     task = await syncTask(task, sm, {
       scanId: findings.scanId,
       repository: { ...task.repository, commitSha: findings.repo.commitSha },
@@ -376,41 +415,60 @@ async function executeChanges(
     sm.emit("generating_changes", "fix_executor");
     task = await syncTask(task, sm);
     try {
-      const safe = selectSafeFixes(analyzed, 10);
-      sm.emit("validating_patch", "safety_classifier", `${safe.length} safe fixes evaluated`);
+      let patchKit = await runPatchKitEngine({
+        repoUrl: input.repoUrl,
+        branch: input.branch ?? analyzed.repo.branch,
+        findings: analyzed,
+        selectedFindingIds: input.findingIds,
+        scanId: analyzed.scanId,
+      });
+
+      sm.emit("validating_patch", "fix_executor");
       task = await syncTask(task, sm);
 
-      const cleanup = await runQuickCleanup(
-        input.repoUrl,
-        input.branch,
-        analyzed,
-        input.findingIds ?? safe.map((f) => f.id)
-      );
+      if (patchKit.patchValidation?.status === "pending_sandbox") {
+        sm.emit("verifying", "verification_worker", "sandbox_validation");
+        task = await syncTask(task, sm);
+        patchKit = await waitForPatchKitSandbox(patchKit);
+      } else {
+        sm.emit("verifying", "verification_worker");
+        task = await syncTask(task, sm);
+      }
 
-      sm.emit("verifying", "verification_worker");
-      task = await syncTask(task, sm);
-      const verification = cleanup.verification;
-      if (verification.status === "failed" && cleanup.proof.finalDecision !== "verified_fix") {
+      const blocker = patchKitDeliveryBlocker(patchKit);
+      if (!patchKitHasDeliverableChanges(patchKit)) {
+        if (task.input.quoteId) {
+          await handleExecutionFailure(task.input.quoteId, "verification_failed");
+        }
         return failTask(
           task,
           sm,
           "verification_failed",
-          cleanup.verifiedLabel ?? "Cleanup verification failed before PR approval.",
+          blocker ?? "No verified cleanup changes were generated for the selected scope.",
           "verification_worker"
         );
       }
 
-      const changedFiles = cleanup.proof.changedFiles;
+      const changedFiles = [
+        ...new Set([
+          ...(patchKit.summary.deletedPaths ?? []),
+          ...(patchKit.changeOperations?.map((op) => op.filePath) ?? []),
+          ...(patchKit.validatedEdits?.map((edit) => edit.path) ?? []),
+        ]),
+      ];
+
       const approval = {
         summary: `${changedFiles.length} file(s) will change on branch repodiet/cleanup-${task.id}`,
         repository: `${analyzed.repo.owner}/${analyzed.repo.name}`,
         branch: `repodiet/cleanup-${task.id}`,
-        changes: changedFiles.map((filePath: string) => ({
+        changes: changedFiles.map((filePath) => ({
           path: filePath,
-          action: "delete" as const,
+          action: (patchKit.summary.deletedPaths ?? []).includes(filePath)
+            ? ("delete" as const)
+            : ("modify" as const),
           summary: "Verified cleanup change",
         })),
-        unifiedDiff: cleanup.unifiedDiff,
+        unifiedDiff: patchKit.artifacts.cleanupPatch,
         expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(),
       };
 
@@ -421,18 +479,28 @@ async function executeChanges(
           findings: task.result.findings,
           changes: {
             changedFiles,
-            unifiedDiff: cleanup.unifiedDiff,
-            patchId: cleanup.id,
-            finalDecision: cleanup.proof.finalDecision,
+            unifiedDiff: patchKit.artifacts.cleanupPatch,
+            patchId: patchKit.id,
+            patchKitId: patchKit.id,
+            finalDecision: "verified_fix",
           },
-          verification,
+          verification: {
+            status: patchKit.repositoryVerification?.status ?? patchKit.patchValidation?.status ?? "passed",
+            checks: patchKit.repositoryVerification?.checks,
+            limitations: patchKit.patchValidation?.userMessage
+              ? [patchKit.patchValidation.userMessage]
+              : undefined,
+          },
         },
       });
     } catch (err) {
+      if (task.input.quoteId) {
+        await handleExecutionFailure(task.input.quoteId, "verification_failed");
+      }
       return failTask(
         task,
         sm,
-        "analysis_failed",
+        "verification_failed",
         err instanceof Error ? err.message : "Cleanup PR preparation failed.",
         "fix_executor"
       );
@@ -725,10 +793,24 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
 
   try {
     const findings = await loadFindings(task);
+    const patchKitId = task.result.changes?.patchKitId ?? task.result.changes?.patchId;
+    const storedPatchKit = patchKitId ? await getStoredPatchKit(patchKitId) : undefined;
+    const patchKit = storedPatchKit?.payload;
+
+    if (!patchKit || !patchKitHasDeliverableChanges(patchKit)) {
+      throw new Error(
+        patchKit
+          ? (patchKitDeliveryBlocker(patchKit) ??
+            "Verified cleanup bundle is missing. Regenerate cleanup scope and try again.")
+          : "Verified cleanup bundle is missing. Regenerate cleanup scope and try again."
+      );
+    }
+
     const pr = await createCleanupPullRequest({
       repoUrl: task.input.repoUrl,
       branch: task.input.branch,
       findings,
+      patchKit,
       demo: task.input.demo,
       githubToken: task.input.githubToken,
     });

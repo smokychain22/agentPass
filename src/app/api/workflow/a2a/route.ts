@@ -73,6 +73,8 @@ export async function POST(request: Request) {
     const task = await submitA2ATask("repository.cleanup_pr", {
       repoUrl: body.repoUrl,
       branch: body.branch ?? findings.repo.branch,
+      scanId: body.scanId,
+      commitSha: body.commitSha,
       findingIds: body.findingIds,
     });
 

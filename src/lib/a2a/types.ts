@@ -81,9 +81,12 @@ export interface A2ATaskRepository {
 export interface A2ATaskInput {
   repoUrl: string;
   branch?: string;
+  scanId?: string;
+  commitSha?: string;
   findingIds?: string[];
   quoteId?: string;
   paymentReference?: string;
+  payer?: string;
   callbackUrl?: string;
   githubToken?: string;
   demo?: boolean;
@@ -96,6 +99,7 @@ export interface A2ATaskResult {
     unifiedDiff?: string;
     finalDecision?: string;
     patchId?: string;
+    patchKitId?: string;
   };
   verification?: {
     status: string;

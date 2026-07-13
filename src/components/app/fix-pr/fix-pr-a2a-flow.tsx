@@ -28,6 +28,12 @@ import {
   readStoredPayerWallet,
   storePayerWallet,
 } from "@/lib/workflow/payment-ui";
+import {
+  isWorkflowTaskFailure,
+  isWorkflowTaskTerminal,
+  workflowFailureGuidance,
+  workflowTaskStatusLabel,
+} from "@/lib/workflow/task-status-ui";
 
 interface FixPrA2AFlowProps {
   repoUrl: string;
@@ -84,15 +90,29 @@ export function FixPrA2AFlow({
 
   useEffect(() => {
     if (!a2aTask?.taskId) return;
-    const terminal = new Set(["completed", "payment_failed", "verification_failed", "delivery_failed"]);
-    if (terminal.has(a2aTask.status)) return;
+    void fetchWorkflowA2ATask(a2aTask.taskId)
+      .then(({ task, quote: q }) => {
+        onTaskUpdate(task);
+        if (q) setQuote(q);
+      })
+      .catch(() => {
+        /* best-effort hydrate */
+      });
+  }, [a2aTask?.taskId, onTaskUpdate]);
+
+  useEffect(() => {
+    if (!a2aTask?.taskId) return;
+    if (isWorkflowTaskTerminal(a2aTask)) return;
 
     const poll = async () => {
       try {
         const { task, quote: q } = await fetchWorkflowA2ATask(a2aTask.taskId);
         onTaskUpdate(task);
         if (q) setQuote(q);
-        if (task.status === "awaiting_approval") {
+        if (
+          task.status === "awaiting_approval" &&
+          (task.approval?.changes?.length ?? 0) > 0
+        ) {
           const approved = await approveWorkflowDelivery(task.taskId);
           onTaskUpdate(approved);
         }
@@ -154,12 +174,26 @@ export function FixPrA2AFlow({
         payer: payerAddress,
       });
       onTaskUpdate(funded);
+      const refreshed = await fetchWorkflowA2ATask(funded.taskId);
+      onTaskUpdate(refreshed.task);
+      if (refreshed.quote) setQuote(refreshed.quote);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Payment failed.");
     } finally {
       setLoading(false);
     }
   }, [a2aTask?.taskId, onTaskUpdate, payer, paymentRef, quote, trustedTestPayment]);
+
+  const retryCleanup = useCallback(() => {
+    onTaskUpdate(null);
+    setQuote(null);
+    setError(null);
+  }, [onTaskUpdate]);
+
+  const executing =
+    Boolean(a2aTask) &&
+    !isWorkflowTaskTerminal(a2aTask) &&
+    a2aTask!.status !== "awaiting_payment";
 
   const connectGitHub = useCallback(async () => {
     setGithubGrantLoading(true);
@@ -283,9 +317,47 @@ export function FixPrA2AFlow({
         )}
 
         {a2aTask && (
-          <p className="mt-3 font-mono text-xs text-muted-foreground">
-            Task {a2aTask.taskId} · {a2aTask.status}
-          </p>
+          <div className="mt-4 space-y-3 rounded-md border border-border/50 bg-card/40 p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium text-foreground">
+                {workflowTaskStatusLabel(a2aTask.status)}
+              </p>
+              <p className="font-mono text-xs text-muted-foreground">{a2aTask.taskId}</p>
+            </div>
+            {executing && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>RepoDiet is applying and verifying your selected cleanup scope. This can take a few minutes on large repositories.</span>
+              </div>
+            )}
+            {isWorkflowTaskFailure(a2aTask) && (
+              <div className="space-y-2">
+                <FeedbackBanner
+                  variant="error"
+                  message={a2aTask.error ?? workflowFailureGuidance(a2aTask)}
+                />
+                <p className="text-muted-foreground">{workflowFailureGuidance(a2aTask)}</p>
+              </div>
+            )}
+            {a2aTask.status === "completed" && a2aTask.pullRequest?.url && (
+              <div className="space-y-1">
+                <p className="text-signal">Cleanup pull request created</p>
+                <a
+                  className="font-mono text-xs text-electric underline"
+                  href={a2aTask.pullRequest.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {a2aTask.pullRequest.url}
+                </a>
+              </div>
+            )}
+            {trustedTestPayment && a2aTask.status !== "awaiting_payment" && (
+              <p className="text-xs text-muted-foreground">
+                Test payment mode: no on-chain USDT transfer is required for the 0.20 USDT personal test price.
+              </p>
+            )}
+          </div>
         )}
 
         {error && <FeedbackBanner variant="error" message={error} className="mt-3" />}
@@ -297,13 +369,13 @@ export function FixPrA2AFlow({
             </Button>
           )}
           {quote && a2aTask?.status === "awaiting_payment" && (
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 space-y-3 w-full">
               {trustedTestPayment ? (
                 <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
                   <p className="font-medium text-foreground">One-click test payment</p>
                   <p className="mt-1">
                     This deployment uses the personal A2A test price ({quote.priceLabel}). Enter
-                    your wallet once, then click pay — no manual transaction hash required.
+                    your wallet once, then click pay. No on-chain transfer is required in test mode.
                   </p>
                 </div>
               ) : (
@@ -335,7 +407,10 @@ export function FixPrA2AFlow({
                 disabled={loading || !payer.trim() || (!trustedTestPayment && !paymentRef.trim())}
               >
                 {loading ? (
-                  <Loader2 className="animate-spin" />
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing payment…
+                  </>
                 ) : trustedTestPayment ? (
                   `Pay ${quote.priceLabel} & start cleanup`
                 ) : (
@@ -343,6 +418,9 @@ export function FixPrA2AFlow({
                 )}
               </Button>
             </div>
+          )}
+          {isWorkflowTaskFailure(a2aTask) && (
+            <Button onClick={retryCleanup}>Start a new cleanup attempt</Button>
           )}
           <Button variant="secondary" asChild>
             <Link href="/app?tab=findings">Back to findings</Link>

@@ -29,11 +29,15 @@ export interface WorkflowA2ATask {
     commitSha?: string;
   };
   transitions: Array<{ status: string; at: string; detail?: string }>;
-  pullRequest?: { url?: string; branch?: string; number?: number };
+  pullRequest?: { url?: string; branch?: string; number?: number; title?: string };
   receipt?: Record<string, unknown>;
   verification?: { status?: string };
   error?: string;
   limitations?: string[];
+  approval?: {
+    summary?: string;
+    changes?: Array<{ path: string; action: string; summary?: string }>;
+  };
 }
 
 export async function fetchRepositoryStatus(input: {
