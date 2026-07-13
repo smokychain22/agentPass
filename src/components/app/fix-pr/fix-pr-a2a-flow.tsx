@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
 import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
-import { ServiceModelPanel } from "@/components/wallet/service-model-panel";
 import { useWallet } from "@/components/wallet/wallet-provider";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
@@ -371,8 +370,6 @@ export function FixPrA2AFlow({
         )}
 
         {error && <FeedbackBanner variant="error" message={error} className="mt-3" />}
-
-        <ServiceModelPanel />
 
         <div className="mt-4 flex flex-wrap gap-2">
           {!quote && (
