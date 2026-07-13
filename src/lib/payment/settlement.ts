@@ -211,6 +211,26 @@ export async function requireEntitlement(
     return { ok: true, status: "funded", quote };
   }
 
+  const payment = await getPaymentByQuoteId(context.quoteId);
+  const postPaymentVerified =
+    quote.paymentStatus === "verified" ||
+    (payment?.lifecycleStatus === "funded" && Boolean(quote.paymentReference));
+
+  if (postPaymentVerified && context.taskId) {
+    if (quote.status === "consumed" && quote.taskId === context.taskId) {
+      return { ok: true, status: "funded", quote };
+    }
+    const lock = await lockQuoteForExecution(
+      context.quoteId,
+      context.taskId,
+      quote.paymentReference ?? payment?.paymentReference ?? ""
+    );
+    if (!lock.ok) {
+      return { ok: false, status: "replayed", reason: lock.reason };
+    }
+    return { ok: true, status: "funded", quote: lock.quote };
+  }
+
   const binding = validateQuoteBinding(quote, context);
   if (!binding.ok) {
     return { ok: false, status: binding.status ?? "invalid_payment", reason: binding.reason };

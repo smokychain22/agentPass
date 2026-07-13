@@ -45,10 +45,8 @@ export function quoteIdForTask(task: A2ATaskRecord): string | undefined {
 }
 
 export function isQuoteVerified(quote: BoundQuote, payment?: PaymentRecord): boolean {
-  if (quote.lifecycleStatus !== "funded" || quote.status !== "funded") return false;
   if (!quote.paymentReference || !quote.payer) return false;
-  if (!payment) return false;
-  if (payment.lifecycleStatus !== "funded") return false;
+  if (!payment || payment.lifecycleStatus !== "funded") return false;
   if (payment.quoteId !== quote.quoteId) return false;
   if (payment.paymentReference !== quote.paymentReference) return false;
   if (payment.payer.toLowerCase() !== quote.payer.toLowerCase()) return false;
@@ -94,8 +92,12 @@ export async function hydrateVerifiedQuoteFromPayment(
   const now = quote.verifiedAt ?? quote.fundedAt ?? payment.createdAt;
   const patched = await updateBoundQuote(quote.quoteId, {
     paymentStatus: "verified",
+    paymentReference: quote.paymentReference ?? payment.paymentReference,
+    payer: quote.payer ?? payment.payer,
     fundedAt: quote.fundedAt ?? payment.createdAt,
     verifiedAt: now,
+    lifecycleStatus: quote.lifecycleStatus === "quote_created" ? "funded" : quote.lifecycleStatus,
+    status: quote.status === "payment_required" ? "funded" : quote.status,
   });
 
   return { quote: patched ?? { ...quote, paymentStatus: "verified" }, payment };
@@ -128,12 +130,44 @@ export async function validateVerifiedQuoteForA2aFund(
     return { ok: false, code: "quote_consumed", reason: "Quote is bound to another task." };
   }
 
+  const paymentHint =
+    (quote.paymentReference
+      ? await getPaymentByReference(quote.paymentReference)
+      : undefined) ?? (await getPaymentByQuoteId(quote.quoteId));
+
   if (quote.status === "consumed" && quote.taskId && quote.taskId !== task.id) {
-    return { ok: false, code: "quote_consumed", reason: "Quote already consumed by another task." };
+    const paymentOwned =
+      paymentHint &&
+      paymentHint.lifecycleStatus === "funded" &&
+      paymentHint.quoteId === quote.quoteId &&
+      (!paymentHint.taskId || paymentHint.taskId === task.id);
+    if (!paymentOwned) {
+      return { ok: false, code: "quote_consumed", reason: "Quote already consumed by another task." };
+    }
   }
 
-  if (quote.lifecycleStatus !== "funded" || quote.status !== "funded") {
-    return { ok: false, code: "quote_not_funded", reason: "Quote is not funded." };
+  const hydrated = await hydrateVerifiedQuoteFromPayment(quote);
+  quote = hydrated.quote;
+  const payment = hydrated.payment ?? paymentHint;
+
+  const verifiedPaymentForTask =
+    Boolean(payment) &&
+    payment!.lifecycleStatus === "funded" &&
+    payment!.quoteId === quote.quoteId &&
+    (!payment!.taskId || payment!.taskId === task.id);
+
+  const fundedForThisTask =
+    verifiedPaymentForTask &&
+    Boolean(quote.paymentReference ?? payment?.paymentReference) &&
+    (quote.lifecycleStatus === "funded" ||
+      quote.lifecycleStatus === "execution_started" ||
+      quote.status === "consumed" ||
+      quote.status === "funded");
+
+  if (!fundedForThisTask) {
+    if (quote.lifecycleStatus !== "funded" || quote.status !== "funded") {
+      return { ok: false, code: "quote_not_funded", reason: "Quote is not funded." };
+    }
   }
 
   if (!quote.paymentReference) {
@@ -147,9 +181,6 @@ export async function validateVerifiedQuoteForA2aFund(
       reason: "Payment reference does not match the funded quote.",
     };
   }
-
-  const hydrated = await hydrateVerifiedQuoteFromPayment(quote);
-  quote = hydrated.quote;
 
   if (quote.paymentStatus !== "verified") {
     return { ok: false, code: "payment_not_verified", reason: "Quote payment is not verified." };
@@ -179,12 +210,6 @@ export async function validateVerifiedQuoteForA2aFund(
   if (order?.payer && quote.payer?.toLowerCase() !== order.payer.toLowerCase()) {
     return { ok: false, code: "payer_mismatch", reason: "Quote payer does not match order buyer." };
   }
-
-  const paymentReference = quote.paymentReference;
-  const payment =
-    hydrated.payment ??
-    (paymentReference ? await getPaymentByReference(paymentReference) : undefined) ??
-    (await getPaymentByQuoteId(quote.quoteId));
 
   if (!payment || !isQuoteVerified(quote, payment)) {
     return {

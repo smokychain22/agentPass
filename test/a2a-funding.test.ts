@@ -11,6 +11,7 @@ import { X402_ASSET, X402_CURRENCY, X402_NETWORK, X402_RECIPIENT } from "../src/
 import {
   claimA2aFundLock,
   getA2aFundLock,
+  getPaymentByQuoteId,
   isA2aFundLockExpired,
   markA2aFundExecutionQueued,
   newPaymentRecord,
@@ -349,6 +350,25 @@ async function run() {
     const result = await validateVerifiedQuoteForA2aFund({
       task,
       quote: hydrated.quote,
+      expectedQuoteId: quote.quoteId,
+      expectedPaymentReference: quote.paymentReference,
+      expectedPayer: quote.payer,
+    });
+    assert.equal(result.ok, true);
+  });
+
+  await test("12b. consumed quote with verified payment recovers for same task payment", async () => {
+    const quote = await fundedQuoteFixture({ status: "consumed", taskId: "task_other" });
+    const payment = await getPaymentByQuoteId(quote.quoteId);
+    assert.ok(payment);
+    const task = baseTask({
+      id: "task_test_fund",
+      status: "payment_failed",
+      input: { repoUrl: "https://github.com/repodiet/demo-slop-app", quoteId: quote.quoteId },
+    });
+    const result = await validateVerifiedQuoteForA2aFund({
+      task,
+      quote,
       expectedQuoteId: quote.quoteId,
       expectedPaymentReference: quote.paymentReference,
       expectedPayer: quote.payer,
