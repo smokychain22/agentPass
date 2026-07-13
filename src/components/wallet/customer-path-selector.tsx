@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import type { CustomerExecutionMode } from "@/lib/wallet/types";
+import { resolveOkxAgentUrl } from "@/lib/wallet/okx-agent-url";
 
 interface CustomerPathSelectorProps {
   mode: CustomerExecutionMode;
@@ -11,7 +12,7 @@ interface CustomerPathSelectorProps {
 }
 
 export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelectorProps) {
-  const okxUrl = process.env.NEXT_PUBLIC_OKX_AGENT_URL?.trim();
+  const okxUrl = resolveOkxAgentUrl();
 
   return (
     <Panel variant="elevated" padding="md" className="space-y-3">
@@ -65,7 +66,11 @@ export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelecto
               </Link>
             </Button>
           ) : (
-            <p className="mt-2 text-xs">OKX agent listing link is not configured on this deployment.</p>
+            <p className="mt-2 text-xs">
+              OKX agent listing link is not configured. Set{" "}
+              <span className="font-mono">NEXT_PUBLIC_OKX_AGENT_URL</span> on Vercel when ASP 5283
+              is publicly listed.
+            </p>
           )}
         </div>
       )}

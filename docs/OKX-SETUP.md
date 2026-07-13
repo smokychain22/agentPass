@@ -106,6 +106,9 @@ Until facilitator URL is configured, test mode works with `REPODIET_X402_TEST_SE
 | `OKX_A2A_SERVICE_ID` | Optional tracking |
 | `OKX_A2MCP_SERVICE_ID` | Optional tracking |
 | `NEXT_PUBLIC_OKX_ASP_AGENT_ID` | Public display only (same ID) |
+| `NEXT_PUBLIC_OKX_AGENT_URL` | Public agent page link (e.g. `https://www.okx.ai/agents/5283`). Leave unset while listing is private/404. |
+| `XLAYER_RPC_URL` | Optional. Default `https://rpc.xlayer.tech` — used to verify direct-site ERC-20 USDT transfers |
+| `ALLOW_INTERNAL_TEST_BUYER` | Must be `0` in production. Internal E2E buyer only. |
 | `REPODIET_OKX_A2MCP_PAID=1` | Enable paid A2MCP |
 | `REQUIRE_REAL_X402=1` | Production payment verification |
 | `GITHUB_APP_ID` | Existing RepoDiet GitHub App |

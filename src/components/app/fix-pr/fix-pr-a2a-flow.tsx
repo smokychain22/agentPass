@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
 import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
-import { ServiceModelPanel } from "@/components/wallet/service-model-panel";
 import { useWallet } from "@/components/wallet/wallet-provider";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
@@ -140,7 +139,7 @@ export function FixPrA2AFlow({
   }, [branch, commitSha, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
 
   const authorizePayment = useCallback(
-    async (input: { payer: string; paymentReference: string }) => {
+    async (input: { payer: string; paymentReference: string; paymentSignature?: string }) => {
       if (!quote || !a2aTask?.taskId) return;
       setLoading(true);
       setError(null);
@@ -150,12 +149,14 @@ export function FixPrA2AFlow({
           quoteId: quote.quoteId,
           paymentReference: input.paymentReference,
           payer: input.payer,
+          paymentSignature: input.paymentSignature,
         });
         const funded = await fundWorkflowTask({
           taskId: a2aTask.taskId,
           quoteId: quote.quoteId,
           paymentReference: input.paymentReference,
           payer: input.payer,
+          paymentSignature: input.paymentSignature,
         });
         onTaskUpdate(funded);
         setPaymentState("execution_started");
@@ -369,8 +370,6 @@ export function FixPrA2AFlow({
         )}
 
         {error && <FeedbackBanner variant="error" message={error} className="mt-3" />}
-
-        <ServiceModelPanel />
 
         <div className="mt-4 flex flex-wrap gap-2">
           {!quote && (
