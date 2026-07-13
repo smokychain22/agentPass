@@ -140,7 +140,7 @@ export function FixPrA2AFlow({
   }, [branch, commitSha, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
 
   const authorizePayment = useCallback(
-    async (input: { payer: string; paymentReference: string }) => {
+    async (input: { payer: string; paymentReference: string; paymentSignature?: string }) => {
       if (!quote || !a2aTask?.taskId) return;
       setLoading(true);
       setError(null);
@@ -150,12 +150,14 @@ export function FixPrA2AFlow({
           quoteId: quote.quoteId,
           paymentReference: input.paymentReference,
           payer: input.payer,
+          paymentSignature: input.paymentSignature,
         });
         const funded = await fundWorkflowTask({
           taskId: a2aTask.taskId,
           quoteId: quote.quoteId,
           paymentReference: input.paymentReference,
           payer: input.payer,
+          paymentSignature: input.paymentSignature,
         });
         onTaskUpdate(funded);
         setPaymentState("execution_started");

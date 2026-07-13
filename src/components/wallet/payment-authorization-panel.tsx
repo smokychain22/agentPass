@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectWalletButton } from "@/components/wallet/connect-wallet-button";
 import { CustomerPathSelector } from "@/components/wallet/customer-path-selector";
 import { useWallet } from "@/components/wallet/wallet-provider";
+import { sendUsdtPayment } from "@/lib/wallet/erc20-transfer";
 import type { WorkflowQuote } from "@/lib/workflow/client";
 import {
   createTestPaymentReference,
@@ -15,7 +17,11 @@ import {
 interface PaymentAuthorizationPanelProps {
   quote: WorkflowQuote;
   loading: boolean;
-  onAuthorize: (input: { payer: string; paymentReference: string }) => Promise<void>;
+  onAuthorize: (input: {
+    payer: string;
+    paymentReference: string;
+    paymentSignature?: string;
+  }) => Promise<void>;
 }
 
 export function PaymentAuthorizationPanel({
@@ -25,8 +31,18 @@ export function PaymentAuthorizationPanel({
 }: PaymentAuthorizationPanelProps) {
   const wallet = useWallet();
   const trustedTestPayment = isTrustedTestQuote(quote);
-  const { state, session, isOnXLayer, connect, switchNetwork, setPaymentState, customerMode, setCustomerMode } =
-    wallet;
+  const {
+    state,
+    session,
+    isOnXLayer,
+    connect,
+    switchNetwork,
+    setPaymentState,
+    customerMode,
+    setCustomerMode,
+  } = wallet;
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
 
   const payerReady = Boolean(session?.address && isOnXLayer);
   const authorizeLabel =
@@ -34,12 +50,15 @@ export function PaymentAuthorizationPanel({
       ? "Connect wallet to authorize"
       : state === "wrong_network"
         ? "Switch to X Layer"
-        : payerReady
-          ? "Authorize and execute"
-          : "Review payment";
+        : !payerReady
+          ? "Review payment"
+          : trustedTestPayment
+            ? "Authorize and execute"
+            : "Authorize USDT payment";
 
   const handleAuthorize = async () => {
     if (customerMode === "okx_marketplace") return;
+    setLocalError(null);
 
     if (!session?.address) {
       await connect();
@@ -53,16 +72,32 @@ export function PaymentAuthorizationPanel({
     setPaymentState("payment_pending");
     try {
       const payer = normalizeWalletAddress(session.address);
-      const paymentReference = trustedTestPayment
-        ? createTestPaymentReference(quote.quoteId)
-        : "";
-      if (!trustedTestPayment) {
-        throw new Error("Live on-chain payment from browser is not yet enabled. Use OKX.AI or test mode.");
+
+      if (trustedTestPayment) {
+        const paymentReference = createTestPaymentReference(quote.quoteId);
+        await onAuthorize({ payer, paymentReference });
+        setPaymentState("payment_verified");
+        return;
       }
-      await onAuthorize({ payer, paymentReference });
+
+      // Live direct path: customer signs ERC-20 USDT transfer from their own wallet.
+      setPaymentState("signature_requested");
+      const { txHash: hash } = await sendUsdtPayment({
+        from: payer,
+        to: quote.recipient,
+        amountMicro: quote.amountMicro,
+      });
+      setTxHash(hash);
+      setPaymentState("payment_pending");
+      await onAuthorize({
+        payer,
+        paymentReference: hash,
+        paymentSignature: "onchain:erc20_transfer",
+      });
       setPaymentState("payment_verified");
     } catch (err) {
       setPaymentState(payerReady ? "connected" : "failed");
+      setLocalError(err instanceof Error ? err.message : "Payment authorization failed.");
       throw err;
     }
   };
@@ -84,15 +119,37 @@ export function PaymentAuthorizationPanel({
               </>
             ) : (
               <>
-                <p className="font-medium text-foreground">Send payment on X Layer</p>
+                <p className="font-medium text-foreground">Authorize live payment</p>
                 <p className="mt-1">
-                  Send exactly {quote.priceLabel} on {quote.network} to{" "}
+                  Your wallet will send exactly {quote.priceLabel} USDT on X Layer to{" "}
                   <span className="font-mono text-xs">{quote.recipient}</span>. RepoDiet verifies
-                  payment server-side before execution.
+                  the Transfer on-chain before execution starts. Price and recipient come from the
+                  server quote — they cannot be edited in the browser.
                 </p>
               </>
             )}
           </div>
+
+          <dl className="grid gap-1 rounded-md border border-border/40 bg-background/30 p-3 text-xs">
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">Quote</dt>
+              <dd className="font-mono">{quote.quoteId}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">Amount</dt>
+              <dd className="font-mono">{quote.priceLabel}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">Network</dt>
+              <dd className="font-mono">{quote.network}</dd>
+            </div>
+            {quote.expiresAt && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted-foreground">Expires</dt>
+                <dd className="font-mono">{new Date(quote.expiresAt).toLocaleString()}</dd>
+              </div>
+            )}
+          </dl>
 
           <div className="flex flex-wrap items-center gap-2">
             <ConnectWalletButton />
@@ -103,19 +160,25 @@ export function PaymentAuthorizationPanel({
             )}
           </div>
 
+          {txHash && (
+            <p className="font-mono text-xs text-muted-foreground">
+              Tx: {txHash.slice(0, 10)}…{txHash.slice(-8)}
+            </p>
+          )}
+
+          {localError && <p className="text-sm text-destructive">{localError}</p>}
+
           <Button
             onClick={() => {
               void handleAuthorize().catch(() => undefined);
             }}
-            disabled={loading || (!trustedTestPayment && customerMode === "direct")}
+            disabled={loading || state === "payment_pending" || state === "signature_requested"}
           >
-            {loading ? (
+            {loading || state === "payment_pending" || state === "signature_requested" ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Processing payment…
+                {state === "signature_requested" ? "Confirm in wallet…" : "Verifying payment…"}
               </>
-            ) : state === "wrong_network" ? (
-              authorizeLabel
             ) : (
               authorizeLabel
             )}

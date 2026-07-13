@@ -17,9 +17,11 @@ import {
   verifyTestPaymentPayload,
 } from "./quote-service";
 import type { BoundQuote, EntitlementContext, PaymentProof, PaymentVerificationResult } from "./types";
-import { X402_CURRENCY, X402_NETWORK, X402_RECIPIENT } from "./constants";
+import { X402_ASSET, X402_CURRENCY, X402_NETWORK, X402_RECIPIENT } from "./constants";
 import { applyFailurePolicy, type FailureScenario } from "./failure-policy";
 import { isA2aTestPriceQuote } from "./a2a-test-price";
+import { verifyOnchainUsdtTransfer } from "./onchain-usdt";
+import { isLikelyTxHash } from "@/lib/wallet/erc20-transfer";
 
 function isRealX402(): boolean {
   return process.env.REQUIRE_REAL_X402 === "1";
@@ -148,10 +150,14 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     proof.paymentSignature = buildTestPaymentSignature(proof, quote);
   }
 
-  const sigOk = await verifyPaymentSignature(proof, quote);
-  if (!sigOk) {
+  const verification = await verifyLiveOrTestPayment(proof, quote);
+  if (!verification.ok) {
     await persistQuoteLifecycle(proof.quoteId, "invalid_payment");
-    return { ok: false, status: "invalid_payment", reason: "Payment signature verification failed." };
+    return {
+      ok: false,
+      status: "invalid_payment",
+      reason: verification.reason ?? "Payment signature verification failed.",
+    };
   }
 
   const funded = await persistQuoteLifecycle(proof.quoteId, "funded", {
@@ -178,7 +184,10 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
   return { ok: true, status: "funded", quote: funded ?? quote };
 }
 
-async function verifyPaymentSignature(proof: PaymentProof, quote: BoundQuote): Promise<boolean> {
+async function verifyLiveOrTestPayment(
+  proof: PaymentProof,
+  quote: BoundQuote
+): Promise<{ ok: boolean; reason?: string }> {
   if (isTestX402(quote)) {
     const payload = {
       quoteId: proof.quoteId,
@@ -189,18 +198,39 @@ async function verifyPaymentSignature(proof: PaymentProof, quote: BoundQuote): P
       requestHash: quote.requestHash,
     };
     if (proof.paymentSignature && verifyTestPaymentPayload(payload, proof.paymentSignature)) {
-      return true;
+      return { ok: true };
     }
     if (isA2aTestPriceQuote(quote)) {
-      return /^0x[a-fA-F0-9]{40}$/.test(proof.payer);
+      return {
+        ok: /^0x[a-fA-F0-9]{40}$/.test(proof.payer),
+        reason: "Trusted test payer address required.",
+      };
     }
     if (process.env.REPODIET_X402_TEST_SECRET) {
-      return false;
+      return { ok: false, reason: "Invalid test payment signature." };
     }
-    return true;
+    return { ok: true };
   }
 
-  if (!proof.paymentSignature) return false;
+  // Direct website live path: verify mined USDT Transfer independently via RPC.
+  if (isLikelyTxHash(proof.paymentReference)) {
+    const onchain = await verifyOnchainUsdtTransfer({
+      txHash: proof.paymentReference,
+      payer: proof.payer,
+      recipient: quote.recipient,
+      amountMicro: quote.amountMicro,
+      tokenAddress: quote.asset || X402_ASSET,
+      network: quote.network,
+    });
+    if (onchain.ok) return { ok: true };
+    if (!process.env.REPODIET_X402_FACILITATOR_URL) {
+      return { ok: false, reason: onchain.reason ?? "On-chain USDT transfer verification failed." };
+    }
+  }
+
+  if (!proof.paymentSignature && !isLikelyTxHash(proof.paymentReference)) {
+    return { ok: false, reason: "Payment requires a transaction hash or facilitator signature." };
+  }
 
   const facilitator = process.env.REPODIET_X402_FACILITATOR_URL;
   if (facilitator) {
@@ -211,15 +241,20 @@ async function verifyPaymentSignature(proof: PaymentProof, quote: BoundQuote): P
         body: JSON.stringify({ proof, quote }),
         signal: AbortSignal.timeout(30_000),
       });
-      if (!res.ok) return false;
-      const json = (await res.json()) as { valid?: boolean };
-      return json.valid === true;
+      if (!res.ok) return { ok: false, reason: "Facilitator rejected payment proof." };
+      const json = (await res.json()) as { valid?: boolean; reason?: string };
+      return json.valid === true
+        ? { ok: true }
+        : { ok: false, reason: json.reason ?? "Facilitator marked payment invalid." };
     } catch {
-      return false;
+      return { ok: false, reason: "Facilitator verification unavailable." };
     }
   }
 
-  return Boolean(proof.paymentSignature);
+  return {
+    ok: false,
+    reason: "Live payment requires a verified on-chain USDT transfer or a configured facilitator.",
+  };
 }
 
 export async function requireEntitlement(
