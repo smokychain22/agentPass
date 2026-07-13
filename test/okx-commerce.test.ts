@@ -3,6 +3,7 @@ import { A2MCP_SERVICES, A2A_SERVICES, getA2mcpService } from "../src/lib/okx/se
 import { buildOkxHealthResponse } from "../src/lib/okx/health";
 import { isOkxPaidMode } from "../src/lib/okx/entitlement";
 import { priceForOperation } from "../src/lib/payment/quote-service";
+import { getAnalyzeRepositoryPrice } from "../src/lib/payment/analyze-repository-price";
 import { buildCommerceBinding } from "../src/lib/okx/commerce-gateway";
 
 function test(name: string, fn: () => void | Promise<void>) {
@@ -22,7 +23,8 @@ async function run() {
 
   await test("A2MCP service catalog has five launch tools", () => {
     assert.equal(Object.keys(A2MCP_SERVICES).length, 5);
-    assert.equal(getA2mcpService("analyze_repository")?.amountMicro, "30000");
+    const analyzePrice = priceForOperation("analyze_repository");
+    assert.equal(getA2mcpService("analyze_repository")?.amountMicro, analyzePrice.amountMicro);
     assert.equal(getA2mcpService("scan_repository")?.amountMicro, "10000");
   });
 
@@ -33,10 +35,10 @@ async function run() {
     }
   });
 
-  await test("analyze_repository price is 0.03 USDT", () => {
+  await test("analyze_repository price follows pricing module", () => {
     const price = priceForOperation("analyze_repository");
-    assert.equal(price.amountMicro, "30000");
-    assert.equal(price.priceLabel, "0.03 USDT");
+    assert.equal(price.amountMicro, getAnalyzeRepositoryPrice().amountMicro);
+    assert.equal(price.priceLabel, getAnalyzeRepositoryPrice().priceLabel);
   });
 
   await test("commerce binding includes request hash", () => {

@@ -12,6 +12,7 @@ import {
 import { saveBoundQuote } from "./payment-store";
 import type { BoundQuote, VerificationProfile } from "./types";
 import { paymentRequiredBody } from "./x402";
+import { getAnalyzeRepositoryPrice } from "./analyze-repository-price";
 
 function microToAmount(micro: string): string {
   const n = Number(micro);
@@ -31,7 +32,7 @@ export function priceForOperation(
     case "scan_repository":
       return { amountMicro: "10000", priceLabel: "0.01 USDT" };
     case "analyze_repository":
-      return { amountMicro: "30000", priceLabel: "0.03 USDT" };
+      return getAnalyzeRepositoryPrice();
     case "list_safe_fixes":
       return { amountMicro: "10000", priceLabel: "0.01 USDT" };
     case "verify_patch":

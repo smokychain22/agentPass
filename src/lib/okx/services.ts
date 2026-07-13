@@ -1,4 +1,7 @@
 import type { A2aServiceId, A2mcpServiceId, OkxServiceDefinition } from "./types";
+import { getAnalyzeRepositoryPrice } from "@/lib/payment/analyze-repository-price";
+
+const analyzeRepositoryPrice = getAnalyzeRepositoryPrice();
 
 export const A2MCP_SERVICES: Record<A2mcpServiceId, OkxServiceDefinition> = {
   scan_repository: {
@@ -19,8 +22,8 @@ export const A2MCP_SERVICES: Record<A2mcpServiceId, OkxServiceDefinition> = {
     operation: "analyze_repository",
     label: "Analyze Repository",
     description: "Findings with evidence and risk buckets.",
-    amountMicro: "30000",
-    priceLabel: "0.03 USDT",
+    amountMicro: analyzeRepositoryPrice.amountMicro,
+    priceLabel: analyzeRepositoryPrice.priceLabel,
     readOnly: true,
     requiresEscrow: false,
     requiresApproval: false,
