@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { fundA2ATask, formatA2ATaskResponse } from "@/lib/a2a/orchestrator";
+import { getA2ATask } from "@/lib/a2a/task-store";
+import { getA2aFundLock } from "@/lib/payment/payment-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -8,15 +10,16 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ taskId: string }> }
 ) {
+  const { taskId } = await context.params;
+  const body = (await request.json()) as {
+    quoteId?: string;
+    paymentReference?: string;
+    payer?: string;
+    paymentSignature?: string;
+    idempotencyKey?: string;
+  };
+
   try {
-    const { taskId } = await context.params;
-    const body = (await request.json()) as {
-      quoteId?: string;
-      paymentReference?: string;
-      payer?: string;
-      paymentSignature?: string;
-      idempotencyKey?: string;
-    };
     const task = await fundA2ATask(taskId, body, request);
     return NextResponse.json({
       success: task.status === "completed" || task.status === "awaiting_approval",
@@ -24,6 +27,26 @@ export async function POST(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Funding failed.";
+    if (message.includes("not awaiting payment")) {
+      const task = await getA2ATask(taskId);
+      const lock = await getA2aFundLock(taskId);
+      if (task) {
+        const paymentReference =
+          task.input.paymentReference ??
+          (typeof body.paymentReference === "string" ? body.paymentReference : undefined);
+        return NextResponse.json(
+          {
+            success: task.status === "completed" || task.status === "awaiting_approval",
+            alreadyProcessed: true,
+            secondPayment: false,
+            executionDispatched: Boolean(lock?.executionQueued),
+            paymentReference,
+            ...formatA2ATaskResponse(task),
+          },
+          { status: 200 }
+        );
+      }
+    }
     return NextResponse.json({ success: false, error: message }, { status: 422 });
   }
 }
