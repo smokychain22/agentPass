@@ -68,6 +68,7 @@ interface AppSessionContextValue {
   toggleFindingSelection: (findingId: string) => void;
   setSelectedFindingIds: (ids: string[]) => void;
   selectAllSafeFindings: () => void;
+  clearFindingSelection: () => void;
   resetSession: () => void;
 }
 
@@ -127,7 +128,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       repoUrl: stored.repoUrl,
       branch: stored.branch,
       scanResult: null,
-      scanComplete: stored.scanComplete,
+      // Wait for persisted scan payload before claiming complete in the UI.
+      scanComplete: false,
       scanRecordId: stored.scanRecordId ?? stored.scanId,
       selectedProjectRoot: stored.selectedProjectRoot,
       projectRootConfirmed: stored.projectRootConfirmed ?? true,
@@ -146,9 +148,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       .then(([findingsPayload, scanPayload, patchPayload, taskPayload]) => {
         if (findingsPayload) {
           setFindings(findingsPayload);
-          if (!stored.selectedFindingIds?.length) {
-            setSelectedFindingIdsState(defaultSelectedFindingIds(findingsPayload));
-          }
+          // Restore only an explicit saved selection — never invent a bulk selection.
+          setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
         }
         if (scanPayload) {
           const needsSelection = scanPayload.repositoryModel?.needsProjectRootSelection ?? false;
@@ -164,6 +165,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
               stored.projectRootConfirmed ??
               (!needsSelection || Boolean(stored.selectedProjectRoot)),
           }));
+        } else {
+          setSession((prev) => ({
+            ...prev,
+            scanComplete: false,
+            scanResult: null,
+          }));
         }
         if (patchPayload) setPatchKit(patchPayload);
         if (taskPayload?.task) setA2aTaskState(taskPayload.task);
@@ -175,19 +182,21 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const setFindingsState = useCallback((next: FindingsPayload | null) => {
     setFindings(next);
     if (next) {
-      const defaults = defaultSafeSelectedIds(next);
-      setSelectedFindingIdsState(defaults);
+      // Do not auto-check dozens of safe findings — user selects scope intentionally.
+      setSelectedFindingIdsState([]);
       setScopeReviewedState(false);
       setA2aTaskState(null);
       setSession((prev) => {
+        const hasAuthenticScan = Boolean(prev.scanResult?.id || prev.scanRecordId);
         const updated = {
           ...prev,
           repoUrl: prev.repoUrl || next.repo.url || `https://github.com/${next.repo.owner}/${next.repo.name}`,
           branch: prev.branch || next.repo.branch,
-          scanComplete: true,
+          // Findings prove analysis, not a structure scan — keep scanComplete only if scan is attested.
+          scanComplete: hasAuthenticScan ? true : prev.scanComplete,
           scanRecordId: prev.scanRecordId ?? next.scanId,
         };
-        persist(updated, next, defaults, null, undefined, false);
+        persist(updated, next, [], null, undefined, false);
         return updated;
       });
       setPatchKit(null);
@@ -306,6 +315,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     persist(session, findings, ids, patchKit, a2aTask?.taskId, false);
   }, [findings, session, patchKit, a2aTask?.taskId]);
 
+  const clearFindingSelection = useCallback(() => {
+    setSelectedFindingIdsState([]);
+    setScopeReviewedState(false);
+    persist(session, findings, [], patchKit, a2aTask?.taskId, false);
+  }, [a2aTask?.taskId, findings, patchKit, session]);
+
   const resetSession = useCallback(() => {
     setSession(emptySession);
     setFindings(null);
@@ -334,6 +349,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       toggleFindingSelection,
       setSelectedFindingIds,
       selectAllSafeFindings,
+      clearFindingSelection,
       resetSession,
     }),
     [
@@ -353,6 +369,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       toggleFindingSelection,
       setSelectedFindingIds,
       selectAllSafeFindings,
+      clearFindingSelection,
       resetSession,
     ]
   );

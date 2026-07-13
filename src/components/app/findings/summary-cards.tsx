@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { availabilityLabel, unavailableMessage } from "@/lib/findings/analyzer-availability";
+import { flattenFindings } from "@/lib/findings/client";
 
 interface SummaryMetric {
   key: string;
@@ -14,6 +15,7 @@ interface SummaryMetric {
 
 function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
   const { summary, analyzerStates } = payload;
+  const flat = flattenFindings(payload);
   const jscpdState = analyzerStates?.jscpd;
   const knipState = analyzerStates?.knip;
   const madgeState = analyzerStates?.madge;
@@ -22,17 +24,31 @@ function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
   const knipAvailable = knipState?.status === "available";
   const madgeAvailable = madgeState?.status === "available";
 
+  const duplicateCount = flat.filter((f) => f.type === "duplicate_code").length;
+  const unusedCodeCount = flat.filter(
+    (f) =>
+      f.type === "unused_file" ||
+      f.type === "unused_dependency" ||
+      f.type === "unused_export" ||
+      f.type === "unused_import"
+  ).length;
+  const orphanCount = flat.filter((f) => f.type === "orphan_pattern").length;
+  const slopCount = flat.filter((f) => f.type === "ai_slop_signal").length;
+  const verifiedCount = flat.filter(
+    (f) => f.confidenceTier === "verified" || f.sourceMode === "native"
+  ).length;
+
   return [
     {
       key: "verified",
-      value: summary.verifiedFindings ?? summary.totalFindings,
+      value: summary.verifiedFindings ?? verifiedCount,
       title: "Verified findings",
       subtitle: "Successful analyzers only",
       explanation: "Counts only findings from analyzers that ran natively. Fallback estimates are excluded.",
     },
     {
       key: "duplicates",
-      value: dupAvailable ? summary.duplicateClusters : "Unavailable",
+      value: dupAvailable ? duplicateCount : "Unavailable",
       title: "Duplicate analysis",
       subtitle: dupAvailable
         ? `jscpd${jscpdState?.version ? ` v${jscpdState.version}` : ""}`
@@ -43,7 +59,7 @@ function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
     },
     {
       key: "unused",
-      value: knipAvailable ? summary.unusedFiles + summary.unusedDependencies + summary.unusedExports : "Unavailable",
+      value: knipAvailable ? unusedCodeCount : "Unavailable",
       title: "Unused-code analysis",
       subtitle: knipAvailable
         ? `Knip${knipState?.version ? ` v${knipState.version}` : ""}`
@@ -54,7 +70,7 @@ function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
     },
     {
       key: "orphans",
-      value: madgeAvailable ? summary.orphanPatterns : "Unavailable",
+      value: madgeAvailable ? orphanCount : "Unavailable",
       title: "Dependency graph",
       subtitle: madgeAvailable
         ? `Madge${madgeState?.version ? ` v${madgeState.version}` : ""}`
@@ -65,7 +81,7 @@ function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
     },
     {
       key: "slop",
-      value: summary.slopSignals,
+      value: slopCount,
       title: "AI-slop signals",
       subtitle: analyzerStates?.heuristics
         ? availabilityLabel(analyzerStates.heuristics)

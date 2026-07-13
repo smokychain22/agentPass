@@ -67,7 +67,7 @@ function AppWorkspace() {
     ]
   );
 
-  const scanStatus = session.scanComplete ? "complete" : "idle";
+  const scanStatus = session.scanResult ? "complete" : "idle";
 
   return (
     <div className="relative flex min-h-screen flex-col bg-background lg:flex-row">

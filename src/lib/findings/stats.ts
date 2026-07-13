@@ -21,6 +21,7 @@ export function computeCanonicalStats(findings: Finding[]): CanonicalFindingsSta
   const unusedFileCount = findings.filter((f) => f.type === "unused_file").length;
   const unusedDependencyCount = findings.filter((f) => f.type === "unused_dependency").length;
   const unusedExportCount = findings.filter((f) => f.type === "unused_export").length;
+  const unusedImportCount = findings.filter((f) => f.type === "unused_import").length;
   const orphanCount = findings.filter((f) => f.type === "orphan_pattern").length;
   const slopSignalCount = findings.filter((f) => f.type === "ai_slop_signal").length;
 
@@ -36,7 +37,7 @@ export function computeCanonicalStats(findings: Finding[]): CanonicalFindingsSta
     duplicateCount,
     unusedFileCount,
     unusedDependencyCount,
-    unusedExportCount,
+    unusedExportCount: unusedExportCount + unusedImportCount,
     orphanCount,
     slopSignalCount,
   };

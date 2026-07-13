@@ -52,8 +52,16 @@ function phaseIndex(phase: FindingsPhase): number {
 
 export function FindingsTab() {
   const searchParams = useSearchParams();
-  const { session, findings, setFindings, selectedFindingIds, toggleFindingSelection, selectAllSafeFindings } =
-    useAppSession();
+  const {
+    session,
+    findings,
+    setFindings,
+    selectedFindingIds,
+    toggleFindingSelection,
+    selectAllSafeFindings,
+    clearFindingSelection,
+    setSelectedFindingIds,
+  } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<FindingsPhase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -285,6 +293,7 @@ export function FindingsTab() {
             findings={findings}
             selectedCount={selectedFindingIds.length}
             onSelectAllSafe={selectAllSafeFindings}
+            onClearSelection={clearFindingSelection}
           />
 
           <SummaryCards payload={findings} />
@@ -297,6 +306,8 @@ export function FindingsTab() {
             rawToolReports={findings.rawToolReports}
             selectedForPatch={selectedFindingIds}
             onTogglePatchSelection={toggleFindingSelection}
+            onClearSelection={clearFindingSelection}
+            onSelectFindingIds={setSelectedFindingIds}
           />
           <JsonExportCard payload={findings} />
           <DeveloperToolsA2Mcp />
@@ -308,8 +319,8 @@ export function FindingsTab() {
       {!findings && !isLoading && !error && (
         <EmptyState
           icon={FileSearch}
-          title="Scan complete — ready for analysis"
-          description="Run the Findings Engine to detect duplicates, unused code, orphan patterns, and AI-slop signals."
+          title="Ready for findings analysis"
+          description="Structure scan finished. Run the Findings Engine to detect duplicates, unused code, orphan patterns, and AI-slop signals."
           action={{ label: "Run Findings Engine", onClick: runFindings }}
         />
       )}

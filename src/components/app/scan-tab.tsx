@@ -273,6 +273,14 @@ export function ScanTab() {
                     <> · <span title="Commit SHA">{displayResult.repo.commitSha.slice(0, 7)}</span></>
                   ) : null}
                 </p>
+                {typeof displayResult.summary?.totalFiles === "number" && (
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">
+                    {displayResult.summary.totalFiles.toLocaleString()} files inventoried
+                    {typeof displayResult.summary.totalFolders === "number"
+                      ? ` · ${displayResult.summary.totalFolders.toLocaleString()} folders`
+                      : ""}
+                  </p>
+                )}
                 {session.scanRecordId && (
                   <p className="mt-1 font-mono text-[10px] text-muted-foreground">
                     Scan ID: {session.scanRecordId}
