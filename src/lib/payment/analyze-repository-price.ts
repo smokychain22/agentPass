@@ -6,10 +6,10 @@ export const ANALYZE_REPOSITORY_PRICE_PRODUCTION = {
   priceLabel: "0.03 USDT",
 } as const;
 
-/** Reduced price for live buyer/seller payment proofs. */
+/** Personal test price for live buyer/seller payment proofs. */
 export const ANALYZE_REPOSITORY_PRICE_TEST = {
-  amountMicro: "10000",
-  priceLabel: "0.01 USDT",
+  amountMicro: "200000",
+  priceLabel: "0.20 USDT",
 } as const;
 
 function isTestPriceEnabled(): boolean {
