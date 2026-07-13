@@ -44,6 +44,12 @@ export function isWorkflowTaskFailure(task: WorkflowA2ATask | null | undefined):
 
 export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined): string {
   if (!task) return "";
+  const err = task.error ?? "";
+
+  if (err.includes("PATCH_GENERATION_FAILED")) {
+    return "RepoDiet could not generate an applyable patch for the selected scope. This usually means the selected files could not be modified in a verified way. Select fewer findings with confirmed eligibility dry-run, then start a new cleanup attempt.";
+  }
+
   if (task.status === "delivery_failed") {
     return "Payment was accepted, but GitHub pull-request delivery did not complete. Your test payment was not a wallet transfer in test mode. Start a new cleanup attempt after reviewing the error below.";
   }

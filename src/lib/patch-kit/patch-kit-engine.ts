@@ -349,11 +349,88 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     const transformerCompatible = compatibleFindings.length;
     const dryRunPassed = preflightAudits.filter(isCleanupEligibleAudit).length;
 
+    const selectedScope = body.selectedFindingIds?.length
+      ? new Set(body.selectedFindingIds)
+      : null;
+
+    const scopedEligibleIds = selectedScope
+      ? eligibleFindingIds.filter((id) => selectedScope.has(id))
+      : eligibleFindingIds;
+
+    const scopedActionableIds = selectedScope
+      ? flatFindings
+          .filter((f) => selectedScope.has(f.id) && isEligibleFinding(f))
+          .map((f) => f.id)
+      : [];
+
+    const cleanupFindingIds =
+      scopedEligibleIds.length > 0
+        ? scopedEligibleIds
+        : scopedActionableIds.length > 0
+          ? scopedActionableIds
+          : eligibleFindingIds;
+
+    if (selectedScope && cleanupFindingIds.length === 0) {
+      const blockedPayload: PatchKitPayload = {
+        id: cleanupRunId,
+        scanId: findings.scanId,
+        repo: {
+          owner: findings.repo.owner,
+          name: findings.repo.name,
+          branch: findings.repo.branch,
+        },
+        repositoryIsPublic: await isPublicGitHubRepository(
+          findings.repo.owner,
+          findings.repo.name
+        ),
+        summary: {
+          safeDeleteCandidates: buckets.safeDelete.length,
+          transformerCompatible: transformerCompatible,
+          dryRunPassed: dryRunPassed,
+          detectedFindings:
+            findings.summary.detectedFindings ?? findings.summary.verifiedFindings ?? 0,
+          generatedChanges: 0,
+          validatedChanges: 0,
+          verifiedChanges: 0,
+          filesEdited: 0,
+          filesDeleted: 0,
+          filesAdded: 0,
+          rawReviewFindings: findings.summary.reviewRequired,
+          reviewFirstItems: 0,
+          doNotTouchItems: findings.summary.doNotTouch ?? 0,
+          packageSuggestions: findings.unused.dependencies.length,
+          patchLines: 0,
+          regressionChecks: 0,
+          bundleFileCount: BUNDLE_FILE_COUNT,
+          patchValidationStatus: "failed",
+          blockerSummary:
+            "Selected findings did not pass executable preflight. Re-run eligibility and choose findings with confirmed dry-run.",
+        },
+        patchValidation: {
+          status: "failed",
+          error: "PATCH_GENERATION_FAILED",
+          userMessage:
+            "No executable cleanup changes for the selected scope. Re-run eligibility preflight and select findings with confirmed dry-run before paying.",
+        },
+        artifacts: {
+          reportMd: "# RepoDiet cleanup blocked\n\nSelected scope has no executable changes.",
+          cleanupPatch: EMPTY_CLEANUP_PATCH,
+          packageCleanupMd: "",
+          regressionChecklistMd: "",
+          cursorPromptMd: "",
+          findingsJson: findings,
+          patchkitSummaryJson: "{}",
+        },
+        downloadUrl: `/api/patches/${cleanupRunId}/download`,
+      };
+      return blockedPayload;
+    }
+
     const cleanupResult = await runFreeCleanupCore(findings, {
-      maxFixes: Math.max(eligibleFindingIds.length, 1),
-      findingIds: eligibleFindingIds,
+      maxFixes: Math.max(cleanupFindingIds.length, 1),
+      findingIds: cleanupFindingIds,
       workspaceRootDir: workspace.rootDir,
-      quickPatchMode: true,
+      quickPatchMode: body.paidExecution ? false : true,
     });
 
     const candidateAudits = mergeExecutionAudits(

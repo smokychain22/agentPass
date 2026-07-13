@@ -421,6 +421,7 @@ async function executeChanges(
         findings: analyzed,
         selectedFindingIds: input.findingIds,
         scanId: analyzed.scanId,
+        paidExecution: true,
       });
 
       sm.emit("validating_patch", "fix_executor");

@@ -5,6 +5,7 @@ import { ExternalLink, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusIndicator } from "@/components/design-system/status-indicator";
 import { RiskBadge } from "@/components/design-system/risk-badge";
+import { ConnectWalletButton } from "@/components/wallet/connect-wallet-button";
 import { cn } from "@/lib/utils";
 
 interface AppTopBarProps {
@@ -73,6 +74,7 @@ export function AppTopBar({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        <ConnectWalletButton className="hidden sm:inline-flex" />
         <StatusIndicator label={status.label} status={status.status} className="hidden sm:inline-flex" />
         <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
           <Link href="/">
