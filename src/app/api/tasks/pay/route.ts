@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isA2aTestPriceQuote } from "@/lib/payment/a2a-test-price";
 import {
   getBoundQuote,
   paymentProofFromRequest,
@@ -32,6 +33,18 @@ export async function POST(request: Request) {
     };
 
     if (!proof.paymentSignature && process.env.REPODIET_X402_TEST_SECRET) {
+      proof.paymentSignature =
+        signTestPaymentPayload({
+          quoteId: proof.quoteId,
+          paymentReference: proof.paymentReference,
+          payer: proof.payer,
+          amountMicro: proof.amountMicro,
+          nonce: proof.nonce,
+          requestHash: quote.requestHash,
+        }) ?? undefined;
+    }
+
+    if (!proof.paymentSignature && isA2aTestPriceQuote(quote)) {
       proof.paymentSignature =
         signTestPaymentPayload({
           quoteId: proof.quoteId,

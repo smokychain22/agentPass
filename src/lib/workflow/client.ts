@@ -15,6 +15,7 @@ export interface WorkflowQuote {
   repository: string;
   commitSha: string;
   findingIds: string[];
+  settlementMode?: "trusted_test" | "test_hmac" | "live_x402";
 }
 
 export interface WorkflowA2ATask {

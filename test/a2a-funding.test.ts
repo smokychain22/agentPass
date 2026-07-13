@@ -391,6 +391,33 @@ async function run() {
       assert.equal(price.amountMicro, "200000");
       assert.equal(price.priceLabel, "0.20 USDT");
     });
+
+    await withEnv("REQUIRE_REAL_X402", "1", async () => {
+      await test("16. A2A test price settles without live x402 signature", async () => {
+        const quote = await createBoundQuote({
+          repository: "velz-cmd/Meridian",
+          branch: "main",
+          commitSha: "abc",
+          findingIds: ["f1"],
+          operation: "verified_cleanup_pr",
+        });
+        const payer = "0xaa895234c3fc31c40018eef975db6ac79bf87f1a";
+        const paymentReference = `0xtest_${quote.quoteId}`;
+        const funded = await verifyAndFundQuote({
+          quoteId: quote.quoteId,
+          paymentReference,
+          payer,
+          amountMicro: quote.amountMicro,
+          currency: quote.currency,
+          network: quote.network,
+          recipient: quote.recipient,
+          nonce: quote.nonce,
+          idempotencyKey: `idem_${quote.quoteId}`,
+        });
+        assert.equal(funded.ok, true, funded.reason);
+        assert.equal(funded.quote?.paymentStatus, "verified");
+      });
+    });
   });
 
   await withEnv("REPODIET_A2MCP_TEST_PRICE", undefined, async () => {

@@ -7,6 +7,7 @@ import { flattenFindings } from "@/lib/findings/client";
 import { resolveRepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { getBoundQuote } from "@/lib/payment";
+import { formatWorkflowQuote } from "@/lib/workflow/format-workflow-quote";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -95,7 +96,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       task: formatA2ATaskResponse(task),
-      quote,
+      quote: quote ? formatWorkflowQuote(quote) : null,
       github,
       serviceId: "32947",
       operation: "verified_cleanup_pr",
@@ -125,7 +126,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     ok: true,
     task: formatA2ATaskResponse(task),
-    quote,
+    quote: quote ? formatWorkflowQuote(quote) : null,
     aspAgentId: "5283",
     serviceId: "32947",
   });

@@ -47,3 +47,27 @@ export function isA2aTestPriceActive(): boolean {
     )
   );
 }
+
+export function isA2aTestPriceQuote(input: {
+  operation?: string;
+  amountMicro?: string;
+}): boolean {
+  if (!isA2aTestPriceActive()) return false;
+  if (input.operation && input.operation !== "verified_cleanup_pr") return false;
+  const test = getA2aCleanupPrTestPrice();
+  return input.amountMicro === test.amountMicro;
+}
+
+export type WorkflowSettlementMode = "trusted_test" | "test_hmac" | "live_x402";
+
+export function resolveWorkflowSettlementMode(input: {
+  operation?: string;
+  amountMicro?: string;
+}): WorkflowSettlementMode {
+  if (isA2aTestPriceQuote(input)) return "trusted_test";
+  if (process.env.REQUIRE_REAL_X402 === "1") return "live_x402";
+  if (process.env.REPODIET_X402_TEST_MODE === "1" || process.env.REPODIET_X402_TEST_SECRET) {
+    return "test_hmac";
+  }
+  return "trusted_test";
+}
