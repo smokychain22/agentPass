@@ -54,13 +54,12 @@ export function ScanTab() {
   const router = useRouter();
   const { session, setScanComplete, setSelectedProjectRoot, resetSession } = useAppSession();
   const { show, Toast } = useFeedbackToast();
-  const [repoUrl, setRepoUrl] = useState(session.repoUrl || "");
-  const [branch, setBranch] = useState(session.branch || "");
-  const [phase, setPhase] = useState<ScanPhase | "idle">(
-    session.scanComplete ? "complete" : "idle"
-  );
+  // Blank form until the user pastes/types a URL or starts a demo — do not hydrate from prior session.
+  const [repoUrl, setRepoUrl] = useState("");
+  const [branch, setBranch] = useState("main");
+  const [phase, setPhase] = useState<ScanPhase | "idle">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ScanPayload | null>(session.scanResult);
+  const [result, setResult] = useState<ScanPayload | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const demoAutoStarted = useRef(false);
 
@@ -82,7 +81,10 @@ export function ScanTab() {
         return;
       }
 
-      if (isDemo) setRepoUrl(target);
+      setRepoUrl(target);
+      if (!isDemo && branch.trim()) {
+        /* keep branch as entered */
+      }
       show("info", isDemo ? "Loading demo repository…" : "Repository scan started");
 
       try {
@@ -92,6 +94,7 @@ export function ScanTab() {
           setPhase
         );
         setResult(data);
+        setBranch(data.repo.branch || branch.trim() || "main");
         setScanComplete(target, data.repo.branch || branch.trim(), data);
         show("success", "Scan complete — review findings next");
         if (isDemo) {
@@ -112,17 +115,25 @@ export function ScanTab() {
     if (demo === "1" || demo === "true") {
       setIsDemoMode(true);
       setRepoUrl(DEMO_REPO);
-      if (!demoAutoStarted.current && !session.scanComplete) {
+      if (!demoAutoStarted.current) {
         demoAutoStarted.current = true;
         void startScan(DEMO_REPO, true);
       }
     }
-  }, [searchParams, startScan, session.scanComplete]);
+  }, [searchParams, startScan]);
 
-  const displayResult = result ?? session.scanResult;
+  // Only show results from a scan started on this page visit — never from silent session restore.
+  const displayResult = result;
   const currentStep = phaseIndex(phase as ScanPhase);
-  const showIdle = phase === "idle" && !session.scanComplete;
-  const showSuccess = (phase === "complete" || session.scanComplete) && displayResult;
+  const showIdle = !isLoading && phase !== "failed" && !result;
+  const showSuccess = phase === "complete" && Boolean(result);
+  const previousScanLabel =
+    !result &&
+    !isLoading &&
+    session.scanResult?.repo?.owner &&
+    session.scanResult?.repo?.name
+      ? `${session.scanResult.repo.owner}/${session.scanResult.repo.name}`
+      : null;
 
   const pasteUrl = async () => {
     try {
@@ -131,6 +142,16 @@ export function ScanTab() {
     } catch {
       /* clipboard unavailable */
     }
+  };
+
+  const startFresh = () => {
+    setResult(null);
+    setPhase("idle");
+    setError(null);
+    setRepoUrl("");
+    setBranch("main");
+    setIsDemoMode(false);
+    resetSession();
   };
 
   return (
@@ -261,6 +282,14 @@ export function ScanTab() {
 
       {showIdle && <ScanEmptyIllustration />}
 
+      {showIdle && previousScanLabel && (
+        <FeedbackBanner
+          variant="info"
+          message={`A previous scan of ${previousScanLabel} is still available under Findings. Paste a repository URL above to start a new scan.`}
+          dismissible
+        />
+      )}
+
       {showSuccess && displayResult && (
         <div className="space-y-4">
           <Panel variant="safe" padding="md">
@@ -300,7 +329,7 @@ export function ScanTab() {
                     Run Findings
                   </Button>
                 )}
-                <Button variant="secondary" onClick={() => resetSession()}>
+                <Button variant="secondary" onClick={startFresh}>
                   Run Another Scan
                 </Button>
               </div>

@@ -67,7 +67,14 @@ function AppWorkspace() {
     ]
   );
 
-  const scanStatus = session.scanResult ? "complete" : "idle";
+  const scanStatus =
+    tab === "scan"
+      ? "idle"
+      : session.scanResult && session.repoUrl.trim()
+        ? "complete"
+        : "idle";
+  const headerRepoUrl = tab === "scan" ? undefined : session.repoUrl || undefined;
+  const headerBranch = tab === "scan" ? undefined : session.branch || undefined;
 
   return (
     <div className="relative flex min-h-screen flex-col bg-background lg:flex-row">
@@ -86,8 +93,8 @@ function AppWorkspace() {
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <AppTopBar
-          repoUrl={session.repoUrl}
-          branch={session.branch}
+          repoUrl={headerRepoUrl}
+          branch={headerBranch}
           scanStatus={scanStatus}
           isDemo={isDemo}
           onMenuClick={() => setMobileNavOpen(true)}
