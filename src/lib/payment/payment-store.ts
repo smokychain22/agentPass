@@ -1,10 +1,20 @@
+import { randomBytes } from "node:crypto";
 import {
+  deleteDurableRecord,
   durableNow,
   getDurableRecord,
   setDurableRecord,
-  setDurableRecordIfAbsent,
+  setDurableRecordIfAbsentWithTtl,
 } from "@/lib/store/durable-store";
 import type { BoundQuote, PaymentLifecycleStatus } from "./types";
+
+/** In-progress fund lock TTL — expired locks can be reclaimed after a crash. */
+export const A2A_FUND_LOCK_TTL_MS = 5 * 60 * 1000;
+
+/** Persistent execution marker TTL on Redis (30 days). */
+export const A2A_FUND_EXECUTION_MARKER_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+const A2A_FUND_LOCK_PREFIX = "a2a:fund:";
 
 export interface A2aFundLockRecord {
   taskId: string;
@@ -13,6 +23,10 @@ export interface A2aFundLockRecord {
   executionQueued: boolean;
   fundedAt: string;
   payer?: string;
+  lockToken: string;
+  claimedAt: string;
+  /** Set while executionQueued is false; cleared once execution is dispatched. */
+  expiresAt?: string;
 }
 
 export interface PaymentRecord {
@@ -27,6 +41,20 @@ export interface PaymentRecord {
   taskId?: string;
   consumedAt?: string;
   createdAt: string;
+}
+
+function lockKey(taskId: string): string {
+  return `${A2A_FUND_LOCK_PREFIX}${taskId}`;
+}
+
+function newLockToken(): string {
+  return randomBytes(16).toString("hex");
+}
+
+export function isA2aFundLockExpired(lock: A2aFundLockRecord, nowMs = Date.now()): boolean {
+  if (lock.executionQueued) return false;
+  if (!lock.expiresAt) return false;
+  return new Date(lock.expiresAt).getTime() <= nowMs;
 }
 
 export async function saveBoundQuote(quote: BoundQuote): Promise<void> {
@@ -140,25 +168,98 @@ export function newPaymentRecord(input: {
   };
 }
 
-const A2A_FUND_LOCK_PREFIX = "a2a:fund:";
-
 export async function getA2aFundLock(taskId: string): Promise<A2aFundLockRecord | undefined> {
-  return getDurableRecord<A2aFundLockRecord>("payment_entitlements", `${A2A_FUND_LOCK_PREFIX}${taskId}`);
+  const lock = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", lockKey(taskId));
+  if (!lock) return undefined;
+  if (lock.executionQueued) return lock;
+  if (isA2aFundLockExpired(lock)) {
+    await deleteDurableRecord("payment_entitlements", lockKey(taskId));
+    return undefined;
+  }
+  return lock;
 }
 
-export async function claimA2aFundLock(input: A2aFundLockRecord): Promise<{
+export async function claimA2aFundLock(input: {
+  taskId: string;
+  quoteId: string;
+  paymentReference: string;
+  fundedAt: string;
+  payer?: string;
+}): Promise<{
   claimed: boolean;
+  lockToken?: string;
   existing?: A2aFundLockRecord;
 }> {
-  const key = `${A2A_FUND_LOCK_PREFIX}${input.taskId}`;
-  const claimed = await setDurableRecordIfAbsent("payment_entitlements", key, input);
-  if (!claimed) {
-    const existing = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", key);
+  const key = lockKey(input.taskId);
+  const existing = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", key);
+
+  if (existing?.executionQueued) {
     return { claimed: false, existing };
   }
-  return { claimed: true };
+
+  if (existing && !isA2aFundLockExpired(existing)) {
+    return { claimed: false, existing };
+  }
+
+  if (existing && isA2aFundLockExpired(existing)) {
+    await deleteDurableRecord("payment_entitlements", key);
+  }
+
+  const lockToken = newLockToken();
+  const claimedAt = durableNow();
+  const expiresAt = new Date(Date.now() + A2A_FUND_LOCK_TTL_MS).toISOString();
+  const record: A2aFundLockRecord = {
+    ...input,
+    executionQueued: false,
+    lockToken,
+    claimedAt,
+    expiresAt,
+  };
+
+  const ttlSeconds = Math.ceil(A2A_FUND_LOCK_TTL_MS / 1000);
+  const claimed = await setDurableRecordIfAbsentWithTtl(
+    "payment_entitlements",
+    key,
+    record,
+    ttlSeconds
+  );
+  if (!claimed) {
+    const raced = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", key);
+    return { claimed: false, existing: raced };
+  }
+  return { claimed: true, lockToken };
 }
 
+/** Token-gated update — only the lock holder can mark execution dispatched. */
+export async function markA2aFundExecutionQueued(
+  taskId: string,
+  lockToken: string,
+  patch: Partial<A2aFundLockRecord> = {}
+): Promise<boolean> {
+  const key = lockKey(taskId);
+  const existing = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", key);
+  if (!existing || existing.lockToken !== lockToken) return false;
+
+  const updated: A2aFundLockRecord = {
+    ...existing,
+    ...patch,
+    executionQueued: true,
+    expiresAt: undefined,
+  };
+  await setDurableRecord("payment_entitlements", key, updated);
+  return true;
+}
+
+/** Token-gated release for failed in-progress funding (never releases dispatched execution). */
+export async function releaseA2aFundLockIfToken(taskId: string, lockToken: string): Promise<boolean> {
+  const key = lockKey(taskId);
+  const existing = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", key);
+  if (!existing || existing.lockToken !== lockToken || existing.executionQueued) return false;
+  await deleteDurableRecord("payment_entitlements", key);
+  return true;
+}
+
+/** @deprecated Use markA2aFundExecutionQueued with lockToken */
 export async function saveA2aFundLock(record: A2aFundLockRecord): Promise<void> {
-  await setDurableRecord("payment_entitlements", `${A2A_FUND_LOCK_PREFIX}${record.taskId}`, record);
+  await setDurableRecord("payment_entitlements", lockKey(record.taskId), record);
 }

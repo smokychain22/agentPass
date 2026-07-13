@@ -11,9 +11,13 @@ import { X402_ASSET, X402_CURRENCY, X402_NETWORK, X402_RECIPIENT } from "../src/
 import {
   claimA2aFundLock,
   getA2aFundLock,
+  isA2aFundLockExpired,
+  markA2aFundExecutionQueued,
   newPaymentRecord,
+  releaseA2aFundLockIfToken,
   saveBoundQuote,
   savePaymentRecord,
+  A2A_FUND_LOCK_TTL_MS,
 } from "../src/lib/payment/payment-store";
 import { createBoundQuote, signTestPaymentPayload } from "../src/lib/payment/quote-service";
 import { verifyAndFundQuote } from "../src/lib/payment/settlement";
@@ -181,14 +185,18 @@ async function run() {
       taskId,
       quoteId: "quote_idem",
       paymentReference: "0xabc",
-      executionQueued: true,
       fundedAt: new Date().toISOString(),
     });
+    assert.ok(first.lockToken);
+    const marked = await markA2aFundExecutionQueued(taskId, first.lockToken!, {
+      quoteId: "quote_idem",
+      paymentReference: "0xabc",
+    });
+    assert.equal(marked, true);
     const second = await claimA2aFundLock({
       taskId,
       quoteId: "quote_idem",
       paymentReference: "0xabc",
-      executionQueued: true,
       fundedAt: new Date().toISOString(),
     });
     assert.equal(first.claimed, true);
@@ -203,7 +211,6 @@ async function run() {
       taskId,
       quoteId: "quote_conc",
       paymentReference: "0xdef",
-      executionQueued: false,
       fundedAt: new Date().toISOString(),
     };
     const results = await Promise.all([
@@ -212,6 +219,31 @@ async function run() {
       claimA2aFundLock(input),
     ]);
     assert.equal(results.filter((r) => r.claimed).length, 1);
+  });
+
+  await test("5b. lock TTL expires and token-gated release works", async () => {
+    const taskId = `task_ttl_${Date.now()}`;
+    const claimed = await claimA2aFundLock({
+      taskId,
+      quoteId: "quote_ttl",
+      paymentReference: "0xttl",
+      fundedAt: new Date().toISOString(),
+    });
+    assert.equal(claimed.claimed, true);
+    const lock = await getA2aFundLock(taskId);
+    assert.ok(lock);
+    const expired = { ...lock!, expiresAt: new Date(Date.now() - 1000).toISOString() };
+    assert.equal(isA2aFundLockExpired(expired), true);
+    const released = await releaseA2aFundLockIfToken(taskId, lock!.lockToken);
+    assert.equal(released, true);
+    const reclaimed = await claimA2aFundLock({
+      taskId,
+      quoteId: "quote_ttl",
+      paymentReference: "0xttl",
+      fundedAt: new Date().toISOString(),
+    });
+    assert.equal(reclaimed.claimed, true);
+    assert.ok(A2A_FUND_LOCK_TTL_MS > 0);
   });
 
   await test("6. quote/order mismatch is rejected", async () => {

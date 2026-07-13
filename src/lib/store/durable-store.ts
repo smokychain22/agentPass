@@ -7,6 +7,7 @@ import {
   readPersistentArtifact,
   setPersistentRecord,
   setPersistentRecordIfAbsent,
+  setPersistentRecordIfAbsentWithTtl,
   withPersistentUsage,
   writePersistentArtifact,
   type DurableDb,
@@ -45,6 +46,15 @@ export async function setDurableRecordIfAbsent(
   value: unknown
 ): Promise<boolean> {
   return setPersistentRecordIfAbsent(collection, id, value);
+}
+
+export async function setDurableRecordIfAbsentWithTtl(
+  collection: PersistentCollection,
+  id: string,
+  value: unknown,
+  ttlSeconds: number
+): Promise<boolean> {
+  return setPersistentRecordIfAbsentWithTtl(collection, id, value, ttlSeconds);
 }
 
 export async function deleteDurableRecord(

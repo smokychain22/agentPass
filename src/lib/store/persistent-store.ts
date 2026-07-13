@@ -214,6 +214,29 @@ export async function setPersistentRecordIfAbsent(
   return true;
 }
 
+/** Atomic create with Redis TTL (local store uses expiresAt on the value). */
+export async function setPersistentRecordIfAbsentWithTtl(
+  collection: PersistentCollection,
+  id: string,
+  value: unknown,
+  ttlSeconds: number
+): Promise<boolean> {
+  const client = redis();
+  if (client) {
+    const result = await client.set(redisKey(collection, id), value, {
+      nx: true,
+      ex: ttlSeconds,
+    });
+    return result === "OK";
+  }
+
+  const db = loadLocalDb();
+  if (db[collection][id] !== undefined) return false;
+  db[collection][id] = value;
+  saveLocalDb(db);
+  return true;
+}
+
 export async function deletePersistentRecord(
   collection: PersistentCollection,
   id: string

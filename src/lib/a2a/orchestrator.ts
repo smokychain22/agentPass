@@ -27,7 +27,8 @@ import { getOkxOrderByA2aTask, updateOkxOrder } from "@/lib/okx/store";
 import {
   claimA2aFundLock,
   getA2aFundLock,
-  saveA2aFundLock,
+  markA2aFundExecutionQueued,
+  releaseA2aFundLockIfToken,
   savePaymentRecord,
   updateBoundQuote,
 } from "@/lib/payment/payment-store";
@@ -626,7 +627,6 @@ export async function fundA2ATask(
     taskId,
     quoteId: fundedQuote.quoteId,
     paymentReference: fundedQuote.paymentReference ?? paymentReference ?? "",
-    executionQueued: false,
     fundedAt: fundedQuote.fundedAt ?? new Date().toISOString(),
     payer: fundedQuote.payer,
   });
@@ -637,8 +637,14 @@ export async function fundA2ATask(
     throw new Error("Funding already in progress for this task.");
   }
 
+  const lockToken = lock.lockToken;
+  if (!lockToken) {
+    throw new Error("Fund lock token missing after claim.");
+  }
+
   const boundPaymentReference = fundedQuote.paymentReference ?? paymentReference;
   if (!boundPaymentReference) {
+    await releaseA2aFundLockIfToken(taskId, lockToken);
     const sm = new A2ATaskStateMachine(existing.transitions);
     return failTask(existing, sm, "payment_failed", "Payment reference missing after funding.");
   }
@@ -677,19 +683,23 @@ export async function fundA2ATask(
     operation: fundedQuote.operation,
   });
   if (!entitled.ok) {
+    await releaseA2aFundLockIfToken(taskId, lockToken);
     return failTask(task, sm, "payment_failed", entitled.reason ?? "Entitlement lock failed.");
   }
 
   sm.emit("funded", "orchestrator", boundPaymentReference);
   await syncTask(task, sm);
-  await saveA2aFundLock({
-    taskId,
+  const marked = await markA2aFundExecutionQueued(taskId, lockToken, {
     quoteId: fundedQuote.quoteId,
     paymentReference: boundPaymentReference,
-    executionQueued: true,
     fundedAt: fundedQuote.fundedAt ?? new Date().toISOString(),
     payer: fundedQuote.payer,
   });
+  if (!marked) {
+    const current = await getA2ATask(taskId);
+    if (current) return current;
+    throw new Error("Failed to mark execution dispatched for funded task.");
+  }
 
   return executeChanges(task, sm, findings);
 }
