@@ -66,38 +66,51 @@ export async function hydrateVerifiedQuoteFromPayment(
     return { quote, payment };
   }
 
-  if (
-    quote.lifecycleStatus !== "funded" ||
-    quote.status !== "funded" ||
-    !quote.paymentReference ||
-    !quote.payer
-  ) {
-    return { quote };
-  }
-
   const payment =
-    (await getPaymentByReference(quote.paymentReference)) ??
-    (await getPaymentByQuoteId(quote.quoteId));
+    (quote.paymentReference
+      ? await getPaymentByReference(quote.paymentReference)
+      : undefined) ?? (await getPaymentByQuoteId(quote.quoteId));
 
   if (
     !payment ||
     payment.lifecycleStatus !== "funded" ||
-    payment.quoteId !== quote.quoteId ||
-    payment.paymentReference !== quote.paymentReference ||
+    payment.quoteId !== quote.quoteId
+  ) {
+    return { quote };
+  }
+
+  if (
+    quote.payer &&
     payment.payer.toLowerCase() !== quote.payer.toLowerCase()
   ) {
     return { quote };
   }
 
+  if (
+    quote.paymentReference &&
+    payment.paymentReference !== quote.paymentReference
+  ) {
+    return { quote };
+  }
+
   const now = quote.verifiedAt ?? quote.fundedAt ?? payment.createdAt;
+  const nextLifecycle =
+    quote.lifecycleStatus === "funded" ||
+    quote.lifecycleStatus === "execution_started" ||
+    quote.lifecycleStatus === "completed"
+      ? quote.lifecycleStatus
+      : "funded";
+  const nextStatus =
+    quote.status === "consumed" || quote.status === "funded" ? quote.status : "funded";
+
   const patched = await updateBoundQuote(quote.quoteId, {
     paymentStatus: "verified",
     paymentReference: quote.paymentReference ?? payment.paymentReference,
     payer: quote.payer ?? payment.payer,
     fundedAt: quote.fundedAt ?? payment.createdAt,
     verifiedAt: now,
-    lifecycleStatus: quote.lifecycleStatus === "quote_created" ? "funded" : quote.lifecycleStatus,
-    status: quote.status === "payment_required" ? "funded" : quote.status,
+    lifecycleStatus: nextLifecycle,
+    status: nextStatus,
   });
 
   return { quote: patched ?? { ...quote, paymentStatus: "verified" }, payment };
