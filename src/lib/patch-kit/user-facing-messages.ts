@@ -20,8 +20,11 @@ export function userFacingPatchFailure(patchKit: PatchKitPayload | null | undefi
   const verification = patchKit?.repositoryVerification;
 
   if (verification?.status === "blocked" || verification?.status === "baseline_blocked") {
+    if (verification.error?.toLowerCase().includes("lint")) {
+      return "The scanned commit already fails lint. Lint is advisory for cleanup delivery when build/typecheck pass. Retry after the latest deploy.";
+    }
     if (patch?.status === "passed") {
-      return "Git validation passed, but dependency checks could not finish in the sandbox. You can retry Regenerate Quick Cleanup, or continue with report-only artifacts.";
+      return "Git validation passed, but required repository checks (build/typecheck or dependency install) could not finish in the sandbox. Retry cleanup, or continue with report-only artifacts.";
     }
     if (verification.error?.toLowerCase().includes("dependency") || verification.error?.toLowerCase().includes("install")) {
       return "Dependency installation failed during verification. Click Regenerate Quick Cleanup to retry.";

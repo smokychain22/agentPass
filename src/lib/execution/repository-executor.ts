@@ -21,6 +21,10 @@ import {
 } from "./vercel-sandbox";
 import type { SandboxRunPayload } from "./sandbox-run-types";
 import { updateSandboxRun } from "./sandbox-run-store";
+import {
+  resolveSandboxVerificationOutcome,
+  type SandboxScriptCheck,
+} from "./sandbox-verification-policy";
 
 export interface RepositoryExecutionResult {
   patchValidation: CanonicalPatchValidationResult;
@@ -103,9 +107,23 @@ async function runVerificationScriptsInSandbox(
   return { installExit: install.exitCode, checks };
 }
 
+function mapSandboxChecks(
+  checks: SandboxScriptCheck[]
+): RepositoryVerificationResult["checks"] {
+  return checks.map((c) => ({
+    name: c.name,
+    command: `npm run ${c.name}`,
+    status: c.exitCode === 0 ? ("passed" as const) : ("failed" as const),
+    exitCode: c.exitCode,
+    durationMs: 0,
+    stdoutSummary: c.exitCode === 0 ? "passed" : "",
+    stderrSummary: c.stderr.slice(0, 400),
+  }));
+}
+
 function verificationFromSandboxChecks(input: {
   installExit: number;
-  checks: Array<{ name: string; exitCode: number; stderr: string }>;
+  checks: SandboxScriptCheck[];
   phase: "baseline" | "patched";
 }): RepositoryVerificationResult {
   if (input.installExit !== 0) {
@@ -119,39 +137,12 @@ function verificationFromSandboxChecks(input: {
     };
   }
 
-  const failed = input.checks.find((c) => c.exitCode !== 0);
-  if (failed) {
-    return {
-      status: input.phase === "baseline" ? "baseline_blocked" : "failed",
-      outcome: input.phase === "baseline" ? "baseline_blocked" : "regression_failed",
-      failureCode: "CHECK_FAILED",
-      error: `${input.phase} ${failed.name} failed in sandbox.`,
-      installAttempts: [],
-      checks: input.checks.map((c) => ({
-        name: c.name,
-        command: `npm run ${c.name}`,
-        status: c.exitCode === 0 ? "passed" : "failed",
-        exitCode: c.exitCode,
-        durationMs: 0,
-        stdoutSummary: "",
-        stderrSummary: c.stderr.slice(0, 400),
-      })),
-    };
-  }
-
+  // Phase-local hard failures are resolved after BOTH phases run (see below).
+  // This helper only materializes install / check records for a single phase.
   return {
-    status: input.phase === "patched" ? "verified" : "not_run",
-    outcome: input.phase === "patched" ? "verified" : undefined,
+    status: "not_run",
     installAttempts: [],
-    checks: input.checks.map((c) => ({
-      name: c.name,
-      command: `npm run ${c.name}`,
-      status: "passed",
-      exitCode: 0,
-      durationMs: 0,
-      stdoutSummary: "passed",
-      stderrSummary: "",
-    })),
+    checks: mapSandboxChecks(input.checks),
   };
 }
 
@@ -303,15 +294,22 @@ export async function executeRepositoryCleanupInSandbox(
 
     await updateSandboxRun(runId, { status: "baseline_verification", progress: "Verifying repository baseline" });
     const baselineResult = await runVerificationScriptsInSandbox(sandbox, baseline);
-    const baselineVerification = verificationFromSandboxChecks({
+    const baselinePhase = verificationFromSandboxChecks({
       ...baselineResult,
       phase: "baseline",
     });
 
-    if (baselineVerification.status === "blocked" || baselineVerification.status === "baseline_blocked") {
+    // Install failure on baseline is a hard stop (cannot compare patched tree fairly).
+    if (baselineResult.installExit !== 0) {
       return {
         patchValidation,
-        repositoryVerification: baselineVerification,
+        repositoryVerification: {
+          ...baselinePhase,
+          status: "baseline_blocked",
+          outcome: "baseline_blocked",
+          failureCode: "DEPENDENCY_INSTALL_FAILED",
+          error: "baseline dependency installation failed in sandbox.",
+        },
         gitVersion,
         patchHash,
         sandboxId: sandbox.name,
@@ -321,9 +319,16 @@ export async function executeRepositoryCleanupInSandbox(
 
     await updateSandboxRun(runId, { status: "patched_verification", progress: "Running patched verification" });
     const patchedResult = await runVerificationScriptsInSandbox(sandbox, validation);
-    const patchedVerification = verificationFromSandboxChecks({
+    const patchedPhase = verificationFromSandboxChecks({
       ...patchedResult,
       phase: "patched",
+    });
+
+    const resolved = resolveSandboxVerificationOutcome({
+      baselineInstallExit: baselineResult.installExit,
+      baselineChecks: baselineResult.checks,
+      patchedInstallExit: patchedResult.installExit,
+      patchedChecks: patchedResult.checks,
     });
 
     const nodeVersion = (await runSandboxShell(sandbox, "node --version")).stdout.trim();
@@ -332,16 +337,21 @@ export async function executeRepositoryCleanupInSandbox(
     return {
       patchValidation,
       repositoryVerification: {
-        ...patchedVerification,
+        status: resolved.status,
+        outcome: resolved.status,
+        failureCode: resolved.failureCode as RepositoryVerificationResult["failureCode"],
+        error: resolved.error,
+        installAttempts: [],
+        checks: mapSandboxChecks(patchedResult.checks),
         baseline: {
           phase: "baseline",
           installAttempts: [],
-          checks: baselineVerification.checks ?? [],
+          checks: baselinePhase.checks ?? [],
         },
         patched: {
           phase: "patched",
           installAttempts: [],
-          checks: patchedVerification.checks ?? [],
+          checks: patchedPhase.checks ?? [],
         },
       },
       gitVersion,

@@ -50,6 +50,14 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
     return "RepoDiet could not generate an applyable patch for the selected scope. This usually means the selected files could not be modified in a verified way. Select fewer findings with confirmed eligibility dry-run, then start a new cleanup attempt.";
   }
 
+  if (err.includes("baseline lint") || err.includes("already fails lint")) {
+    return "The repository already fails lint on the scanned commit. RepoDiet treats lint as advisory when build/typecheck are available — start a new cleanup attempt after the latest deploy.";
+  }
+
+  if (err.includes("baseline") && err.includes("failed in sandbox")) {
+    return "Repository baseline checks failed in the verification sandbox before cleanup could be compared. Try fewer findings, or fix failing build/typecheck on the source branch, then start a new cleanup attempt.";
+  }
+
   if (task.status === "delivery_failed") {
     return "Payment was accepted, but GitHub pull-request delivery did not complete. Your test payment was not a wallet transfer in test mode. Start a new cleanup attempt after reviewing the error below.";
   }
