@@ -88,6 +88,48 @@ test("fix PR unlock requires github, commit, and selected safe scope", () => {
   assert.equal(unlocked.unlocked, true);
 });
 
+test("fix PR lock copy distinguishes missing app config from repo authorization", () => {
+  const missingConfig = resolveFixPrUnlock({
+    scanComplete: true,
+    commitSha: "abc",
+    github: {
+      connected: false,
+      configured: false,
+      repository: "o/r",
+      owner: "o",
+      canRead: false,
+      canCreateBranch: false,
+      canCreatePullRequest: false,
+    },
+    selectedFindingIds: ["f1"],
+    safeCandidateCount: 1,
+  });
+  assert.match(missingConfig.title, /not configured/i);
+
+  const needsRepo = resolveFixPrUnlock({
+    scanComplete: true,
+    commitSha: "abc",
+    github: {
+      connected: false,
+      configured: true,
+      repository: "o/r",
+      owner: "o",
+      canRead: false,
+      canCreateBranch: false,
+      canCreatePullRequest: false,
+      messages: {
+        title: "RepoDiet needs access to this repository",
+        body: "Grant access to o/r.",
+        primaryAction: "Grant Access",
+      },
+    },
+    selectedFindingIds: ["f1"],
+    safeCandidateCount: 1,
+  });
+  assert.match(needsRepo.title, /access to this repository/i);
+  assert.equal(needsRepo.primaryAction, "Grant Access");
+});
+
 test("workflow gates lock fix and pr when no safe candidates selected", () => {
   const gates = computeWorkflowGates({
     scanComplete: true,

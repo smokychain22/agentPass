@@ -144,11 +144,27 @@ export function FixPrA2AFlow({
             <p className="text-signal">GitHub connected</p>
             <p className="text-muted-foreground">Branch and pull-request access confirmed</p>
           </div>
+        ) : github?.configured === false ? (
+          <div className="space-y-1 text-sm">
+            <p className="font-medium text-foreground">GitHub App is not configured</p>
+            <p className="text-muted-foreground">
+              This deployment is missing GitHub App credentials. Set GITHUB_APP_* environment
+              variables on Vercel to enable Fix &amp; PR.
+            </p>
+          </div>
         ) : (
           <div className="space-y-3 text-sm">
-            <p>Connect GitHub to create an isolated cleanup branch and pull request.</p>
+            <p className="font-medium text-foreground">
+              {github?.messages?.title ?? "Connect GitHub to continue"}
+            </p>
+            <p className="text-muted-foreground">
+              {github?.messages?.body ??
+                "Authorize RepoDiet on this repository to create an isolated cleanup branch and pull request."}
+            </p>
             <Button asChild size="sm">
-              <a href="/api/github/install/start">Connect GitHub</a>
+              <a href="/api/github/install/start">
+                {github?.messages?.primaryAction ?? "Connect GitHub"}
+              </a>
             </Button>
           </div>
         )}

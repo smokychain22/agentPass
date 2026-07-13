@@ -66,12 +66,24 @@ export function resolveFixPrUnlock(input: {
   }
 
   if (reasons.includes("github_not_connected")) {
+    if (input.github?.configured === false) {
+      return {
+        unlocked: false,
+        reasons,
+        title: "GitHub App is not configured",
+        body: "This deployment is missing GitHub App credentials. Set GITHUB_APP_* environment variables on Vercel.",
+        secondaryAction: "Back to findings",
+      };
+    }
+
     return {
       unlocked: false,
       reasons,
-      title: "Connect GitHub to continue",
-      body: "Connect GitHub to create an isolated cleanup branch and pull request.",
-      primaryAction: "Connect GitHub",
+      title: input.github?.messages?.title ?? "Connect GitHub to continue",
+      body:
+        input.github?.messages?.body ??
+        "Authorize RepoDiet on this repository to create an isolated cleanup branch and pull request.",
+      primaryAction: input.github?.messages?.primaryAction ?? "Connect GitHub",
       secondaryAction: "Back to findings",
     };
   }
