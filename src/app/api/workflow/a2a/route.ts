@@ -8,6 +8,7 @@ import { resolveRepositoryConnectionStatus } from "@/lib/workflow/github-reposit
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { getBoundQuote } from "@/lib/payment";
 import { formatWorkflowQuote } from "@/lib/workflow/format-workflow-quote";
+import { runEligibilityPreflight } from "@/lib/workflow/eligibility-preflight";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -51,6 +52,28 @@ export async function POST(request: Request) {
     if (!selected.every(isActionableFinding)) {
       return NextResponse.json(
         { ok: false, error: "Scope includes findings that are not safe for automatic cleanup." },
+        { status: 422 }
+      );
+    }
+
+    const eligibility = await runEligibilityPreflight({
+      repoUrl: body.repoUrl,
+      branch: body.branch ?? findings.repo.branch,
+      findings: flat,
+      findingIds: body.findingIds,
+    });
+    const executable = eligibility.filter(
+      (r) => r.classification === "safe_candidate" && r.autoFixAllowed
+    );
+    if (executable.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "scope_not_executable",
+          message:
+            "None of the selected findings passed executable preflight. Re-run eligibility and select findings with confirmed dry-run before requesting a quote.",
+          eligibility,
+        },
         { status: 422 }
       );
     }

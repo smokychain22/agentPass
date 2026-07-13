@@ -6,6 +6,9 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
+import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
+import { ServiceModelPanel } from "@/components/wallet/service-model-panel";
+import { useWallet } from "@/components/wallet/wallet-provider";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
 import {
@@ -21,13 +24,7 @@ import {
 import { flattenFindings } from "@/lib/findings/client";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 import { repodietInstallReturnPath, startGitHubGrantAccess } from "@/lib/patch-kit/client";
-import {
-  createTestPaymentReference,
-  isTrustedTestQuote,
-  normalizeWalletAddress,
-  readStoredPayerWallet,
-  storePayerWallet,
-} from "@/lib/workflow/payment-ui";
+import { isTrustedTestQuote } from "@/lib/workflow/payment-ui";
 import {
   isWorkflowTaskFailure,
   isWorkflowTaskTerminal,
@@ -62,15 +59,9 @@ export function FixPrA2AFlow({
   const [githubGrantLoading, setGithubGrantLoading] = useState(false);
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [payer, setPayer] = useState("");
-  const [paymentRef, setPaymentRef] = useState("");
+  const { setPaymentState } = useWallet();
 
   const trustedTestPayment = isTrustedTestQuote(quote);
-
-  useEffect(() => {
-    const stored = readStoredPayerWallet();
-    if (stored) setPayer(stored);
-  }, []);
 
   const repository = `${findings.repo.owner}/${findings.repo.name}`;
   const commitSha = findings.repo.commitSha ?? "";
@@ -148,41 +139,39 @@ export function FixPrA2AFlow({
     }
   }, [branch, commitSha, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
 
-  const authorizePayment = useCallback(async () => {
-    if (!quote || !a2aTask?.taskId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const payerAddress = normalizeWalletAddress(payer);
-      storePayerWallet(payerAddress);
-      const paymentReference = trustedTestPayment
-        ? createTestPaymentReference(quote.quoteId)
-        : paymentRef.trim();
-      if (!trustedTestPayment && !paymentReference) {
-        throw new Error("Payment reference is required for live settlement.");
+  const authorizePayment = useCallback(
+    async (input: { payer: string; paymentReference: string }) => {
+      if (!quote || !a2aTask?.taskId) return;
+      setLoading(true);
+      setError(null);
+      setPaymentState("payment_pending");
+      try {
+        await payWorkflowQuote({
+          quoteId: quote.quoteId,
+          paymentReference: input.paymentReference,
+          payer: input.payer,
+        });
+        const funded = await fundWorkflowTask({
+          taskId: a2aTask.taskId,
+          quoteId: quote.quoteId,
+          paymentReference: input.paymentReference,
+          payer: input.payer,
+        });
+        onTaskUpdate(funded);
+        setPaymentState("execution_started");
+        const refreshed = await fetchWorkflowA2ATask(funded.taskId);
+        onTaskUpdate(refreshed.task);
+        if (refreshed.quote) setQuote(refreshed.quote);
+      } catch (err) {
+        setPaymentState("failed");
+        setError(err instanceof Error ? err.message : "Payment failed.");
+        throw err;
+      } finally {
+        setLoading(false);
       }
-
-      await payWorkflowQuote({
-        quoteId: quote.quoteId,
-        paymentReference,
-        payer: payerAddress,
-      });
-      const funded = await fundWorkflowTask({
-        taskId: a2aTask.taskId,
-        quoteId: quote.quoteId,
-        paymentReference,
-        payer: payerAddress,
-      });
-      onTaskUpdate(funded);
-      const refreshed = await fetchWorkflowA2ATask(funded.taskId);
-      onTaskUpdate(refreshed.task);
-      if (refreshed.quote) setQuote(refreshed.quote);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Payment failed.");
-    } finally {
-      setLoading(false);
-    }
-  }, [a2aTask?.taskId, onTaskUpdate, payer, paymentRef, quote, trustedTestPayment]);
+    },
+    [a2aTask?.taskId, onTaskUpdate, quote, setPaymentState]
+  );
 
   const retryCleanup = useCallback(() => {
     onTaskUpdate(null);
@@ -331,13 +320,10 @@ export function FixPrA2AFlow({
               </div>
             )}
             {isWorkflowTaskFailure(a2aTask) && (
-              <div className="space-y-2">
-                <FeedbackBanner
-                  variant="error"
-                  message={a2aTask.error ?? workflowFailureGuidance(a2aTask)}
-                />
-                <p className="text-muted-foreground">{workflowFailureGuidance(a2aTask)}</p>
-              </div>
+              <FeedbackBanner
+                variant="error"
+                message={a2aTask.error ?? workflowFailureGuidance(a2aTask)}
+              />
             )}
             {a2aTask.status === "completed" && a2aTask.pullRequest?.url && (
               <div className="space-y-1">
@@ -352,6 +338,28 @@ export function FixPrA2AFlow({
                 </a>
               </div>
             )}
+            {a2aTask.status === "completed" && a2aTask.receipt && (
+              <dl className="mt-2 grid gap-1 rounded-md border border-border/40 bg-background/40 p-2 text-xs">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Receipt</dt>
+                  <dd className="font-mono">
+                    {String(
+                      (a2aTask.receipt as { receiptId?: string }).receiptId ??
+                        (a2aTask.receipt as { id?: string }).id ??
+                        "—"
+                    )}
+                  </dd>
+                </div>
+                {(a2aTask.receipt as { hash?: string }).hash && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-muted-foreground">Receipt hash</dt>
+                    <dd className="truncate font-mono">
+                      {String((a2aTask.receipt as { hash?: string }).hash)}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            )}
             {trustedTestPayment && a2aTask.status !== "awaiting_payment" && (
               <p className="text-xs text-muted-foreground">
                 Test payment mode: no on-chain USDT transfer is required for the 0.20 USDT personal test price.
@@ -362,6 +370,8 @@ export function FixPrA2AFlow({
 
         {error && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
+        <ServiceModelPanel />
+
         <div className="mt-4 flex flex-wrap gap-2">
           {!quote && (
             <Button onClick={startQuote} disabled={loading || !github?.connected || selectedSafe.length === 0}>
@@ -369,55 +379,11 @@ export function FixPrA2AFlow({
             </Button>
           )}
           {quote && a2aTask?.status === "awaiting_payment" && (
-            <div className="mt-4 space-y-3 w-full">
-              {trustedTestPayment ? (
-                <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-                  <p className="font-medium text-foreground">One-click test payment</p>
-                  <p className="mt-1">
-                    This deployment uses the personal A2A test price ({quote.priceLabel}). Enter
-                    your wallet once, then click pay. No on-chain transfer is required in test mode.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-                  <p className="font-medium text-foreground">Send payment on X Layer</p>
-                  <p className="mt-1">
-                    Send exactly {quote.priceLabel} on {quote.network} to{" "}
-                    <span className="font-mono text-xs">{quote.recipient}</span>, then paste your
-                    transaction hash below.
-                  </p>
-                </div>
-              )}
-              <input
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                placeholder="Your wallet (0x…)"
-                value={payer}
-                onChange={(e) => setPayer(e.target.value)}
-              />
-              {!trustedTestPayment && (
-                <input
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                  placeholder="Transaction hash (0x…)"
-                  value={paymentRef}
-                  onChange={(e) => setPaymentRef(e.target.value)}
-                />
-              )}
-              <Button
-                onClick={authorizePayment}
-                disabled={loading || !payer.trim() || (!trustedTestPayment && !paymentRef.trim())}
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Processing payment…
-                  </>
-                ) : trustedTestPayment ? (
-                  `Pay ${quote.priceLabel} & start cleanup`
-                ) : (
-                  "Authorize and create cleanup PR"
-                )}
-              </Button>
-            </div>
+            <PaymentAuthorizationPanel
+              quote={quote}
+              loading={loading}
+              onAuthorize={authorizePayment}
+            />
           )}
           {isWorkflowTaskFailure(a2aTask) && (
             <Button onClick={retryCleanup}>Start a new cleanup attempt</Button>

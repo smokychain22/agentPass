@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { isA2aTestPriceQuote } from "@/lib/payment/a2a-test-price";
+import { rejectInternalTestBuyerForCustomer } from "@/lib/wallet/test-buyer-guard";
 import {
   getBoundQuote,
   paymentProofFromRequest,
   signTestPaymentPayload,
   verifyAndFundQuote,
 } from "@/lib/payment";
+import { isA2aTestPriceQuote } from "@/lib/payment/a2a-test-price";
 
 export const runtime = "nodejs";
 
@@ -31,6 +32,11 @@ export async function POST(request: Request) {
       recipient: quote.recipient,
       nonce: quote.nonce,
     };
+
+    const buyerGuard = rejectInternalTestBuyerForCustomer({ payer: proof.payer });
+    if (!buyerGuard.ok) {
+      return NextResponse.json({ success: false, error: buyerGuard.reason }, { status: 403 });
+    }
 
     if (!proof.paymentSignature && process.env.REPODIET_X402_TEST_SECRET) {
       proof.paymentSignature =

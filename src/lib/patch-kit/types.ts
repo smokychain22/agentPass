@@ -9,6 +9,8 @@ export interface PatchKitGenerateBody {
   selectedFindingIds?: string[];
   scanId?: string;
   projectRoot?: string;
+  /** Paid A2A execution — full verification, scoped to selected findings. */
+  paidExecution?: boolean;
 }
 
 export interface PatchKitRepo {

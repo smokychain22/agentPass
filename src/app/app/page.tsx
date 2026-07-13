@@ -10,6 +10,7 @@ import { VerifyTab } from "@/components/app/verify-tab";
 import { CleanupTab } from "@/components/app/cleanup-tab";
 import { AppSessionProvider, useAppSession } from "@/components/app/app-session";
 import { AppTopBar } from "@/components/app/shell/app-top-bar";
+import { WalletProvider } from "@/components/wallet/wallet-provider";
 import { WorkflowRail, type WorkflowStepId } from "@/components/app/shell/workflow-rail";
 import { Container } from "@/components/design-system/container";
 import { GridBackground } from "@/components/design-system/grid-background";
@@ -124,16 +125,18 @@ function AppWorkspace() {
 
 export default function AppPage() {
   return (
-    <AppSessionProvider>
-      <Suspense
-        fallback={
-          <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
-            Loading workspace…
-          </div>
-        }
-      >
-        <AppWorkspace />
-      </Suspense>
-    </AppSessionProvider>
+    <WalletProvider>
+      <AppSessionProvider>
+        <Suspense
+          fallback={
+            <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+              Loading workspace…
+            </div>
+          }
+        >
+          <AppWorkspace />
+        </Suspense>
+      </AppSessionProvider>
+    </WalletProvider>
   );
 }
