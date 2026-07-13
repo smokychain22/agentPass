@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { nanoid } from "nanoid";
 import type { CommerceOperation } from "./types";
-import { quoteCleanupPrPrice } from "@/lib/pricing/quote";
+import { resolveCommercePrice } from "@/lib/pricing/commerce-price";
 import {
   QUOTE_TTL_MS,
   X402_ASSET,
@@ -12,7 +12,6 @@ import {
 import { saveBoundQuote } from "./payment-store";
 import type { BoundQuote, VerificationProfile } from "./types";
 import { paymentRequiredBody } from "./x402";
-import { getAnalyzeRepositoryPrice } from "./analyze-repository-price";
 
 function microToAmount(micro: string): string {
   const n = Number(micro);
@@ -28,30 +27,8 @@ export function priceForOperation(
   operation: CommerceOperation,
   sourceFileCount?: number
 ): { amountMicro: string; priceLabel: string } {
-  switch (operation) {
-    case "scan_repository":
-      return { amountMicro: "10000", priceLabel: "0.01 USDT" };
-    case "analyze_repository":
-      return getAnalyzeRepositoryPrice();
-    case "list_safe_fixes":
-      return { amountMicro: "10000", priceLabel: "0.01 USDT" };
-    case "verify_patch":
-      return { amountMicro: "50000", priceLabel: "0.05 USDT" };
-    case "repository_health_delta":
-      return { amountMicro: "30000", priceLabel: "0.03 USDT" };
-    case "free_proof":
-      return { amountMicro: "0", priceLabel: "Free" };
-    case "quick_cleanup":
-      return { amountMicro: "250000", priceLabel: "0.25 USDT" };
-    case "verified_cleanup_pr": {
-      const pr = quoteCleanupPrPrice(sourceFileCount ?? 200);
-      return { amountMicro: pr.amountMicro, priceLabel: `${pr.amountUsdt} USDT` };
-    }
-    case "repo_guard":
-      return { amountMicro: "4000000", priceLabel: "4 USDT/month" };
-    default:
-      return { amountMicro: "0", priceLabel: "Free" };
-  }
+  const price = resolveCommercePrice(operation, { sourceFileCount });
+  return { amountMicro: price.amountMicro, priceLabel: price.priceLabel };
 }
 
 export async function createBoundQuote(input: {

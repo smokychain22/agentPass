@@ -1,5 +1,19 @@
-import { durableNow, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
+import {
+  durableNow,
+  getDurableRecord,
+  setDurableRecord,
+  setDurableRecordIfAbsent,
+} from "@/lib/store/durable-store";
 import type { BoundQuote, PaymentLifecycleStatus } from "./types";
+
+export interface A2aFundLockRecord {
+  taskId: string;
+  quoteId: string;
+  paymentReference: string;
+  executionQueued: boolean;
+  fundedAt: string;
+  payer?: string;
+}
 
 export interface PaymentRecord {
   id: string;
@@ -38,6 +52,11 @@ export async function savePaymentRecord(record: PaymentRecord): Promise<void> {
   await setDurableRecord("payments", record.id, record);
   await setDurableRecord("payments", `ref_${record.paymentReference}`, record);
   await setDurableRecord("payments", `idem_${record.idempotencyKey}`, record);
+  await setDurableRecord("payments", `quote_${record.quoteId}`, record);
+}
+
+export async function getPaymentByQuoteId(quoteId: string): Promise<PaymentRecord | undefined> {
+  return getDurableRecord<PaymentRecord>("payments", `quote_${quoteId}`);
 }
 
 export async function getPaymentByReference(
@@ -119,4 +138,27 @@ export function newPaymentRecord(input: {
     ...input,
     createdAt: durableNow(),
   };
+}
+
+const A2A_FUND_LOCK_PREFIX = "a2a:fund:";
+
+export async function getA2aFundLock(taskId: string): Promise<A2aFundLockRecord | undefined> {
+  return getDurableRecord<A2aFundLockRecord>("payment_entitlements", `${A2A_FUND_LOCK_PREFIX}${taskId}`);
+}
+
+export async function claimA2aFundLock(input: A2aFundLockRecord): Promise<{
+  claimed: boolean;
+  existing?: A2aFundLockRecord;
+}> {
+  const key = `${A2A_FUND_LOCK_PREFIX}${input.taskId}`;
+  const claimed = await setDurableRecordIfAbsent("payment_entitlements", key, input);
+  if (!claimed) {
+    const existing = await getDurableRecord<A2aFundLockRecord>("payment_entitlements", key);
+    return { claimed: false, existing };
+  }
+  return { claimed: true };
+}
+
+export async function saveA2aFundLock(record: A2aFundLockRecord): Promise<void> {
+  await setDurableRecord("payment_entitlements", `${A2A_FUND_LOCK_PREFIX}${record.taskId}`, record);
 }

@@ -15,7 +15,22 @@ import {
   handleExecutionFailure,
   signTestPaymentPayload,
   getBoundQuote,
+  paymentProofFromRequest,
 } from "@/lib/payment";
+import {
+  validateVerifiedQuoteForA2aFund,
+  A2A_FUNDABLE_STATUSES,
+  A2A_FUNDED_OR_EXECUTING_STATUSES,
+  quoteIdForTask,
+} from "@/lib/a2a/a2a-funding";
+import { getOkxOrderByA2aTask, updateOkxOrder } from "@/lib/okx/store";
+import {
+  claimA2aFundLock,
+  getA2aFundLock,
+  saveA2aFundLock,
+  savePaymentRecord,
+  updateBoundQuote,
+} from "@/lib/payment/payment-store";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
@@ -202,6 +217,7 @@ async function ensurePayment(
       ],
       result: { ...task.result, receipt: { quote } },
     });
+    await updateBoundQuote(quote.quoteId, { a2aTaskId: task.id });
     sm.emit("awaiting_payment", "orchestrator", quote.quoteId);
     return syncTask(task, sm);
   }
@@ -498,86 +514,183 @@ export async function submitA2ATask(type: A2ATaskType, input: A2ATaskInput): Pro
 
 export async function fundA2ATask(
   taskId: string,
-  input: { quoteId?: string; paymentReference?: string; payer?: string; idempotencyKey?: string }
+  input: {
+    quoteId?: string;
+    paymentReference?: string;
+    payer?: string;
+    idempotencyKey?: string;
+    paymentSignature?: string;
+  },
+  request?: Request
 ): Promise<A2ATaskRecord> {
   const existing = await getA2ATask(taskId);
   if (!existing) throw new Error("Task not found.");
-  if (existing.status !== "awaiting_payment" && existing.status !== "quote_required") {
+
+  const existingLock = await getA2aFundLock(taskId);
+  if (existingLock?.executionQueued && A2A_FUNDED_OR_EXECUTING_STATUSES.has(existing.status)) {
+    return existing;
+  }
+
+  if (A2A_FUNDED_OR_EXECUTING_STATUSES.has(existing.status) && existing.status !== "payment_failed") {
+    return existing;
+  }
+
+  if (!A2A_FUNDABLE_STATUSES.has(existing.status)) {
     throw new Error(`Task is not awaiting payment (status=${existing.status}).`);
   }
 
-  const quoteId = input.quoteId ?? existing.input.quoteId;
+  const quoteId = input.quoteId ?? quoteIdForTask(existing);
   if (!quoteId) throw new Error("quoteId is required.");
 
   const quote = await getBoundQuote(quoteId);
   if (!quote) throw new Error("Quote not found.");
 
-  const paymentReference =
-    input.paymentReference ?? `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`;
-  const payer = input.payer ?? "0x0000000000000000000000000000000000000001";
-  const idempotencyKey = input.idempotencyKey ?? `idem_${taskId}_${quoteId}`;
+  const order = await getOkxOrderByA2aTask(taskId);
+  const paymentReference = input.paymentReference ?? quote.paymentReference;
+  const payer = input.payer ?? quote.payer ?? order?.payer;
 
-  let paymentSignature: string | undefined;
-  if (process.env.REPODIET_X402_TEST_SECRET) {
-    paymentSignature =
-      signTestPaymentPayload({
-        quoteId,
-        paymentReference,
-        payer,
-        amountMicro: quote.amountMicro,
-        nonce: quote.nonce,
-        requestHash: quote.requestHash,
-      }) ?? undefined;
-  }
-
-  const funded = await verifyAndFundQuote({
-    quoteId,
-    paymentReference,
-    payer,
-    amountMicro: quote.amountMicro,
-    currency: quote.currency,
-    network: quote.network,
-    recipient: quote.recipient,
-    nonce: quote.nonce,
-    idempotencyKey,
-    paymentSignature,
+  let fundedQuote = quote;
+  const verified = await validateVerifiedQuoteForA2aFund({
+    task: existing,
+    quote,
+    order,
+    expectedQuoteId: quoteId,
+    expectedPayer: payer,
+    expectedPaymentReference: paymentReference,
   });
 
-  if (!funded.ok) {
+  if (!verified.ok) {
+    const proof = request ? paymentProofFromRequest(request, { ...input, quoteId }) : null;
+    const paymentSignature =
+      input.paymentSignature ??
+      proof?.paymentSignature ??
+      (process.env.REPODIET_X402_TEST_SECRET
+        ? signTestPaymentPayload({
+            quoteId,
+            paymentReference:
+              input.paymentReference ?? `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`,
+            payer: payer ?? "0x0000000000000000000000000000000000000001",
+            amountMicro: quote.amountMicro,
+            nonce: quote.nonce,
+            requestHash: quote.requestHash,
+          }) ?? undefined
+        : undefined);
+
+    if (!paymentSignature) {
+      const sm = new A2ATaskStateMachine(existing.transitions);
+      return failTask(
+        existing,
+        sm,
+        "payment_failed",
+        verified.reason ?? "Payment required before funding."
+      );
+    }
+
+    const idempotencyKey = input.idempotencyKey ?? `idem_${taskId}_${quoteId}`;
+    const funded = await verifyAndFundQuote({
+      quoteId,
+      paymentReference:
+        input.paymentReference ?? `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`,
+      payer: payer ?? "0x0000000000000000000000000000000000000001",
+      amountMicro: quote.amountMicro,
+      currency: quote.currency,
+      network: quote.network,
+      recipient: quote.recipient,
+      nonce: quote.nonce,
+      idempotencyKey,
+      paymentSignature,
+      taskId,
+    });
+
+    if (!funded.ok) {
+      const sm = new A2ATaskStateMachine(existing.transitions);
+      return failTask(existing, sm, "payment_failed", funded.reason ?? "Payment failed.");
+    }
+
+    if (funded.existingTaskId && funded.existingTaskId !== taskId) {
+      throw new Error(`Duplicate payment — existing task ${funded.existingTaskId}`);
+    }
+
+    fundedQuote = funded.quote ?? quote;
+  } else if (!verified.payment) {
     const sm = new A2ATaskStateMachine(existing.transitions);
-    return failTask(existing, sm, "payment_failed", funded.reason ?? "Payment failed.");
+    return failTask(existing, sm, "payment_failed", "Verified payment missing.");
+  } else {
+    fundedQuote = quote;
+    if (!verified.payment.taskId) {
+      await savePaymentRecord({ ...verified.payment, taskId });
+    }
   }
 
-  if (funded.existingTaskId && funded.existingTaskId !== taskId) {
-    throw new Error(`Duplicate payment — existing task ${funded.existingTaskId}`);
+  const lock = await claimA2aFundLock({
+    taskId,
+    quoteId: fundedQuote.quoteId,
+    paymentReference: fundedQuote.paymentReference ?? paymentReference ?? "",
+    executionQueued: false,
+    fundedAt: fundedQuote.fundedAt ?? new Date().toISOString(),
+    payer: fundedQuote.payer,
+  });
+
+  if (!lock.claimed) {
+    const current = await getA2ATask(taskId);
+    if (current) return current;
+    throw new Error("Funding already in progress for this task.");
+  }
+
+  const boundPaymentReference = fundedQuote.paymentReference ?? paymentReference;
+  if (!boundPaymentReference) {
+    const sm = new A2ATaskStateMachine(existing.transitions);
+    return failTask(existing, sm, "payment_failed", "Payment reference missing after funding.");
   }
 
   const task = await updateA2ATask(taskId, {
     input: {
       ...existing.input,
       quoteId,
-      paymentReference,
+      paymentReference: boundPaymentReference,
+      ...(payer ? { payer } : {}),
     },
+    status: existing.status === "payment_failed" ? "awaiting_payment" : existing.status,
+    error: undefined,
   });
   if (!task) throw new Error("Failed to update task.");
+
+  await updateBoundQuote(fundedQuote.quoteId, { a2aTaskId: taskId, taskId });
+  if (order) {
+    await updateOkxOrder(order.orderId, {
+      quoteId: fundedQuote.quoteId,
+      payer: fundedQuote.payer,
+      amountMicro: fundedQuote.amountMicro,
+      status: "funded",
+    });
+  }
 
   const sm = new A2ATaskStateMachine(task.transitions);
   const findings = await loadFindings(task);
   const entitled = await requireEntitlement({
     quoteId,
-    repository: quote.repository,
-    branch: quote.branch,
-    commitSha: quote.commitSha,
-    findingIds: quote.findingIds,
-    operation: quote.operation,
     taskId,
+    repository: fundedQuote.repository,
+    branch: fundedQuote.branch,
+    commitSha: fundedQuote.commitSha,
+    findingIds: fundedQuote.findingIds,
+    operation: fundedQuote.operation,
   });
   if (!entitled.ok) {
     return failTask(task, sm, "payment_failed", entitled.reason ?? "Entitlement lock failed.");
   }
 
-  sm.emit("funded", "orchestrator", paymentReference);
+  sm.emit("funded", "orchestrator", boundPaymentReference);
   await syncTask(task, sm);
+  await saveA2aFundLock({
+    taskId,
+    quoteId: fundedQuote.quoteId,
+    paymentReference: boundPaymentReference,
+    executionQueued: true,
+    fundedAt: fundedQuote.fundedAt ?? new Date().toISOString(),
+    payer: fundedQuote.payer,
+  });
+
   return executeChanges(task, sm, findings);
 }
 

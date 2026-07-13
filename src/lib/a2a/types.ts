@@ -140,7 +140,7 @@ export function mapTaskTypeToOperation(
     case "repository.safe_cleanup":
       return "free_proof";
     case "repository.verified_cleanup":
-      return "quick_cleanup";
+      return "verified_cleanup_pr";
     case "repository.cleanup_pr":
       return "verified_cleanup_pr";
     case "repository.guard_activation":

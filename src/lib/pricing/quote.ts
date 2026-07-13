@@ -1,4 +1,4 @@
-import { getA2aCleanupPrTestPrice, isA2aTestPriceActive } from "@/lib/payment/a2a-test-price";
+import { classifyRepoSize, resolveCommercePrice } from "@/lib/pricing/commerce-price";
 
 export type RepoSizeTier = "small" | "medium" | "large";
 
@@ -9,32 +9,24 @@ export interface CleanupPrPriceQuote {
   explanation: string;
 }
 
-export function classifyRepoSize(sourceFileCount: number): RepoSizeTier {
-  if (sourceFileCount <= 150) return "small";
-  if (sourceFileCount <= 400) return "medium";
-  return "large";
-}
+export { classifyRepoSize };
 
 export function quoteCleanupPrPrice(sourceFileCount: number): CleanupPrPriceQuote {
   const tier = classifyRepoSize(sourceFileCount);
-  if (isA2aTestPriceActive()) {
-    const test = getA2aCleanupPrTestPrice();
-    return {
-      tier,
-      amountUsdt: test.amountUsdt,
-      amountMicro: test.amountMicro,
-      explanation: test.explanation,
-    };
-  }
-  const amountUsdt = tier === "small" ? 1 : tier === "medium" ? 2 : 3;
-  const amountMicro = String(amountUsdt * 1_000_000);
+  const price = resolveCommercePrice("verified_cleanup_pr", { sourceFileCount });
+  const amountUsdt = price.amountUsdt ?? Number(price.amountMicro) / 1_000_000;
   const explanation =
     tier === "small"
       ? "Small repository (≤150 source files): 1 USDT"
       : tier === "medium"
         ? "Medium repository (151–400 source files): 2 USDT"
         : "Larger supported repository (>400 source files): 3 USDT";
-  return { tier, amountUsdt, amountMicro, explanation };
+  return {
+    tier,
+    amountUsdt,
+    amountMicro: price.amountMicro,
+    explanation: price.priceLabel === "0.20 USDT" ? price.priceLabel : explanation,
+  };
 }
 
 export const AGENT_API_LAUNCH_PRICES = [

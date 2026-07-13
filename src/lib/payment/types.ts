@@ -30,6 +30,8 @@ export type PaymentLifecycleStatus =
   | "credited"
   | "refunded";
 
+export type PaymentStatus = "pending" | "verified" | "failed";
+
 export type QuoteStatus = "active" | "payment_required" | "funded" | "consumed" | "expired" | "refunded";
 
 export interface BoundQuote {
@@ -56,8 +58,12 @@ export interface BoundQuote {
   createdAt: string;
   idempotencyKey?: string;
   taskId?: string;
+  a2aTaskId?: string;
   paymentReference?: string;
   payer?: string;
+  paymentStatus?: PaymentStatus;
+  fundedAt?: string;
+  verifiedAt?: string;
 }
 
 export interface PaymentProof {
@@ -71,6 +77,7 @@ export interface PaymentProof {
   nonce: string;
   idempotencyKey: string;
   paymentSignature?: string;
+  taskId?: string;
 }
 
 export interface PaymentVerificationResult {

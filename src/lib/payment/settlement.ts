@@ -4,6 +4,7 @@ import {
   getBoundQuote,
   getPaymentByIdempotencyKey,
   getPaymentByReference,
+  getPaymentByQuoteId,
   lockQuoteForExecution,
   newPaymentRecord,
   persistQuoteLifecycle,
@@ -53,6 +54,17 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
 
   if (quote.amountMicro === "0") {
     return { ok: true, status: "funded", quote };
+  }
+
+  if (
+    quote.lifecycleStatus === "funded" &&
+    quote.paymentStatus === "verified" &&
+    quote.paymentReference
+  ) {
+    const existingPayment = await getPaymentByReference(quote.paymentReference);
+    if (existingPayment?.lifecycleStatus === "funded" && existingPayment.quoteId === proof.quoteId) {
+      return { ok: true, status: "funded", quote, reason: "Quote already verified." };
+    }
   }
 
   await persistQuoteLifecycle(proof.quoteId, "payment_submitted");
@@ -122,6 +134,15 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     return { ok: false, status: "invalid_payment", reason: "Payment signature verification failed." };
   }
 
+  const funded = await persistQuoteLifecycle(proof.quoteId, "funded", {
+    paymentReference: proof.paymentReference,
+    payer: proof.payer,
+    status: "funded",
+    paymentStatus: "verified",
+    fundedAt: new Date().toISOString(),
+    verifiedAt: new Date().toISOString(),
+  });
+
   const payment = newPaymentRecord({
     quoteId: proof.quoteId,
     paymentReference: proof.paymentReference,
@@ -130,14 +151,9 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     nonce: proof.nonce,
     idempotencyKey: proof.idempotencyKey,
     lifecycleStatus: "funded",
+    taskId: proof.taskId,
   });
   await savePaymentRecord(payment);
-
-  const funded = await persistQuoteLifecycle(proof.quoteId, "funded", {
-    paymentReference: proof.paymentReference,
-    payer: proof.payer,
-    status: "funded",
-  });
 
   return { ok: true, status: "funded", quote: funded ?? quote };
 }

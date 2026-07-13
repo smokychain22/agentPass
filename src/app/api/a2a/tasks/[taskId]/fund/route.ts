@@ -10,8 +10,14 @@ export async function POST(
 ) {
   try {
     const { taskId } = await context.params;
-    const body = (await request.json()) as { quoteId?: string; paymentReference?: string };
-    const task = await fundA2ATask(taskId, body);
+    const body = (await request.json()) as {
+      quoteId?: string;
+      paymentReference?: string;
+      payer?: string;
+      paymentSignature?: string;
+      idempotencyKey?: string;
+    };
+    const task = await fundA2ATask(taskId, body, request);
     return NextResponse.json({
       success: task.status === "completed" || task.status === "awaiting_approval",
       ...formatA2ATaskResponse(task),

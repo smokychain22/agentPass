@@ -195,6 +195,25 @@ export async function setPersistentRecord(
   saveLocalDb(db);
 }
 
+/** Atomic create — returns false when the record already exists. */
+export async function setPersistentRecordIfAbsent(
+  collection: PersistentCollection,
+  id: string,
+  value: unknown
+): Promise<boolean> {
+  const client = redis();
+  if (client) {
+    const result = await client.set(redisKey(collection, id), value, { nx: true });
+    return result === "OK";
+  }
+
+  const db = loadLocalDb();
+  if (db[collection][id] !== undefined) return false;
+  db[collection][id] = value;
+  saveLocalDb(db);
+  return true;
+}
+
 export async function deletePersistentRecord(
   collection: PersistentCollection,
   id: string

@@ -117,6 +117,9 @@ export interface OkxOrderRecord {
   escrowReference?: string;
   taskId?: string;
   a2aTaskId?: string;
+  quoteId?: string;
+  payer?: string;
+  amountMicro?: string;
   createdAt: string;
   updatedAt: string;
 }

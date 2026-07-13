@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { nanoid } from "nanoid";
-import { quoteCleanupPrPrice } from "@/lib/pricing/quote";
+import { resolveCommercePrice } from "@/lib/pricing/commerce-price";
 
 export type TaskOperation =
   | "free_proof"
@@ -49,14 +49,18 @@ export function createTaskQuote(input: {
       priceMicro = "0";
       priceLabel = "Free";
       break;
-    case "quick_cleanup":
-      priceMicro = "250000";
-      priceLabel = "0.25 USDT";
+    case "quick_cleanup": {
+      const price = resolveCommercePrice("quick_cleanup");
+      priceMicro = price.amountMicro;
+      priceLabel = price.priceLabel;
       break;
+    }
     case "verified_cleanup_pr": {
-      const pr = quoteCleanupPrPrice(input.sourceFileCount ?? 200);
-      priceMicro = pr.amountMicro;
-      priceLabel = `${pr.amountUsdt} USDT`;
+      const price = resolveCommercePrice("verified_cleanup_pr", {
+        sourceFileCount: input.sourceFileCount,
+      });
+      priceMicro = price.amountMicro;
+      priceLabel = price.priceLabel;
       break;
     }
     case "repo_guard":
