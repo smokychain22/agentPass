@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { runPhase3ToolRoute } from "@/lib/a2mcp/phase3-route";
-import { executeAnalyzeRepository } from "@/lib/a2mcp/phase3-engine";
+import { executeQuickTriage } from "@/lib/a2mcp/quick-triage-engine";
 import { buildToolErrorResponse } from "@/lib/a2mcp/tool-contract";
 import { createTaskId } from "@/lib/a2mcp/task-store";
 
@@ -94,10 +94,6 @@ export async function POST(request: Request) {
     body: JSON.stringify(forwardedBody),
   });
 
-  return runPhase3ToolRoute(
-    "analyze_repository",
-    forwardedRequest,
-    executeAnalyzeRepository
-  );
+  return runPhase3ToolRoute("analyze_repository", forwardedRequest, executeQuickTriage);
 }
 
