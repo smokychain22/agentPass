@@ -1,3 +1,5 @@
+import { getA2aCleanupPrTestPrice, isA2aTestPriceActive } from "@/lib/payment/a2a-test-price";
+
 export type RepoSizeTier = "small" | "medium" | "large";
 
 export interface CleanupPrPriceQuote {
@@ -15,6 +17,15 @@ export function classifyRepoSize(sourceFileCount: number): RepoSizeTier {
 
 export function quoteCleanupPrPrice(sourceFileCount: number): CleanupPrPriceQuote {
   const tier = classifyRepoSize(sourceFileCount);
+  if (isA2aTestPriceActive()) {
+    const test = getA2aCleanupPrTestPrice();
+    return {
+      tier,
+      amountUsdt: test.amountUsdt,
+      amountMicro: test.amountMicro,
+      explanation: test.explanation,
+    };
+  }
   const amountUsdt = tier === "small" ? 1 : tier === "medium" ? 2 : 3;
   const amountMicro = String(amountUsdt * 1_000_000);
   const explanation =

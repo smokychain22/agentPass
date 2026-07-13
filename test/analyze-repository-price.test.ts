@@ -41,7 +41,7 @@ async function run() {
     });
   });
 
-  test("test mode is 0.20 USDT", () => {
+  test("test mode is 0.01 USDT", () => {
     withEnv("REPODIET_A2MCP_TEST_PRICE", "1", () => {
       const price = getAnalyzeRepositoryPrice();
       assert.deepEqual(price, ANALYZE_REPOSITORY_PRICE_TEST);

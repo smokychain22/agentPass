@@ -17,3 +17,4 @@ data-*/
 agentpass/data-test/
 tsconfig.tsbuildinfo
 /.swc
+.env*
