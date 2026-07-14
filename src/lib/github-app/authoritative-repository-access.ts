@@ -9,14 +9,24 @@ import {
   createInstallationAccessToken,
   getInstallationDetails,
   installationIncludesRepository,
+  installationIncludesRepositoryWithRetry,
 } from "@/lib/github-app/installations";
 import { getAppOctokit } from "@/lib/github-app/octokit";
 import { lookupRepositoryInstallationBinding } from "@/lib/github-app/install-flow-store";
+import { REPO_INSTALL_BINDING_TRUST_MS } from "@/lib/github-app/binding-trust";
 import {
   installationIdLastFour,
   type AuthoritativeGitHubAccessState,
 } from "@/lib/github-app/authoritative-access";
 import { requiresRepositoryOwnerInstall } from "@/lib/github-app/repository";
+
+function isRecentBindingAuthorizedAt(authorizedAt?: string): boolean {
+  if (!authorizedAt) return false;
+  const parsed = Date.parse(authorizedAt);
+  if (!Number.isFinite(parsed)) return false;
+  const age = Date.now() - parsed;
+  return age >= 0 && age < REPO_INSTALL_BINDING_TRUST_MS;
+}
 
 export interface AuthoritativeRepositoryAccessResult {
   authoritativeState: AuthoritativeGitHubAccessState;
@@ -254,11 +264,28 @@ export async function resolveAuthoritativeRepositoryAccess(input: {
     };
   }
 
-  const repositorySelected = await installationIncludesRepository(
-    installationId,
-    input.owner,
-    input.repo
-  );
+  const repositoryFullName = `${input.owner}/${input.repo}`;
+  const durableBinding = await lookupRepositoryInstallationBinding(repositoryFullName);
+  const bindingTrusted =
+    durableBinding?.installationId === installationId &&
+    isRecentBindingAuthorizedAt(durableBinding.authorizedAt);
+
+  let repositorySelected = false;
+  if (details.repositorySelection === "all" && account.toLowerCase() === input.owner.toLowerCase()) {
+    repositorySelected = true;
+  } else {
+    const access = await installationIncludesRepositoryWithRetry(
+      installationId,
+      input.owner,
+      input.repo,
+      { attempts: bindingTrusted ? 6 : 2, delayMs: bindingTrusted ? 1500 : 500 }
+    );
+    repositorySelected = access.granted;
+  }
+
+  if (!repositorySelected && bindingTrusted) {
+    repositorySelected = true;
+  }
 
   if (!repositorySelected) {
     return {
