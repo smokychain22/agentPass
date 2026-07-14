@@ -35,6 +35,7 @@ import {
   parseBaselineInvalidUi,
   type BaselineInvalidUi,
 } from "@/lib/workflow/baseline-invalid-ui";
+import { isKnownBaselineInvalidCommit } from "@/lib/workflow/known-invalid-commits";
 
 interface FixPrA2AFlowProps {
   repoUrl: string;
@@ -141,7 +142,11 @@ export function FixPrA2AFlow({
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to prepare quote.";
       setError(message);
-      const parsed = parseBaselineInvalidUi({ message, commitSha });
+      const parsed = parseBaselineInvalidUi({
+        message,
+        commitSha,
+        repository: { owner: findings.repo.owner, name: findings.repo.name },
+      });
       if (parsed) setBaselineInvalid(parsed);
     } finally {
       setLoading(false);
@@ -196,11 +201,21 @@ export function FixPrA2AFlow({
     return parseBaselineInvalidUi({
       message: a2aTask.error,
       commitSha,
+      repository: { owner: findings.repo.owner, name: findings.repo.name },
     });
-  }, [a2aTask?.error, commitSha]);
+  }, [a2aTask?.error, commitSha, findings.repo.name, findings.repo.owner]);
 
-  const showBaselineBlock = baselineInvalid ?? taskBaselineInvalid;
+  const pinnedBaselineInvalid = useMemo(() => {
+    if (!commitSha || !isKnownBaselineInvalidCommit(commitSha)) return null;
+    return parseBaselineInvalidUi({
+      commitSha,
+      repository: { owner: findings.repo.owner, name: findings.repo.name },
+    });
+  }, [commitSha, findings.repo.name, findings.repo.owner]);
+
+  const showBaselineBlock = baselineInvalid ?? taskBaselineInvalid ?? pinnedBaselineInvalid;
   const hideRetryCleanup = Boolean(showBaselineBlock?.hideRetry);
+  const hideQuoteButton = Boolean(showBaselineBlock?.hideQuoteButton);
 
   const executing =
     Boolean(a2aTask) &&
@@ -416,18 +431,19 @@ export function FixPrA2AFlow({
                 <dd>{showBaselineBlock.action}</dd>
               </div>
             </dl>
+            <p className="text-xs text-muted-foreground">{showBaselineBlock.scanGuidance}</p>
           </div>
         )}
 
         {error && !showBaselineBlock && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {!quote && (
+          {!quote && !hideQuoteButton && (
             <Button onClick={startQuote} disabled={loading || !github?.connected || selectedSafe.length === 0}>
               {loading ? <Loader2 className="animate-spin" /> : scopeReviewed ? "Refresh quote" : "Review cleanup scope"}
             </Button>
           )}
-          {quote && a2aTask?.status === "awaiting_payment" && (
+          {quote && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
             <PaymentAuthorizationPanel
               quote={quote}
               loading={loading}
@@ -437,14 +453,24 @@ export function FixPrA2AFlow({
           {isWorkflowTaskFailure(a2aTask) && !hideRetryCleanup && (
             <Button onClick={retryCleanup}>Start a new cleanup attempt</Button>
           )}
-          {showBaselineBlock && (
-            <p className="self-center text-sm text-muted-foreground">
-              {showBaselineBlock.retryLabel ?? "Run a new scan after the repository is repaired."}
-            </p>
+          {showBaselineBlock ? (
+            <>
+              <Button asChild>
+                <Link href="/app?tab=scan">Back to Scan</Link>
+              </Button>
+              {showBaselineBlock.commitUrl && (
+                <Button variant="secondary" asChild>
+                  <a href={showBaselineBlock.commitUrl} target="_blank" rel="noreferrer">
+                    Open repository commit
+                  </a>
+                </Button>
+              )}
+            </>
+          ) : (
+            <Button variant="secondary" asChild>
+              <Link href="/app?tab=findings">Back to findings</Link>
+            </Button>
           )}
-          <Button variant="secondary" asChild>
-            <Link href="/app?tab=findings">Back to findings</Link>
-          </Button>
         </div>
       </Panel>
     </div>

@@ -1,4 +1,5 @@
 import type { BaselineReadinessResult } from "./baseline-readiness";
+import { isKnownBaselineInvalidCommit, repositoryCommitUrl } from "./known-invalid-commits";
 
 export interface BaselineInvalidUi {
   title: string;
@@ -8,7 +9,10 @@ export interface BaselineInvalidUi {
   action: string;
   stderrExcerpt?: string;
   hideRetry: boolean;
+  hideQuoteButton: boolean;
   retryLabel?: string;
+  scanGuidance: string;
+  commitUrl?: string;
 }
 
 export function parseBaselineInvalidUi(input: {
@@ -16,27 +20,42 @@ export function parseBaselineInvalidUi(input: {
   baseline?: BaselineReadinessResult;
   invalidation?: { status: string; requiresNewScan?: boolean };
   commitSha?: string;
+  repository?: { owner: string; name: string };
 }): BaselineInvalidUi | null {
   const baseline = input.baseline;
   const commit = baseline?.commitSha ?? input.commitSha ?? "unknown";
   const classification =
     baseline?.status ?? input.invalidation?.status ?? "baseline_invalid";
 
+  const knownInvalid = commit !== "unknown" && isKnownBaselineInvalidCommit(commit);
+  const messageInvalid = input.message?.includes("Repository baseline invalid");
+
   if (
+    !knownInvalid &&
+    !messageInvalid &&
     classification !== "baseline_invalid" &&
     classification !== "baseline_environment_blocked" &&
     classification !== "baseline_infrastructure_failed" &&
     classification !== "invalid_source_baseline" &&
     classification !== "stale_source_commit"
   ) {
-    if (!input.message?.includes("Repository baseline invalid")) return null;
+    return null;
   }
+
+  const commitUrl =
+    input.repository && commit !== "unknown"
+      ? repositoryCommitUrl({
+          owner: input.repository.owner,
+          name: input.repository.name,
+          commitSha: commit,
+        })
+      : undefined;
 
   return {
     title: "Repository baseline invalid",
     sourceCommit: commit,
     failedCheck: baseline?.failedCheck ?? "npm run build",
-    classification,
+    classification: knownInvalid ? "baseline_invalid" : classification,
     action:
       baseline?.action ??
       (classification === "stale_source_commit"
@@ -44,7 +63,11 @@ export function parseBaselineInvalidUi(input: {
         : "Repair the repository source and run a new scan."),
     stderrExcerpt: baseline?.stderrExcerpt,
     hideRetry: true,
+    hideQuoteButton: true,
     retryLabel: "Run a new scan after the repository is repaired.",
+    scanGuidance:
+      "A new scan is useful only after repository HEAD changes. Refreshing a quote cannot repair the source commit.",
+    commitUrl,
   };
 }
 

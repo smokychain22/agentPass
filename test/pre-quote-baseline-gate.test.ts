@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { isKnownBaselineInvalidCommit } from "../src/lib/workflow/known-invalid-commits";
 import {
-  isKnownBaselineInvalidCommit,
   formatBaselineInvalidMessage,
 } from "../src/lib/workflow/baseline-readiness";
 import { PreQuoteGateError } from "../src/lib/workflow/pre-quote-gate";
@@ -158,7 +158,8 @@ async function main() {
     });
     assert.ok(ui);
     assert.equal(ui?.hideRetry, true);
-    assert.match(ui?.retryLabel ?? "", /new scan/i);
+    assert.equal(ui?.hideQuoteButton, true);
+    assert.match(ui?.scanGuidance ?? "", /repository HEAD changes/i);
   });
 
   await test("known invalid task IDs are flagged", () => {
