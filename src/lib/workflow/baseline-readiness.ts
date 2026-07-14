@@ -7,6 +7,13 @@ import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { fetchBranchCommitSha } from "@/lib/github/fetch-repo-zip";
 import { runBaselineOnlyVerification } from "@/lib/patch-kit/repository-verification";
 import { nanoid } from "nanoid";
+import {
+  classifyBaselineFailure,
+  parseBaselineBuildDiagnostic,
+  repositoryFileLineUrl,
+  type BaselineActionableError,
+  type BaselineFailureClassification,
+} from "./baseline-diagnostics";
 
 export type BaselineReadinessStatus =
   | "baseline_ready"
@@ -35,6 +42,8 @@ export interface BaselineReadinessResult {
   diagnostics: BaselineDiagnosticCheck[];
   stderrExcerpt?: string;
   action: string;
+  classification?: BaselineFailureClassification;
+  firstActionableError?: BaselineActionableError;
 }
 
 import { isKnownBaselineInvalidCommit } from "./known-invalid-commits";
@@ -110,16 +119,65 @@ function blockedResult(
     status: BaselineReadinessStatus;
     commitSha: string;
     failedCheck?: string;
+    repository?: { owner: string; name: string };
   }
 ): BaselineReadinessResult {
+  const stderrExcerpt = input.stderrExcerpt;
+  const parsed = stderrExcerpt ? parseBaselineBuildDiagnostic(stderrExcerpt) : undefined;
+  const classification =
+    input.classification ??
+    classifyBaselineFailure({
+      failedCheck: input.failedCheck,
+      stderrExcerpt,
+      dependencyInstallStatus: input.dependencyInstallStatus,
+    });
+
+  const firstActionableError: BaselineActionableError | undefined =
+    input.firstActionableError ??
+    (parsed || stderrExcerpt
+      ? {
+          filePath: parsed?.filePath,
+          line: parsed?.line,
+          column: parsed?.column,
+          errorCode: parsed?.errorCode,
+          message: parsed?.message ?? stderrExcerpt?.slice(0, 280) ?? "Build failed.",
+          baselineCommand: input.failedCheck,
+          sourceCommit: input.commitSha,
+          causedByCleanup: false,
+          fileUrl:
+            input.repository && parsed?.filePath
+              ? repositoryFileLineUrl({
+                  owner: input.repository.owner,
+                  name: input.repository.name,
+                  commitSha: input.commitSha,
+                  filePath: parsed.filePath,
+                  line: parsed.line,
+                })
+              : undefined,
+        }
+      : undefined);
+
   return {
     archiveRetrieved: input.archiveRetrieved ?? false,
     touchedFilesParsed: input.touchedFilesParsed ?? false,
     requiredChecksDetected: input.requiredChecksDetected ?? [],
     diagnostics: input.diagnostics ?? [],
-    action: "Repair the repository source and run a new scan.",
+    action: "Repair this existing build error, merge the repair, then run a new scan.",
     ...input,
+    classification,
+    firstActionableError,
   };
+}
+
+function parseRepositoryOwnerName(repoUrl: string): { owner: string; name: string } | undefined {
+  try {
+    const url = new URL(repoUrl);
+    const parts = url.pathname.replace(/^\//, "").split("/").filter(Boolean);
+    if (parts.length >= 2) return { owner: parts[0]!, name: parts[1]!.replace(/\.git$/, "") };
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 export async function runBaselineReadiness(input: {
@@ -130,6 +188,7 @@ export async function runBaselineReadiness(input: {
   findings?: Finding[];
 }): Promise<BaselineReadinessResult> {
   const commitSha = input.commitSha.trim();
+  const repository = parseRepositoryOwnerName(input.repoUrl);
   const touchedPaths = [
     ...new Set(
       (input.touchedPaths ?? input.findings?.flatMap((f) => f.files) ?? []).map((p) =>
@@ -319,6 +378,7 @@ export async function runBaselineReadiness(input: {
       return blockedResult({
         status: isEnvBlock ? "baseline_environment_blocked" : "baseline_invalid",
         commitSha,
+        repository,
         archiveRetrieved: true,
         packageManager: pm.packageManager,
         dependencyInstallStatus,
@@ -350,16 +410,32 @@ export function formatBaselineInvalidMessage(result: BaselineReadinessResult): s
   const lines = [
     "Repository baseline invalid",
     "",
-    `Source commit:\n${result.commitSha}`,
-    "",
     `Failed check:\n${result.failedCheck ?? "baseline verification"}`,
-    "",
-    `Classification:\n${result.status}`,
-    "",
-    `Action:\n${result.action}`,
   ];
-  if (result.stderrExcerpt?.trim()) {
-    lines.push("", "Diagnostic (excerpt):", result.stderrExcerpt.trim().slice(0, 400));
+
+  const err = result.firstActionableError;
+  if (err?.filePath) {
+    const loc = err.line ? `${err.filePath}:${err.line}` : err.filePath;
+    lines.push("", `First actionable error:\n${loc}`);
   }
+  if (err?.message) {
+    lines.push("", `Diagnostic:\n${err.message}`);
+  } else if (result.stderrExcerpt?.trim()) {
+    lines.push("", `Diagnostic:\n${result.stderrExcerpt.trim().slice(0, 400)}`);
+  }
+
+  lines.push(
+    "",
+    `Classification:\n${result.classification ?? result.status}`,
+    "",
+    "RepoDiet-selected cleanup caused this:\nNo",
+    "",
+    `Required action:\n${result.action}`
+  );
+
+  if (err?.fileUrl) {
+    lines.push("", `Source reference:\n${err.fileUrl}`);
+  }
+
   return lines.join("\n");
 }

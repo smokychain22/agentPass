@@ -603,15 +603,41 @@ export function FixPrA2AFlow({
                 <dt className="text-muted-foreground">Failed check</dt>
                 <dd className="font-mono">{showBaselineBlock.failedCheck}</dd>
               </div>
+              {showBaselineBlock.errorLocation && (
+                <div>
+                  <dt className="text-muted-foreground">First actionable error</dt>
+                  <dd className="font-mono">{showBaselineBlock.errorLocation}</dd>
+                </div>
+              )}
+              {showBaselineBlock.firstActionableError && (
+                <div>
+                  <dt className="text-muted-foreground">Diagnostic</dt>
+                  <dd>{showBaselineBlock.firstActionableError}</dd>
+                </div>
+              )}
               <div>
                 <dt className="text-muted-foreground">Classification</dt>
                 <dd className="font-mono">{showBaselineBlock.classification}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Action</dt>
+                <dt className="text-muted-foreground">RepoDiet-selected cleanup caused this</dt>
+                <dd>{showBaselineBlock.causedByCleanup ? "Yes" : "No"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Required action</dt>
                 <dd>{showBaselineBlock.action}</dd>
               </div>
             </dl>
+            {showBaselineBlock.fileUrl && (
+              <a
+                className="text-xs text-electric underline"
+                href={showBaselineBlock.fileUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open failing source on GitHub
+              </a>
+            )}
             <p className="text-xs text-muted-foreground">{showBaselineBlock.scanGuidance}</p>
           </div>
         )}
