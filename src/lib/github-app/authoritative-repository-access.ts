@@ -43,6 +43,8 @@ export interface AuthoritativeRepositoryAccessResult {
   canonicalOrigin: string;
   githubAppId?: string;
   diagnosticReason?: string;
+  repositorySelection?: string;
+  accessibleRepositoryCount?: number;
 }
 
 function permissionsAreSufficient(permissions?: {
@@ -288,6 +290,7 @@ export async function resolveAuthoritativeRepositoryAccess(input: {
   }
 
   if (!repositorySelected) {
+    const accessibleRepos = await listInstallationAccessibleRepos(installationId);
     return {
       authoritativeState: "repository_not_selected",
       account,
@@ -301,6 +304,8 @@ export async function resolveAuthoritativeRepositoryAccess(input: {
       checkedAt,
       canonicalOrigin,
       githubAppId,
+      repositorySelection: details.repositorySelection,
+      accessibleRepositoryCount: accessibleRepos.length,
       diagnosticReason: `${repositoryFullName} is not included in the installation repository list.`,
     };
   }
