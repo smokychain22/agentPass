@@ -90,6 +90,7 @@ export interface A2ATaskInput {
   callbackUrl?: string;
   githubToken?: string;
   demo?: boolean;
+  transformedSourceHashes?: Record<string, string>;
 }
 
 export interface A2ATaskResult {
@@ -117,6 +118,18 @@ export interface A2ATaskResult {
   baselineRun?: Record<string, unknown>;
 }
 
+export interface A2ATaskWorkflowMeta {
+  status: "invalid_source_baseline" | "stale_source_commit";
+  retryable: false;
+  requiresNewScan: true;
+  reason: string;
+  pinnedCommitSha?: string;
+  currentCommitSha?: string;
+  failedCheck?: string;
+  classification?: string;
+  invalidatedAt: string;
+}
+
 export interface A2ATaskRecord {
   id: string;
   type: A2ATaskType;
@@ -129,6 +142,7 @@ export interface A2ATaskRecord {
   result: A2ATaskResult;
   transitions: A2ATaskTransition[];
   limitations: string[];
+  workflowMeta?: A2ATaskWorkflowMeta;
   error?: string;
   createdAt: string;
   updatedAt: string;

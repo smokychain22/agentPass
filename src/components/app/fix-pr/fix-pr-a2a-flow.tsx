@@ -30,6 +30,11 @@ import {
   workflowFailureGuidance,
   workflowTaskStatusLabel,
 } from "@/lib/workflow/task-status-ui";
+import {
+  formatBaselineInvalidBanner,
+  parseBaselineInvalidUi,
+  type BaselineInvalidUi,
+} from "@/lib/workflow/baseline-invalid-ui";
 
 interface FixPrA2AFlowProps {
   repoUrl: string;
@@ -58,6 +63,7 @@ export function FixPrA2AFlow({
   const [githubGrantLoading, setGithubGrantLoading] = useState(false);
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [baselineInvalid, setBaselineInvalid] = useState<BaselineInvalidUi | null>(null);
   const { setPaymentState } = useWallet();
 
   const trustedTestPayment = isTrustedTestQuote(quote);
@@ -120,6 +126,7 @@ export function FixPrA2AFlow({
     if (!commitSha || selectedSafe.length === 0) return;
     setLoading(true);
     setError(null);
+    setBaselineInvalid(null);
     try {
       onScopeReviewed();
       const { task, quote: q } = await createWorkflowA2ATask({
@@ -132,7 +139,10 @@ export function FixPrA2AFlow({
       onTaskUpdate(task);
       setQuote(q);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to prepare quote.");
+      const message = err instanceof Error ? err.message : "Failed to prepare quote.";
+      setError(message);
+      const parsed = parseBaselineInvalidUi({ message, commitSha });
+      if (parsed) setBaselineInvalid(parsed);
     } finally {
       setLoading(false);
     }
@@ -178,7 +188,19 @@ export function FixPrA2AFlow({
     onTaskUpdate(null);
     setQuote(null);
     setError(null);
+    setBaselineInvalid(null);
   }, [onTaskUpdate]);
+
+  const taskBaselineInvalid = useMemo(() => {
+    if (!a2aTask?.error) return null;
+    return parseBaselineInvalidUi({
+      message: a2aTask.error,
+      commitSha,
+    });
+  }, [a2aTask?.error, commitSha]);
+
+  const showBaselineBlock = baselineInvalid ?? taskBaselineInvalid;
+  const hideRetryCleanup = Boolean(showBaselineBlock?.hideRetry);
 
   const executing =
     Boolean(a2aTask) &&
@@ -323,7 +345,11 @@ export function FixPrA2AFlow({
             {isWorkflowTaskFailure(a2aTask) && (
               <FeedbackBanner
                 variant="error"
-                message={a2aTask.error ?? workflowFailureGuidance(a2aTask)}
+                message={
+                  taskBaselineInvalid
+                    ? formatBaselineInvalidBanner(taskBaselineInvalid)
+                    : (a2aTask.error ?? workflowFailureGuidance(a2aTask))
+                }
               />
             )}
             {a2aTask.status === "completed" && a2aTask.pullRequest?.url && (
@@ -369,7 +395,31 @@ export function FixPrA2AFlow({
           </div>
         )}
 
-        {error && <FeedbackBanner variant="error" message={error} className="mt-3" />}
+        {showBaselineBlock && (
+          <div className="mt-3 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+            <p className="font-medium text-foreground">{showBaselineBlock.title}</p>
+            <dl className="grid gap-1 text-xs">
+              <div>
+                <dt className="text-muted-foreground">Source commit</dt>
+                <dd className="font-mono">{showBaselineBlock.sourceCommit}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Failed check</dt>
+                <dd className="font-mono">{showBaselineBlock.failedCheck}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Classification</dt>
+                <dd className="font-mono">{showBaselineBlock.classification}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Action</dt>
+                <dd>{showBaselineBlock.action}</dd>
+              </div>
+            </dl>
+          </div>
+        )}
+
+        {error && !showBaselineBlock && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
         <div className="mt-4 flex flex-wrap gap-2">
           {!quote && (
@@ -384,8 +434,13 @@ export function FixPrA2AFlow({
               onAuthorize={authorizePayment}
             />
           )}
-          {isWorkflowTaskFailure(a2aTask) && (
+          {isWorkflowTaskFailure(a2aTask) && !hideRetryCleanup && (
             <Button onClick={retryCleanup}>Start a new cleanup attempt</Button>
+          )}
+          {showBaselineBlock && (
+            <p className="self-center text-sm text-muted-foreground">
+              {showBaselineBlock.retryLabel ?? "Run a new scan after the repository is repaired."}
+            </p>
           )}
           <Button variant="secondary" asChild>
             <Link href="/app?tab=findings">Back to findings</Link>

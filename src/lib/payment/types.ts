@@ -59,6 +59,8 @@ export interface BoundQuote {
   idempotencyKey?: string;
   taskId?: string;
   a2aTaskId?: string;
+  scanId?: string;
+  transformedSourceHashes?: Record<string, string>;
   paymentReference?: string;
   payer?: string;
   paymentStatus?: PaymentStatus;
@@ -96,4 +98,6 @@ export interface EntitlementContext {
   operation: CommerceOperation;
   quoteId: string;
   taskId?: string;
+  scanId?: string;
+  transformedSourceHashes?: Record<string, string>;
 }

@@ -98,9 +98,28 @@ export async function createWorkflowA2ATask(input: {
     github?: RepositoryConnectionStatus;
     error?: string;
     message?: string;
+    baseline?: {
+      status: string;
+      commitSha: string;
+      failedCheck?: string;
+      stderrExcerpt?: string;
+      action?: string;
+    };
+    invalidation?: { status: string; requiresNewScan?: boolean };
   };
   if (!res.ok || !data.ok || !data.task) {
-    throw new Error(data.message ?? data.error ?? "Failed to create cleanup task.");
+    const detail = data.message ?? data.error ?? "Failed to create cleanup task.";
+    if (data.baseline || data.invalidation) {
+      const lines = [
+        "Repository baseline invalid",
+        `Source commit: ${data.baseline?.commitSha ?? input.commitSha}`,
+        `Failed check: ${data.baseline?.failedCheck ?? "npm run build"}`,
+        `Classification: ${data.baseline?.status ?? data.invalidation?.status ?? "baseline_invalid"}`,
+        `Action: ${data.baseline?.action ?? "Repair the repository source and run a new scan."}`,
+      ];
+      throw new Error(lines.join("\n"));
+    }
+    throw new Error(detail);
   }
   return {
     task: data.task,

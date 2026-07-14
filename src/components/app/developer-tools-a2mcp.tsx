@@ -1,11 +1,33 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Panel } from "@/components/design-system/panel";
 
+interface BuildInfo {
+  gitCommit: string;
+  gitBranch: string;
+  environment: string;
+  builtAt: string;
+}
+
 export function DeveloperToolsA2Mcp() {
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
+
+  useEffect(() => {
+    void fetch("/api/build-info")
+      .then((res) => res.json())
+      .then((data: BuildInfo) => setBuildInfo(data))
+      .catch(() => setBuildInfo(null));
+  }, []);
+
   const sample = `curl -X POST https://skillswap-skillswap7.vercel.app/api/a2mcp/quick-triage \\
   -H "Content-Type: application/json" \\
   -d '{"repoUrl":"https://github.com/owner/repo","maximumFindings":10}'`;
+
+  const shortCommit =
+    buildInfo?.gitCommit && buildInfo.gitCommit !== "unknown"
+      ? buildInfo.gitCommit.slice(0, 7)
+      : "—";
 
   return (
     <Panel variant="elevated" padding="md" className="border-border/60">
@@ -15,6 +37,16 @@ export function DeveloperToolsA2Mcp() {
         cleanup payment flow. Full browser cleanup uses A2A service 32947 only.
       </p>
       <dl className="grid gap-2 text-sm">
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted-foreground">Deployment commit</dt>
+          <dd className="font-mono" title={buildInfo?.gitCommit}>
+            {shortCommit}
+          </dd>
+        </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted-foreground">Environment</dt>
+          <dd className="font-mono">{buildInfo?.environment ?? "—"}</dd>
+        </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Service</dt>
           <dd className="font-mono">32948</dd>

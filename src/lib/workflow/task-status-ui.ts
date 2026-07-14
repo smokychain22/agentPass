@@ -46,8 +46,12 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
   if (!task) return "";
   const err = task.error ?? "";
 
+  if (err.includes("Repository baseline invalid") || err.includes("baseline_invalid")) {
+    return "Repository baseline invalid. Repair the repository source and run a new scan before requesting a quote.";
+  }
+
   if (err.includes("Mandatory verification gates failed") && err.includes("production build")) {
-    return "Production build failed during verification. The build gate prevented delivery of a broken patch. See the verification report for the source commit, check name, classification, and stderr excerpt.";
+    return "Repository baseline invalid. Production build failed on the pinned source commit before cleanup could be verified. Repair the repository source and run a new scan.";
   }
 
   if (err.includes("malformed TypeScript") || err.includes("earlier cleanup PR")) {

@@ -416,6 +416,38 @@ function resolveOutcome(
   };
 }
 
+/** Baseline-only verification for pre-quote readiness (no patch applied). */
+export async function runBaselineOnlyVerification(input: {
+  baselineRoot: string;
+  cleanupRunId: string;
+}): Promise<RepositoryVerificationPhaseResult> {
+  const pkgPath = path.join(input.baselineRoot, "package.json");
+  const hasPackageJson = await fs.access(pkgPath).then(() => true).catch(() => false);
+  if (!hasPackageJson) {
+    return {
+      phase: "baseline",
+      installAttempts: [],
+      checks: [
+        {
+          name: "dependency install",
+          command: "n/a",
+          status: "skipped",
+          exitCode: null,
+          durationMs: 0,
+          stdoutSummary: "No package.json — install skipped.",
+          stderrSummary: "",
+        },
+      ],
+    };
+  }
+
+  return runVerificationPhase({
+    rootDir: input.baselineRoot,
+    cleanupRunId: input.cleanupRunId,
+    phase: "baseline",
+  });
+}
+
 export async function runRepositoryVerification(input: {
   baselineRoot: string;
   edits: ConsolidatedEdit[];

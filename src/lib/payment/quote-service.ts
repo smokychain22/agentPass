@@ -23,6 +23,11 @@ function requestHash(parts: Record<string, string | string[]>): string {
   return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
+function hashTransformedSourceHashes(hashes?: Record<string, string>): string {
+  if (!hashes || Object.keys(hashes).length === 0) return "";
+  return JSON.stringify(Object.fromEntries(Object.entries(hashes).sort(([a], [b]) => a.localeCompare(b))));
+}
+
 export function priceForOperation(
   operation: CommerceOperation,
   sourceFileCount?: number
@@ -40,12 +45,19 @@ export async function createBoundQuote(input: {
   verificationProfile?: VerificationProfile;
   sourceFileCount?: number;
   idempotencyKey?: string;
+  scanId?: string;
+  transformedSourceHashes?: Record<string, string>;
 }): Promise<BoundQuote> {
   const quoteId = `quote_${nanoid(12)}`;
   const nonce = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + QUOTE_TTL_MS).toISOString();
   const { amountMicro, priceLabel } = priceForOperation(input.operation, input.sourceFileCount);
   const findingIds = [...input.findingIds].sort();
+  const transformedSourceHashes = input.transformedSourceHashes
+    ? Object.fromEntries(
+        Object.entries(input.transformedSourceHashes).sort(([a], [b]) => a.localeCompare(b))
+      )
+    : undefined;
 
   const hashInput = {
     operation: input.operation,
@@ -53,6 +65,8 @@ export async function createBoundQuote(input: {
     branch: input.branch,
     commitSha: input.commitSha,
     findingIds,
+    scanId: input.scanId ?? "",
+    transformedSourceHashes: hashTransformedSourceHashes(transformedSourceHashes),
     verificationProfile: input.verificationProfile ?? "standard",
     amountMicro,
     currency: X402_CURRENCY,
@@ -88,6 +102,8 @@ export async function createBoundQuote(input: {
     lifecycleStatus: amountMicro === "0" ? "funded" : "quote_created",
     createdAt: new Date().toISOString(),
     idempotencyKey: input.idempotencyKey,
+    scanId: input.scanId,
+    transformedSourceHashes,
   };
 
   if (amountMicro !== "0") {
@@ -116,6 +132,8 @@ export function validateQuoteBinding(
     commitSha: string;
     findingIds: string[];
     operation: CommerceOperation;
+    scanId?: string;
+    transformedSourceHashes?: Record<string, string>;
   }
 ): { ok: boolean; reason?: string; status?: BoundQuote["lifecycleStatus"] } {
   if (new Date(quote.expiresAt).getTime() < Date.now()) {
@@ -140,6 +158,20 @@ export function validateQuoteBinding(
   const b = [...context.findingIds].sort().join(",");
   if (a !== b) {
     return { ok: false, reason: "Finding IDs mismatch.", status: "invalid_payment" };
+  }
+  if (context.scanId && quote.scanId && quote.scanId !== context.scanId) {
+    return { ok: false, reason: "Scan ID mismatch.", status: "invalid_payment" };
+  }
+  if (quote.transformedSourceHashes && context.transformedSourceHashes) {
+    const qa = JSON.stringify(
+      Object.fromEntries(Object.entries(quote.transformedSourceHashes).sort())
+    );
+    const qb = JSON.stringify(
+      Object.fromEntries(Object.entries(context.transformedSourceHashes).sort())
+    );
+    if (qa !== qb) {
+      return { ok: false, reason: "Transformed source hash mismatch.", status: "invalid_payment" };
+    }
   }
   return { ok: true };
 }

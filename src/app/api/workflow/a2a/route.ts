@@ -9,6 +9,11 @@ import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { getBoundQuote } from "@/lib/payment";
 import { formatWorkflowQuote } from "@/lib/workflow/format-workflow-quote";
 import { runEligibilityPreflight } from "@/lib/workflow/eligibility-preflight";
+import {
+  assertPreQuoteGate,
+  PreQuoteGateError,
+  preQuoteGateErrorResponse,
+} from "@/lib/workflow/pre-quote-gate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -93,12 +98,32 @@ export async function POST(request: Request) {
       );
     }
 
+    let gateResult;
+    try {
+      gateResult = await assertPreQuoteGate({
+        repoUrl: body.repoUrl,
+        branch: body.branch ?? findings.repo.branch,
+        scanId: body.scanId,
+        commitSha: body.commitSha,
+        findingIds: body.findingIds,
+        findings: flat,
+        repository,
+        github,
+      });
+    } catch (err) {
+      if (err instanceof PreQuoteGateError) {
+        return NextResponse.json(preQuoteGateErrorResponse(err), { status: err.httpStatus });
+      }
+      throw err;
+    }
+
     const task = await submitA2ATask("repository.cleanup_pr", {
       repoUrl: body.repoUrl,
       branch: body.branch ?? findings.repo.branch,
       scanId: body.scanId,
       commitSha: body.commitSha,
-      findingIds: body.findingIds,
+      findingIds: gateResult.eligibleFindingIds,
+      transformedSourceHashes: gateResult.transformedSourceHashes,
     });
 
     const quoteId =

@@ -57,6 +57,11 @@ import {
   waitForPatchKitSandbox,
 } from "./patch-kit-delivery";
 import { withRefreshedVerificationGates } from "@/lib/patch-kit/refresh-verification-gates";
+import {
+  assertPreQuoteGate,
+  PreQuoteGateError,
+} from "@/lib/workflow/pre-quote-gate";
+import { flattenFindings } from "@/lib/findings/client";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -241,14 +246,35 @@ async function ensurePayment(
   const findingIds = task.input.findingIds ?? [];
 
   if (!task.input.quoteId) {
+    try {
+      await assertPreQuoteGate({
+        repoUrl: task.input.repoUrl,
+        branch: task.input.branch ?? findings.repo.branch,
+        scanId: task.input.scanId ?? findings.scanId,
+        commitSha: task.input.commitSha ?? findings.repo.commitSha ?? "unknown",
+        findingIds,
+        findings: flattenFindings(findings),
+        repository,
+        taskId: task.id,
+        skipTransformPreflight: Boolean(task.input.transformedSourceHashes),
+      });
+    } catch (err) {
+      if (err instanceof PreQuoteGateError) {
+        return failTask(task, sm, "analysis_failed", err.message, "orchestrator");
+      }
+      throw err;
+    }
+
     sm.emit("quote_required", "orchestrator");
     const quote = await createQuoteForOperation({
       repository,
       branch: findings.repo.branch,
-      commitSha: findings.repo.commitSha ?? "unknown",
+      commitSha: findings.repo.commitSha ?? task.input.commitSha ?? "unknown",
       findingIds,
       operation,
       sourceFileCount: findings.summary.totalFindings,
+      scanId: task.input.scanId ?? findings.scanId,
+      transformedSourceHashes: task.input.transformedSourceHashes,
     });
     task = await syncTask(task, sm, {
       quoteId: quote.quoteId,
@@ -267,10 +293,12 @@ async function ensurePayment(
     quoteId: task.input.quoteId,
     repository,
     branch: findings.repo.branch,
-    commitSha: findings.repo.commitSha ?? "unknown",
+    commitSha: findings.repo.commitSha ?? task.input.commitSha ?? "unknown",
     findingIds,
     operation,
     taskId: task.id,
+    scanId: task.input.scanId ?? findings.scanId,
+    transformedSourceHashes: task.input.transformedSourceHashes,
   });
 
   if (!entitlement.ok) {

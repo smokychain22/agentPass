@@ -22,6 +22,10 @@ import { applyFailurePolicy, type FailureScenario } from "./failure-policy";
 import { isA2aTestPriceQuote } from "./a2a-test-price";
 import { verifyOnchainUsdtTransfer } from "./onchain-usdt";
 import { isLikelyTxHash } from "@/lib/wallet/erc20-transfer";
+import {
+  isKnownBaselineInvalidCommit,
+} from "@/lib/workflow/baseline-readiness";
+import { ensureScanInvalidationMetadata, scanBlocksFixPr } from "@/lib/workflow/source-invalidation";
 
 function isRealX402(): boolean {
   return process.env.REQUIRE_REAL_X402 === "1";
@@ -53,7 +57,20 @@ export async function createQuoteForOperation(input: {
   operation: CommerceOperation;
   sourceFileCount?: number;
   idempotencyKey?: string;
+  scanId?: string;
+  transformedSourceHashes?: Record<string, string>;
 }): Promise<BoundQuote> {
+  if (isKnownBaselineInvalidCommit(input.commitSha)) {
+    throw new Error("baseline_invalid: Repository baseline is invalid at the pinned source commit.");
+  }
+  if (input.scanId) {
+    const invalidation = await ensureScanInvalidationMetadata(input.scanId);
+    if (scanBlocksFixPr(invalidation)) {
+      throw new Error(
+        `${invalidation?.status ?? "invalid_source_baseline"}: ${invalidation?.reason ?? "Scan blocked."}`
+      );
+    }
+  }
   if (input.idempotencyKey) {
     const existing = await getPaymentByIdempotencyKey(input.idempotencyKey);
     if (existing?.taskId) {
@@ -64,10 +81,34 @@ export async function createQuoteForOperation(input: {
   return createBoundQuote(input);
 }
 
+async function assertQuoteCommerciallySafe(quote: BoundQuote): Promise<{ ok: false; reason: string } | { ok: true }> {
+  if (isKnownBaselineInvalidCommit(quote.commitSha)) {
+    return { ok: false, reason: "Repository baseline is invalid at the pinned source commit." };
+  }
+  if (quote.scanId) {
+    const invalidation = await ensureScanInvalidationMetadata(quote.scanId);
+    if (scanBlocksFixPr(invalidation)) {
+      return { ok: false, reason: invalidation?.reason ?? "Scan is blocked due to invalid source baseline." };
+    }
+  }
+  if (!quote.transformedSourceHashes || Object.keys(quote.transformedSourceHashes).length === 0) {
+    if (quote.operation === "verified_cleanup_pr" && quote.findingIds.length > 0) {
+      return { ok: false, reason: "Quote is missing transform preflight hashes." };
+    }
+  }
+  return { ok: true };
+}
+
 export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVerificationResult> {
   const quote = await getBoundQuote(proof.quoteId);
   if (!quote) {
     return { ok: false, status: "invalid_payment", reason: "Quote not found." };
+  }
+
+  const commercial = await assertQuoteCommerciallySafe(quote);
+  if (!commercial.ok) {
+    await persistQuoteLifecycle(proof.quoteId, "invalid_payment");
+    return { ok: false, status: "invalid_payment", reason: commercial.reason };
   }
 
   if (quote.amountMicro === "0") {
@@ -94,6 +135,8 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     commitSha: quote.commitSha,
     findingIds: quote.findingIds,
     operation: quote.operation,
+    scanId: quote.scanId,
+    transformedSourceHashes: quote.transformedSourceHashes,
   });
   if (!binding.ok) {
     const scenario = binding.status === "expired" ? "expired" : "invalid_payment";
