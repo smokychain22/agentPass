@@ -215,6 +215,20 @@ test("customer flow does not reference Cursor", () => {
   assert.doesNotMatch(guidance, /cursor/i);
 });
 
+test("Vercel commit status contexts are treated as provider checks", () => {
+  const summary = detectVercelProjects({
+    checks: [
+      check({
+        checkName: "Vercel – trade-alpha",
+        provider: "vercel",
+        conclusion: "failure",
+      }),
+    ],
+    repositoryName: "Meridian",
+  });
+  assert.equal(summary?.projects[0]?.name, "trade-alpha");
+});
+
 test("aggregate cleanup caused respects comparisons", () => {
   const caused = aggregateCleanupCaused(
     [{ checkName: "x", cleanupCausedThis: false, sameDiagnostic: true }],

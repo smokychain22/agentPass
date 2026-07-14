@@ -62,6 +62,13 @@ function isCheckRequired(checkName: string, requiredContexts: string[]): boolean
   );
 }
 
+function mapStatusState(state: string): CheckRunConclusion {
+  if (state === "success") return "success";
+  if (state === "failure" || state === "error") return "failure";
+  if (state === "pending") return null;
+  return "neutral";
+}
+
 function mapRawChecks(
   raw: Awaited<ReturnType<GitHubClient["listCommitCheckRuns"]>>,
   requiredContexts: string[]
@@ -83,6 +90,54 @@ function mapRawChecks(
   });
 }
 
+function mapCommitStatuses(
+  statuses: Awaited<ReturnType<GitHubClient["listCommitStatuses"]>>,
+  requiredContexts: string[],
+  existingNames: Set<string>
+): PrCheckRecord[] {
+  return statuses
+    .filter((status) => !existingNames.has(status.context.toLowerCase()))
+    .map((status) => ({
+      checkName: status.context,
+      provider: isVercelCheckName(status.context) ? ("vercel" as const) : ("other" as const),
+      status: status.state === "pending" ? ("in_progress" as const) : ("completed" as const),
+      conclusion: mapStatusState(status.state),
+      required: isCheckRequired(status.context, requiredContexts),
+      detailsUrl: status.target_url,
+      startedAt: status.created_at,
+      completedAt: status.updated_at,
+    }));
+}
+
+async function loadCommitChecks(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  ref: string,
+  requiredContexts: string[]
+): Promise<{
+  checks: PrCheckRecord[];
+  rawChecks: Awaited<ReturnType<GitHubClient["listCommitCheckRuns"]>>;
+  statusEvidence: Map<string, { description?: string; targetUrl?: string }>;
+}> {
+  const rawChecks = await client.listCommitCheckRuns(owner, repo, ref);
+  const fromRuns = mapRawChecks(rawChecks, requiredContexts);
+  const statuses = await client.listCommitStatuses(owner, repo, ref);
+  const existing = new Set(fromRuns.map((check) => check.checkName.toLowerCase()));
+  const fromStatuses = mapCommitStatuses(statuses, requiredContexts, existing);
+  const statusEvidence = new Map(
+    statuses.map((status) => [
+      status.context,
+      { description: status.description, targetUrl: status.target_url },
+    ])
+  );
+  return {
+    checks: [...fromRuns, ...fromStatuses],
+    rawChecks,
+    statusEvidence,
+  };
+}
+
 async function collectEvidence(input: {
   client: GitHubClient;
   owner: string;
@@ -90,6 +145,7 @@ async function collectEvidence(input: {
   headSha: string;
   failedChecks: PrCheckRecord[];
   rawChecks: Awaited<ReturnType<GitHubClient["listCommitCheckRuns"]>>;
+  statusEvidence: Map<string, { description?: string; targetUrl?: string }>;
   cleanupCausedByCheck: Record<string, CleanupCausedDetermination>;
 }): Promise<Record<string, Parameters<typeof diagnoseChecks>[0]["evidenceByCheck"][string]>> {
   const evidence: Record<string, Parameters<typeof diagnoseChecks>[0]["evidenceByCheck"][string]> =
@@ -97,8 +153,9 @@ async function collectEvidence(input: {
 
   for (const check of input.failedChecks) {
     const raw = input.rawChecks.find((entry) => entry.id === check.checkRunId);
+    const status = input.statusEvidence.get(check.checkName);
     const outputTitle = raw?.output?.title;
-    const outputSummary = raw?.output?.summary;
+    const outputSummary = raw?.output?.summary ?? status?.description;
     const outputText = raw?.output?.text;
 
     let logExcerpt = extractCheckDiagnostic(outputSummary, outputText);
@@ -184,17 +241,27 @@ export async function inspectPullRequestChecks(input: {
 
   let checks: PrCheckRecord[] = [];
   let rawChecks: Awaited<ReturnType<GitHubClient["listCommitCheckRuns"]>> = [];
+  let statusEvidence = new Map<string, { description?: string; targetUrl?: string }>();
 
   for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
-    rawChecks = await client.listCommitCheckRuns(input.owner, input.repo, pr.headSha);
-    checks = mapRawChecks(rawChecks, requiredContexts);
+    const loaded = await loadCommitChecks(client, input.owner, input.repo, pr.headSha, requiredContexts);
+    checks = loaded.checks;
+    rawChecks = loaded.rawChecks;
+    statusEvidence = loaded.statusEvidence;
     const pending = checks.some((check) => check.required && !isTerminalCheck(check));
     if (!pending || attempt === pollAttempts - 1) break;
     await new Promise((resolve) => setTimeout(resolve, pollDelayMs));
   }
 
-  const baselineRaw = await client.listCommitCheckRuns(input.owner, input.repo, pr.baseSha);
-  const baselineChecks = mapRawChecks(baselineRaw, requiredContexts);
+  const baselineLoaded = await loadCommitChecks(
+    client,
+    input.owner,
+    input.repo,
+    pr.baseSha,
+    requiredContexts
+  );
+  const baselineChecks = baselineLoaded.checks;
+  const baselineRaw = baselineLoaded.rawChecks;
 
   const preliminaryComparisons = compareBaselineAndPrChecks({
     baselineChecks,
@@ -217,6 +284,7 @@ export async function inspectPullRequestChecks(input: {
     headSha: pr.headSha,
     failedChecks,
     rawChecks,
+    statusEvidence,
     cleanupCausedByCheck,
   });
 
@@ -227,14 +295,18 @@ export async function inspectPullRequestChecks(input: {
   const baselineEvidence = Object.fromEntries(
     baselineFailed.map((check) => {
       const raw = baselineRaw.find((entry) => entry.id === check.checkRunId);
+      const status = baselineLoaded.statusEvidence.get(check.checkName);
       return [
         check.checkName,
         {
           outputTitle: raw?.output?.title,
-          outputSummary: raw?.output?.summary,
+          outputSummary: raw?.output?.summary ?? status?.description,
           outputText: raw?.output?.text,
-          logExcerpt: extractCheckDiagnostic(raw?.output?.summary, raw?.output?.text),
-          logsAvailable: Boolean(raw?.output?.summary || raw?.output?.text),
+          logExcerpt: extractCheckDiagnostic(
+            raw?.output?.summary ?? status?.description,
+            raw?.output?.text
+          ),
+          logsAvailable: Boolean(raw?.output?.summary || raw?.output?.text || status?.description),
           cleanupCausedThis: false as const,
         },
       ];

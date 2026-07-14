@@ -318,6 +318,33 @@ export class GitHubClient {
     return data.check_runs ?? [];
   }
 
+  async listCommitStatuses(
+    owner: string,
+    repo: string,
+    ref: string
+  ): Promise<
+    Array<{
+      context: string;
+      state: string;
+      description?: string;
+      target_url?: string;
+      created_at?: string;
+      updated_at?: string;
+    }>
+  > {
+    const data = await this.request<{
+      statuses: Array<{
+        context: string;
+        state: string;
+        description?: string;
+        target_url?: string;
+        created_at?: string;
+        updated_at?: string;
+      }>;
+    }>(`/repos/${owner}/${repo}/commits/${ref}/status`);
+    return data.statuses ?? [];
+  }
+
   async getBranchRequiredCheckContexts(
     owner: string,
     repo: string,
