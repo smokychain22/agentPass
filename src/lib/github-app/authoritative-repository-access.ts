@@ -10,6 +10,7 @@ import {
   getInstallationDetails,
   installationIncludesRepository,
   installationIncludesRepositoryWithRetry,
+  listInstallationAccessibleRepos,
 } from "@/lib/github-app/installations";
 import { getAppOctokit } from "@/lib/github-app/octokit";
 import { lookupRepositoryInstallationBinding } from "@/lib/github-app/install-flow-store";
