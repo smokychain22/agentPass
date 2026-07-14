@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "@/components/design-system/status-indicator";
+import { RepodietLogo } from "@/components/layout/repodiet-logo";
 
 const mainNav = [
   {
@@ -96,10 +97,7 @@ export function AppSidebar({
     <>
       <div className="flex items-center justify-between border-b border-border/60 px-4 py-4 lg:px-5">
         <Link href="/" className="flex items-center gap-2.5" onClick={onMobileClose}>
-          <span className="flex h-7 w-7 items-center justify-center rounded border border-electric/30 bg-electric/10 text-xs font-mono font-semibold text-electric">
-            RD
-          </span>
-          <span className="text-sm font-semibold tracking-tight">RepoDiet</span>
+          <RepodietLogo />
         </Link>
         {onMobileClose && (
           <button

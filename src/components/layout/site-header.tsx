@@ -6,6 +6,7 @@ import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FOOTER_OKX_COPY } from "@/lib/marketing/content";
 import { Button } from "@/components/ui/button";
+import { RepodietLogo } from "@/components/layout/repodiet-logo";
 
 const navLinks = [
   { href: "/#product", label: "Product" },
@@ -31,12 +32,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-border/60 bg-[#05080D]/90 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
         <Link href="/" className="group flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded border border-electric/25 bg-electric/10 text-xs font-mono font-semibold text-electric">
-            RD
-          </span>
-          <span className="text-sm font-semibold tracking-tight text-foreground transition-colors group-hover:text-electric">
-            RepoDiet
-          </span>
+          <RepodietLogo className="group-hover:[&_span]:text-electric" />
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main navigation">
@@ -117,10 +113,7 @@ export function SiteFooter({ variant = "default" }: SiteFooterProps) {
         <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded border border-electric/25 bg-electric/10 text-[10px] font-mono font-semibold text-electric">
-                RD
-              </span>
-              <p className="text-sm font-semibold text-foreground">RepoDiet</p>
+              <RepodietLogo size="sm" />
             </div>
             <p className="mt-2 max-w-xs text-sm text-muted-foreground">
               Review-first cleanup intelligence for AI-built repositories.

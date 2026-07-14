@@ -7,6 +7,10 @@ export const metadata: Metadata = {
   title: "RepoDiet — Cut AI code bloat before your app collapses",
   description:
     "Scan AI-built JavaScript and TypeScript repos for duplicate code, dead files, unused dependencies, and generate safe cleanup patches.",
+  icons: {
+    icon: "/brand/repodiet-icon.png",
+    apple: "/brand/repodiet-icon.png",
+  },
 };
 
 export default function RootLayout({
