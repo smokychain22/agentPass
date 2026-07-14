@@ -38,7 +38,7 @@ export function PaymentAuthorizationPanel({
   const wallet = useWallet();
   const trustedTestPayment = isTrustedTestQuote(quote);
   const { state, session, isOnXLayer, connect, switchNetwork, setPaymentState } = wallet;
-  const [payerInput, setPayerInput] = useState("");
+  const [payerInput, setPayerInput] = useState(readStoredPayerWallet);
   const [localError, setLocalError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 

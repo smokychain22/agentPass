@@ -1,4 +1,5 @@
 import type { WorkflowQuote } from "./client";
+import { REPODIET_OWNER_BUYER_WALLET } from "@/lib/wallet/owner-buyer-wallet";
 
 const WALLET_STORAGE_KEY = "repodiet_payer_wallet";
 
@@ -8,8 +9,10 @@ export function isTrustedTestQuote(quote: WorkflowQuote | null | undefined): boo
 }
 
 export function readStoredPayerWallet(): string {
-  if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(WALLET_STORAGE_KEY)?.trim() ?? "";
+  if (typeof window === "undefined") return REPODIET_OWNER_BUYER_WALLET;
+  return (
+    window.localStorage.getItem(WALLET_STORAGE_KEY)?.trim() ?? REPODIET_OWNER_BUYER_WALLET
+  );
 }
 
 export function storePayerWallet(wallet: string): void {

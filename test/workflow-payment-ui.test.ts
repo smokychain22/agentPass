@@ -4,6 +4,7 @@ import {
   isTrustedTestQuote,
   normalizeWalletAddress,
 } from "../src/lib/workflow/payment-ui";
+import { REPODIET_OWNER_BUYER_WALLET } from "../src/lib/wallet/owner-buyer-wallet";
 import type { WorkflowQuote } from "../src/lib/workflow/client";
 
 function test(name: string, fn: () => void) {
@@ -34,6 +35,10 @@ test("payment reference is a valid 0x hash", () => {
 test("wallet normalization accepts valid payer", () => {
   const wallet = normalizeWalletAddress("0xaa895234c3fc31c40018eef975db6ac79bf87f1a");
   assert.equal(wallet, "0xaa895234c3fc31c40018eef975db6ac79bf87f1a");
+});
+
+test("owner buyer wallet is the OKX email-generated payer", () => {
+  assert.equal(REPODIET_OWNER_BUYER_WALLET, "0xaa895234c3fc31c40018eef975db6ac79bf87f1a");
 });
 
 test("wallet normalization rejects seller pasted as reference", () => {
