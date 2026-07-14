@@ -2,6 +2,9 @@
 export function canonicalAppOrigin(): string {
   const explicit = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
   if (explicit) return explicit;
+  if (process.env.VERCEL_ENV === "production") {
+    return "https://skillswap-skillswap7.vercel.app";
+  }
   const vercel = process.env.VERCEL_URL?.replace(/\/$/, "");
   if (vercel) return vercel.startsWith("http") ? vercel : `https://${vercel}`;
   return "";
