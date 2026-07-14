@@ -113,7 +113,8 @@ export function SiteFooter({ variant = "default" }: SiteFooterProps) {
         <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <RepodietLogo size="sm" />
+              <RepodietLogo size="sm" showWordmark={false} />
+              <p className="text-sm font-semibold text-foreground">RepoDiet</p>
             </div>
             <p className="mt-2 max-w-xs text-sm text-muted-foreground">
               Review-first cleanup intelligence for AI-built repositories.

@@ -8,8 +8,11 @@ export const metadata: Metadata = {
   description:
     "Scan AI-built JavaScript and TypeScript repos for duplicate code, dead files, unused dependencies, and generate safe cleanup patches.",
   icons: {
-    icon: "/brand/repodiet-icon.png",
-    apple: "/brand/repodiet-icon.png",
+    icon: [
+      { url: "/brand/repodiet-mark-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/brand/repodiet-mark-128.png", sizes: "128x128", type: "image/png" },
+    ],
+    apple: "/brand/repodiet-mark-256.png",
   },
 };
 
