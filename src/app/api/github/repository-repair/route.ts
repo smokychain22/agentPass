@@ -20,11 +20,16 @@ export async function POST(request: Request) {
     owner?: string;
     repo?: string;
     repairId?: string;
+    installationId?: number;
   };
 
   const owner = body.owner?.trim();
   const repo = body.repo?.trim();
   const repairId = body.repairId?.trim() ?? MERIDIAN_BASELINE_REPAIR_ID;
+  const installationId =
+    typeof body.installationId === "number" && Number.isFinite(body.installationId)
+      ? body.installationId
+      : undefined;
 
   if (!owner || !repo) {
     return NextResponse.json(
@@ -34,7 +39,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await applyMeridianBaselineRepair({ owner, repo, repairId });
+    const result = await applyMeridianBaselineRepair({
+      owner,
+      repo,
+      repairId,
+      installationId,
+    });
     if (!result.ok) {
       return NextResponse.json(result, { status: 422 });
     }

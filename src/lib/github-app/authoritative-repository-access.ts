@@ -103,6 +103,9 @@ export async function resolveInstallationIdForRepository(input: {
 
   const cached = await getAspRepositoryInstallation(repositoryFullName);
   if (cached?.installationId) {
+    if (isRecentBindingAuthorizedAt(cached.authorizedAt)) {
+      return { installationId: cached.installationId, source: "asp_cache" };
+    }
     const hasAccess = await installationIncludesRepository(
       cached.installationId,
       input.owner,

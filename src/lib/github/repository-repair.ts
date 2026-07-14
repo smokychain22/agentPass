@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { GitHubClient } from "@/lib/github/github-client";
 import { resolveAspGitHubToken } from "@/lib/asp/github-access";
+import { saveAspRepositoryInstallation } from "@/lib/asp/store";
+import { getInstallationDetails } from "@/lib/github-app/installations";
+import { saveRepoInstallBinding } from "@/lib/github-app/install-flow-store";
 
 export const MERIDIAN_BASELINE_REPAIR_ID = "meridian-baseline-build-2026-07";
 
@@ -69,10 +72,37 @@ async function readBundleFile(bundleName: string): Promise<string> {
   return fs.readFile(filePath, "utf8");
 }
 
+async function ensureRepairRepositoryBinding(input: {
+  owner: string;
+  repo: string;
+  installationId: number;
+}): Promise<void> {
+  const repositoryFullName = `${input.owner}/${input.repo}`;
+  const details = await getInstallationDetails(input.installationId);
+  const authorizedAt = new Date().toISOString();
+
+  await saveRepoInstallBinding({
+    sessionKey: `repair:${repositoryFullName}`,
+    installationId: input.installationId,
+    installationOwner: details?.accountLogin ?? input.owner,
+    installationOwnerType: details?.accountType ?? "User",
+    repositoryFullName,
+    setupAction: "update",
+    authorizedAt,
+  });
+
+  await saveAspRepositoryInstallation({
+    installationId: input.installationId,
+    repositoryFullName,
+    authorizedAt,
+  });
+}
+
 export async function applyMeridianBaselineRepair(input: {
   owner: string;
   repo: string;
   repairId: string;
+  installationId?: number;
 }): Promise<RepositoryRepairResult> {
   if (input.repairId !== MERIDIAN_BASELINE_REPAIR_ID) {
     return {
@@ -92,7 +122,19 @@ export async function applyMeridianBaselineRepair(input: {
     };
   }
 
-  const token = await resolveAspGitHubToken({ owner: input.owner, repo: input.repo });
+  if (input.installationId) {
+    await ensureRepairRepositoryBinding({
+      owner: input.owner,
+      repo: input.repo,
+      installationId: input.installationId,
+    });
+  }
+
+  const token = await resolveAspGitHubToken({
+    owner: input.owner,
+    repo: input.repo,
+    installationId: input.installationId,
+  });
   const client = new GitHubClient(token);
   const meta = await client.getRepo(input.owner, input.repo);
   const baseSha = await client.getBranchSha(input.owner, input.repo, meta.defaultBranch);
