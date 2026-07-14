@@ -6,9 +6,11 @@ import { buildNewInstallationUrl } from "@/lib/github-app/install-redirect";
 import {
   createInstallationAccessToken,
   getInstallationDetails,
-  installationHasRepoAccess,
 } from "@/lib/github-app/installations";
-import { resolveInstallationIdForRepository } from "@/lib/github-app/authoritative-repository-access";
+import {
+  resolveAuthoritativeRepositoryAccess,
+  resolveInstallationIdForRepository,
+} from "@/lib/github-app/authoritative-repository-access";
 import { getAspPublicBaseUrl } from "./auth";
 
 function permissionsAreSufficient(permissions?: {
@@ -61,10 +63,7 @@ export async function resolveAspGitHubToken(input: {
   repo: string;
   installationId?: number;
 }): Promise<string> {
-  const installationId =
-    input.installationId ?? (await findInstallationForRepository(input.owner, input.repo));
-
-  if (!installationId) {
+  if (!isGitHubAppConfigured()) {
     throw new ToolExecutionError(
       "GITHUB_APP_NOT_CONNECTED",
       "Repository-specific GitHub App authorization is required.",
@@ -72,7 +71,38 @@ export async function resolveAspGitHubToken(input: {
     );
   }
 
-  const details = await getInstallationDetails(installationId);
+  const access = await resolveAuthoritativeRepositoryAccess({
+    owner: input.owner,
+    repo: input.repo,
+    installationIdHint: input.installationId,
+  });
+
+  if (access.authoritativeState !== "repository_verified") {
+    const reason =
+      access.diagnosticReason ??
+      `GitHub App access is not verified for ${input.owner}/${input.repo}.`;
+    const code =
+      access.authoritativeState === "permissions_insufficient"
+        ? "GITHUB_PERMISSION_DENIED"
+        : "GITHUB_APP_NOT_CONNECTED";
+    throw new ToolExecutionError(code, reason, code === "GITHUB_PERMISSION_DENIED" ? 403 : 401);
+  }
+
+  const resolved = await resolveInstallationIdForRepository({
+    owner: input.owner,
+    repo: input.repo,
+    installationIdHint: input.installationId,
+  });
+
+  if (!resolved.installationId) {
+    throw new ToolExecutionError(
+      "GITHUB_APP_NOT_CONNECTED",
+      `RepoDiet is not authorized for ${input.owner}/${input.repo}.`,
+      401
+    );
+  }
+
+  const details = await getInstallationDetails(resolved.installationId);
   if (!permissionsAreSufficient(details?.permissions)) {
     throw new ToolExecutionError(
       "GITHUB_PERMISSION_DENIED",
@@ -81,16 +111,7 @@ export async function resolveAspGitHubToken(input: {
     );
   }
 
-  const hasAccess = await installationHasRepoAccess(installationId, input.owner, input.repo);
-  if (!hasAccess) {
-    throw new ToolExecutionError(
-      "GITHUB_APP_NOT_CONNECTED",
-      `RepoDiet is not authorized for ${input.owner}/${input.repo}.`,
-      401
-    );
-  }
-
-  const token = await createInstallationAccessToken(installationId);
+  const token = await createInstallationAccessToken(resolved.installationId);
   return token.token;
 }
 
