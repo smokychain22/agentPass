@@ -7,13 +7,18 @@ export type BuildGateClassification =
   | "infrastructure_failure"
   | "passed";
 
-export function classifyBuildGateFailure(patchKit: PatchKitPayload): {
+export function classifyBuildGateFailure(
+  patchKit: PatchKitPayload,
+  findings?: FindingsPayload
+): {
   classification: BuildGateClassification;
   check: string;
   commitSha?: string;
   stderrExcerpt?: string;
   fullLog?: string;
 } {
+  const commitSha =
+    findings?.repo.commitSha ?? patchKit.artifacts?.findingsJson?.repo?.commitSha;
   const repoVerification = patchKit.repositoryVerification;
   const status = repoVerification?.status;
   const patched = repoVerification?.patched as { checks?: Array<{ name: string; status: string; stderr?: string }> } | undefined;
@@ -31,7 +36,7 @@ export function classifyBuildGateFailure(patchKit: PatchKitPayload): {
     return {
       classification: "infrastructure_failure",
       check: "dependency install",
-      commitSha: findings?.repo.commitSha,
+      commitSha,
       stderrExcerpt: stderr.slice(0, 400),
       fullLog: stderr,
     };
@@ -41,7 +46,7 @@ export function classifyBuildGateFailure(patchKit: PatchKitPayload): {
     return {
       classification: "patch_regression",
       check: "npm run build",
-      commitSha: findings?.repo.commitSha,
+      commitSha,
       stderrExcerpt: stderr.slice(0, 400),
       fullLog: stderr,
     };
@@ -50,7 +55,7 @@ export function classifyBuildGateFailure(patchKit: PatchKitPayload): {
   return {
     classification: "baseline_failure",
     check: "npm run build",
-    commitSha: findings?.repo.commitSha,
+    commitSha,
     stderrExcerpt: stderr.slice(0, 400),
     fullLog: stderr,
   };
@@ -60,7 +65,7 @@ export function formatBuildGateFailureMessage(
   patchKit: PatchKitPayload,
   findings?: FindingsPayload
 ): string {
-  const info = classifyBuildGateFailure(patchKit);
+  const info = classifyBuildGateFailure(patchKit, findings);
   if (info.classification === "passed") return "Production build passed.";
 
   const lines = [
