@@ -264,7 +264,6 @@ export async function resolveAuthoritativeRepositoryAccess(input: {
     };
   }
 
-  const repositoryFullName = `${input.owner}/${input.repo}`;
   const durableBinding = await lookupRepositoryInstallationBinding(repositoryFullName);
   const bindingTrusted =
     durableBinding?.installationId === installationId &&
