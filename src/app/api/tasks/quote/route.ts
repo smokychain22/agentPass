@@ -3,6 +3,8 @@ import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import type { CommerceOperation } from "@/lib/payment/types";
 import { createQuoteForOperation, quoteTo402Response } from "@/lib/payment";
+import { paymentRequiredJsonResponse } from "@/lib/payment/x402-payment-required";
+import { canonicalResourceUrl } from "@/lib/payment/canonical-app-url";
 
 export const runtime = "nodejs";
 
@@ -40,8 +42,8 @@ export async function POST(request: Request) {
     });
 
     if (quote.amountMicro !== "0") {
-      const resourceUrl = new URL(request.url).toString();
-      return NextResponse.json(quoteTo402Response(quote, resourceUrl), { status: 402 });
+      const resourceUrl = canonicalResourceUrl("/api/tasks/quote", request.url);
+      return paymentRequiredJsonResponse(quoteTo402Response(quote, resourceUrl), 402);
     }
 
     return NextResponse.json({

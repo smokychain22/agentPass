@@ -7,6 +7,7 @@ import type { CommerceBinding } from "./types";
 import { claimIdempotencyLock } from "./store";
 import { requireEntitlement } from "@/lib/payment/settlement";
 import type { BoundQuote } from "@/lib/payment/types";
+import { canonicalResourceUrl } from "@/lib/payment/canonical-app-url";
 
 export class PaymentRequiredError extends Error {
   readonly status = 402;
@@ -118,13 +119,14 @@ export async function gateA2mcpCall(input: {
 
   if (!quoteId) {
     const provider = createPaymentProvider();
+    const requestPath = new URL(input.request.url).pathname;
     const requirement = await provider.createRequirement({
       serviceId: input.serviceId as import("./types").A2mcpServiceId,
       repository: input.binding.repository,
       branch: input.binding.branch,
       commitSha: input.binding.commitSha,
       requestHash: input.binding.requestHash,
-      resourceUrl: new URL(input.request.url).toString(),
+      resourceUrl: canonicalResourceUrl(requestPath, input.request.url),
       findingIds: input.binding.findingIds,
       idempotencyKey,
     });
@@ -144,13 +146,14 @@ export async function gateA2mcpCall(input: {
   if (!entitlement.ok) {
     if (entitlement.status === "payment_required" || entitlement.status === "invalid_payment") {
       const provider = createPaymentProvider();
+      const requestPath = new URL(input.request.url).pathname;
       const requirement = await provider.createRequirement({
         serviceId: input.serviceId as import("./types").A2mcpServiceId,
         repository: input.binding.repository,
         branch: input.binding.branch,
         commitSha: input.binding.commitSha,
         requestHash: input.binding.requestHash,
-        resourceUrl: new URL(input.request.url).toString(),
+        resourceUrl: canonicalResourceUrl(requestPath, input.request.url),
         findingIds: input.binding.findingIds,
         idempotencyKey,
       });

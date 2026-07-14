@@ -1,11 +1,16 @@
 import { findInstallationForRepository } from "@/lib/asp/github-access";
 import { accessCopyForState } from "@/lib/github-app/access-states";
+import {
+  isRepositoryVerifiedState,
+  mapToAuthoritativeAccessState,
+  type AuthoritativeGitHubAccessState,
+} from "@/lib/github-app/authoritative-access";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
 import {
+  createInstallationAccessToken,
   getInstallationDetails,
   installationHasRepoAccess,
 } from "@/lib/github-app/installations";
-import { runGitHubPreflight } from "@/lib/github-app/preflight";
 import { parseRepositoryFullName } from "@/lib/github-app/repository";
 
 export interface RepositoryConnectionStatus {
@@ -21,6 +26,8 @@ export interface RepositoryConnectionStatus {
   commitSha?: string;
   commitMatches?: boolean;
   accessState?: string;
+  authoritativeState?: AuthoritativeGitHubAccessState;
+  installationTokenAvailable?: boolean;
   messages?: {
     title: string;
     body: string;
@@ -48,15 +55,25 @@ async function resolveServerInstallationStatus(input: {
   connected: boolean;
   installationId?: number;
   accessState: import("@/lib/github-app/access-states").GitHubAccessState;
+  installationTokenAvailable: boolean;
 }> {
   const installationId = await findInstallationForRepository(input.owner, input.repo);
   if (!installationId) {
-    return { connected: false, accessState: "not_installed" };
+    return {
+      connected: false,
+      accessState: "not_installed",
+      installationTokenAvailable: false,
+    };
   }
 
   const details = await getInstallationDetails(installationId);
   if (!details) {
-    return { connected: false, installationId, accessState: "not_installed" };
+    return {
+      connected: false,
+      installationId,
+      accessState: "not_installed",
+      installationTokenAvailable: false,
+    };
   }
 
   if (details.suspendedAt) {
@@ -64,6 +81,7 @@ async function resolveServerInstallationStatus(input: {
       connected: false,
       installationId,
       accessState: "organization_approval_required",
+      installationTokenAvailable: false,
     };
   }
 
@@ -72,6 +90,7 @@ async function resolveServerInstallationStatus(input: {
       connected: false,
       installationId,
       accessState: "permissions_outdated",
+      installationTokenAvailable: false,
     };
   }
 
@@ -81,13 +100,25 @@ async function resolveServerInstallationStatus(input: {
       connected: false,
       installationId,
       accessState: "installed_repo_missing",
+      installationTokenAvailable: false,
     };
   }
 
+  let installationTokenAvailable = false;
+  try {
+    await createInstallationAccessToken(installationId);
+    installationTokenAvailable = true;
+  } catch {
+    installationTokenAvailable = false;
+  }
+
+  const verified = installationTokenAvailable;
+
   return {
-    connected: true,
+    connected: verified,
     installationId,
-    accessState: "repository_verified",
+    accessState: verified ? "repository_verified" : "not_installed",
+    installationTokenAvailable,
   };
 }
 
@@ -101,54 +132,44 @@ export async function resolveRepositoryConnectionStatus(input: {
   const fullName = `${owner}/${repo}`;
   const configured = isGitHubAppConfigured();
 
-  const preflight = await runGitHubPreflight({
-    repositoryFullName: fullName,
-    branch: input.branch,
-    commitSha: input.commitSha,
-    sessionKey: input.sessionKey,
-    quick: false,
-  });
-
-  let connected =
-    preflight.appInstalled &&
-    preflight.repositoryAuthorized &&
-    preflight.permissionsVerified;
-  let installationId = preflight.installationId;
-  let accessState = preflight.accessState;
-  let messages = preflight.messages;
-
-  if (!connected && configured) {
-    const serverStatus = await resolveServerInstallationStatus({ owner, repo });
-    if (serverStatus.connected) {
-      connected = true;
-      installationId = serverStatus.installationId;
-      accessState = serverStatus.accessState;
-      messages = accessCopyForState(serverStatus.accessState, repo, owner);
-    } else if (!preflight.appInstalled) {
-      installationId = serverStatus.installationId ?? installationId;
-      accessState = serverStatus.accessState;
-      messages = accessCopyForState(serverStatus.accessState, repo, owner);
-    }
-  }
-
   if (!configured) {
-    accessState = "not_configured";
-    messages = accessCopyForState("not_configured", repo, owner);
+    const authoritativeState: AuthoritativeGitHubAccessState = "app_not_configured";
+    return {
+      connected: false,
+      configured: false,
+      repository: fullName,
+      owner,
+      canRead: true,
+      canCreateBranch: false,
+      canCreatePullRequest: false,
+      defaultBranch: input.branch,
+      commitSha: input.commitSha,
+      accessState: "not_configured",
+      authoritativeState,
+      installationTokenAvailable: false,
+      messages: accessCopyForState("not_configured", repo, owner),
+    };
   }
+
+  const serverStatus = await resolveServerInstallationStatus({ owner, repo });
+  const authoritativeState = mapToAuthoritativeAccessState(serverStatus.accessState);
+  const connected = isRepositoryVerifiedState(authoritativeState) && serverStatus.connected;
+  const messages = accessCopyForState(serverStatus.accessState, repo, owner);
 
   return {
     connected,
-    configured,
-    installationId,
+    configured: true,
+    installationId: serverStatus.installationId,
     repository: fullName,
-    owner: preflight.repositoryOwner,
-    canRead: preflight.repositoryAccessible || preflight.repositoryIsPublic === true,
+    owner,
+    canRead: true,
     canCreateBranch: connected,
     canCreatePullRequest: connected,
     defaultBranch: input.branch,
     commitSha: input.commitSha,
-    commitMatches: preflight.commitMatches,
-    accessState,
+    accessState: serverStatus.accessState,
+    authoritativeState,
+    installationTokenAvailable: serverStatus.installationTokenAvailable,
     messages,
   };
 }

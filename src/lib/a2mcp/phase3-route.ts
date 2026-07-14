@@ -14,6 +14,7 @@ import { resolveBindingFromBody } from "@/lib/okx/a2mcp-adapter";
 import { getA2mcpService } from "@/lib/okx/services";
 import { signOkxReceipt } from "@/lib/okx/payment-provider";
 import type { CommerceOperation } from "@/lib/payment/types";
+import { paymentRequiredJsonResponse } from "@/lib/payment/x402-payment-required";
 
 export interface Phase3RouteOptions {
   paid?: boolean;
@@ -92,7 +93,7 @@ export async function runPhase3ToolRoute(
     });
   } catch (err) {
     if (err instanceof PaymentRequiredError) {
-      return NextResponse.json(err.body, { status: 402 });
+      return paymentRequiredJsonResponse(err.body, 402);
     }
     if (err instanceof EntitlementDeniedError) {
       return NextResponse.json(

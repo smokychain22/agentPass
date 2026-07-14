@@ -69,6 +69,9 @@ export function FixPrA2AFlow({
 
   const trustedTestPayment = isTrustedTestQuote(quote);
 
+  const githubVerified =
+    github?.authoritativeState === "repository_verified" && github?.connected === true;
+
   const repository = `${findings.repo.owner}/${findings.repo.name}`;
   const commitSha = findings.repo.commitSha ?? "";
   const selectedSafe = useMemo(
@@ -243,12 +246,14 @@ export function FixPrA2AFlow({
     <div className="space-y-4">
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-3">Repository connection</p>
-        {github?.connected ? (
+        {githubVerified ? (
           <div className="space-y-1 text-sm">
-            <p className="text-signal">GitHub connected</p>
-            <p className="text-muted-foreground">Branch and pull-request access confirmed</p>
+            <p className="text-signal">Repository access verified</p>
+            <p className="text-muted-foreground">
+              GitHub App installation confirmed with branch and pull-request write access.
+            </p>
           </div>
-        ) : github?.configured === false ? (
+        ) : github?.authoritativeState === "app_not_configured" || github?.configured === false ? (
           <div className="space-y-1 text-sm">
             <p className="font-medium text-foreground">GitHub App is not configured</p>
             <p className="text-muted-foreground">
@@ -439,7 +444,7 @@ export function FixPrA2AFlow({
 
         <div className="mt-4 flex flex-wrap gap-2">
           {!quote && !hideQuoteButton && (
-            <Button onClick={startQuote} disabled={loading || !github?.connected || selectedSafe.length === 0}>
+            <Button onClick={startQuote} disabled={loading || !githubVerified || selectedSafe.length === 0}>
               {loading ? <Loader2 className="animate-spin" /> : scopeReviewed ? "Refresh quote" : "Review cleanup scope"}
             </Button>
           )}

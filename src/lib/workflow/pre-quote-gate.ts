@@ -101,7 +101,7 @@ export async function assertPreQuoteGate(input: PreQuoteGateInput): Promise<PreQ
     }
   }
 
-  if (input.github && !input.github.connected) {
+  if (input.github && (input.github.authoritativeState !== "repository_verified" || !input.github.connected)) {
     throw new PreQuoteGateError("GitHub write access is required before quote creation.", {
       code: "github_authorization_required",
       httpStatus: 403,

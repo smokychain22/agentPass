@@ -91,7 +91,7 @@ export async function POST(request: Request) {
       commitSha: body.commitSha,
       sessionKey: sessionKey ?? undefined,
     });
-    if (!github.connected) {
+    if (!github.connected || github.authoritativeState !== "repository_verified") {
       return NextResponse.json(
         { ok: false, error: "github_authorization_required", github },
         { status: 403 }
