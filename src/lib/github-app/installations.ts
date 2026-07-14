@@ -2,6 +2,7 @@ import { createGitHubAppJwt } from "./jwt";
 import type { GitHubInstallationSession, InstallationTokenResult } from "./types";
 import { getInstallationOctokit } from "./octokit";
 import { repositoryFullNameInList } from "./repository-match";
+import { GitHubClient } from "@/lib/github/github-client";
 
 export async function createInstallationAccessToken(
   installationId: number
@@ -66,9 +67,27 @@ export async function installationHasRepoAccess(
   owner: string,
   repo: string
 ): Promise<boolean> {
+  if (await probeRepositoryWithInstallationToken(installationId, owner, repo)) {
+    return true;
+  }
   try {
     const octokit = await getInstallationOctokit(installationId);
     await octokit.rest.repos.get({ owner, repo });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function probeRepositoryWithInstallationToken(
+  installationId: number,
+  owner: string,
+  repo: string
+): Promise<boolean> {
+  try {
+    const installationToken = await createInstallationAccessToken(installationId);
+    const client = new GitHubClient(installationToken.token);
+    await client.getRepo(owner, repo);
     return true;
   } catch {
     return false;

@@ -11,6 +11,7 @@ import {
   installationIncludesRepository,
   installationIncludesRepositoryWithRetry,
   listInstallationAccessibleRepos,
+  probeRepositoryWithInstallationToken,
 } from "@/lib/github-app/installations";
 import { getAppOctokit } from "@/lib/github-app/octokit";
 import { lookupRepositoryInstallationBinding } from "@/lib/github-app/install-flow-store";
@@ -287,6 +288,14 @@ export async function resolveAuthoritativeRepositoryAccess(input: {
 
   if (!repositorySelected && bindingTrusted) {
     repositorySelected = true;
+  }
+
+  if (!repositorySelected) {
+    repositorySelected = await probeRepositoryWithInstallationToken(
+      installationId,
+      input.owner,
+      input.repo
+    );
   }
 
   if (!repositorySelected) {
