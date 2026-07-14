@@ -29,6 +29,10 @@ export const INTERNAL_ROLES: Record<
     label: "GitHub Delivery Worker",
     responsibility: "Creates cleanup branches and pull requests after approval.",
   },
+  ci_monitor: {
+    label: "CI Monitor",
+    responsibility: "Monitors required GitHub and provider checks after pull request creation.",
+  },
   receipt_signer: {
     label: "Receipt Signer",
     responsibility: "Signs execution receipts when operator key is configured.",

@@ -155,6 +155,7 @@ function loadLocalDb(): DurableDb {
       asp_jobs: parsed.asp_jobs ?? {},
       repository_jobs: parsed.repository_jobs ?? {},
       worker_instances: parsed.worker_instances ?? {},
+      pr_delivery_monitors: parsed.pr_delivery_monitors ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);

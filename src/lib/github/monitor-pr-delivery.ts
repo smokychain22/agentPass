@@ -3,13 +3,12 @@ import { A2ATaskStateMachine } from "@/lib/a2a/task-state-machine";
 import { saveA2ATask } from "@/lib/a2a/task-store";
 import { deliverTaskCallback, persistTask } from "@/lib/a2a/callbacks";
 import { markQuoteCompleted } from "@/lib/payment";
-import { createExecutionReceipt } from "@/lib/execution";
 import {
   buildDeliveryReceiptChecks,
   inspectPullRequestChecks,
 } from "@/lib/github/pr-check-monitor";
 import type { PrDeliveryMonitorRecord } from "@/lib/github/pr-check-types";
-import { signExecutionReceipt } from "@/lib/operator/sign-receipt";
+import { signExecutionReceipt, type ExecutionReceipt } from "@/lib/operator/sign-receipt";
 
 async function syncDeliveryTask(
   task: A2ATaskRecord,
@@ -52,21 +51,19 @@ export async function monitorTaskPullRequestDelivery(input: {
   });
 
   const receiptChecks = buildDeliveryReceiptChecks(monitor);
-  const signed = signExecutionReceipt(
-    createExecutionReceipt({
-      taskId: input.task.id,
-      repository: `${input.task.repository.owner}/${input.task.repository.name}`,
-      commitSha: input.task.repository.commitSha ?? monitor.sourceCommitSha,
-      findingIds: input.task.input.findingIds ?? [],
-      patchHash: "sha256:pr",
-      verificationHash: "sha256:pr-checks",
-      status: monitor.deliveryReady ? "verified" : "failed",
-      quoteId: input.task.input.quoteId,
-      paymentReference: input.task.input.paymentReference,
-      timestamp: new Date().toISOString(),
-      pullRequestUrl: input.prUrl,
-    })
-  );
+  const signed = signExecutionReceipt({
+    taskId: input.task.id,
+    repository: `${input.task.repository.owner}/${input.task.repository.name}`,
+    commitSha: input.task.repository.commitSha ?? monitor.sourceCommitSha,
+    findingIds: input.task.input.findingIds ?? [],
+    patchHash: "sha256:pr",
+    verificationHash: "sha256:pr-checks",
+    status: monitor.deliveryReady ? "verified" : "failed",
+    quoteId: input.task.input.quoteId,
+    paymentReference: input.task.input.paymentReference,
+    timestamp: new Date().toISOString(),
+    pullRequestUrl: input.prUrl,
+  } satisfies ExecutionReceipt);
 
   const receipt = {
     ...signed.signedReceipt,

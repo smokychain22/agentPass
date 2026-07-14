@@ -95,6 +95,7 @@ export async function withDurableDb<T>(
       asp_jobs: {},
       repository_jobs: {},
       worker_instances: {},
+      pr_delivery_monitors: {},
     };
     return fn(db);
   });
