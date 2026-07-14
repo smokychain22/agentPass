@@ -62,6 +62,7 @@ import {
   PreQuoteGateError,
 } from "@/lib/workflow/pre-quote-gate";
 import { flattenFindings } from "@/lib/findings/client";
+import { monitorTaskPullRequestDelivery } from "@/lib/github/monitor-pr-delivery";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -852,28 +853,11 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
       githubToken: task.input.githubToken,
     });
 
-    const receipt = createExecutionReceipt({
-      taskId: task.id,
-      repository: `${findings.repo.owner}/${findings.repo.name}`,
-      commitSha: findings.repo.commitSha ?? "unknown",
-      findingIds: task.input.findingIds ?? [],
-      patchHash: "sha256:pr",
-      verificationHash: "sha256:pr",
-      status: "verified",
-      quoteId: task.input.quoteId,
-      paymentReference: task.input.paymentReference,
-      timestamp: new Date().toISOString(),
-    });
-
-    return completeTask(current, sm, {
-      ...current.result,
-      pullRequest: {
-        url: pr.data.pullRequest.url,
-        number: pr.data.pullRequest.number,
-        title: pr.data.pullRequest.title,
-        branch: pr.data.repo.cleanupBranch,
-      },
-      receipt: receipt as Record<string, unknown>,
+    return monitorTaskPullRequestDelivery({
+      task: current,
+      prNumber: pr.data.pullRequest.number,
+      prUrl: pr.data.pullRequest.url,
+      branch: pr.data.repo.cleanupBranch,
     });
   } catch (err) {
     return failTask(
@@ -906,6 +890,7 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
     verification: task.result.verification ?? {},
     pullRequest: task.result.pullRequest ?? {},
     receipt: task.result.receipt ?? {},
+    prDelivery: task.result.prDelivery ?? {},
     transitions: task.transitions,
     limitations: task.limitations,
     error: task.error,

@@ -19,6 +19,11 @@ export type A2ATaskStatus =
   | "validating_patch"
   | "verifying"
   | "creating_pull_request"
+  | "monitoring_checks"
+  | "checks_failed"
+  | "diagnosis_ready"
+  | "owner_action_required"
+  | "delivery_ready"
   | "completed"
   | "rejected"
   | "unsupported"
@@ -36,12 +41,15 @@ export const A2A_FAILURE_STATUSES: A2ATaskStatus[] = [
   "analysis_failed",
   "verification_failed",
   "delivery_failed",
+  "checks_failed",
+  "owner_action_required",
   "cancelled",
   "expired",
 ];
 
 export const A2A_TERMINAL_STATUSES: A2ATaskStatus[] = [
   "completed",
+  "delivery_ready",
   ...A2A_FAILURE_STATUSES,
 ];
 
@@ -52,6 +60,7 @@ export type InternalRole =
   | "fix_executor"
   | "verification_worker"
   | "github_delivery_worker"
+  | "ci_monitor"
   | "receipt_signer";
 
 export interface A2AApprovalCheckpoint {
@@ -116,6 +125,7 @@ export interface A2ATaskResult {
   receipt?: Record<string, unknown>;
   guard?: Record<string, unknown>;
   baselineRun?: Record<string, unknown>;
+  prDelivery?: Record<string, unknown>;
 }
 
 export interface A2ATaskWorkflowMeta {

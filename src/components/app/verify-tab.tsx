@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, Circle, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, ExternalLink, Loader2, RefreshCw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { useAppSession } from "@/components/app/app-session";
 import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
+import {
+  fetchPrDeliveryMonitor,
+  retryPrDeliveryChecks,
+  type PrDeliveryMonitor,
+} from "@/lib/workflow/client";
 import { cn } from "@/lib/utils";
 
 const TIMELINE_STEPS = [
@@ -18,6 +23,7 @@ const TIMELINE_STEPS = [
   "Patch validated",
   "Verification completed",
   "Pull request created",
+  "Required checks monitored",
   "Delivery receipt signed",
 ] as const;
 
@@ -29,16 +35,42 @@ function stepDone(status: string, index: number): boolean {
     "validating_patch",
     "verifying",
     "creating_pull_request",
+    "monitoring_checks",
     "awaiting_approval",
+    "delivery_ready",
     "completed",
+    "checks_failed",
+    "diagnosis_ready",
+    "owner_action_required",
   ];
   const pos = order.indexOf(status);
-  if (status === "completed") return true;
+  if (status === "delivery_ready" || status === "completed") return true;
   return pos >= index + 1;
+}
+
+function checkIcon(conclusion: string | null | undefined, pending: boolean) {
+  if (pending) return <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-electric" aria-hidden />;
+  if (conclusion === "success") {
+    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-signal" aria-hidden />;
+  }
+  if (conclusion === "failure" || conclusion === "timed_out" || conclusion === "action_required") {
+    return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" aria-hidden />;
+  }
+  return <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />;
+}
+
+function cleanupCausedLabel(value: boolean | "unknown"): string {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  return "Unknown";
 }
 
 export function VerifyTab() {
   const { session, findings, patchKit, a2aTask } = useAppSession();
+  const [monitor, setMonitor] = useState<PrDeliveryMonitor | null>(null);
+  const [loadingChecks, setLoadingChecks] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   const gates = useMemo(
     () =>
@@ -51,6 +83,41 @@ export function VerifyTab() {
     [session.scanComplete, findings, patchKit, a2aTask]
   );
 
+  const task = a2aTask;
+  const receipt = (task?.receipt ?? {}) as Record<string, unknown>;
+  const failed =
+    task?.status === "verification_failed" ||
+    task?.status === "delivery_failed" ||
+    task?.status === "checks_failed" ||
+    task?.status === "owner_action_required";
+
+  const prDelivery = (task?.prDelivery as PrDeliveryMonitor | undefined) ?? monitor;
+
+  const refreshChecks = useCallback(async () => {
+    if (!task?.pullRequest?.number || !findings) return;
+    setLoadingChecks(true);
+    setCheckError(null);
+    try {
+      const { monitor: next } = await fetchPrDeliveryMonitor({
+        owner: findings.repo.owner,
+        repo: findings.repo.name,
+        prNumber: task.pullRequest.number,
+        taskId: task.taskId,
+        poll: true,
+      });
+      setMonitor(next);
+    } catch (err) {
+      setCheckError(err instanceof Error ? err.message : "Could not refresh check diagnostics.");
+    } finally {
+      setLoadingChecks(false);
+    }
+  }, [findings, task?.pullRequest?.number, task?.taskId]);
+
+  useEffect(() => {
+    if (!task?.pullRequest?.number || prDelivery) return;
+    void refreshChecks();
+  }, [prDelivery, refreshChecks, task?.pullRequest?.number]);
+
   if (!gates.verifyUnlocked) {
     return (
       <LockedTab
@@ -61,16 +128,30 @@ export function VerifyTab() {
     );
   }
 
-  const task = a2aTask;
-  const receipt = (task?.receipt ?? {}) as Record<string, unknown>;
-  const failed = task?.status === "verification_failed" || task?.status === "delivery_failed";
+  const handleRetry = async () => {
+    if (!task?.pullRequest?.number || !findings) return;
+    setRetryLoading(true);
+    try {
+      const result = await retryPrDeliveryChecks({
+        owner: findings.repo.owner,
+        repo: findings.repo.name,
+        prNumber: task.pullRequest.number,
+        taskId: task.taskId,
+      });
+      setMonitor(result.monitor);
+    } catch (err) {
+      setCheckError(err instanceof Error ? err.message : "Retry failed.");
+    } finally {
+      setRetryLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
       <WorkspaceSection
         label="Delivery evidence"
         title="Verify"
-        description="Chronological execution timeline for the paid A2A cleanup delivery."
+        description="RepoDiet monitors required GitHub and provider checks after your pull request is created."
       />
 
       <Panel variant="elevated" padding="md">
@@ -78,7 +159,7 @@ export function VerifyTab() {
         <ol className="space-y-2 text-sm">
           {TIMELINE_STEPS.map((label, index) => {
             const done = task ? stepDone(task.status, index) : false;
-            const failedHere = failed && index === 5;
+            const failedHere = failed && index >= 7;
             return (
               <li key={label} className="flex items-start gap-2">
                 {failedHere ? (
@@ -116,19 +197,11 @@ export function VerifyTab() {
                 </dd>
               </div>
             )}
-            {task.pullRequest?.branch && (
-              <div>
-                <dt className="text-muted-foreground">Branch</dt>
-                <dd className="font-mono text-xs">{task.pullRequest.branch}</dd>
-              </div>
-            )}
             <div>
-              <dt className="text-muted-foreground">Source commit</dt>
-              <dd className="font-mono text-xs">{task.repository.commitSha?.slice(0, 12) ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">ASP Agent ID</dt>
-              <dd className="font-mono">5283</dd>
+              <dt className="text-muted-foreground">Delivery ready</dt>
+              <dd className="font-mono">
+                {receipt.deliveryReady === true || prDelivery?.deliveryReady ? "true" : "false"}
+              </dd>
             </div>
             {typeof receipt.receiptId === "string" && (
               <div>
@@ -137,15 +210,135 @@ export function VerifyTab() {
               </div>
             )}
           </dl>
-          {task.error && (
-            <p className="mt-3 text-sm text-red-300">Failed check: {task.error}</p>
-          )}
         </Panel>
       )}
 
-      <Button variant="secondary" asChild>
-        <Link href="/app?tab=patch">Back to Fix & PR</Link>
-      </Button>
+      {prDelivery && (
+        <>
+          <Panel variant="elevated" padding="md">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="ds-label">Required checks</p>
+              <Button variant="secondary" size="sm" onClick={() => void refreshChecks()} disabled={loadingChecks}>
+                {loadingChecks ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                <span className="ml-2">Re-run verification</span>
+              </Button>
+            </div>
+            <ul className="space-y-2 text-sm">
+              {prDelivery.checks.map((check) => {
+                const pending = check.status !== "completed";
+                return (
+                  <li key={check.checkName} className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2">
+                      {checkIcon(check.conclusion, pending)}
+                      <div>
+                        <p>
+                          {check.provider === "vercel" ? "Vercel" : check.provider} {check.checkName}
+                          {check.required ? "" : " (optional)"}
+                          {": "}
+                          <span className="font-mono text-xs">
+                            {pending ? check.status.toUpperCase() : (check.conclusion ?? "unknown").toUpperCase()}
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                    {check.detailsUrl && (
+                      <a
+                        href={check.detailsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-electric underline"
+                      >
+                        Open provider logs
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </Panel>
+
+          {prDelivery.vercelProjects && prDelivery.vercelProjects.projects.length > 1 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Connected Vercel projects</p>
+              <ul className="space-y-2 text-sm">
+                {prDelivery.vercelProjects.projects.map((project) => (
+                  <li key={project.name}>
+                    <span className="font-mono">{project.name}</span>
+                    {" — "}
+                    {project.likelyCanonical ? "likely canonical" : "review"}
+                    {". "}
+                    {project.reason}
+                  </li>
+                ))}
+              </ul>
+              {prDelivery.vercelProjects.ownerAction && (
+                <p className="mt-3 text-sm text-amber-200">{prDelivery.vercelProjects.ownerAction}</p>
+              )}
+            </Panel>
+          )}
+
+          {prDelivery.diagnoses.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-3">Diagnosis</p>
+              <div className="space-y-4 text-sm">
+                {prDelivery.diagnoses.map((diagnosis) => (
+                  <div key={diagnosis.firstActionableError} className="rounded-md border border-border/60 p-3">
+                    <p className="font-mono text-xs text-red-300">{diagnosis.firstActionableError}</p>
+                    <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <dt className="text-muted-foreground">Classification</dt>
+                        <dd>{diagnosis.classification}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">RepoDiet caused this</dt>
+                        <dd>{cleanupCausedLabel(diagnosis.cleanupCausedThis)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Confidence</dt>
+                        <dd>{diagnosis.confidence}</dd>
+                      </div>
+                      {diagnosis.affectedFile && (
+                        <div>
+                          <dt className="text-muted-foreground">Affected file</dt>
+                          <dd className="font-mono text-xs">{diagnosis.affectedFile}</dd>
+                        </div>
+                      )}
+                    </dl>
+                    <p className="mt-2 text-muted-foreground">{diagnosis.recommendedAction}</p>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {prDelivery.ownerActions.length > 0 && (
+            <Panel variant="elevated" padding="md">
+              <p className="ds-label mb-2">Owner actions</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-amber-100">
+                {prDelivery.ownerActions.map((action) => (
+                  <li key={action}>{action}</li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+        </>
+      )}
+
+      {checkError && <p className="text-sm text-red-300">{checkError}</p>}
+      {task?.error && <p className="text-sm text-red-300">Failed check: {task.error}</p>}
+
+      <div className="flex flex-wrap gap-2">
+        {task?.pullRequest?.number && (
+          <Button variant="secondary" onClick={() => void handleRetry()} disabled={retryLoading}>
+            {retryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Retry failed checks
+          </Button>
+        )}
+        <Button variant="secondary" asChild>
+          <Link href="/app?tab=patch">Back to Fix & PR</Link>
+        </Button>
+      </div>
     </div>
   );
 }

@@ -29,7 +29,8 @@ export type PersistentCollection =
   | "payment_entitlements"
   | "asp_jobs"
   | "repository_jobs"
-  | "worker_instances";
+  | "worker_instances"
+  | "pr_delivery_monitors";
 
 export type ArtifactCollection = "artifacts";
 
@@ -60,6 +61,7 @@ export interface DurableDb {
   asp_jobs: Record<string, unknown>;
   repository_jobs: Record<string, unknown>;
   worker_instances: Record<string, unknown>;
+  pr_delivery_monitors: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -89,6 +91,7 @@ const DEFAULT_DB: DurableDb = {
   asp_jobs: {},
   repository_jobs: {},
   worker_instances: {},
+  pr_delivery_monitors: {},
 };
 
 let redisClient: Redis | null = null;

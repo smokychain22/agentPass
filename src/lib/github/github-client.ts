@@ -251,4 +251,211 @@ export class GitHubClient {
       );
     }
   }
+
+  async getPullRequest(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<{
+    number: number;
+    url: string;
+    headSha: string;
+    baseSha: string;
+    headRef: string;
+    baseRef: string;
+    state: string;
+  }> {
+    const pr = await this.request<{
+      number: number;
+      html_url: string;
+      state: string;
+      head: { sha: string; ref: string };
+      base: { sha: string; ref: string };
+    }>(`/repos/${owner}/${repo}/pulls/${prNumber}`);
+    return {
+      number: pr.number,
+      url: pr.html_url,
+      headSha: pr.head.sha,
+      baseSha: pr.base.sha,
+      headRef: pr.head.ref,
+      baseRef: pr.base.ref,
+      state: pr.state,
+    };
+  }
+
+  async listCommitCheckRuns(
+    owner: string,
+    repo: string,
+    ref: string
+  ): Promise<
+    Array<{
+      id: number;
+      name: string;
+      status: string;
+      conclusion: string | null;
+      details_url?: string;
+      started_at?: string;
+      completed_at?: string;
+      external_id?: string;
+      output?: { title?: string; summary?: string; text?: string };
+      app?: { slug?: string; name?: string };
+    }>
+  > {
+    const data = await this.request<{
+      check_runs: Array<{
+        id: number;
+        name: string;
+        status: string;
+        conclusion: string | null;
+        details_url?: string;
+        started_at?: string;
+        completed_at?: string;
+        external_id?: string;
+        output?: { title?: string; summary?: string; text?: string };
+        app?: { slug?: string; name?: string };
+      }>;
+    }>(`/repos/${owner}/${repo}/commits/${ref}/check-runs?per_page=100`);
+    return data.check_runs ?? [];
+  }
+
+  async getBranchRequiredCheckContexts(
+    owner: string,
+    repo: string,
+    branch: string
+  ): Promise<string[]> {
+    try {
+      const protection = await this.request<{
+        required_status_checks?: { contexts?: string[]; checks?: Array<{ context: string }> };
+      }>(
+        `/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`,
+        { expectedStatuses: [200] }
+      );
+      const fromContexts = protection.required_status_checks?.contexts ?? [];
+      const fromChecks =
+        protection.required_status_checks?.checks?.map((entry) => entry.context) ?? [];
+      return [...new Set([...fromContexts, ...fromChecks])];
+    } catch {
+      return [];
+    }
+  }
+
+  async listWorkflowRunsForCommit(
+    owner: string,
+    repo: string,
+    headSha: string
+  ): Promise<
+    Array<{
+      id: number;
+      name: string;
+      status: string;
+      conclusion: string | null;
+      html_url?: string;
+      created_at?: string;
+      updated_at?: string;
+    }>
+  > {
+    const data = await this.request<{
+      workflow_runs: Array<{
+        id: number;
+        name: string;
+        status: string;
+        conclusion: string | null;
+        html_url?: string;
+        created_at?: string;
+        updated_at?: string;
+      }>;
+    }>(`/repos/${owner}/${repo}/actions/runs?head_sha=${headSha}&per_page=20`);
+    return data.workflow_runs ?? [];
+  }
+
+  async listWorkflowRunJobs(
+    owner: string,
+    repo: string,
+    runId: number
+  ): Promise<
+    Array<{
+      id: number;
+      name: string;
+      status: string;
+      conclusion: string | null;
+      html_url?: string;
+      started_at?: string;
+      completed_at?: string;
+      steps?: Array<{
+        name: string;
+        status: string;
+        conclusion: string | null;
+        number: number;
+      }>;
+    }>
+  > {
+    const data = await this.request<{
+      jobs: Array<{
+        id: number;
+        name: string;
+        status: string;
+        conclusion: string | null;
+        html_url?: string;
+        started_at?: string;
+        completed_at?: string;
+        steps?: Array<{
+          name: string;
+          status: string;
+          conclusion: string | null;
+          number: number;
+        }>;
+      }>;
+    }>(`/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`);
+    return data.jobs ?? [];
+  }
+
+  async downloadWorkflowJobLog(
+    owner: string,
+    repo: string,
+    jobId: number
+  ): Promise<string | undefined> {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`,
+      { headers: this.headers(), redirect: "follow" }
+    );
+    if (!res.ok) return undefined;
+    const text = await res.text();
+    return text;
+  }
+
+  async rerunWorkflowRun(owner: string, repo: string, runId: number): Promise<boolean> {
+    try {
+      await this.request(`/repos/${owner}/${repo}/actions/runs/${runId}/rerun`, {
+        method: "POST",
+        expectedStatuses: [201],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async rerunFailedWorkflowRun(owner: string, repo: string, runId: number): Promise<boolean> {
+    try {
+      await this.request(`/repos/${owner}/${repo}/actions/runs/${runId}/rerun-failed-jobs`, {
+        method: "POST",
+        expectedStatuses: [201],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async rerequestCheckSuite(owner: string, repo: string, checkSuiteId: number): Promise<boolean> {
+    try {
+      await this.request(`/repos/${owner}/${repo}/check-suites/${checkSuiteId}/rerequest`, {
+        method: "POST",
+        expectedStatuses: [201],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

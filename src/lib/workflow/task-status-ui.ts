@@ -8,6 +8,11 @@ const STATUS_LABELS: Record<string, string> = {
   verifying: "Verifying in sandbox",
   awaiting_approval: "Ready to open pull request",
   creating_pull_request: "Creating pull request",
+  monitoring_checks: "Monitoring required GitHub checks",
+  delivery_ready: "Delivery ready — required checks passed",
+  checks_failed: "Required provider checks failed",
+  diagnosis_ready: "Check failure diagnosed — review required",
+  owner_action_required: "Owner action required in deployment provider",
   completed: "Cleanup pull request delivered",
   payment_failed: "Payment failed",
   verification_failed: "Verification failed",
@@ -23,10 +28,13 @@ export function isWorkflowTaskTerminal(task: WorkflowA2ATask | null | undefined)
   if (!task) return false;
   return new Set([
     "completed",
+    "delivery_ready",
     "payment_failed",
     "verification_failed",
     "delivery_failed",
     "analysis_failed",
+    "checks_failed",
+    "owner_action_required",
     "cancelled",
     "expired",
   ]).has(task.status);
@@ -39,6 +47,8 @@ export function isWorkflowTaskFailure(task: WorkflowA2ATask | null | undefined):
     "verification_failed",
     "delivery_failed",
     "analysis_failed",
+    "checks_failed",
+    "owner_action_required",
   ]).has(task.status);
 }
 
@@ -80,6 +90,9 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
 
   if (task.status === "delivery_failed") {
     return "Payment was accepted, but GitHub pull-request delivery did not complete. Your test payment was not a wallet transfer in test mode. Start a new cleanup attempt after reviewing the error below.";
+  }
+  if (task.status === "checks_failed" || task.status === "owner_action_required") {
+    return "Required GitHub or provider checks failed after the pull request was created. Review the Verify tab diagnosis, fix provider configuration or repository issues, then retry failed checks.";
   }
   if (task.status === "verification_failed") {
     return "Payment was accepted, but RepoDiet could not verify cleanup changes for the selected scope. Try fewer safe findings or re-run eligibility preflight before paying again.";

@@ -31,6 +31,7 @@ export interface WorkflowA2ATask {
   transitions: Array<{ status: string; at: string; detail?: string }>;
   pullRequest?: { url?: string; branch?: string; number?: number; title?: string };
   receipt?: Record<string, unknown>;
+  prDelivery?: PrDeliveryMonitor;
   verification?: { status?: string };
   error?: string;
   limitations?: string[];
@@ -38,6 +39,46 @@ export interface WorkflowA2ATask {
     summary?: string;
     changes?: Array<{ path: string; action: string; summary?: string }>;
   };
+}
+
+export interface PrDeliveryCheck {
+  checkName: string;
+  provider: string;
+  status: string;
+  conclusion: string | null;
+  required: boolean;
+  detailsUrl?: string;
+}
+
+export interface PrDeliveryDiagnosis {
+  classification: string;
+  cleanupCausedThis: boolean | "unknown";
+  confidence: string;
+  firstActionableError: string;
+  affectedFile?: string;
+  recommendedAction: string;
+}
+
+export interface PrDeliveryMonitor {
+  deliveryState: string;
+  deliveryReady: boolean;
+  checks: PrDeliveryCheck[];
+  diagnoses: PrDeliveryDiagnosis[];
+  baselineComparisons: Array<{
+    checkName: string;
+    baselineConclusion?: string | null;
+    prConclusion?: string | null;
+    cleanupCausedThis: boolean | "unknown";
+    sameDiagnostic: boolean;
+  }>;
+  vercelProjects?: {
+    provider: string;
+    projects: Array<{ name: string; status: string; conclusion: string | null; likelyCanonical: boolean; reason: string }>;
+    ownerAction?: string;
+  };
+  ownerActions: string[];
+  prUrl: string;
+  prNumber: number;
 }
 
 export async function fetchRepositoryStatus(input: {
@@ -256,4 +297,63 @@ export async function approveWorkflowDelivery(taskId: string): Promise<WorkflowA
     throw new Error(data.error ?? "PR approval failed.");
   }
   return data.task;
+}
+
+export async function fetchPrDeliveryMonitor(input: {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  taskId?: string;
+  installationId?: number;
+  poll?: boolean;
+}): Promise<{ monitor: PrDeliveryMonitor; receiptChecks: Record<string, unknown> }> {
+  const params = new URLSearchParams({
+    owner: input.owner,
+    repo: input.repo,
+    prNumber: String(input.prNumber),
+  });
+  if (input.taskId) params.set("taskId", input.taskId);
+  if (input.installationId) params.set("installation_id", String(input.installationId));
+  if (input.poll) params.set("poll", "true");
+
+  const res = await fetch(`/api/github/pr-checks?${params}`, { cache: "no-store" });
+  const data = (await res.json()) as {
+    ok: boolean;
+    monitor?: PrDeliveryMonitor;
+    receiptChecks?: Record<string, unknown>;
+    error?: string;
+  };
+  if (!res.ok || !data.ok || !data.monitor) {
+    throw new Error(data.error ?? "Failed to load pull request check diagnostics.");
+  }
+  return { monitor: data.monitor, receiptChecks: data.receiptChecks ?? {} };
+}
+
+export async function retryPrDeliveryChecks(input: {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  taskId?: string;
+  installationId?: number;
+}): Promise<{ monitor: PrDeliveryMonitor; retried: boolean; message: string }> {
+  const res = await fetch("/api/github/pr-checks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, action: "retry" }),
+  });
+  const data = (await res.json()) as {
+    ok: boolean;
+    monitor?: PrDeliveryMonitor;
+    retried?: boolean;
+    message?: string;
+    error?: string;
+  };
+  if (!res.ok || !data.ok || !data.monitor) {
+    throw new Error(data.error ?? "Failed to retry pull request checks.");
+  }
+  return {
+    monitor: data.monitor,
+    retried: data.retried === true,
+    message: data.message ?? "Retry requested.",
+  };
 }
