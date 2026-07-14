@@ -5,9 +5,11 @@
  * Required for safe PR delivery: typecheck + build (when present).
  * Advisory only: lint + test (repos often have pre-existing lint debt).
  *
- * Pre-existing required-check failure (same failure on baseline AND patched)
- * does not block delivery — cleanup did not introduce the break.
+ * Pre-existing required-check failure: patched required-check diagnostics must be
+ * a subset of baseline diagnostics. Equal exit codes alone are never sufficient.
  */
+
+import { patchedErrorsAreSubsetOfBaseline } from "./sandbox-diagnostics";
 
 export const REQUIRED_SANDBOX_SCRIPTS = ["typecheck", "build"] as const;
 export const ADVISORY_SANDBOX_SCRIPTS = ["lint", "test"] as const;
@@ -24,7 +26,6 @@ export function sandboxPhasePassed(checks: SandboxScriptCheck[]): boolean {
     (REQUIRED_SANDBOX_SCRIPTS as readonly string[]).includes(c.name)
   );
   if (required.length === 0) {
-    // No typecheck/build → any failure blocks (including lint-only repos).
     return executed.every((c) => c.exitCode === 0);
   }
   return required.every((c) => c.exitCode === 0);
@@ -52,7 +53,6 @@ export function firstAdvisoryFailure(
   );
 }
 
-/** Normalize check stderr so flaky timestamps do not look like new regressions. */
 export function fingerprintSandboxCheck(check: SandboxScriptCheck): string {
   const stderr = check.stderr
     .replace(/\u001b\[[0-9;]*m/g, "")
@@ -71,9 +71,13 @@ export function isPreExistingRequiredFailure(
   const patchedFailed = firstRequiredFailure(patchedChecks);
   if (!baselineFailed || !patchedFailed) return false;
   if (baselineFailed.name !== patchedFailed.name) return false;
-  // Same script failed both sides — treat as pre-existing unless the fingerprint diverges sharply.
-  return fingerprintSandboxCheck(baselineFailed) === fingerprintSandboxCheck(patchedFailed)
-    || baselineFailed.exitCode === patchedFailed.exitCode;
+
+  const subset = patchedErrorsAreSubsetOfBaseline(baselineFailed, patchedFailed);
+  if (subset === true) return true;
+  if (subset === false) return false;
+
+  // Unparseable comparison — only allow when stderr fingerprints match exactly.
+  return fingerprintSandboxCheck(baselineFailed) === fingerprintSandboxCheck(patchedFailed);
 }
 
 export function resolveSandboxVerificationOutcome(input: {
@@ -126,8 +130,6 @@ export function resolveSandboxVerificationOutcome(input: {
   }
 
   if (!baselineOk && !patchedOk) {
-    // Meridian-class case: unscanned commit already fails next build in sandbox.
-    // If cleanup did not change that required-check outcome, allow delivery.
     if (isPreExistingRequiredFailure(input.baselineChecks, input.patchedChecks)) {
       return { status: "verified" };
     }
@@ -142,7 +144,6 @@ export function resolveSandboxVerificationOutcome(input: {
     };
   }
 
-  // patchedOk && !baselineOk — cleanup did not worsen required checks
   return {
     status: "verified",
     error: undefined,

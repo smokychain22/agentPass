@@ -2,17 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { Finding } from "@/lib/findings/types";
-import {
-  convertSymbolToTypeOnlyImport,
-  removeUnusedSymbolFromImport,
-  removeUnusedSymbolAtLine,
-} from "@/lib/findings/unused-import-detector";
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
 import { isToolingDependency } from "@/lib/findings/framework-protected";
 import { resolvePhase1Plugin, resolvePhase1TransformPlugin, type Phase1PluginId } from "./fix-plugins/phase1-plugins";
 import { listStrategiesForFinding } from "./fix-strategies";
 import { blockerCodeFromPreflight } from "./candidate-lifecycle";
 import { hashSource, countDiffStats } from "./transform-audit";
+import { parseUnusedImportEvidence } from "./unused-import-evidence";
+import {
+  convertSymbolToTypeOnlyImportAst,
+  removeUnusedImportSpecifierAst,
+} from "./unused-import-ast";
+import { validateTransformedSourceSyntax } from "./validate-transform-syntax";
+import { isUnusedImportAutoTransformEnabled } from "./unused-import-policy";
 
 export type CandidateClassification =
   | "detected_candidate"
@@ -136,45 +138,44 @@ export async function resolveDependencyEntry(
   };
 }
 
-function importEvidence(finding: Finding): { importLine: string; symbol: string; lineNumber?: number } {
-  const importLine =
-    finding.evidence.signals.find((s) => s.startsWith("importLine="))?.slice("importLine=".length) ??
-    finding.evidence.summary;
-  const symbol =
-    finding.evidence.signals.find((s) => s.startsWith("symbol="))?.slice("symbol=".length) ?? "";
-  const lineRaw = finding.evidence.signals.find((s) => s.startsWith("line="))?.slice("line=".length);
-  const lineNumber = lineRaw ? Number(lineRaw) : undefined;
-  return { importLine, symbol, lineNumber: Number.isFinite(lineNumber) ? lineNumber : undefined };
-}
-
 function dryRunUnusedImport(
   source: string,
   finding: Finding,
   strategyId: string
 ): string | null {
-  const { importLine, symbol, lineNumber } = importEvidence(finding);
-  if (!symbol) return null;
+  if (!isUnusedImportAutoTransformEnabled()) {
+    return null;
+  }
+
+  const evidenceResult = parseUnusedImportEvidence(finding);
+  if (!evidenceResult.ok) {
+    return null;
+  }
+  const evidence = evidenceResult.evidence;
 
   let modified: string | null = null;
   switch (strategyId) {
     case "convert_to_type_only_import":
-      modified = convertSymbolToTypeOnlyImport(source, importLine, symbol);
+      modified = convertSymbolToTypeOnlyImportAst(source, evidence);
       break;
-    case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free": {
-      const partial = removeUnusedSymbolFromImport(source, importLine, symbol);
-      modified = partial === source ? null : partial;
-      break;
-    }
+    case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free":
     case "remove_unused_named_specifier":
     default:
-      modified = removeUnusedSymbolFromImport(source, importLine, symbol);
-      if (modified === source && lineNumber) {
-        modified = removeUnusedSymbolAtLine(source, lineNumber, symbol);
-      }
+      modified = removeUnusedImportSpecifierAst(source, evidence);
       break;
   }
 
-  return modified === source ? null : modified;
+  if (!modified || modified === source) return null;
+
+  const rel = finding.files[0] ?? evidence.filePath;
+  const syntax = validateTransformedSourceSyntax({
+    filePath: rel,
+    originalSource: source,
+    transformedSource: modified,
+  });
+  if (!syntax.ok) return null;
+
+  return modified;
 }
 
 export function buildTextDiff(relPath: string, original: string, modified: string): string {
@@ -392,6 +393,26 @@ export async function runFixPreflight(
       blocker,
       blockerCode: blockerCodeFromPreflight({ ...base, blocker, classification: "detected_candidate" }),
     };
+  }
+
+  if (finding.type === "unused_import") {
+    if (!isUnusedImportAutoTransformEnabled()) {
+      const blocker = "Unused-import auto-fix is disabled until AST transformer validation passes.";
+      return {
+        ...base,
+        blocker,
+        blockerCode: "plugin_not_implemented",
+      };
+    }
+    const evidenceResult = parseUnusedImportEvidence(finding);
+    if (!evidenceResult.ok) {
+      const blocker = `Invalid transform evidence: ${evidenceResult.reason}`;
+      return {
+        ...base,
+        blocker,
+        blockerCode: "invalid_transform_evidence",
+      };
+    }
   }
 
   if (plugin.id === "review_only") {

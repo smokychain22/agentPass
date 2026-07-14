@@ -1,5 +1,6 @@
 import type { PatchKitPayload } from "./types";
 import type { FindingsPayload } from "@/lib/findings/types";
+import { formatBuildGateFailureMessage } from "./build-gate-message";
 
 export type VerificationGateStatus = "passed" | "failed" | "skipped" | "not_run" | "partial";
 
@@ -120,6 +121,11 @@ export function buildVerificationGateReport(
       label: "Run production build",
       requiredForSafePr: true,
       status: checkStatusFromScript(checkList, "build", repoVerified),
+      detail: (() => {
+        const buildStatus = checkStatusFromScript(checkList, "build", repoVerified);
+        if (buildStatus === "passed") return undefined;
+        return formatBuildGateFailureMessage(patchKit, findings);
+      })(),
     },
     {
       id: "baseline_patched",

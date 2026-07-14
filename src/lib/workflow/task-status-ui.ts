@@ -46,6 +46,18 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
   if (!task) return "";
   const err = task.error ?? "";
 
+  if (err.includes("Mandatory verification gates failed") && err.includes("production build")) {
+    return "Production build failed during verification. The build gate prevented delivery of a broken patch. See the verification report for the source commit, check name, classification, and stderr excerpt.";
+  }
+
+  if (err.includes("malformed TypeScript") || err.includes("earlier cleanup PR")) {
+    return "The selected source commit already contains malformed TypeScript introduced by an earlier cleanup PR. Repair the source repository and run a new scan before paying again.";
+  }
+
+  if (err.includes("PATCH_REGRESSION") || err.includes("patch regression")) {
+    return "Cleanup introduced a new build or typecheck regression compared to the baseline. The patch was rejected — do not bypass the production build gate.";
+  }
+
   if (err.includes("PATCH_GENERATION_FAILED")) {
     return "RepoDiet could not generate an applyable patch for the selected scope. This usually means the selected files could not be modified in a verified way. Select fewer findings with confirmed eligibility dry-run, then start a new cleanup attempt.";
   }

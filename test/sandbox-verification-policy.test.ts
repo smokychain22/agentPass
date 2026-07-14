@@ -91,15 +91,14 @@ test("Meridian: same pre-existing build failure baseline+patched → verified", 
   assert.equal(result.status, "verified");
 });
 
-test("pre-existing build with same exit code verifies even if stderr differs slightly", () => {
+test("different build failures with same exit code are regression", () => {
   const result = resolveSandboxVerificationOutcome({
     baselineInstallExit: 0,
     baselineChecks: [{ name: "build", exitCode: 1, stderr: "Missing env A" }],
     patchedInstallExit: 0,
     patchedChecks: [{ name: "build", exitCode: 1, stderr: "Type error in src/cleanup.ts" }],
   });
-  // Same required script + same exit code → pre-existing; cleanup did not newly break a passing baseline.
-  assert.equal(result.status, "verified");
+  assert.equal(result.status, "regression_failed");
 });
 
 test("new build failure after clean baseline is regression", () => {

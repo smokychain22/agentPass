@@ -1,5 +1,7 @@
 import type { Finding, FindingAction } from "@/lib/findings/types";
 import { isDoNotTouchPath } from "@/lib/findings/confidence-path-rules";
+import { isUnusedImportAutoTransformEnabled } from "@/lib/execution/unused-import-policy";
+import { parseUnusedImportEvidence } from "@/lib/execution/unused-import-evidence";
 import type { EvidenceItem } from "./types";
 import type {
   ClassificationLabel,
@@ -147,6 +149,12 @@ function actionFor(input: DecisionInput, grade: FusionEvidenceGrade, label: Clas
   }
 
   if (finding.type === "unused_import") {
+    if (
+      !isUnusedImportAutoTransformEnabled() ||
+      !parseUnusedImportEvidence(finding).ok
+    ) {
+      return "review_first";
+    }
     if (grade === "strong" && actionable && transformerAvailable && hasPreflightActionable) {
       return "safe_candidate";
     }

@@ -1,5 +1,7 @@
 import type { Finding } from "@/lib/findings/types";
 import { isDoNotTouchPath, isRouteLikePath } from "@/lib/findings/confidence-path-rules";
+import { parseUnusedImportEvidence } from "@/lib/execution/unused-import-evidence";
+import { isUnusedImportAutoTransformEnabled } from "@/lib/execution/unused-import-policy";
 
 export type Phase1PluginId =
   | "remove_unused_import"
@@ -105,10 +107,9 @@ export function isPhase1StructuralCandidate(finding: Finding): boolean {
     return false;
   }
   if (finding.type === "unused_import") {
-    const hasEvidence = finding.evidence.signals.some(
-      (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
-    );
-    return hasEvidence && finding.files.length === 1;
+    if (!isUnusedImportAutoTransformEnabled()) return false;
+    const parsed = parseUnusedImportEvidence(finding);
+    return parsed.ok;
   }
   if (finding.type === "unused_dependency") {
     return Boolean(finding.packageName);
@@ -132,24 +133,23 @@ export const PHASE1_PLUGINS: Phase1FixPlugin[] = [
     description: "Remove an import statement with deterministic evidence that symbols are unused.",
     supports(finding) {
       if (finding.type !== "unused_import") return false;
+      if (!isUnusedImportAutoTransformEnabled()) return false;
       if (!baseEligible(finding)) return false;
       if (finding.sourceMode === "fallback") return false;
       if (finding.source !== "knip" && finding.source !== "repodiet_import") return false;
       if (!hasActionablePreflight(finding)) return false;
-      const hasEvidence = finding.evidence.signals.some(
-        (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
-      );
-      return hasEvidence && finding.files.length === 1;
+      return parseUnusedImportEvidence(finding).ok;
     },
     eligibilityReason(finding) {
       if (finding.type !== "unused_import") return "Not an unused import finding.";
+      if (!isUnusedImportAutoTransformEnabled()) {
+        return "Unused-import auto-fix disabled — review manually.";
+      }
       if (finding.confidence < MIN_CONFIDENCE) return "Below confidence threshold.";
       if (finding.files.some(isProtectedPath)) return "Protected path.";
-      const hasEvidence = finding.evidence.signals.some(
-        (s) => s.startsWith("importLine=") || s.startsWith("symbol=")
-      );
-      if (!hasEvidence) return "Missing parser evidence for import removal.";
-      return "Unused import with parser-verified safe removal.";
+      const parsed = parseUnusedImportEvidence(finding);
+      if (!parsed.ok) return parsed.reason;
+      return "Unused import with AST-verified safe removal.";
     },
   },
   {
@@ -287,6 +287,9 @@ export function resolvePhase1TransformPlugin(finding: Finding): Phase1FixPlugin 
   }
   if (isPhase1StructuralCandidate(finding)) {
     if (finding.type === "unused_import") {
+      if (!isUnusedImportAutoTransformEnabled()) {
+        return PHASE1_PLUGINS.find((p) => p.id === "review_only")!;
+      }
       return PHASE1_PLUGINS.find((p) => p.id === "remove_unused_import")!;
     }
     if (finding.type === "unused_dependency" && finding.packageName) {

@@ -5,10 +5,12 @@ import type { Finding } from "@/lib/findings/types";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import {
-  removeUnusedSymbolFromImport,
-  convertSymbolToTypeOnlyImport,
-  removeUnusedSymbolAtLine,
-} from "@/lib/findings/unused-import-detector";
+  convertSymbolToTypeOnlyImportAst,
+  removeUnusedImportSpecifierAst,
+} from "@/lib/execution/unused-import-ast";
+import { parseUnusedImportEvidence } from "@/lib/execution/unused-import-evidence";
+import { validateTransformedSourceSyntax } from "@/lib/execution/validate-transform-syntax";
+import { isUnusedImportAutoTransformEnabled } from "@/lib/execution/unused-import-policy";
 import { buildTextDiff } from "../fix-preflight";
 import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
@@ -137,43 +139,42 @@ async function applyRemoveUnusedImport(
 ): Promise<AppliedFix> {
   const rel = finding.files[0];
   if (!rel) throw new Error("No file for unused import fix.");
+  if (!isUnusedImportAutoTransformEnabled()) {
+    throw new Error("Unused-import auto-fix is disabled.");
+  }
 
-  const importLine =
-    finding.evidence.signals.find((s) => s.startsWith("importLine="))?.slice(11) ??
-    finding.evidence.summary;
-  const symbol =
-    finding.evidence.signals.find((s) => s.startsWith("symbol="))?.slice(7) ?? "";
-  const lineRaw = finding.evidence.signals.find((s) => s.startsWith("line="))?.slice(5);
-  const lineNumber = lineRaw ? Number(lineRaw) : undefined;
+  const evidenceResult = parseUnusedImportEvidence(finding);
+  if (!evidenceResult.ok) {
+    throw new Error(`invalid_transform_evidence: ${evidenceResult.reason}`);
+  }
+  const evidence = evidenceResult.evidence;
 
   const full = path.join(rootDir, rel);
   const original = await fs.readFile(full, "utf8");
-  let modified: string;
+  let modified: string | null;
 
   switch (strategyId) {
     case "convert_to_type_only_import":
-      modified = convertSymbolToTypeOnlyImport(original, importLine, symbol);
+      modified = convertSymbolToTypeOnlyImportAst(original, evidence);
       break;
-    case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free": {
-      const partial = removeUnusedSymbolFromImport(original, importLine, symbol);
-      if (partial === original) {
-        throw new Error("transform_noop: Unused symbol not present in import declaration.");
-      }
-      modified = partial;
-      break;
-    }
+    case "remove_entire_import_when_no_specifiers_remain_and_side_effect_free":
     case "remove_unused_named_specifier":
     default:
-      modified = removeUnusedSymbolFromImport(original, importLine, symbol);
-      if (modified === original && Number.isFinite(lineNumber)) {
-        const atLine = removeUnusedSymbolAtLine(original, lineNumber!, symbol);
-        if (atLine) modified = atLine;
-      }
+      modified = removeUnusedImportSpecifierAst(original, evidence);
       break;
   }
 
-  if (modified === original) {
+  if (!modified || modified === original) {
     throw new Error("transform_noop: Unused import could not be modified safely for this strategy.");
+  }
+
+  const syntax = validateTransformedSourceSyntax({
+    filePath: rel,
+    originalSource: original,
+    transformedSource: modified,
+  });
+  if (!syntax.ok) {
+    throw new Error(`unsupported_syntax: ${syntax.reason}`);
   }
 
   await ensureGitBaseline(rootDir);

@@ -9,6 +9,7 @@ export type BlockerCode =
   | "source_not_found"
   | "source_hash_mismatch"
   | "unsupported_syntax"
+  | "invalid_transform_evidence"
   | "transform_noop"
   | "plugin_not_implemented"
   | "plugin_strategy_missing"
@@ -53,6 +54,10 @@ export function blockerCodeFromPreflight(preflight: FixPreflightResult): Blocker
   if (preflight.classification === "actionable_candidate") return undefined;
   const blocker = (preflight.blocker ?? "").toLowerCase();
   if (blocker.includes("protected")) return "protected_path";
+  if (blocker.includes("invalid transform evidence") || blocker.includes("importline")) {
+    return "invalid_transform_evidence";
+  }
+  if (blocker.includes("syntax validation")) return "unsupported_syntax";
   if (blocker.includes("hash mismatch") || blocker.includes("stale")) return "source_hash_mismatch";
   if (
     blocker.includes("could not produce") ||
