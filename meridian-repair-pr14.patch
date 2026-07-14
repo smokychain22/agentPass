@@ -1,0 +1,85 @@
+From 5946387114ad910f284a67f35ca0378c895de8d8 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 14 Jul 2026 11:05:38 +0000
+Subject: [PATCH] Repair malformed TypeScript introduced by RepoDiet PR #14
+
+Restore src/lib/feed-curation.ts and src/lib/token-quote.ts from commit
+824075afe776067bf00343581105d6a1f5e61178 (pre-RepoDiet PR #14).
+
+Broken commit: a39937b4b05691a7cc57f2824f18745dd61bea3f merged PR #14 which
+left incomplete constant declarations and dangling type properties in:
+- src/lib/feed-curation.ts (unfinished BLUE_CHIP_NAME_HINTS, removed BLUE_CHIP_SYMBOLS)
+- src/lib/token-quote.ts (dangling type properties, missing isTokenQuoteReliable header)
+
+No unrelated changes. RepoDiet artifacts under repodiet/ are not reverted.
+---
+ src/lib/feed-curation.ts | 39 +++++++++++++++++++++++++++++++++++++++
+ src/lib/token-quote.ts   |  3 +++
+ 2 files changed, 42 insertions(+)
+
+diff --git a/src/lib/feed-curation.ts b/src/lib/feed-curation.ts
+index e84761c..b0953e7 100644
+--- a/src/lib/feed-curation.ts
++++ b/src/lib/feed-curation.ts
+@@ -4,7 +4,46 @@
+ 
+ import type { TrendingToken } from "./dexscreener";
+ 
++const BLUE_CHIP_SYMBOLS = new Set([
++  "weth",
++  "eth",
++  "ether",
++  "wbtc",
++  "btc",
++  "cbbtc",
++  "sol",
++  "wsol",
++  "arb",
++  "bnb",
++  "matic",
++  "pol",
++  "link",
++  "uni",
++  "aave",
++  "dai",
++  "usdc",
++  "usdt",
++  "op",
++  "avax",
++  "doge",
++  "xrp",
++  "ada",
++  "trx",
++  "ton",
++  "pepe",
++  "shib",
++]);
++
+ const BLUE_CHIP_NAME_HINTS = [
++  "wrapped ether",
++  "wrapped bitcoin",
++  "coinbase wrapped",
++  "ethereum",
++  "solana",
++  "arbitrum",
++  "chainlink",
++  "uniswap",
++];
+ 
+ export function tokenKey(t: { chainId: string; tokenAddress: string }): string {
+   return `${t.chainId}:${t.tokenAddress.toLowerCase()}`;
+diff --git a/src/lib/token-quote.ts b/src/lib/token-quote.ts
+index 2527e72..bf4f5c9 100644
+--- a/src/lib/token-quote.ts
++++ b/src/lib/token-quote.ts
+@@ -1,4 +1,7 @@
+ 
++/** Dex-backed quote is usable for agent copy (avoids $0.00 / empty-pool guidance). */
++export function isTokenQuoteReliable(token: {
++  priceUsd?: number;
+   liquidityUsd?: number;
+   pairAddress?: string | null;
+ }): boolean {
+-- 
+2.43.0
+
