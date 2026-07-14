@@ -6,6 +6,7 @@ import { saveRepoInstallBinding } from "@/lib/github-app/install-flow-store";
 import { saveInstallationSession } from "@/lib/github-app/session";
 import { parseRepositoryFullName } from "@/lib/github-app/repository";
 import { runGitHubPreflight, type GitHubPreflightInput } from "@/lib/github-app/preflight";
+import { saveAspRepositoryInstallation } from "@/lib/asp/store";
 
 export interface CompleteInstallAccessInput {
   installationId: number;
@@ -21,6 +22,7 @@ export interface CompleteInstallAccessResult {
   repositoryAccessible: boolean;
   accessibleRepos: string[];
   bindingSaved: boolean;
+  aspPersisted: boolean;
 }
 
 export async function completeInstallAccess(
@@ -42,25 +44,33 @@ export async function completeInstallAccess(
     { attempts, delayMs }
   );
 
-  let bindingSaved = false;
-  if (access.granted || trustGrant) {
-    await saveRepoInstallBinding({
-      sessionKey: input.sessionKey,
+  const authorizedAt = new Date().toISOString();
+  await saveRepoInstallBinding({
+    sessionKey: input.sessionKey,
+    installationId: session.installationId,
+    installationOwner: session.accountLogin,
+    installationOwnerType: session.accountType,
+    repositoryFullName: input.repositoryFullName,
+    setupAction: input.setupAction,
+    authorizedAt,
+  });
+
+  let aspPersisted = false;
+  if (access.granted) {
+    await saveAspRepositoryInstallation({
       installationId: session.installationId,
-      installationOwner: session.accountLogin,
-      installationOwnerType: session.accountType,
       repositoryFullName: input.repositoryFullName,
-      setupAction: input.setupAction,
-      authorizedAt: new Date().toISOString(),
+      authorizedAt,
     });
-    bindingSaved = true;
+    aspPersisted = true;
   }
 
   return {
     session,
     repositoryAccessible: access.granted,
     accessibleRepos: access.accessibleRepos,
-    bindingSaved,
+    bindingSaved: true,
+    aspPersisted,
   };
 }
 
@@ -94,6 +104,14 @@ export async function runGitHubAccessSync(input: {
     commitSha: input.commitSha,
     quick,
   } satisfies GitHubPreflightInput);
+
+  if (preflight.repositoryAuthorized) {
+    await saveAspRepositoryInstallation({
+      installationId: completed.session.installationId,
+      repositoryFullName: input.repositoryFullName,
+      authorizedAt: new Date().toISOString(),
+    });
+  }
 
   return { completed, preflight };
 }

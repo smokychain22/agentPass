@@ -3,8 +3,11 @@ import type { GitHubAccessState } from "./access-states";
 export type AuthoritativeGitHubAccessState =
   | "app_not_configured"
   | "installation_required"
+  | "installation_not_found_for_app"
+  | "account_mismatch"
   | "repository_not_selected"
   | "permissions_insufficient"
+  | "token_creation_failed"
   | "repository_verified"
   | "installation_error";
 
@@ -25,6 +28,7 @@ export function mapToAuthoritativeAccessState(
     case "repository_verified":
       return "repository_verified";
     case "wrong_account":
+      return "account_mismatch";
     case "state_expired":
     default:
       return "installation_error";
@@ -33,4 +37,10 @@ export function mapToAuthoritativeAccessState(
 
 export function isRepositoryVerifiedState(state: AuthoritativeGitHubAccessState): boolean {
   return state === "repository_verified";
+}
+
+export function installationIdLastFour(installationId?: number): string | undefined {
+  if (!installationId || !Number.isFinite(installationId)) return undefined;
+  const digits = String(installationId);
+  return digits.length <= 4 ? digits : digits.slice(-4);
 }

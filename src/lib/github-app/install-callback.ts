@@ -40,7 +40,9 @@ export function parseSetupAction(raw: string | null): GitHubSetupAction | null {
 export function parseInstallCallbackParams(
   searchParams: URLSearchParams
 ): InstallCallbackValidation {
-  const installationIdRaw = readSearchParam(searchParams, "installation_id");
+  const installationIdRaw =
+    readSearchParam(searchParams, "installation_id") ??
+    readSearchParam(searchParams, "github_installation_id");
   const setupActionRaw = readSearchParam(searchParams, "setup_action");
   const stateToken = readSearchParam(searchParams, "state");
 

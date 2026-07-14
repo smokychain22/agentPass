@@ -8,12 +8,8 @@ import {
   getInstallationDetails,
   installationHasRepoAccess,
 } from "@/lib/github-app/installations";
-import { getAppOctokit } from "@/lib/github-app/octokit";
+import { resolveInstallationIdForRepository } from "@/lib/github-app/authoritative-repository-access";
 import { getAspPublicBaseUrl } from "./auth";
-import {
-  getAspRepositoryInstallation,
-  saveAspRepositoryInstallation,
-} from "./store";
 
 function permissionsAreSufficient(permissions?: {
   contents: string;
@@ -30,41 +26,17 @@ function permissionsAreSufficient(permissions?: {
 
 export async function findInstallationForRepository(
   owner: string,
-  repo: string
+  repo: string,
+  installationIdHint?: number
 ): Promise<number | undefined> {
   if (!isGitHubAppConfigured()) return undefined;
 
-  const repositoryFullName = `${owner}/${repo}`;
-  const cached = await getAspRepositoryInstallation(repositoryFullName);
-  if (cached?.installationId) {
-    const hasAccess = await installationHasRepoAccess(cached.installationId, owner, repo);
-    if (hasAccess) return cached.installationId;
-  }
-
-  try {
-    const octokit = getAppOctokit();
-    const installations = await octokit.paginate(octokit.rest.apps.listInstallations, {
-      per_page: 100,
-    });
-
-    for (const installation of installations) {
-      const installationId = installation.id;
-      const details = await getInstallationDetails(installationId);
-      if (!permissionsAreSufficient(details?.permissions)) continue;
-      if (await installationHasRepoAccess(installationId, owner, repo)) {
-        await saveAspRepositoryInstallation({
-          installationId,
-          repositoryFullName,
-          authorizedAt: new Date().toISOString(),
-        });
-        return installationId;
-      }
-    }
-  } catch {
-    return undefined;
-  }
-
-  return undefined;
+  const resolved = await resolveInstallationIdForRepository({
+    owner,
+    repo,
+    installationIdHint,
+  });
+  return resolved.installationId;
 }
 
 export function buildAspInstallStateToken(input: {

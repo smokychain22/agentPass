@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { durableNow, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
+import { durableNow, deleteDurableRecord, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
 import type { AspJobRecord } from "./types";
 
 function jobKey(jobId: string): string {
@@ -74,4 +74,8 @@ export async function getAspRepositoryInstallation(
     "asp_jobs",
     aspInstallationKey(repositoryFullName)
   );
+}
+
+export async function deleteAspRepositoryInstallation(repositoryFullName: string): Promise<void> {
+  await deleteDurableRecord("asp_jobs", aspInstallationKey(repositoryFullName));
 }

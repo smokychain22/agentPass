@@ -5,12 +5,8 @@ import {
   mapToAuthoritativeAccessState,
   type AuthoritativeGitHubAccessState,
 } from "@/lib/github-app/authoritative-access";
+import { resolveAuthoritativeRepositoryAccess } from "@/lib/github-app/authoritative-repository-access";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
-import {
-  createInstallationAccessToken,
-  getInstallationDetails,
-  installationHasRepoAccess,
-} from "@/lib/github-app/installations";
 import { parseRepositoryFullName } from "@/lib/github-app/repository";
 
 export interface RepositoryConnectionStatus {
@@ -28,6 +24,8 @@ export interface RepositoryConnectionStatus {
   accessState?: string;
   authoritativeState?: AuthoritativeGitHubAccessState;
   installationTokenAvailable?: boolean;
+  installationIdLast4?: string;
+  checkedAt?: string;
   messages?: {
     title: string;
     body: string;
@@ -35,91 +33,28 @@ export interface RepositoryConnectionStatus {
   };
 }
 
-function permissionsAreSufficient(permissions?: {
-  contents: string;
-  pullRequests: string;
-  metadata: string;
-}): boolean {
-  if (!permissions) return false;
-  return (
-    permissions.contents === "write" &&
-    permissions.pullRequests === "write" &&
-    (permissions.metadata === "read" || permissions.metadata === "write")
-  );
-}
-
-async function resolveServerInstallationStatus(input: {
-  owner: string;
-  repo: string;
-}): Promise<{
-  connected: boolean;
-  installationId?: number;
-  accessState: import("@/lib/github-app/access-states").GitHubAccessState;
-  installationTokenAvailable: boolean;
-}> {
-  const installationId = await findInstallationForRepository(input.owner, input.repo);
-  if (!installationId) {
-    return {
-      connected: false,
-      accessState: "not_installed",
-      installationTokenAvailable: false,
-    };
+function mapAuthoritativeToAccessState(
+  state: AuthoritativeGitHubAccessState
+): import("@/lib/github-app/access-states").GitHubAccessState {
+  switch (state) {
+    case "app_not_configured":
+      return "not_configured";
+    case "installation_required":
+    case "installation_not_found_for_app":
+    case "token_creation_failed":
+    case "installation_error":
+      return "not_installed";
+    case "account_mismatch":
+      return "wrong_account";
+    case "repository_not_selected":
+      return "installed_repo_missing";
+    case "permissions_insufficient":
+      return "permissions_outdated";
+    case "repository_verified":
+      return "repository_verified";
+    default:
+      return "not_installed";
   }
-
-  const details = await getInstallationDetails(installationId);
-  if (!details) {
-    return {
-      connected: false,
-      installationId,
-      accessState: "not_installed",
-      installationTokenAvailable: false,
-    };
-  }
-
-  if (details.suspendedAt) {
-    return {
-      connected: false,
-      installationId,
-      accessState: "organization_approval_required",
-      installationTokenAvailable: false,
-    };
-  }
-
-  if (!permissionsAreSufficient(details.permissions)) {
-    return {
-      connected: false,
-      installationId,
-      accessState: "permissions_outdated",
-      installationTokenAvailable: false,
-    };
-  }
-
-  const hasAccess = await installationHasRepoAccess(installationId, input.owner, input.repo);
-  if (!hasAccess) {
-    return {
-      connected: false,
-      installationId,
-      accessState: "installed_repo_missing",
-      installationTokenAvailable: false,
-    };
-  }
-
-  let installationTokenAvailable = false;
-  try {
-    await createInstallationAccessToken(installationId);
-    installationTokenAvailable = true;
-  } catch {
-    installationTokenAvailable = false;
-  }
-
-  const verified = installationTokenAvailable;
-
-  return {
-    connected: verified,
-    installationId,
-    accessState: verified ? "repository_verified" : "not_installed",
-    installationTokenAvailable,
-  };
 }
 
 export async function resolveRepositoryConnectionStatus(input: {
@@ -127,6 +62,7 @@ export async function resolveRepositoryConnectionStatus(input: {
   branch?: string;
   commitSha?: string;
   sessionKey?: string;
+  installationIdHint?: number;
 }): Promise<RepositoryConnectionStatus> {
   const { owner, repo } = parseRepositoryFullName(input.repository);
   const fullName = `${owner}/${repo}`;
@@ -151,15 +87,27 @@ export async function resolveRepositoryConnectionStatus(input: {
     };
   }
 
-  const serverStatus = await resolveServerInstallationStatus({ owner, repo });
-  const authoritativeState = mapToAuthoritativeAccessState(serverStatus.accessState);
-  const connected = isRepositoryVerifiedState(authoritativeState) && serverStatus.connected;
-  const messages = accessCopyForState(serverStatus.accessState, repo, owner);
+  const authoritative = await resolveAuthoritativeRepositoryAccess({
+    owner,
+    repo,
+    installationIdHint: input.installationIdHint,
+    expectedAccount: owner,
+  });
+
+  const accessState = mapAuthoritativeToAccessState(authoritative.authoritativeState);
+  const connected =
+    isRepositoryVerifiedState(authoritative.authoritativeState) &&
+    authoritative.installationTokenAvailable;
+  const messages = accessCopyForState(accessState, repo, owner);
+
+  const installationId = authoritative.installationFound
+    ? await findInstallationForRepository(owner, repo, input.installationIdHint)
+    : undefined;
 
   return {
     connected,
     configured: true,
-    installationId: serverStatus.installationId,
+    installationId,
     repository: fullName,
     owner,
     canRead: true,
@@ -167,9 +115,11 @@ export async function resolveRepositoryConnectionStatus(input: {
     canCreatePullRequest: connected,
     defaultBranch: input.branch,
     commitSha: input.commitSha,
-    accessState: serverStatus.accessState,
-    authoritativeState,
-    installationTokenAvailable: serverStatus.installationTokenAvailable,
+    accessState,
+    authoritativeState: authoritative.authoritativeState,
+    installationTokenAvailable: authoritative.installationTokenAvailable,
+    installationIdLast4: authoritative.installationIdLast4,
+    checkedAt: authoritative.checkedAt,
     messages,
   };
 }

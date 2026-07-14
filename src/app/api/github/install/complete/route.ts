@@ -15,6 +15,9 @@ import {
   readPendingInstallCookie,
 } from "@/lib/github-app/install-flow-cookie";
 import type { InstallFlowRecord } from "@/lib/github-app/install-flow-store";
+import { resolveAuthoritativeRepositoryAccess } from "@/lib/github-app/authoritative-repository-access";
+import { installationIdLastFour } from "@/lib/github-app/authoritative-access";
+import { safeCallbackDiagnostics } from "@/lib/github-app/callback-diagnostics";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -147,6 +150,17 @@ export async function GET(request: NextRequest) {
 
   const { installationId, setupAction, stateToken } = parsed.params;
   const trustUpdateCallback = setupAction === "update";
+  const callbackOrigin = getAppBaseUrl();
+
+  console.info(
+    "[github-install-complete] callback received",
+    safeCallbackDiagnostics({
+      setupAction,
+      installationId,
+      callbackOrigin,
+      stateValid: true,
+    })
+  );
 
   let resolved = await resolveFlowRecord(stateToken, sessionKey);
 
@@ -183,6 +197,30 @@ export async function GET(request: NextRequest) {
         trustPendingPropagation: trustUpdateCallback,
       });
 
+      const postAccess = await resolveAuthoritativeRepositoryAccess({
+        owner: recovered.owner,
+        repo: recovered.repo,
+        installationIdHint: installationId,
+        expectedAccount: recovered.owner,
+      });
+
+      console.info(
+        "[github-install-complete] recovered callback persisted",
+        safeCallbackDiagnostics({
+          setupAction,
+          installationId,
+          callbackOrigin,
+          repository: recovered.repositoryFullName,
+          stateValid: true,
+          persistenceResult: completed.bindingSaved
+            ? completed.aspPersisted
+              ? "binding_and_asp"
+              : "binding_only"
+            : "failed",
+          postCallbackState: postAccess.authoritativeState,
+        })
+      );
+
       await clearInstallSessionId();
       await clearPendingInstallCookie();
 
@@ -214,11 +252,44 @@ export async function GET(request: NextRequest) {
       trustPendingPropagation: trustUpdateCallback,
     });
 
+    const postAccess = await resolveAuthoritativeRepositoryAccess({
+      owner: flow.owner,
+      repo: flow.repo,
+      installationIdHint: installationId,
+      expectedAccount: flow.owner,
+    });
+
+    console.info(
+      "[github-install-complete] callback persisted",
+      safeCallbackDiagnostics({
+        setupAction,
+        installationId,
+        callbackOrigin,
+        repository: flow.repositoryFullName,
+        stateValid: true,
+        persistenceResult: completed.bindingSaved
+          ? completed.aspPersisted
+            ? "binding_and_asp"
+            : "binding_only"
+          : "failed",
+        postCallbackState: postAccess.authoritativeState,
+      })
+    );
+
     await clearInstallSessionId();
 
     if (!completed.repositoryAccessible && !trustUpdateCallback) {
       await consumeInstallFlowState(stateToken);
-      return redirectWithError("repo_not_granted", flow.returnPath, flow.scanId);
+      await clearPendingInstallCookie();
+
+      const successParams: Record<string, string> = {
+        github: "connected",
+        setup_action: setupAction,
+        github_installation_id: String(installationId),
+        github_repo_pending: "true",
+      };
+
+      return redirectWithSuccess(flow.returnPath, flow.scanId, successParams);
     }
 
     await consumeInstallFlowState(stateToken);
@@ -248,6 +319,7 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error("[github-install-complete] setup failed", {
       installationId,
+      installationIdLast4: installationIdLastFour(installationId),
       setupAction,
       appBaseUrl: getAppBaseUrl(),
       targetOwner: flow.owner,

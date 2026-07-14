@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
@@ -13,6 +14,7 @@ import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repositor
 import {
   approveWorkflowDelivery,
   createWorkflowA2ATask,
+  fetchAuthoritativeRepositoryAccess,
   fetchRepositoryStatus,
   fetchWorkflowA2ATask,
   fundWorkflowTask,
@@ -22,7 +24,12 @@ import {
 } from "@/lib/workflow/client";
 import { flattenFindings } from "@/lib/findings/client";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
-import { repodietInstallReturnPath, startGitHubGrantAccess } from "@/lib/patch-kit/client";
+import {
+  PENDING_GITHUB_GRANT_KEY,
+  repodietInstallReturnPath,
+  startGitHubGrantAccess,
+  syncGitHubRepositoryAccess,
+} from "@/lib/patch-kit/client";
 import { isTrustedTestQuote } from "@/lib/workflow/payment-ui";
 import {
   isWorkflowTaskFailure,
@@ -58,14 +65,19 @@ export function FixPrA2AFlow({
   onScopeReviewed,
   onTaskUpdate,
 }: FixPrA2AFlowProps) {
+  const router = useRouter();
   const [github, setGithub] = useState<RepositoryConnectionStatus | null>(null);
   const [quote, setQuote] = useState<WorkflowQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [githubGrantLoading, setGithubGrantLoading] = useState(false);
+  const [githubVerifying, setGithubVerifying] = useState(false);
+  const [githubRecheckLoading, setGithubRecheckLoading] = useState(false);
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baselineInvalid, setBaselineInvalid] = useState<BaselineInvalidUi | null>(null);
   const { setPaymentState } = useWallet();
+  const cleanedReturnUrl = useRef(false);
+  const githubBootstrapped = useRef<string | null>(null);
 
   const trustedTestPayment = isTrustedTestQuote(quote);
 
@@ -82,11 +94,135 @@ export function FixPrA2AFlow({
     [findings, selectedFindingIds]
   );
 
+  const readGithubReturnFromUrl = useCallback(() => {
+    if (typeof window === "undefined") {
+      return { hasReturn: false as const };
+    }
+    const params = new URLSearchParams(window.location.search);
+    const hasReturn =
+      params.get("github") === "connected" ||
+      params.get("github_connected") === "true" ||
+      params.get("github_recovered") === "installation_only" ||
+      params.get("github_repo_pending") === "true";
+    const rawInstallationId =
+      params.get("github_installation_id") ?? params.get("installation_id");
+    const installationId = rawInstallationId ? Number(rawInstallationId) : NaN;
+    return {
+      hasReturn,
+      installationId: Number.isFinite(installationId) ? installationId : undefined,
+      setupAction:
+        params.get("setup_action") === "update" ? ("update" as const) : undefined,
+    };
+  }, []);
+
+  const cleanGithubReturnUrl = useCallback(() => {
+    if (cleanedReturnUrl.current || typeof window === "undefined") return;
+    cleanedReturnUrl.current = true;
+    const params = new URLSearchParams(window.location.search);
+    params.delete("github");
+    params.delete("github_connected");
+    params.delete("github_recovered");
+    params.delete("github_repo_pending");
+    params.delete("setup_action");
+    params.delete("github_installation_id");
+    params.delete("installation_id");
+    const qs = params.toString();
+    router.replace(qs ? `/app?${qs}` : "/app?tab=fix-pr", { scroll: false });
+  }, [router]);
+
+  const refreshGithubAccess = useCallback(
+    async (opts?: {
+      sync?: boolean;
+      trustPending?: boolean;
+      installationId?: number;
+      setupAction?: "install" | "update";
+      silent?: boolean;
+    }) => {
+      if (!opts?.silent) {
+        setGithubVerifying(true);
+      }
+      try {
+        const pendingGrant =
+          typeof window !== "undefined" &&
+          window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repository;
+        const shouldSync = opts?.sync ?? pendingGrant;
+
+        if (shouldSync) {
+          await syncGitHubRepositoryAccess({
+            repositoryFullName: repository,
+            branch,
+            scanId: findings.scanId,
+            commitSha,
+            installationId: opts?.installationId,
+            setupAction: opts?.setupAction,
+            trustPendingPropagation: opts?.trustPending ?? shouldSync,
+          });
+        }
+
+        const authoritative = await fetchAuthoritativeRepositoryAccess({
+          owner: findings.repo.owner,
+          repo: findings.repo.name,
+          installationId: opts?.installationId,
+        });
+
+        const status = await fetchRepositoryStatus({
+          repository,
+          branch,
+          commitSha,
+          installationId: opts?.installationId,
+        });
+
+        setGithub({
+          ...status,
+          authoritativeState: authoritative.authoritativeState as RepositoryConnectionStatus["authoritativeState"],
+          connected:
+            authoritative.authoritativeState === "repository_verified" &&
+            authoritative.installationTokenAvailable,
+          installationTokenAvailable: authoritative.installationTokenAvailable,
+          installationIdLast4: authoritative.installationIdLast4,
+          checkedAt: authoritative.checkedAt,
+        });
+
+        if (
+          authoritative.authoritativeState === "repository_verified" &&
+          typeof window !== "undefined"
+        ) {
+          window.sessionStorage.removeItem(PENDING_GITHUB_GRANT_KEY);
+        }
+
+        return authoritative;
+      } finally {
+        if (!opts?.silent) {
+          setGithubVerifying(false);
+        }
+      }
+    },
+    [branch, commitSha, findings.repo.name, findings.repo.owner, findings.scanId, repository]
+  );
+
   useEffect(() => {
-    void fetchRepositoryStatus({ repository, branch, commitSha })
-      .then(setGithub)
-      .catch(() => setGithub(null));
-  }, [repository, branch, commitSha]);
+    if (githubBootstrapped.current === repository) return;
+    githubBootstrapped.current = repository;
+
+    const returnParams = readGithubReturnFromUrl();
+    const pendingGrant =
+      typeof window !== "undefined" &&
+      window.sessionStorage.getItem(PENDING_GITHUB_GRANT_KEY) === repository;
+
+    void refreshGithubAccess({
+      sync: returnParams.hasReturn || pendingGrant,
+      trustPending: returnParams.hasReturn || pendingGrant,
+      installationId: returnParams.installationId,
+      setupAction: returnParams.setupAction,
+    }).then((authoritative) => {
+      if (
+        returnParams.hasReturn &&
+        authoritative?.authoritativeState === "repository_verified"
+      ) {
+        cleanGithubReturnUrl();
+      }
+    });
+  }, [cleanGithubReturnUrl, readGithubReturnFromUrl, refreshGithubAccess, repository]);
 
   useEffect(() => {
     if (!a2aTask?.taskId) return;
@@ -225,6 +361,26 @@ export function FixPrA2AFlow({
     !isWorkflowTaskTerminal(a2aTask) &&
     a2aTask!.status !== "awaiting_payment";
 
+  const recheckGitHubAccess = useCallback(async () => {
+    setGithubRecheckLoading(true);
+    setGithubGrantError(null);
+    try {
+      const returnParams = readGithubReturnFromUrl();
+      await refreshGithubAccess({
+        sync: true,
+        trustPending: true,
+        installationId: returnParams.installationId,
+        setupAction: returnParams.setupAction,
+      });
+    } catch (err) {
+      setGithubGrantError(
+        err instanceof Error ? err.message : "Could not recheck GitHub repository access."
+      );
+    } finally {
+      setGithubRecheckLoading(false);
+    }
+  }, [readGithubReturnFromUrl, refreshGithubAccess]);
+
   const connectGitHub = useCallback(async () => {
     setGithubGrantLoading(true);
     setGithubGrantError(null);
@@ -246,7 +402,12 @@ export function FixPrA2AFlow({
     <div className="space-y-4">
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-3">Repository connection</p>
-        {githubVerified ? (
+        {githubVerifying ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>Verifying GitHub access…</span>
+          </div>
+        ) : githubVerified ? (
           <div className="space-y-1 text-sm">
             <p className="text-signal">Repository access verified</p>
             <p className="text-muted-foreground">
@@ -273,7 +434,7 @@ export function FixPrA2AFlow({
             <Button
               size="sm"
               onClick={() => void connectGitHub()}
-              disabled={githubGrantLoading}
+              disabled={githubGrantLoading || githubVerifying}
             >
               {githubGrantLoading ? (
                 <>
@@ -282,6 +443,21 @@ export function FixPrA2AFlow({
                 </>
               ) : (
                 github?.messages?.primaryAction ?? "Connect GitHub"
+              )}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void recheckGitHubAccess()}
+              disabled={githubRecheckLoading || githubVerifying}
+            >
+              {githubRecheckLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Rechecking…
+                </>
+              ) : (
+                "Recheck GitHub access"
               )}
             </Button>
             {githubGrantError && (

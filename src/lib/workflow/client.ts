@@ -44,14 +44,61 @@ export async function fetchRepositoryStatus(input: {
   repository: string;
   branch?: string;
   commitSha?: string;
+  installationId?: number;
 }): Promise<RepositoryConnectionStatus> {
   const params = new URLSearchParams({ repository: input.repository });
   if (input.branch) params.set("branch", input.branch);
   if (input.commitSha) params.set("commitSha", input.commitSha);
-  const res = await fetch(`/api/github/repository-status?${params}`);
+  if (input.installationId) {
+    params.set("github_installation_id", String(input.installationId));
+  }
+  const res = await fetch(`/api/github/repository-status?${params}`, {
+    cache: "no-store",
+  });
   const data = (await res.json()) as RepositoryConnectionStatus & { ok: boolean; error?: string };
   if (!res.ok || !data.ok) {
     throw new Error(data.error ?? "Failed to load GitHub status.");
+  }
+  return data;
+}
+
+export interface AuthoritativeRepositoryAccess {
+  authoritativeState: string;
+  account?: string;
+  repository: string;
+  installationFound: boolean;
+  installationIdLast4?: string;
+  repositorySelected: boolean;
+  contentsPermission?: string;
+  pullRequestsPermission?: string;
+  installationTokenAvailable: boolean;
+  checkedAt: string;
+  canonicalOrigin: string;
+  githubAppId?: string;
+  diagnosticReason?: string;
+}
+
+export async function fetchAuthoritativeRepositoryAccess(input: {
+  owner: string;
+  repo: string;
+  installationId?: number;
+}): Promise<AuthoritativeRepositoryAccess> {
+  const params = new URLSearchParams({
+    owner: input.owner,
+    repo: input.repo,
+  });
+  if (input.installationId) {
+    params.set("github_installation_id", String(input.installationId));
+  }
+  const res = await fetch(`/api/github/repository-access?${params}`, {
+    cache: "no-store",
+  });
+  const data = (await res.json()) as AuthoritativeRepositoryAccess & {
+    ok: boolean;
+    error?: string;
+  };
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error ?? "Failed to verify GitHub repository access.");
   }
   return data;
 }
