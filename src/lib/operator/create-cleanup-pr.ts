@@ -7,6 +7,7 @@ import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { classifyFindingsForPatch } from "@/lib/patch-kit/safe-delete-classifier";
 import type { ClassifiedBuckets } from "@/lib/patch-kit/types";
 import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
+import { withRefreshedVerificationGates } from "@/lib/patch-kit/refresh-verification-gates";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
 import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
@@ -166,7 +167,10 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const baseBranch = input.branch?.trim() || parsed.branch || repoMeta.meta.defaultBranch;
 
   const findings = await resolveFindings(input);
-  const patchKit = await resolvePatchKit(input, findings);
+  const patchKit = withRefreshedVerificationGates(
+    await resolvePatchKit(input, findings),
+    findings
+  );
   const buckets = classifyFindingsForPatch(findings);
   const validatedChanges = patchKit.summary.validatedChanges ?? 0;
   const validatedEdits = patchKit.validatedEdits ?? [];

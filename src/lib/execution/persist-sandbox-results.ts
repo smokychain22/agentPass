@@ -1,6 +1,7 @@
 import { buildProofLadderCounts } from "@/lib/execution/proof-ladder";
 import type { CanonicalPatchValidationResult } from "@/lib/patch-kit/canonical-patch";
 import { buildCleanupRunSummary } from "@/lib/patch-kit/cleanup-summary";
+import { withRefreshedVerificationGates } from "@/lib/patch-kit/refresh-verification-gates";
 import { getStoredPatchKit, storePatchKit } from "@/lib/patch-kit/patch-kit-store";
 import type { RepositoryVerificationResult } from "@/lib/patch-kit/repository-verification";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
@@ -92,37 +93,40 @@ export async function persistSandboxResultsToPatchKit(input: {
             : "pending",
   });
 
-  const payload: PatchKitPayload = {
-    ...stored.payload,
-    patchValidation,
-    repositoryVerification,
-    sandboxRunId: input.sandboxRunId ?? stored.payload.sandboxRunId,
-    workflowRunId: input.workflowRunId ?? stored.payload.workflowRunId,
-    cleanupRunSummary,
-    candidateAudits,
-    transformerResults,
-    summary: {
-      ...summary,
-      proofLadder: {
-        ...proofLadder,
-        detected: cleanupRunSummary.detectedFindings,
-        eligible: cleanupRunSummary.eligibleFindings,
-        executed: cleanupRunSummary.executedFindings,
-        attempted: cleanupRunSummary.executedFindings,
-        generated: cleanupRunSummary.generatedOperations,
-        validated: cleanupRunSummary.gitValidatedOperations,
-        contentValidated: cleanupRunSummary.contentValidatedOperations,
-        gitValidated: cleanupRunSummary.gitValidatedOperations,
-        verified: cleanupRunSummary.verifiedOperations,
-        delivered: cleanupRunSummary.deliveredOperations,
-        noop: cleanupRunSummary.noChangeExecutions,
-        failed: cleanupRunSummary.failedExecutions,
-        notAttempted: cleanupRunSummary.notAttempted,
-        rejectedForSafety:
-          cleanupRunSummary.reviewRequiredFindings + cleanupRunSummary.protectedFindings,
+  const payload: PatchKitPayload = withRefreshedVerificationGates(
+    {
+      ...stored.payload,
+      patchValidation,
+      repositoryVerification,
+      sandboxRunId: input.sandboxRunId ?? stored.payload.sandboxRunId,
+      workflowRunId: input.workflowRunId ?? stored.payload.workflowRunId,
+      cleanupRunSummary,
+      candidateAudits,
+      transformerResults,
+      summary: {
+        ...summary,
+        proofLadder: {
+          ...proofLadder,
+          detected: cleanupRunSummary.detectedFindings,
+          eligible: cleanupRunSummary.eligibleFindings,
+          executed: cleanupRunSummary.executedFindings,
+          attempted: cleanupRunSummary.executedFindings,
+          generated: cleanupRunSummary.generatedOperations,
+          validated: cleanupRunSummary.gitValidatedOperations,
+          contentValidated: cleanupRunSummary.contentValidatedOperations,
+          gitValidated: cleanupRunSummary.gitValidatedOperations,
+          verified: cleanupRunSummary.verifiedOperations,
+          delivered: cleanupRunSummary.deliveredOperations,
+          noop: cleanupRunSummary.noChangeExecutions,
+          failed: cleanupRunSummary.failedExecutions,
+          notAttempted: cleanupRunSummary.notAttempted,
+          rejectedForSafety:
+            cleanupRunSummary.reviewRequiredFindings + cleanupRunSummary.protectedFindings,
+        },
       },
     },
-  };
+    stored.payload.artifacts.findingsJson
+  );
 
   await storePatchKit(payload, stored.zipBuffer, stored.filename, stored.scanId);
   return payload;

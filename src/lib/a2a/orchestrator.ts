@@ -56,6 +56,7 @@ import {
   patchKitHasDeliverableChanges,
   waitForPatchKitSandbox,
 } from "./patch-kit-delivery";
+import { withRefreshedVerificationGates } from "@/lib/patch-kit/refresh-verification-gates";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -796,7 +797,14 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
     const findings = await loadFindings(task);
     const patchKitId = task.result.changes?.patchKitId ?? task.result.changes?.patchId;
     const storedPatchKit = patchKitId ? await getStoredPatchKit(patchKitId) : undefined;
-    const patchKit = storedPatchKit?.payload;
+    let patchKit = storedPatchKit?.payload;
+
+    if (patchKit?.patchValidation?.status === "pending_sandbox") {
+      patchKit = await waitForPatchKitSandbox(patchKit);
+    }
+    if (patchKit) {
+      patchKit = withRefreshedVerificationGates(patchKit, findings);
+    }
 
     if (!patchKit || !patchKitHasDeliverableChanges(patchKit)) {
       throw new Error(

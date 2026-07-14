@@ -5,11 +5,15 @@ import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
 
 export function patchKitHasDeliverableChanges(patchKit: PatchKitPayload): boolean {
   const verified = patchKit.summary.verifiedChanges ?? 0;
-  const validated = patchKit.summary.validatedChanges ?? 0;
-  const generated = patchKit.summary.generatedChanges ?? 0;
   if (verified > 0) return true;
-  if (validated > 0 && patchKit.patchValidation?.status === "passed") return true;
-  if (generated > 0 && patchKit.patchValidation?.status === "passed") return true;
+  // Git-validated-only bundles are not deliverable — repository verification must complete.
+  if (
+    patchKit.repositoryVerification?.status === "verified" &&
+    (patchKit.summary.generatedChanges ?? 0) > 0 &&
+    patchKit.patchValidation?.status === "passed"
+  ) {
+    return true;
+  }
   return false;
 }
 

@@ -52,6 +52,34 @@ assert.equal(
   ),
   true
 );
+assert.equal(
+  patchKitHasDeliverableChanges(
+    basePatchKit({
+      summary: {
+        ...basePatchKit().summary,
+        verifiedChanges: 0,
+        validatedChanges: 2,
+        generatedChanges: 2,
+      },
+      patchValidation: { status: "passed" },
+    })
+  ),
+  false
+);
+assert.equal(
+  patchKitHasDeliverableChanges(
+    basePatchKit({
+      summary: {
+        ...basePatchKit().summary,
+        verifiedChanges: 0,
+        generatedChanges: 2,
+      },
+      patchValidation: { status: "passed" },
+      repositoryVerification: { status: "verified", installAttempts: [], checks: [] },
+    })
+  ),
+  true
+);
 assert.match(
   patchKitDeliveryBlocker(basePatchKit()) ?? "",
   /No cleanup changes were generated/i
