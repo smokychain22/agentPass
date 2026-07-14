@@ -8,7 +8,7 @@ import { getGitHubAppConfig, isGitHubAppConfigured } from "@/lib/github-app/conf
 import {
   createInstallationAccessToken,
   getInstallationDetails,
-  installationHasRepoAccess,
+  installationIncludesRepository,
 } from "@/lib/github-app/installations";
 import { getAppOctokit } from "@/lib/github-app/octokit";
 import { lookupRepositoryInstallationBinding } from "@/lib/github-app/install-flow-store";
@@ -61,7 +61,7 @@ async function paginateInstallationForRepository(
       const installationId = installation.id;
       const details = await getInstallationDetails(installationId);
       if (!permissionsAreSufficient(details?.permissions)) continue;
-      if (await installationHasRepoAccess(installationId, owner, repo)) {
+      if (await installationIncludesRepository(installationId, owner, repo)) {
         return installationId;
       }
     }
@@ -89,7 +89,7 @@ export async function resolveInstallationIdForRepository(input: {
 
   const cached = await getAspRepositoryInstallation(repositoryFullName);
   if (cached?.installationId) {
-    const hasAccess = await installationHasRepoAccess(
+    const hasAccess = await installationIncludesRepository(
       cached.installationId,
       input.owner,
       input.repo
@@ -254,7 +254,7 @@ export async function resolveAuthoritativeRepositoryAccess(input: {
     };
   }
 
-  const repositorySelected = await installationHasRepoAccess(
+  const repositorySelected = await installationIncludesRepository(
     installationId,
     input.owner,
     input.repo
