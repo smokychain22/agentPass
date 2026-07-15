@@ -111,7 +111,14 @@ export async function resolveAspGitHubToken(input: {
     );
   }
 
-  const token = await createInstallationAccessToken(resolved.installationId);
+  const token = await createInstallationAccessToken(resolved.installationId, {
+    repositories: [input.repo],
+    permissions: {
+      contents: "write",
+      pull_requests: "write",
+      metadata: "read",
+    },
+  });
   return token.token;
 }
 

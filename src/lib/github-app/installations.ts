@@ -5,9 +5,20 @@ import { repositoryFullNameInList } from "./repository-match";
 import { GitHubClient } from "@/lib/github/github-client";
 
 export async function createInstallationAccessToken(
-  installationId: number
+  installationId: number,
+  options?: {
+    repositories?: string[];
+    permissions?: Record<string, "read" | "write">;
+  }
 ): Promise<InstallationTokenResult> {
   const appJwt = createGitHubAppJwt();
+  const body: Record<string, unknown> = {};
+  if (options?.repositories?.length) {
+    body.repositories = options.repositories;
+  }
+  if (options?.permissions && Object.keys(options.permissions).length > 0) {
+    body.permissions = options.permissions;
+  }
   const res = await fetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
@@ -16,7 +27,9 @@ export async function createInstallationAccessToken(
         Authorization: `Bearer ${appJwt}`,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
+        ...(Object.keys(body).length > 0 ? { "Content-Type": "application/json" } : {}),
       },
+      ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}),
     }
   );
 
