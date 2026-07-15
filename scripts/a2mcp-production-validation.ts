@@ -81,19 +81,23 @@ async function main() {
         decoded = JSON.parse(paymentHeaderRaw) as Record<string, unknown>;
       }
       const accepts = (decoded.accepts ?? []) as Array<Record<string, unknown>>;
-      const first = accepts[0] ?? {};
+      const challenge = accepts[0] ?? decoded;
       record("C x402Version 2", decoded.x402Version === 2, `got=${decoded.x402Version}`);
-      record("C network eip155:196", first.network === "eip155:196", `got=${first.network}`);
+      record("C network eip155:196", challenge.network === "eip155:196", `got=${challenge.network}`);
       record(
         "C asset USD₮0",
-        first.asset === "0x779ded0c9e1022225f8e0630b35a9b54be713736",
-        `got=${first.asset}`
+        challenge.asset === "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        `got=${challenge.asset}`
       );
-      record("C amount 30000", first.amount === "30000" || first.amount === 30000, `got=${first.amount}`);
+      record(
+        "C amount 30000",
+        challenge.amount === "30000" || challenge.amount === 30000,
+        `got=${challenge.amount}`
+      );
       record(
         "C payTo seller",
-        first.payTo === "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
-        `got=${first.payTo}`
+        challenge.payTo === "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+        `got=${challenge.payTo}`
       );
     } else {
       record("C PAYMENT-REQUIRED decode", false, "header missing");

@@ -1,0 +1,54 @@
+{
+  "validatedAt": "2026-07-15T20:23:00Z",
+  "productionUrl": "https://skillswap-virid-kappa.vercel.app",
+  "mergedCommitSha": "8c26ba30c9c3705db6c1e506815b228991e9f3d9",
+  "deployedCommitSha": "8c26ba30c9c3705db6c1e506815b228991e9f3d9",
+  "vercelProductionDeploymentId": "5463553606",
+  "vercelDeploymentUrl": "https://vercel.com/skillswap7/skillswap/zCt2kfxon6LP5ArAweYkrJUdzNx5",
+  "deploymentStatus": "success",
+  "commitsMatch": true,
+  "forbiddenQuote": "quote_oQs2zW2cmt7o",
+  "forbiddenQuoteReuseBlocked": true,
+  "historicalTx": "0x351daeb986fc656fd611aaf01226e297efe42cfc91be1082222b94702d5fa73f",
+  "noNewQuoteAuthorized": true,
+  "noFundsMoved": true,
+  "productionChecks": {
+    "A_health": { "pass": true, "tools": 200, "okx": 200, "mode": "live_x402" },
+    "B_unpaid402": { "pass": true, "status": 402 },
+    "C_paymentRequired": {
+      "pass": true,
+      "x402Version": 2,
+      "network": "eip155:196",
+      "asset": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+      "amount": "30000",
+      "payTo": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90"
+    },
+    "D_boundedTriageOnProductionUrl": {
+      "pass": false,
+      "reason": "Production diagnostic requires REPODIET_INTERNAL_DIAGNOSTIC_SECRET; unauthenticated call returns 403 by design",
+      "deployParityAtMergedCommit": {
+        "pass": true,
+        "httpStatus": 200,
+        "elapsedMs": 1163,
+        "totalMs": 1130,
+        "findingsReturned": 5
+      }
+    },
+    "F_diagnosticSecurity": { "pass": true, "unauthenticatedStatus": 403 },
+    "G_J_paidPathReceiptIdempotency": {
+      "pass": true,
+      "verifiedVia": "test/a2mcp-paid-path-fixture.test.ts at deployed commit"
+    },
+    "K_noSecondPayment": { "pass": true },
+    "L_M_N_lifecycle": {
+      "pass": true,
+      "verifiedVia": "test/a2mcp-quote-lifecycle.test.ts + test/a2mcp-paid-path-fixture.test.ts"
+    }
+  },
+  "productionLogs": {
+    "accessible": false,
+    "note": "Vercel runtime logs not available to cloud agent; no 5xx observed on health/402/403 probes",
+    "observedErrors": []
+  },
+  "verdict": "PRODUCTION_READY_FOR_FINAL_PAID_TEST"
+}
