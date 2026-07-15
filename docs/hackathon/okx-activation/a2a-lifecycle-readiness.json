@@ -1,0 +1,55 @@
+{
+  "generatedAt": "2026-07-15T21:20:00Z",
+  "canonicalOrigin": "https://skillswap-virid-kappa.vercel.app",
+  "aspAgentId": "5283",
+  "a2aServiceId": "32947",
+  "operation": "create_cleanup_pr",
+  "defaultReferencePrice": "1 USD₮0",
+  "lifecycle": [
+    "buyer creates A2A task",
+    "seller accepts or negotiates scope",
+    "funds enter escrow",
+    "RepoDiet creates a real Green PR",
+    "seller submits delivery evidence",
+    "buyer inspects and accepts",
+    "escrow releases to seller",
+    "receipt and task evidence are recorded"
+  ],
+  "repoDietOwnedEndpoints": {
+    "proposeScope": "POST /api/green-pr/contracts",
+    "acceptScope": "POST /api/green-pr/contracts/{id}/accept",
+    "createTaskOrder": "POST /api/okx/a2a/orders",
+    "fundInternalEntitlement": "POST /api/a2a/tasks/{taskId}/fund",
+    "approveCreateGreenPr": "POST /api/a2a/tasks/{taskId}/approve",
+    "submitDeliveryEvidence": "POST /api/okx/a2a/tasks/{taskId}/delivery",
+    "buyerAccept": "POST /api/okx/a2a/tasks/{taskId}/accept",
+    "recordEscrowRelease": "POST /api/okx/a2a/tasks/{taskId}/release",
+    "verifyReceipt": "GET /api/okx/receipts/{receiptId}"
+  },
+  "okxNativeSteps": [
+    "marketplace task creation",
+    "escrow lock",
+    "buyer acceptance in OKX UI/CLI",
+    "escrow release payment"
+  ],
+  "statusMachine": [
+    "delivery_ready",
+    "delivery_submitted",
+    "buyer_accepted",
+    "completed"
+  ],
+  "guards": {
+    "doNotCreateA2mcpQuote": true,
+    "doNotMoveFundsWithoutAuthorization": true,
+    "stopBeforeEscrowFundingUntilAuthorized": true,
+    "listingPublicAgentPageStillUnset": true
+  },
+  "implementation": {
+    "deliveryEvidenceWired": true,
+    "buyerAcceptEndpoint": true,
+    "escrowReleaseRecordingEndpoint": true,
+    "quoteCompletionDeferredUntilRelease": true,
+    "marketplaceDeliveryPersisted": true
+  },
+  "verdict": "A2A_LIFECYCLE_IMPLEMENTED_STOP_BEFORE_FUNDED_ACCEPTANCE"
+}

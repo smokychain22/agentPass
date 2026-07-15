@@ -32,4 +32,5 @@ Protocol distinction: A2MCP is standardized pay-per-call; A2A is customized escr
 - `listing-status.json` — prepared public listing copy
 - `service-identities.json` — live IDs and fee resolution
 - `a2mcp-final-acceptance-result.json` — paid A2MCP + crypto evidence
+- `a2a-lifecycle.md` / `a2a-lifecycle-readiness.json` — escrow → Green PR → accept → release mapping
 - Production pages: `/`, `/pricing`, `/okx`, `/.well-known/agent-card.json`, `/api/tools/manifest`
