@@ -38,7 +38,12 @@ function signingAlgorithm(key: KeyObject): AsymmetricSigner["algorithm"] {
 }
 
 export function publicKeyFingerprint(publicKeyPem: string): string {
-  return createHash("sha256").update(publicKeyPem).digest("hex").slice(0, 24);
+  // Fingerprint the canonical SubjectPublicKeyInfo bytes, not PEM text. Secret
+  // stores and CLIs commonly preserve or append line endings; those formatting
+  // differences must not make the same cryptographic key look like a mismatch.
+  const der = createPublicKey(decodeKey(publicKeyPem))
+    .export({ type: "spki", format: "der" });
+  return createHash("sha256").update(der).digest("hex").slice(0, 24);
 }
 
 export function createAsymmetricSigner(input: {
