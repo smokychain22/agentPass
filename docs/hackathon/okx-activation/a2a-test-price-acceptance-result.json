@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-07-15T23:05:00Z",
+  "canonicalOrigin": "https://skillswap-virid-kappa.vercel.app",
+  "previewOrigin": "https://skillswap-git-cursor-a2a-acceptance-scoped-b5b2-skillswap7.vercel.app",
+  "aspAgentId": "5283",
+  "a2aServiceId": "32947",
+  "testPrice": {
+    "env": "REPODIET_A2A_TEST_PRICE=1",
+    "amountMicro": "200000",
+    "priceLabel": "0.20 USDT"
+  },
+  "latestSuccessfulPaymentPath": {
+    "taskId": "task_31f66187405240",
+    "quoteId": "quote_sV_KIegf1Mac",
+    "amountMicro": "200000",
+    "statusReached": "awaiting_approval",
+    "repository": "velz-cmd/repodiet-e2e-test",
+    "findingScope": ["src/unused/confirmed-unused.ts", "src/unused/empty-module.ts"]
+  },
+  "blocker": {
+    "status": "delivery_failed",
+    "step": "approve → create Green PR branch",
+    "error": "POST /repos/velz-cmd/repodiet-e2e-test/git/refs → 403 Resource not accessible by integration",
+    "meaning": "RepoDiet GitHub App installation 145764323 can read the fixture but cannot create refs (Contents write).",
+    "requiredAction": "On https://github.com/apps/repodiet-operator/installations/145764323 ensure Contents and Pull requests are Write for velz-cmd/repodiet-e2e-test, then re-run scripts/a2a-controlled-acceptance.ts"
+  },
+  "envCleanup": {
+    "afterAcceptancePassesRemove": [
+      "REPODIET_A2A_TEST_PRICE",
+      "REPODIET_X402_TEST_MODE",
+      "REPODIET_X402_TEST_SECRET"
+    ],
+    "retain": {
+      "ALLOW_INTERNAL_TEST_BUYER": "0",
+      "spellingNote": "BUYER not BUER"
+    },
+    "removedYet": false,
+    "reason": "Do not remove temporary test-price vars until Green PR + delivery/accept/release acceptance passes."
+  },
+  "verdict": "A2A_TEST_PRICE_PAYMENT_PATH_PASS_GREEN_PR_BLOCKED_GITHUB_CONTENTS_WRITE"
+}
