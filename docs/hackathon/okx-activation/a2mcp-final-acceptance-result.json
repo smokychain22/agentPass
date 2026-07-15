@@ -1,0 +1,135 @@
+{
+  "completedAt": "2026-07-15T20:30:00Z",
+  "verdict": "FINAL_A2MCP_ACCEPTANCE_PASS",
+  "productionUrl": "https://skillswap-virid-kappa.vercel.app",
+  "deployedCommitSha": "8c26ba30c9c3705db6c1e506815b228991e9f3d9",
+  "serviceId": "32948",
+  "authorization": {
+    "ownerAuthorized": true,
+    "authorizedQuoteId": "quote_kpBaws-sNypi",
+    "authorizedRequestDigestAtQuoteCreation": "sha256:eaf3dbd6c09347190fd1502a25490462f5a4d519d2b1f2b77776e225449f9937",
+    "executionBindingDigest": "sha256:6719e581938926354c2e06ad60fd01913729aaf964da171ae513fa3cb91a6efc",
+    "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "amount": "0.03 USD₮0",
+    "amountMicro": "30000",
+    "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "network": "eip155:196",
+    "operation": "analyze_repository",
+    "repository": "smokychain22/agentPass",
+    "maximumFindings": 5,
+    "forbiddenQuoteNotUsed": "quote_oQs2zW2cmt7o"
+  },
+  "settlement": {
+    "method": "eip3009_transferWithAuthorization_redeemed_on_xlayer",
+    "transactionHash": "0x068547fad27d1832e0a8d4f5f9a25b9b10ca9800646f6c83e8351ea70e9ef88b",
+    "txStatus": "SUCCESS",
+    "onChainVerification": {
+      "from": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+      "to": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+      "tokenContract": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+      "amountMicro": "30000"
+    },
+    "paymentReference": "0x068547fad27d1832e0a8d4f5f9a25b9b10ca9800646f6c83e8351ea70e9ef88b"
+  },
+  "quoteFunding": {
+    "endpoint": "https://skillswap-virid-kappa.vercel.app/api/tasks/pay",
+    "httpStatus": 200,
+    "success": true,
+    "status": "funded",
+    "quoteId": "quote_kpBaws-sNypi",
+    "executionStateAfterFunding": "FUNDED",
+    "executionStateAfterSuccess": "SUCCEEDED"
+  },
+  "protectedRequest1": {
+    "endpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage",
+    "httpStatus": 200,
+    "success": true,
+    "taskId": "task_83a1cd6430a644",
+    "executionDurationMs": 2149,
+    "boundedScanTotalMs": 1799,
+    "triageMode": "bounded_quick_triage",
+    "stageTimings": [
+      { "stage": "fetch_and_extract", "durationMs": 1301, "ok": true },
+      { "stage": "bounded_analysis", "durationMs": 489, "ok": true },
+      { "stage": "normalize", "durationMs": 9, "ok": true }
+    ],
+    "summary": {
+      "totalFindingsDetected": 253,
+      "findingsReturned": 5,
+      "safeCandidates": 0,
+      "reviewFirst": 5,
+      "protected": 0
+    },
+    "resolvedCommitSha": "b9f6b502060d345718f79b2f097823bddcbc7f7e"
+  },
+  "protectedRequest2_idempotency": {
+    "httpStatus": 200,
+    "success": true,
+    "idempotentReplay": true,
+    "alreadyProcessed": true,
+    "originalTaskId": "task_83a1cd6430a644",
+    "receiptId": "receipt_OkwZLE67jSCT",
+    "sameResultDigest": true,
+    "secondExecutionCreated": false
+  },
+  "duplicatePaymentProbe": {
+    "endpoint": "https://skillswap-virid-kappa.vercel.app/api/tasks/pay",
+    "httpStatus": 409,
+    "status": "replayed",
+    "error": "Quote already consumed.",
+    "secondOnChainSettlement": false
+  },
+  "receipt": {
+    "receiptId": "receipt_OkwZLE67jSCT",
+    "resultHash": "sha256:eb3926e492acd957ee3e030dc0b9cb100bd46feec161f18b500060dee05587ef",
+    "requestHashOnReceipt": "sha256:6719e581938926354c2e06ad60fd01913729aaf964da171ae513fa3cb91a6efc",
+    "signaturePresent": true,
+    "operatorAgentId": "5283",
+    "quoteId": "quote_kpBaws-sNypi",
+    "paymentReference": "0x068547fad27d1832e0a8d4f5f9a25b9b10ca9800646f6c83e8351ea70e9ef88b",
+    "cryptographicVerification": {
+      "productionVerifyEndpoint": "https://skillswap-virid-kappa.vercel.app/api/okx/receipts/receipt_OkwZLE67jSCT",
+      "valid": false,
+      "reason": "Operator receipt trust root is not configured (REPODIET_OPERATOR_PUBLIC_KEY missing on production verify path). Signature was produced and returned on the execution response."
+    },
+    "bindingsConfirmed": {
+      "quoteId": true,
+      "paymentReference": true,
+      "buyerViaOnChainTransfer": true,
+      "sellerViaOnChainTransfer": true,
+      "amountMicro30000": true,
+      "tokenContract": true,
+      "networkEip155196": true,
+      "operationAnalyzeRepository": true,
+      "repositorySmokychain22AgentPass": true,
+      "resultDigest": true
+    }
+  },
+  "balances": {
+    "buyerUsdT0Before": "0.52",
+    "buyerUsdT0After": "0.49",
+    "sellerUsdT0Before": "0.33",
+    "sellerUsdT0After": "0.36",
+    "buyerDelta": "-0.03",
+    "sellerDelta": "+0.03",
+    "estimatedNetworkFee": "0"
+  },
+  "productionLogs": {
+    "accessible": false,
+    "observedHttpErrorsDuringTest": [],
+    "note": "No 402/409/5xx/timeout on successful execution path; duplicate pay correctly returned 409 replayed"
+  },
+  "historicalEvidencePreserved": {
+    "failedQuote": "quote_oQs2zW2cmt7o",
+    "failedTx": "0x351daeb986fc656fd611aaf01226e297efe42cfc91be1082222b94702d5fa73f",
+    "classification": "PAYMENT_PASS_DELIVERY_FAIL"
+  },
+  "redactions": [
+    "PAYMENT-SIGNATURE raw value",
+    "OTP",
+    "session tokens",
+    "private keys",
+    "API secrets"
+  ]
+}
