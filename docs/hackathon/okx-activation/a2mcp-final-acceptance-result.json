@@ -230,5 +230,81 @@
       }
     },
     "verdict": "STRICT_FINAL_A2MCP_ACCEPTANCE_PASS"
+  },
+  "cryptographicEvidenceRemediation": {
+    "completedAt": "2026-07-15T20:53:00Z",
+    "noNewQuote": true,
+    "noFundsMoved": true,
+    "noNewExecution": true,
+    "noNewExecutionReceipt": true,
+    "mergedCommitSha": "5326f3db13d529c418675b3d5618951f7a55cac5",
+    "deployedCommitSha": "5326f3db13d529c418675b3d5618951f7a55cac5",
+    "vercelProductionDeploymentId": "5463936365",
+    "originalSignedPayload": "{\"version\":\"1\",\"operator\":\"repodiet-operator\",\"taskId\":\"task_83a1cd6430a644\",\"quoteId\":\"quote_kpBaws-sNypi\",\"paymentReference\":null,\"repository\":\"smokychain22/agentPass\",\"commitSha\":\"\",\"findingIds\":[],\"patchHash\":\"sha256:eb3926e492acd957ee3e030dc0b9cb100bd46feec161f18b500060dee05587ef\",\"verificationHash\":\"sha256:eb3926e492acd957ee3e030dc0b9cb100bd46feec161f18b500060dee05587ef\",\"pullRequestUrl\":null,\"status\":\"completed\",\"timestamp\":\"2026-07-15T20:29:53.621Z\"}",
+    "originalSignedFields": [
+      "version",
+      "operator",
+      "taskId",
+      "quoteId",
+      "paymentReference",
+      "repository",
+      "commitSha",
+      "findingIds",
+      "patchHash",
+      "verificationHash",
+      "pullRequestUrl",
+      "status",
+      "timestamp"
+    ],
+    "quoteDigestOriginallySigned": false,
+    "quoteDigestStatus": "ORIGINAL_RECEIPT_DOES_NOT_CRYPTOGRAPHICALLY_BIND_QUOTE_DIGEST",
+    "trustRootFingerprint": "sha256:d495f62bd74d136390322df4a042db4250cd27c594992b55f321201a16aba662",
+    "trustRootSource": "pinned_constant",
+    "trustRootUsesPrivateDerivation": false,
+    "dashboardActionForEnv": [
+      "Vercel \u2192 Project Settings \u2192 Environment Variables",
+      "Key: REPODIET_OPERATOR_PUBLIC_KEY",
+      "Environment: Production",
+      "Value: paste SPKI PEM from GET /api/okx/trust-root",
+      "Save \u2192 Redeploy Production"
+    ],
+    "bindingAttestationId": "binding_attestation_PrAfShe59R31",
+    "bindingAttestationSignature": "BvhbF+agi6mWP0b04xdd7Xa1Ex0ri8LsTjvIgAT1gLuweyqKIucCB5+LkWrijEzOQdW12iuOT5y8fbLUOU0eU3WLVN+f/JB1rlvnTqR2P+WNLcQg+RbAvDDpj1HjJ2KPfrdYWamugeL9gl3tCJ5mjCy4x/R+xKKkBp+/AA9C9HkWF4qSjVQECRRxyCk1git3eWlQj6HrqbmUWO4zrwKKmkb83gi/D9rMvNLv7E/OtQADY2HOJMRj4VMjyK8lZhmf3hFDKnD7L6jJt8uz0Z0ct+dlHSbDTLoeZ7//KJx5fNGTKfvW5LPHr5O5anUsVKsiq2vo7veAgni+DLjAHd38xA==",
+    "bindingAttestationVerification": {
+      "valid": true,
+      "bindsQuoteRequestDigest": true,
+      "bindsExecutionRequestDigest": true,
+      "bindsOriginalReceiptSignatureDigest": true,
+      "bindsTransactionAndTask": true,
+      "kind": "binding_attestation_not_execution_receipt"
+    },
+    "futureReceiptVersion": "SignedReceiptV2",
+    "originalReceiptCryptoVerify": {
+      "valid": true,
+      "receiptId": "receipt_OkwZLE67jSCT",
+      "operatorId": "5283",
+      "againstPinnedPublicKey": true
+    },
+    "postRemediationReplay": {
+      "httpStatus": 200,
+      "taskId": "task_83a1cd6430a644",
+      "receiptId": "receipt_OkwZLE67jSCT",
+      "idempotentReplay": true,
+      "sameResultDigest": true,
+      "duplicatePayment": {
+        "httpStatus": 402,
+        "status": "expired",
+        "error": "Quote expired.",
+        "secondOnChainSettlement": false,
+        "note": "Quote TTL elapsed; re-pay rejected without moving funds. Balances unchanged."
+      },
+      "duplicateExecution": false,
+      "duplicateExecutionReceipt": false,
+      "balancesUnchanged": {
+        "buyerUsdT0": "0.49",
+        "sellerUsdT0": "0.36"
+      }
+    },
+    "verdict": "CRYPTOGRAPHIC_EVIDENCE_REMEDIATION_PASS"
   }
 }
