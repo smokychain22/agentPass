@@ -875,7 +875,7 @@ export async function fundA2ATask(
     return failTask(existing, sm, "payment_failed", "Payment reference missing after funding.");
   }
 
-  const task = await updateA2ATask(taskId, {
+  let task = await updateA2ATask(taskId, {
     input: {
       ...existing.input,
       quoteId,
@@ -915,6 +915,19 @@ export async function fundA2ATask(
   }
 
   sm.emit("funded", "orchestrator", boundPaymentReference);
+  // Bind OKX-native escrow reference into settlement evidence when provided on the order.
+  if (order?.escrowReference) {
+    task = {
+      ...task,
+      result: {
+        ...task.result,
+        settlement: {
+          ...task.result.settlement,
+          escrowReference: order.escrowReference,
+        },
+      },
+    };
+  }
   await syncTask(task, sm);
   const marked = await markA2aFundExecutionQueued(taskId, lockToken, {
     quoteId: fundedQuote.quoteId,

@@ -2,7 +2,6 @@ import type { A2ATaskRecord } from "@/lib/a2a/types";
 import { A2ATaskStateMachine } from "@/lib/a2a/task-state-machine";
 import { saveA2ATask } from "@/lib/a2a/task-store";
 import { deliverTaskCallback, persistTask } from "@/lib/a2a/callbacks";
-import { markQuoteCompleted } from "@/lib/payment";
 import {
   buildDeliveryReceiptChecks,
   inspectPullRequestChecks,
@@ -328,14 +327,19 @@ export async function monitorTaskPullRequestDelivery(input: {
       result,
       transitions: sm.cloneTransitions(),
       updatedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      // Not terminal — buyer must inspect, accept, then escrow releases.
+      completedAt: undefined,
     };
     await saveA2ATask(finalized);
     await deliverTaskCallback(finalized);
-    if (input.task.input.quoteId) {
-      await markQuoteCompleted(input.task.input.quoteId, input.task.id);
+
+    // Seller submits delivery evidence; quote entitlement closes only after escrow release.
+    try {
+      const { submitA2aDeliveryEvidence } = await import("@/lib/a2a/settlement-lifecycle");
+      return await submitA2aDeliveryEvidence(finalized.id);
+    } catch {
+      return finalized;
     }
-    return finalized;
   }
 
   const failureStatus =

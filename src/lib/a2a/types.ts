@@ -24,6 +24,12 @@ export type A2ATaskStatus =
   | "diagnosis_ready"
   | "owner_action_required"
   | "delivery_ready"
+  /** Seller submitted delivery evidence for buyer inspection. */
+  | "delivery_submitted"
+  /** Buyer inspected and accepted the delivered Green PR. */
+  | "buyer_accepted"
+  /** Escrow release to seller recorded (OKX-native release reference). */
+  | "escrow_released"
   | "completed"
   | "rejected"
   | "unsupported"
@@ -49,8 +55,17 @@ export const A2A_FAILURE_STATUSES: A2ATaskStatus[] = [
 
 export const A2A_TERMINAL_STATUSES: A2ATaskStatus[] = [
   "completed",
-  "delivery_ready",
+  "escrow_released",
   ...A2A_FAILURE_STATUSES,
+];
+
+/** Lifecycle stages after a real Green PR is ready for buyer settlement. */
+export const A2A_SETTLEMENT_STATUSES: A2ATaskStatus[] = [
+  "delivery_ready",
+  "delivery_submitted",
+  "buyer_accepted",
+  "escrow_released",
+  "completed",
 ];
 
 export type InternalRole =
@@ -137,6 +152,17 @@ export interface A2ATaskResult {
   };
   greenPrExecution?: Record<string, unknown>;
   attestation?: Record<string, unknown>;
+  /** A2A settlement evidence (escrow → delivery → buyer accept → release). */
+  settlement?: {
+    escrowReference?: string;
+    deliveryId?: string;
+    deliverySubmittedAt?: string;
+    buyerAcceptedAt?: string;
+    buyerWallet?: string;
+    escrowReleasedAt?: string;
+    escrowReleaseReference?: string;
+    sellerWallet?: string;
+  };
 }
 
 export interface A2ATaskWorkflowMeta {

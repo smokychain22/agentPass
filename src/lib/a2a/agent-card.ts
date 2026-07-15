@@ -105,6 +105,7 @@ export function buildAgentCard() {
     },
     endpoints: {
       submitTask: `${baseUrl}/api/a2a/tasks`,
+      createA2aOrder: `${baseUrl}/api/okx/a2a/orders`,
       quickTriage: `${baseUrl}/api/a2mcp/quick-triage`,
       proposeMaintenanceContract: `${baseUrl}/api/green-pr/contracts`,
       acceptMaintenanceContract: `${baseUrl}/api/green-pr/contracts/{contractId}/accept`,
@@ -113,12 +114,25 @@ export function buildAgentCard() {
       approveTask: `${baseUrl}/api/a2a/tasks/{taskId}/approve`,
       fundTask: `${baseUrl}/api/a2a/tasks/{taskId}/fund`,
       cancelTask: `${baseUrl}/api/a2a/tasks/{taskId}/cancel`,
+      submitDeliveryEvidence: `${baseUrl}/api/okx/a2a/tasks/{taskId}/delivery`,
+      buyerAcceptDelivery: `${baseUrl}/api/okx/a2a/tasks/{taskId}/accept`,
+      recordEscrowRelease: `${baseUrl}/api/okx/a2a/tasks/{taskId}/release`,
       trustRoot: `${baseUrl}/api/okx/trust-root`,
       verifyReceipt: `${baseUrl}/api/okx/receipts/{receiptId}`,
       manifest: `${baseUrl}/api/tools/manifest`,
       health: `${baseUrl}/api/tools/health`,
       maintenanceContractSchema: `${baseUrl}/schemas/repodiet.contract.v1.schema.json`,
     },
+    a2aLifecycle: [
+      "buyer creates A2A task",
+      "seller accepts or negotiates scope",
+      "funds enter escrow",
+      "RepoDiet creates a real Green PR",
+      "seller submits delivery evidence",
+      "buyer inspects and accepts",
+      "escrow releases to seller",
+      "receipt and task evidence are recorded",
+    ],
     inputFormats: {
       submitTask: {
         type: "object",
