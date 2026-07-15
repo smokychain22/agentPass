@@ -9,11 +9,28 @@ export async function GET(
 ) {
   const { receiptId } = await context.params;
   const result = await verifyReceipt(receiptId);
+
   if (!result.valid) {
     return NextResponse.json(
-      { success: false, error: result.reason ?? "Invalid receipt." },
-      { status: 404 }
+      {
+        success: false,
+        valid: false,
+        receiptId: result.receiptId ?? receiptId,
+        operatorId: result.operatorId,
+        signatureAlgorithm: result.signatureAlgorithm,
+        receipt: result.receipt,
+        error: result.reason ?? "Invalid receipt.",
+      },
+      { status: result.reason === "Receipt not found." ? 404 : 422 }
     );
   }
-  return NextResponse.json({ success: true, receipt: result.receipt });
+
+  return NextResponse.json({
+    success: true,
+    valid: true,
+    receiptId: result.receiptId ?? receiptId,
+    operatorId: result.operatorId,
+    signatureAlgorithm: result.signatureAlgorithm,
+    receipt: result.receipt,
+  });
 }

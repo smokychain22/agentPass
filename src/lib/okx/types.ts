@@ -108,6 +108,10 @@ export interface PaymentReceipt {
   repository?: string;
   resultDigest?: string;
   completedAt?: string;
+  /** Authorized quote commercial digest (buyer-authorized request). */
+  quoteRequestDigest?: string;
+  /** Optional narrower execution-binding digest used at request gate time. */
+  executionRequestDigest?: string;
 }
 
 export interface CommerceBinding {

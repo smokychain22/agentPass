@@ -18,6 +18,7 @@ import type { CommerceOperation } from "@/lib/payment/types";
 import { paymentRequiredJsonResponse } from "@/lib/payment/x402-payment-required";
 import {
   getCompletedA2mcpExecution,
+  getCompletedA2mcpExecutionByQuote,
   newCompletedExecution,
   saveCompletedA2mcpExecution,
 } from "@/lib/a2mcp/a2mcp-execution-store";
@@ -53,6 +54,7 @@ export async function runPhase3ToolRoute(
 
   let gateQuoteId: string | undefined;
   let requestHash: string | undefined;
+  let executionRequestDigest: string | undefined;
 
   try {
     if (request.method !== "POST") {
@@ -71,25 +73,46 @@ export async function runPhase3ToolRoute(
 
     if (paid) {
       const binding = await resolveBindingFromBody(body, operation);
-      requestHash = binding.requestHash;
+      executionRequestDigest = binding.requestHash;
+      requestHash = executionRequestDigest;
 
       const quoteId =
         (typeof body.quoteId === "string" ? body.quoteId : undefined) ??
         request.headers.get("x-repodiet-quote-id") ??
         undefined;
 
-      if (quoteId && requestHash) {
-        const cached = await getCompletedA2mcpExecution(quoteId, requestHash);
-        if (cached) {
+      if (quoteId) {
+        const quoteForCache = await getBoundQuote(quoteId);
+        const digests = [executionRequestDigest, quoteForCache?.requestHash].filter(
+          (value): value is string => Boolean(value)
+        );
+        for (const digest of digests) {
+          const cached = await getCompletedA2mcpExecution(quoteId, digest);
+          if (cached) {
+            return NextResponse.json(
+              {
+                ...cached.responseBody,
+                alreadyProcessed: true,
+                idempotentReplay: true,
+                originalTaskId: cached.taskId,
+                receiptId: cached.receiptId,
+              },
+              { status: cached.httpStatus }
+            );
+          }
+        }
+        // Quote-level cache (covers digest-key drift between quote/execution layers).
+        const byQuote = await getCompletedA2mcpExecutionByQuote(quoteId);
+        if (byQuote) {
           return NextResponse.json(
             {
-              ...cached.responseBody,
+              ...byQuote.responseBody,
               alreadyProcessed: true,
               idempotentReplay: true,
-              originalTaskId: cached.taskId,
-              receiptId: cached.receiptId,
+              originalTaskId: byQuote.taskId,
+              receiptId: byQuote.receiptId,
             },
-            { status: cached.httpStatus }
+            { status: byQuote.httpStatus }
           );
         }
       }
@@ -102,7 +125,9 @@ export async function runPhase3ToolRoute(
         binding,
       });
       gateQuoteId = gate.quote?.quoteId ?? quoteId;
-      requestHash = gate.requestHash;
+      executionRequestDigest = gate.requestHash ?? executionRequestDigest;
+      // Prefer authorized quote commercial digest for receipt binding.
+      requestHash = gate.quote?.requestHash ?? gate.requestHash;
 
       if (gateQuoteId) {
         const completedQuote = await getBoundQuote(gateQuoteId);
@@ -182,11 +207,18 @@ export async function runPhase3ToolRoute(
 
     if (paid && task.status === "completed") {
       const quote = gateQuoteId ? await getBoundQuote(gateQuoteId) : undefined;
+      const quoteRequestDigest = quote?.requestHash ?? requestHash ?? "";
+      const execDigest =
+        executionRequestDigest && executionRequestDigest !== quoteRequestDigest
+          ? executionRequestDigest
+          : undefined;
       const receipt = await signOkxReceipt({
         serviceId: tool,
         serviceType: "A2MCP",
         taskId,
-        requestHash: requestHash ?? "",
+        requestHash: quoteRequestDigest,
+        quoteRequestDigest,
+        executionRequestDigest: execDigest,
         result: task.result,
         quoteId: gateQuoteId,
         paymentReference: quote?.paymentReference,
@@ -202,6 +234,8 @@ export async function runPhase3ToolRoute(
         ...task.receipt,
         receiptId: receipt.receiptId,
         requestHash: receipt.requestHash,
+        quoteRequestDigest: receipt.quoteRequestDigest,
+        executionRequestDigest: receipt.executionRequestDigest,
         resultHash: receipt.resultHash,
         signature: receipt.signature,
         operatorAgentId: receipt.operatorAgentId,
@@ -213,17 +247,23 @@ export async function runPhase3ToolRoute(
         await markQuoteCompleted(gateQuoteId, taskId, receipt.receiptId);
         const responsePreview = buildToolActionResponse(tool, task);
         Object.assign(responsePreview, { service: tool });
-        await saveCompletedA2mcpExecution(
-          newCompletedExecution({
-            quoteId: gateQuoteId,
-            requestHash: requestHash ?? "",
-            taskId,
-            receiptId: receipt.receiptId,
-            httpStatus: 200,
-            responseBody: responsePreview as unknown as Record<string, unknown>,
-            resultDigest: resultDigest(task.result),
-          })
-        );
+        const completed = newCompletedExecution({
+          quoteId: gateQuoteId,
+          requestHash: quoteRequestDigest,
+          taskId,
+          receiptId: receipt.receiptId,
+          httpStatus: 200,
+          responseBody: responsePreview as unknown as Record<string, unknown>,
+          resultDigest: resultDigest(task.result),
+        });
+        await saveCompletedA2mcpExecution(completed);
+        // Also index under the execution-binding digest when it differs, for identical-request replay.
+        if (execDigest) {
+          await saveCompletedA2mcpExecution({
+            ...completed,
+            requestHash: execDigest,
+          });
+        }
       }
     }
 

@@ -121,10 +121,19 @@ export async function signOkxReceipt(input: {
   network?: string;
   operation?: string;
   repository?: string;
+  /** Authorized quote commercial digest — must not be replaced by an execution binding digest. */
+  quoteRequestDigest?: string;
+  /** Narrower commerce-binding digest used at request gate time. */
+  executionRequestDigest?: string;
 }): Promise<PaymentReceipt> {
   const receiptId = newReceiptId();
   const hash = resultHash(input.result);
   const timestamp = new Date().toISOString();
+  const quoteRequestDigest = input.quoteRequestDigest ?? input.requestHash;
+  const executionRequestDigest =
+    input.executionRequestDigest && input.executionRequestDigest !== quoteRequestDigest
+      ? input.executionRequestDigest
+      : undefined;
   const signed = signExecutionReceipt({
     taskId: input.taskId,
     repository: input.repository ?? "",
@@ -134,6 +143,7 @@ export async function signOkxReceipt(input: {
     verificationHash: hash,
     status: "verified",
     quoteId: input.quoteId,
+    paymentReference: input.paymentReference,
     timestamp,
   });
 
@@ -142,7 +152,10 @@ export async function signOkxReceipt(input: {
     serviceId: input.serviceId as PaymentReceipt["serviceId"],
     serviceType: input.serviceType,
     taskId: input.taskId,
-    requestHash: input.requestHash,
+    // Primary requestHash is always the buyer-authorized quote digest.
+    requestHash: quoteRequestDigest,
+    quoteRequestDigest,
+    executionRequestDigest,
     resultHash: hash,
     resultDigest: hash,
     signature: signed.signature ?? undefined,
