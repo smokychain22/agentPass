@@ -12,20 +12,27 @@ export const maxDuration = 300;
  * Non-billable diagnostic path for Quick Triage.
  * Never creates/funds quotes and never moves balances.
  *
- * Enabled when:
- * - REPODIET_ALLOW_INTERNAL_DIAGNOSTIC=1, or
- * - NODE_ENV !== "production"
+ * Production (VERCEL_ENV=production): requires REPODIET_INTERNAL_DIAGNOSTIC_SECRET
+ * header match — never publicly enabled, even with REPODIET_ALLOW_INTERNAL_DIAGNOSTIC.
  *
- * Optional shared secret header: x-repodiet-diagnostic-secret
+ * Non-production: enabled when REPODIET_ALLOW_INTERNAL_DIAGNOSTIC=1 or NODE_ENV !== production.
+ * Optional secret header when REPODIET_INTERNAL_DIAGNOSTIC_SECRET is configured.
  */
 function diagnosticAllowed(request: Request): boolean {
+  const isProduction =
+    process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+  const secret = process.env.REPODIET_INTERNAL_DIAGNOSTIC_SECRET?.trim();
+
+  if (isProduction) {
+    if (!secret) return false;
+    return request.headers.get("x-repodiet-diagnostic-secret") === secret;
+  }
+
   const allowFlag = process.env.REPODIET_ALLOW_INTERNAL_DIAGNOSTIC === "1";
   const nonProd = process.env.NODE_ENV !== "production";
   if (!allowFlag && !nonProd) return false;
-
-  const required = process.env.REPODIET_INTERNAL_DIAGNOSTIC_SECRET?.trim();
-  if (!required) return allowFlag || nonProd;
-  return request.headers.get("x-repodiet-diagnostic-secret") === required;
+  if (!secret) return allowFlag || nonProd;
+  return request.headers.get("x-repodiet-diagnostic-secret") === secret;
 }
 
 export async function POST(request: Request) {
