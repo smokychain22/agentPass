@@ -158,7 +158,7 @@ function successfulVerificationFixture() {
     receipt,
     trustedReceiptKeys: { [receiptSigner.keyId]: receiptSigner.publicKeyPem },
   };
-  return { contractRecord, verificationInput, receipt };
+  return { contractRecord, verificationInput, receipt, receiptSigner };
 }
 
 test("maintenance contract digest is stable after normalization", () => {
@@ -235,8 +235,13 @@ test("separately signed DSSE Green PR attestation verifies and detects tampering
     expectedSourceCommit: SOURCE_COMMIT,
     expectedPrHeadCommit: PATCH_COMMIT,
     expectedPullRequestNumber: 1,
+    receipt: fixture.receipt,
+    trustedReceiptPublicKeys: {
+      [fixture.receiptSigner.keyId]: fixture.receiptSigner.publicKeyPem,
+    },
   });
   assert.equal(valid.valid, true);
+  assert.equal(valid.receiptValid, true);
   assert.equal(valid.acceptanceRecommendation, "ACCEPT");
 
   const tampered = structuredClone(attestation);
@@ -246,6 +251,10 @@ test("separately signed DSSE Green PR attestation verifies and detects tampering
   const invalid = verifyGreenPrAttestation(tampered, {
     contractRecord: fixture.contractRecord,
     trustedPublicKeys: { [verifierSigner.keyId]: verifierSigner.publicKeyPem },
+    receipt: fixture.receipt,
+    trustedReceiptPublicKeys: {
+      [fixture.receiptSigner.keyId]: fixture.receiptSigner.publicKeyPem,
+    },
   });
   assert.equal(invalid.valid, false);
   assert.equal(invalid.signatureValid, false);
@@ -282,6 +291,10 @@ test("a valid signature cannot hide out-of-contract work or missing verification
   const result = verifyGreenPrAttestation(signedButFalse, {
     contractRecord: fixture.contractRecord,
     trustedPublicKeys: { [verifierSigner.keyId]: verifierSigner.publicKeyPem },
+    receipt: fixture.receipt,
+    trustedReceiptPublicKeys: {
+      [fixture.receiptSigner.keyId]: fixture.receiptSigner.publicKeyPem,
+    },
   });
 
   assert.equal(result.signatureValid, true);
@@ -289,6 +302,37 @@ test("a valid signature cannot hide out-of-contract work or missing verification
   assert.equal(result.requiredChecksPassed, false);
   assert.equal(result.valid, false);
   assert.match(result.reasons.join(","), /path_outside_scope/);
+});
+
+test("attestation signing rejects reuse of the receipt signing identity", () => {
+  const fixture = successfulVerificationFixture();
+  const decision = independentlyVerifyGreenPr(fixture.verificationInput);
+  assert.throws(
+    () => createGreenPrAttestation({
+      verificationInput: fixture.verificationInput,
+      decision,
+      receipt: fixture.receipt,
+      tools: [{
+        name: "repodiet-green-pr-verifier",
+        version: "1.0.0",
+        configurationDigest: `sha256:${"d".repeat(64)}`,
+      }],
+      signer: fixture.receiptSigner,
+    }),
+    /separation_of_powers/
+  );
+});
+
+test("signer construction rejects a public key that does not match its private key", () => {
+  const privatePair = generateKeyPairSync("ed25519");
+  const otherPair = generateKeyPairSync("ed25519");
+  assert.throws(
+    () => createAsymmetricSigner({
+      privateKeyPem: privatePair.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      publicKeyPem: otherPair.publicKey.export({ type: "spki", format: "pem" }).toString(),
+    }),
+    /does_not_match/
+  );
 });
 
 console.log("green-pr-protocol.test.ts: ok");

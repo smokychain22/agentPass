@@ -54,6 +54,9 @@ export function validateExecutionScope(
   const contractedFindings = new Set(record.contract.scope.findingIds);
   if (request.findingIds.length === 0) violations.push("no_findings_selected");
   const requestedFindings = new Set(request.findingIds);
+  if (requestedFindings.size !== request.findingIds.length) {
+    violations.push("duplicate_finding_id");
+  }
   for (const findingId of requestedFindings) {
     if (!contractedFindings.has(findingId)) violations.push(`finding_outside_scope:${findingId}`);
   }
@@ -62,6 +65,7 @@ export function validateExecutionScope(
   }
 
   const normalizedChanges: ContractedChange[] = [];
+  const changedPaths = new Set<string>();
   for (const change of request.changes) {
     let path = change.path;
     try {
@@ -70,6 +74,8 @@ export function validateExecutionScope(
       violations.push(error instanceof Error ? error.message : `invalid_path:${change.path}`);
       continue;
     }
+    if (changedPaths.has(path)) violations.push(`duplicate_change_path:${path}`);
+    changedPaths.add(path);
     normalizedChanges.push({ ...change, path });
     if (!record.contract.scope.allowedOperations.includes(change.operation)) {
       violations.push(`operation_outside_scope:${change.operation}`);
@@ -84,6 +90,10 @@ export function validateExecutionScope(
     if (!Number.isInteger(change.linesAdded) || change.linesAdded < 0 ||
         !Number.isInteger(change.linesDeleted) || change.linesDeleted < 0) {
       violations.push(`invalid_line_count:${path}`);
+    }
+    if (change.dependencyChanges !== undefined &&
+        (!Number.isInteger(change.dependencyChanges) || change.dependencyChanges < 0)) {
+      violations.push(`invalid_dependency_change_count:${path}`);
     }
   }
 

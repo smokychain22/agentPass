@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   decodeAttestationStatement,
   getGreenPrAttestation,
+  getGreenPrReceipt,
   getMaintenanceContractByDigest,
   trustedKeyMapFromEnvironment,
   verifyGreenPrAttestation,
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
     );
   }
   const trustedPublicKeys = trustedKeyMapFromEnvironment("GREEN_PR");
+  const trustedReceiptPublicKeys = trustedKeyMapFromEnvironment("RECEIPT");
   if (Object.keys(trustedPublicKeys).length === 0) {
     return NextResponse.json(
       { success: false, error: "Green PR verification trust root is not configured." },
@@ -59,6 +61,7 @@ export async function POST(request: Request) {
   const expected = body.expected && typeof body.expected === "object"
     ? body.expected as Record<string, unknown>
     : {};
+  const receipt = await getGreenPrReceipt(statement.predicate.commercialEvidence.receiptId);
   const result = verifyGreenPrAttestation(attestation, {
     contractRecord: contract,
     trustedPublicKeys,
@@ -70,6 +73,8 @@ export async function POST(request: Request) {
       typeof expected.prHeadCommit === "string" ? expected.prHeadCommit : undefined,
     expectedPullRequestNumber:
       typeof expected.pullRequestNumber === "number" ? expected.pullRequestNumber : undefined,
+    receipt,
+    trustedReceiptPublicKeys,
   });
   return NextResponse.json(
     { success: result.valid, attestationId, ...result, statement: undefined },

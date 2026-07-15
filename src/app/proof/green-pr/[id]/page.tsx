@@ -7,6 +7,7 @@ import { SiteFooter, SiteHeader } from "@/components/layout/site-header";
 import {
   decodeAttestationStatement,
   getGreenPrAttestation,
+  getGreenPrReceipt,
   getMaintenanceContractByDigest,
   trustedKeyMapFromEnvironment,
   verifyGreenPrAttestation,
@@ -38,9 +39,13 @@ export default async function GreenPrProofPage({
   const contract = await getMaintenanceContractByDigest(statement.predicate.contractDigest);
   if (!contract) notFound();
   const trustedPublicKeys = trustedKeyMapFromEnvironment("GREEN_PR");
+  const trustedReceiptPublicKeys = trustedKeyMapFromEnvironment("RECEIPT");
+  const receipt = await getGreenPrReceipt(statement.predicate.commercialEvidence.receiptId);
   const verification = verifyGreenPrAttestation(attestation, {
     contractRecord: contract,
     trustedPublicKeys,
+    receipt,
+    trustedReceiptPublicKeys,
   });
   const predicate = statement.predicate;
 
@@ -68,6 +73,9 @@ export default async function GreenPrProofPage({
             </Status>
             <Status ok={verification.requiredChecksPassed}>
               {verification.requiredChecksPassed ? "Blocking checks passed" : "Checks incomplete"}
+            </Status>
+            <Status ok={verification.receiptValid}>
+              {verification.receiptValid ? "Receipt verified" : "Receipt not verified"}
             </Status>
           </div>
         </div>
@@ -180,6 +188,11 @@ export default async function GreenPrProofPage({
           <Button asChild variant="outline">
             <Link href={`/api/attestations/${attestation.attestationId}`}>
               View Attestation JSON
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href={`/api/receipts/${predicate.commercialEvidence.receiptId}`}>
+              View Receipt JSON
             </Link>
           </Button>
           <Button asChild variant="outline">

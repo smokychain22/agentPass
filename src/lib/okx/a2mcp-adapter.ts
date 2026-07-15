@@ -7,6 +7,7 @@ import type { CommerceOperation } from "@/lib/payment/types";
 import {
   decodeAttestationStatement,
   getGreenPrAttestation,
+  getGreenPrReceipt,
   getMaintenanceContractByDigest,
 } from "@/lib/green-pr";
 
@@ -24,6 +25,25 @@ export async function resolveBindingFromBody(
   const branch = typeof body.branch === "string" ? body.branch.trim() : "main";
   const attestationId =
     typeof body.attestationId === "string" ? body.attestationId.trim() : undefined;
+  const receiptId = typeof body.receiptId === "string" ? body.receiptId.trim() : undefined;
+
+  if (receiptId) {
+    const receipt = await getGreenPrReceipt(receiptId);
+    if (!receipt) throw new Error(`Receipt not found: ${receiptId}.`);
+    const contract = await getMaintenanceContractByDigest(receipt.payload.contractDigest);
+    if (!contract) throw new Error("Maintenance contract not found for receipt.");
+    return buildCommerceBinding({
+      operation,
+      repository: `${contract.contract.repository.owner}/${contract.contract.repository.name}`,
+      branch: contract.contract.repository.branch,
+      commitSha: contract.contract.repository.sourceCommit,
+      findingIds: [
+        ...contract.contract.scope.findingIds,
+        `contract:${contract.contractDigest}`,
+        `receipt:${receiptId}`,
+      ],
+    });
+  }
 
   if (attestationId) {
     const attestation = await getGreenPrAttestation(attestationId);

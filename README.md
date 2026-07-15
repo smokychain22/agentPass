@@ -37,7 +37,7 @@ A2MCP analysis → bound quote → maintenance contract → OKX A2A order
 ```
 
 - **A2A service:** negotiated, repository-specific cleanup and pull-request delivery.
-- **A2MCP service:** repeatable analysis plus `verify_attestation` and `verify_green_pr` operations.
+- **A2MCP service:** repeatable analysis plus `verify_receipt`, `verify_attestation`, and `verify_green_pr` operations.
 - **Settlement:** X Layer (`eip155:196`) using the contract-bound asset and recipient.
 - **Fail-closed delivery:** missing keys, evidence, source-commit agreement, required checks, or payment prevents `delivery_ready`.
 

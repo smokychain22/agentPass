@@ -30,12 +30,14 @@ function decodeKey(value: string): string {
 }
 
 function signingAlgorithm(key: KeyObject): AsymmetricSigner["algorithm"] {
-  return key.asymmetricKeyType === "ed25519" || key.asymmetricKeyType === "ed448"
-    ? "ed25519"
-    : "sha256";
+  if (key.asymmetricKeyType === "ed25519") return "ed25519";
+  if (key.asymmetricKeyType === "ed448") {
+    throw new Error("unsupported_signing_key_type:ed448");
+  }
+  return "sha256";
 }
 
-function publicKeyFingerprint(publicKeyPem: string): string {
+export function publicKeyFingerprint(publicKeyPem: string): string {
   return createHash("sha256").update(publicKeyPem).digest("hex").slice(0, 24);
 }
 
@@ -50,6 +52,12 @@ export function createAsymmetricSigner(input: {
   const publicKeyPem = input.publicKeyPem
     ? decodeKey(input.publicKeyPem)
     : createPublicKey(privateKey).export({ type: "spki", format: "pem" }).toString();
+  const derivedPublicKeyPem = createPublicKey(privateKey)
+    .export({ type: "spki", format: "pem" })
+    .toString();
+  if (publicKeyFingerprint(publicKeyPem) !== publicKeyFingerprint(derivedPublicKeyPem)) {
+    throw new Error("signing_public_key_does_not_match_private_key");
+  }
   return {
     keyId: input.keyId ?? `sha256:${publicKeyFingerprint(publicKeyPem)}`,
     keyVersion: input.keyVersion ?? "1",
@@ -57,6 +65,19 @@ export function createAsymmetricSigner(input: {
     publicKeyPem,
     algorithm: signingAlgorithm(privateKey),
   };
+}
+
+export function assertSigningIdentitySeparation(
+  receiptSigner: Pick<AsymmetricSigner, "keyId" | "publicKeyPem">,
+  attestationSigner: Pick<AsymmetricSigner, "keyId" | "publicKeyPem">
+): void {
+  if (receiptSigner.keyId === attestationSigner.keyId) {
+    throw new Error("green_pr_separation_of_powers_key_id_conflict");
+  }
+  if (publicKeyFingerprint(receiptSigner.publicKeyPem) ===
+      publicKeyFingerprint(attestationSigner.publicKeyPem)) {
+    throw new Error("green_pr_separation_of_powers_public_key_conflict");
+  }
 }
 
 export function signerFromEnvironment(prefix: "GREEN_PR" | "RECEIPT"): AsymmetricSigner | null {
@@ -144,4 +165,40 @@ export function trustedKeyMapFromEnvironment(prefix: "GREEN_PR" | "RECEIPT"):
     result[singleKeyId ?? `sha256:${publicKeyFingerprint(publicKeyPem)}`] = publicKeyPem;
   }
   return result;
+}
+
+export interface PublicVerificationKey {
+  keyId: string;
+  keyVersion: string;
+  algorithm: AsymmetricSigner["algorithm"];
+  publicKeyPem: string;
+  fingerprint: string;
+  active: boolean;
+}
+
+export function publicVerificationKeysFromEnvironment(
+  prefix: "GREEN_PR" | "RECEIPT"
+): PublicVerificationKey[] {
+  const trusted = trustedKeyMapFromEnvironment(prefix);
+  const activeSigner = signerFromEnvironment(prefix);
+  const activeKeyId = activeSigner?.keyId;
+  const activeVersion = activeSigner?.keyVersion ??
+    process.env[`REPODIET_${prefix}_KEY_VERSION`] ?? "1";
+
+  if (activeSigner) trusted[activeSigner.keyId] = activeSigner.publicKeyPem;
+
+  return Object.entries(trusted)
+    .map(([keyId, publicKeyPem]) => {
+      const publicKey = createPublicKey(publicKeyPem);
+      return {
+        keyId,
+        keyVersion: activeSigner && keyId === activeKeyId ? activeVersion : "historical",
+        algorithm: signingAlgorithm(publicKey),
+        publicKeyPem,
+        fingerprint: `sha256:${publicKeyFingerprint(publicKeyPem)}`,
+        active: Boolean(activeSigner && keyId === activeKeyId),
+      } satisfies PublicVerificationKey;
+    })
+    .sort((left, right) => Number(right.active) - Number(left.active) ||
+      left.keyId.localeCompare(right.keyId));
 }

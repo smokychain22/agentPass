@@ -10,10 +10,11 @@ import {
   verifyMaintenanceContractRecord,
   type MaintenanceContractRecord,
 } from "./contract";
-import type { SignedGreenPrReceipt } from "./receipt";
+import { verifyGreenPrReceipt, type SignedGreenPrReceipt } from "./receipt";
 import {
   signBytes,
   verifyBytes,
+  publicKeyFingerprint,
   type AsymmetricSigner,
   type DetachedSignature,
 } from "./signatures";
@@ -242,6 +243,16 @@ export function createGreenPrAttestation(input: {
   if (input.receipt.payload.contractDigest !== input.decision.contractDigest) {
     throw new Error("green_pr_attestation_receipt_contract_mismatch");
   }
+  if (input.receipt.signature.keyId === input.signer.keyId) {
+    throw new Error("green_pr_separation_of_powers_key_id_conflict");
+  }
+  const receiptPublicKey = input.verificationInput.trustedReceiptKeys?.[
+    input.receipt.signature.keyId
+  ];
+  if (!receiptPublicKey) throw new Error("green_pr_receipt_signing_identity_unavailable");
+  if (publicKeyFingerprint(receiptPublicKey) === publicKeyFingerprint(input.signer.publicKeyPem)) {
+    throw new Error("green_pr_separation_of_powers_public_key_conflict");
+  }
 
   const now = input.now ?? new Date();
   const contract = input.verificationInput.contractRecord.contract;
@@ -331,6 +342,8 @@ export interface VerifyGreenPrAttestationOptions {
   expectedPrHeadCommit?: string;
   expectedPullRequestNumber?: number;
   previouslyProcessedReceiptIds?: Set<string>;
+  receipt?: SignedGreenPrReceipt;
+  trustedReceiptPublicKeys?: Record<string, string>;
 }
 
 export function verifyGreenPrAttestation(
@@ -343,6 +356,7 @@ export function verifyGreenPrAttestation(
   sourceCommitMatched: boolean;
   scopeRespected: boolean;
   requiredChecksPassed: boolean;
+  receiptValid: boolean;
   newDiagnostics: number;
   acceptanceRecommendation: "ACCEPT" | "REJECT";
   reasons: string[];
@@ -426,6 +440,35 @@ export function verifyGreenPrAttestation(
     reasons.push("attestation_duplicate_receipt");
   }
 
+  let receiptValid = !contract.acceptancePolicy.receiptMustVerify;
+  if (contract.acceptancePolicy.receiptMustVerify) {
+    if (!options.receipt) {
+      reasons.push("attestation_receipt_missing");
+    } else {
+      if (predicate?.commercialEvidence.receiptId !== options.receipt.payload.receiptId) {
+        reasons.push("attestation_receipt_id_mismatch");
+      }
+      if (envelopeSignature?.keyid === options.receipt.signature.keyId) {
+        reasons.push("attestation_receipt_signer_not_separated");
+      }
+      const receiptTrustedKey = options.trustedReceiptPublicKeys?.[
+        options.receipt.signature.keyId
+      ];
+      if (trustedKey && receiptTrustedKey &&
+          publicKeyFingerprint(trustedKey) === publicKeyFingerprint(receiptTrustedKey)) {
+        reasons.push("attestation_receipt_public_key_not_separated");
+      }
+      const receiptResult = verifyGreenPrReceipt(
+        options.receipt,
+        options.contractRecord,
+        options.trustedReceiptPublicKeys ?? {},
+        options.previouslyProcessedReceiptIds ?? new Set()
+      );
+      receiptValid = receiptResult.valid;
+      if (!receiptResult.valid) reasons.push(...receiptResult.reasons);
+    }
+  }
+
   if (statement && predicate) {
     const subjectsValid =
       subjectMatches(statement, repository, "source", predicate.sourceCommit) &&
@@ -494,6 +537,7 @@ export function verifyGreenPrAttestation(
     githubChecksPassed &&
     diagnosticsPassed &&
     signedChecksPassed &&
+    receiptValid &&
     predicate.result.contractSatisfied &&
     predicate.result.deliveryReady &&
     predicate.result.acceptanceRecommendation === "ACCEPT"
@@ -508,6 +552,7 @@ export function verifyGreenPrAttestation(
     sourceCommitMatched,
     scopeRespected,
     requiredChecksPassed,
+    receiptValid,
     newDiagnostics: predicate?.verification.newDiagnostics.length ?? 0,
     acceptanceRecommendation: valid ? "ACCEPT" : "REJECT",
     reasons: [...new Set(reasons)],

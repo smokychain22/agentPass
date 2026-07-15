@@ -9,6 +9,7 @@ import {
   type MaintenanceContractRecord,
 } from "./contract";
 import type { GreenPrAttestationRecord } from "./attestation";
+import type { SignedGreenPrReceipt } from "./receipt";
 
 export async function saveMaintenanceContract(
   record: MaintenanceContractRecord
@@ -118,6 +119,30 @@ export async function getGreenPrAttestation(
   );
 }
 
+export async function saveGreenPrReceipt(
+  receipt: SignedGreenPrReceipt
+): Promise<SignedGreenPrReceipt> {
+  const created = await setDurableRecordIfAbsent(
+    "green_pr_receipts",
+    receipt.payload.receiptId,
+    receipt
+  );
+  if (!created) {
+    const existing = await getGreenPrReceipt(receipt.payload.receiptId);
+    if (existing?.payloadDigest !== receipt.payloadDigest) {
+      throw new Error("green_pr_receipt_id_conflict");
+    }
+    return existing;
+  }
+  return receipt;
+}
+
+export async function getGreenPrReceipt(
+  receiptId: string
+): Promise<SignedGreenPrReceipt | undefined> {
+  return getDurableRecord<SignedGreenPrReceipt>("green_pr_receipts", receiptId);
+}
+
 export async function markMaintenanceContractDelivered(input: {
   contractId: string;
   contractDigest: string;
@@ -128,8 +153,14 @@ export async function markMaintenanceContractDelivered(input: {
   const existing = await getMaintenanceContract(input.contractId);
   if (!existing) throw new Error("maintenance_contract_not_found");
   if (existing.contractDigest !== input.contractDigest) throw new Error("contract_digest_mismatch");
-  if (existing.status !== "accepted" && existing.status !== "executing" &&
-      existing.status !== "delivered") {
+  if (existing.status === "delivered") {
+    const sameDelivery = existing.delivery?.pullRequestUrl === input.pullRequestUrl &&
+      existing.delivery?.receiptId === input.receiptId &&
+      existing.delivery?.attestationId === input.attestationId;
+    if (!sameDelivery) throw new Error("maintenance_contract_delivery_conflict");
+    return existing;
+  }
+  if (existing.status !== "accepted" && existing.status !== "executing") {
     throw new Error(`maintenance_contract_cannot_deliver:${existing.status}`);
   }
   const deliveredAt = existing.delivery?.deliveredAt ?? durableNow();

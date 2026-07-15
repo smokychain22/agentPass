@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { canonicalDigest } from "./canonical-json";
 import type { MaintenanceContractRecord } from "./contract";
 import {
@@ -34,14 +35,47 @@ export interface SignedGreenPrReceipt {
   signature: DetachedSignature;
 }
 
+const receiptPayloadSchema = z.object({
+  receiptVersion: z.literal("1"),
+  receiptId: z.string().trim().min(1).max(200),
+  contractDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  aspId: z.number().int().positive(),
+  serviceId: z.number().int().positive(),
+  quoteId: z.string().trim().min(1).max(200),
+  taskId: z.string().trim().min(1).max(200),
+  paymentReference: z.string().trim().min(1).max(500),
+  repository: z.string().regex(/^[^/\s]+\/[^/\s]+$/),
+  sourceCommit: z.string().regex(/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/),
+  amount: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/),
+  asset: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  network: z.string().trim().min(1),
+  payer: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  recipient: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  idempotencyKey: z.string().trim().min(1).max(500),
+  deliveryId: z.string().trim().min(1).max(500),
+  issuedAt: z.string().datetime({ offset: true }),
+}).strict();
+
+const signedReceiptSchema = z.object({
+  payload: receiptPayloadSchema,
+  payloadDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  signature: z.object({
+    keyId: z.string().trim().min(1),
+    keyVersion: z.string().trim().min(1),
+    algorithm: z.enum(["ed25519", "sha256"]),
+    signature: z.string().trim().min(1),
+  }).strict(),
+}).strict();
+
 export function signGreenPrReceipt(
   payload: GreenPrReceiptPayload,
   signer: AsymmetricSigner
 ): SignedGreenPrReceipt {
+  const validated = receiptPayloadSchema.parse(payload) as GreenPrReceiptPayload;
   return {
-    payload,
-    payloadDigest: canonicalDigest(payload),
-    signature: signCanonicalPayload(payload, signer),
+    payload: validated,
+    payloadDigest: canonicalDigest(validated),
+    signature: signCanonicalPayload(validated, signer),
   };
 }
 
@@ -52,6 +86,11 @@ export function verifyGreenPrReceipt(
   seenReceiptIds: Set<string> = new Set()
 ): { valid: boolean; duplicate: boolean; reasons: string[] } {
   const reasons: string[] = [];
+  const parsed = signedReceiptSchema.safeParse(receipt);
+  if (!parsed.success) {
+    return { valid: false, duplicate: false, reasons: ["receipt_payload_invalid"] };
+  }
+  receipt = parsed.data as SignedGreenPrReceipt;
   const contract = contractRecord.contract;
   const trustedKey = trustedPublicKeys[receipt.signature.keyId];
   if (!trustedKey || !verifyCanonicalPayload(receipt.payload, receipt.signature, trustedKey)) {

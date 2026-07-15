@@ -1,3 +1,5 @@
+import { DEFAULT_IDENTITY } from "@/lib/okx/identity";
+
 /**
  * Resolve the public OKX.AI agent listing URL.
  * Never invent a URL when env is unset — listing may be private.
@@ -13,7 +15,7 @@ export function resolveOkxAgentUrl(): string | null {
   const agentId =
     process.env.NEXT_PUBLIC_OKX_ASP_AGENT_ID?.trim() ||
     process.env.OKX_ASP_AGENT_ID?.trim() ||
-    "5283";
+    String(DEFAULT_IDENTITY.aspAgentId);
   if (!agentId) return null;
   return `https://www.okx.ai/agents/${agentId}`;
 }

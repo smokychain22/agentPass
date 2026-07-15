@@ -101,11 +101,11 @@ export const maintenanceContractSchema = z
       .strict(),
     acceptancePolicy: z
       .object({
-        blockingChecksMustPass: z.boolean(),
-        attestationMustVerify: z.boolean(),
-        sourceCommitMustMatch: z.boolean(),
-        scopeMustMatch: z.boolean(),
-        receiptMustVerify: z.boolean(),
+        blockingChecksMustPass: z.literal(true),
+        attestationMustVerify: z.literal(true),
+        sourceCommitMustMatch: z.literal(true),
+        scopeMustMatch: z.literal(true),
+        receiptMustVerify: z.literal(true),
       })
       .strict(),
     warrantyPolicy: z

@@ -173,11 +173,11 @@
         "receiptMustVerify"
       ],
       "properties": {
-        "blockingChecksMustPass": { "type": "boolean" },
-        "attestationMustVerify": { "type": "boolean" },
-        "sourceCommitMustMatch": { "type": "boolean" },
-        "scopeMustMatch": { "type": "boolean" },
-        "receiptMustVerify": { "type": "boolean" }
+        "blockingChecksMustPass": { "const": true },
+        "attestationMustVerify": { "const": true },
+        "sourceCommitMustMatch": { "const": true },
+        "scopeMustMatch": { "const": true },
+        "receiptMustVerify": { "const": true }
       }
     },
     "warrantyPolicy": {

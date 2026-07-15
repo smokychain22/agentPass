@@ -32,7 +32,8 @@ export type PersistentCollection =
   | "worker_instances"
   | "pr_delivery_monitors"
   | "maintenance_contracts"
-  | "green_pr_attestations";
+  | "green_pr_attestations"
+  | "green_pr_receipts";
 
 export type ArtifactCollection = "artifacts";
 
@@ -66,6 +67,7 @@ export interface DurableDb {
   pr_delivery_monitors: Record<string, unknown>;
   maintenance_contracts: Record<string, unknown>;
   green_pr_attestations: Record<string, unknown>;
+  green_pr_receipts: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -98,6 +100,7 @@ const DEFAULT_DB: DurableDb = {
   pr_delivery_monitors: {},
   maintenance_contracts: {},
   green_pr_attestations: {},
+  green_pr_receipts: {},
 };
 
 let redisClient: Redis | null = null;
@@ -164,6 +167,7 @@ function loadLocalDb(): DurableDb {
       pr_delivery_monitors: parsed.pr_delivery_monitors ?? {},
       maintenance_contracts: parsed.maintenance_contracts ?? {},
       green_pr_attestations: parsed.green_pr_attestations ?? {},
+      green_pr_receipts: parsed.green_pr_receipts ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);

@@ -11,11 +11,13 @@ import type { PrDeliveryMonitorRecord } from "@/lib/github/pr-check-types";
 import { signExecutionReceipt, type ExecutionReceipt } from "@/lib/operator/sign-receipt";
 import {
   canonicalDigest,
+  assertSigningIdentitySeparation,
   createGreenPrAttestation,
   getMaintenanceContract,
   independentlyVerifyGreenPr,
   markMaintenanceContractDelivered,
   saveGreenPrAttestation,
+  saveGreenPrReceipt,
   sha256Digest,
   signGreenPrReceipt,
   signerFromEnvironment,
@@ -73,9 +75,7 @@ async function finalizeContractedGreenPr(input: {
   const attestationSigner = signerFromEnvironment("GREEN_PR");
   if (!receiptSigner) throw new Error("green_pr_receipt_signing_key_unavailable");
   if (!attestationSigner) throw new Error("green_pr_attestation_signing_key_unavailable");
-  if (receiptSigner.keyId === attestationSigner.keyId) {
-    throw new Error("green_pr_separation_of_powers_key_conflict");
-  }
+  assertSigningIdentitySeparation(receiptSigner, attestationSigner);
   const quoteId = input.task.input.quoteId;
   if (!quoteId) throw new Error("green_pr_quote_missing");
   const quote = await getBoundQuote(quoteId);
@@ -117,6 +117,7 @@ async function finalizeContractedGreenPr(input: {
     },
     receiptSigner
   );
+  await saveGreenPrReceipt(receipt);
 
   const requiredCommands = contractRecord.contract.verificationPolicy.requiredCommands;
   const verificationInput: IndependentVerificationInput = {

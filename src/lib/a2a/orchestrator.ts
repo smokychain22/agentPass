@@ -626,7 +626,9 @@ async function executeChanges(
             finalDecision: "verified_fix",
           },
           verification: {
-            status: patchKit.repositoryVerification?.status ?? patchKit.patchValidation?.status ?? "passed",
+            status: patchKit.repositoryVerification?.status ??
+              patchKit.patchValidation?.status ??
+              "unknown",
             checks: patchKit.repositoryVerification?.checks,
             limitations: patchKit.patchValidation?.userMessage
               ? [patchKit.patchValidation.userMessage]
