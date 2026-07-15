@@ -322,8 +322,9 @@ async function ensurePayment(
   const findingIds = task.input.findingIds ?? [];
 
   if (!task.input.quoteId) {
+    let gateResult: Awaited<ReturnType<typeof assertPreQuoteGate>>;
     try {
-      await assertPreQuoteGate({
+      gateResult = await assertPreQuoteGate({
         repoUrl: task.input.repoUrl,
         branch: task.input.branch ?? findings.repo.branch,
         scanId: task.input.scanId ?? findings.scanId,
@@ -343,19 +344,32 @@ async function ensurePayment(
       throw err;
     }
 
+    const eligibleFindingIds =
+      gateResult.eligibleFindingIds.length > 0 ? gateResult.eligibleFindingIds : findingIds;
+    const transformedSourceHashes =
+      Object.keys(gateResult.transformedSourceHashes).length > 0
+        ? gateResult.transformedSourceHashes
+        : task.input.transformedSourceHashes;
+
     sm.emit("quote_required", "orchestrator");
     const quote = await createQuoteForOperation({
       repository,
       branch: findings.repo.branch,
       commitSha: findings.repo.commitSha ?? task.input.commitSha ?? "unknown",
-      findingIds,
+      findingIds: eligibleFindingIds,
       operation,
       sourceFileCount: findings.summary.totalFindings,
       scanId: task.input.scanId ?? findings.scanId,
-      transformedSourceHashes: task.input.transformedSourceHashes,
+      transformedSourceHashes,
     });
     task = await syncTask(task, sm, {
       quoteId: quote.quoteId,
+      input: {
+        ...task.input,
+        quoteId: quote.quoteId,
+        findingIds: eligibleFindingIds,
+        transformedSourceHashes,
+      },
       limitations: [
         ...task.limitations,
         `Quote ${quote.quoteId}: ${quote.priceLabel}. Pay via POST /api/tasks/pay then POST /api/a2a/tasks/${task.id}/fund`,

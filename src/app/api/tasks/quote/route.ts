@@ -22,6 +22,8 @@ export async function POST(request: Request) {
       sourceFileCount?: number;
       idempotencyKey?: string;
       verificationProfile?: "standard" | "strict";
+      scanId?: string;
+      transformedSourceHashes?: Record<string, string>;
     };
 
     if (!body.repository || !body.commitSha || !body.operation) {
@@ -31,6 +33,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const transformedSourceHashes =
+      body.transformedSourceHashes && typeof body.transformedSourceHashes === "object"
+        ? Object.fromEntries(
+            Object.entries(body.transformedSourceHashes).filter(
+              (entry): entry is [string, string] =>
+                typeof entry[0] === "string" && typeof entry[1] === "string"
+            )
+          )
+        : undefined;
+
     const quote = await createQuoteForOperation({
       repository: body.repository,
       branch: body.branch ?? "main",
@@ -39,6 +51,8 @@ export async function POST(request: Request) {
       operation: body.operation,
       sourceFileCount: body.sourceFileCount,
       idempotencyKey: body.idempotencyKey,
+      scanId: typeof body.scanId === "string" ? body.scanId : undefined,
+      transformedSourceHashes,
     });
 
     if (quote.amountMicro !== "0") {

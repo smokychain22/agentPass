@@ -111,8 +111,21 @@ export async function resolveAspGitHubToken(input: {
     );
   }
 
-  const token = await createInstallationAccessToken(resolved.installationId);
-  return token.token;
+  try {
+    const token = await createInstallationAccessToken(resolved.installationId, {
+      repositories: [input.repo],
+    });
+    return token.token;
+  } catch (err) {
+    // Fall back to an unscoped installation token when selected-repo scoping fails.
+    try {
+      const token = await createInstallationAccessToken(resolved.installationId);
+      return token.token;
+    } catch {
+      const reason = err instanceof Error ? err.message : "Failed to create installation token.";
+      throw new ToolExecutionError("GITHUB_APP_NOT_CONNECTED", reason, 401);
+    }
+  }
 }
 
 export async function captureBaseCommitSha(input: {

@@ -208,7 +208,9 @@ export async function resolveCleanupGitHubToken(
       if (err instanceof ToolExecutionError) throw err;
       throw new ToolExecutionError(
         "GITHUB_APP_NOT_CONNECTED",
-        "Grant repository access from the Patch tab before creating a cleanup PR.",
+        err instanceof Error
+          ? err.message
+          : "Grant repository access from the Patch tab before creating a cleanup PR.",
         401
       );
     }

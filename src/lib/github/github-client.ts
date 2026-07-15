@@ -32,10 +32,11 @@ export class GitHubClient {
     const expected = init?.expectedStatuses ?? [200, 201];
     if (!expected.includes(res.status)) {
       const text = await res.text().catch(() => "");
+      const detail = text.replace(/\s+/g, " ").trim().slice(0, 240);
       if (res.status === 401 || res.status === 403) {
         throw new ToolExecutionError(
           "GITHUB_PERMISSION_DENIED",
-          "GitHub token lacks permission for this repository or action.",
+          `GitHub token lacks permission for this repository or action (${init?.method || "GET"} ${path}${detail ? `: ${detail}` : ""}).`,
           403
         );
       }
@@ -48,7 +49,7 @@ export class GitHubClient {
       }
       throw new ToolExecutionError(
         "INTERNAL_ERROR",
-        `GitHub API error (${res.status}): ${text.slice(0, 200)}`,
+        `GitHub API error (${res.status} ${init?.method || "GET"} ${path}): ${detail || text.slice(0, 200)}`,
         502
       );
     }
