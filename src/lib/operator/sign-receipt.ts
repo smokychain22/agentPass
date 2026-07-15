@@ -105,6 +105,9 @@ export function signExecutionReceipt(receipt: ExecutionReceipt): {
   const signedReceipt = toSignedReceiptV1(receipt);
   const privateKeyPem = process.env.REPODIET_OPERATOR_PRIVATE_KEY;
   if (!privateKeyPem) {
+    if (process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production") {
+      throw new Error("operator_receipt_signing_key_unavailable");
+    }
     return { receipt, signedReceipt, signature: null, signedBy: null };
   }
 

@@ -47,6 +47,7 @@ test("findingsPayloadToSarif produces SARIF 2.1.0", () => {
     unused: { files: [], dependencies: [], exports: [sampleFinding] },
     orphans: [],
     slopSignals: [],
+    riskBuckets: { safeDelete: [], reviewFirst: [], doNotTouch: [] },
     artifacts: { findingsJson: true },
     rawToolReports: {
       knip: { status: "ok" as const, source: "knip" as const, sourceMode: "native" as const, durationMs: 1 },

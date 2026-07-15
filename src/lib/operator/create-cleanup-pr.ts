@@ -24,6 +24,7 @@ export interface CreateCleanupPrInput {
   patchKit?: PatchKitPayload;
   demo?: boolean;
   sessionKey?: string;
+  cleanupBranch?: string;
 }
 
 const ARTIFACT_PATHS = {
@@ -249,7 +250,11 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   warnings.push(...deliveryContext.warnings);
 
   const baseSha = deliveryContext.liveBaseSha;
-  const cleanupBranch = buildCleanupBranchName();
+  const cleanupBranch = input.cleanupBranch?.trim() || buildCleanupBranchName();
+  if (!/^repodiet\/(?:cleanup|green-pr)-[A-Za-z0-9._-]+$/.test(cleanupBranch) ||
+      cleanupBranch.includes("..")) {
+    throw new ToolExecutionError("INVALID_INPUT", "Invalid RepoDiet cleanup branch name.", 400);
+  }
   await client.createBranch(parsed.owner, parsed.repo, cleanupBranch, baseSha);
 
   let filesDeleted = 0;

@@ -1,5 +1,7 @@
 /** Resolve OKX / x402 env vars with official OKX naming aliases. */
 
+import { getCanonicalOkxIdentity } from "./identity";
+
 export function readOkxEnv(...names: string[]): string | undefined {
   for (const name of names) {
     const value = process.env[name]?.trim();
@@ -9,30 +11,19 @@ export function readOkxEnv(...names: string[]): string | undefined {
 }
 
 export function payToAddress(): string {
-  return (
-    readOkxEnv(
-      "REPODIET_PAY_TO",
-      "PAY_TO_ADDRESS",
-      "OKX_AGENTIC_WALLET_ADDRESS"
-    ) ?? "0xRepoDietTreasury00000000000000001"
-  );
+  return getCanonicalOkxIdentity().sellerWallet;
 }
 
 export function aspAgentId(): string | undefined {
-  return readOkxEnv(
-    "REPODIET_OKX_AGENT_ID",
-    "OKX_ASP_AGENT_ID",
-    "OKX_AGENT_ID",
-    "NEXT_PUBLIC_OKX_ASP_AGENT_ID"
-  );
+  return String(getCanonicalOkxIdentity().aspAgentId);
 }
 
 export function a2aServiceId(): string | undefined {
-  return readOkxEnv("OKX_A2A_SERVICE_ID", "REPODIET_OKX_A2A_SERVICE_ID");
+  return String(getCanonicalOkxIdentity().a2aServiceId);
 }
 
 export function a2mcpServiceId(): string | undefined {
-  return readOkxEnv("OKX_A2MCP_SERVICE_ID", "REPODIET_OKX_A2MCP_SERVICE_ID");
+  return String(getCanonicalOkxIdentity().a2mcpServiceId);
 }
 
 export function okxApiCredentials(): {

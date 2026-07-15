@@ -8,6 +8,7 @@ import { resolveRepositoryConnectionStatus } from "@/lib/workflow/github-reposit
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { getBoundQuote } from "@/lib/payment";
 import { formatWorkflowQuote } from "@/lib/workflow/format-workflow-quote";
+import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 import { runEligibilityPreflight } from "@/lib/workflow/eligibility-preflight";
 import {
   assertPreQuoteGate,
@@ -17,6 +18,8 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+const okxIdentity = getCanonicalOkxIdentity();
 
 /** Create scoped A2A cleanup task and return quote for browser payment flow. */
 export async function POST(request: Request) {
@@ -148,9 +151,9 @@ export async function POST(request: Request) {
       task: formatA2ATaskResponse(task),
       quote: quote ? formatWorkflowQuote(quote) : null,
       github,
-      serviceId: "32947",
+      serviceId: String(okxIdentity.a2aServiceId),
       operation: "verified_cleanup_pr",
-      aspAgentId: "5283",
+      aspAgentId: String(okxIdentity.aspAgentId),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Workflow task creation failed.";
@@ -177,8 +180,8 @@ export async function GET(request: Request) {
     ok: true,
     task: formatA2ATaskResponse(task),
     quote: quote ? formatWorkflowQuote(quote) : null,
-    aspAgentId: "5283",
-    serviceId: "32947",
+    aspAgentId: String(okxIdentity.aspAgentId),
+    serviceId: String(okxIdentity.a2aServiceId),
   });
 }
 

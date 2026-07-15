@@ -400,6 +400,7 @@ async function run() {
           commitSha: "abc",
           findingIds: ["f1"],
           operation: "verified_cleanup_pr",
+          transformedSourceHashes: { "src/example.ts": "sha256:test-preflight" },
         });
         const payer = "0xaa895234c3fc31c40018eef975db6ac79bf87f1a";
         const paymentReference = `0xtest_${quote.quoteId}`;

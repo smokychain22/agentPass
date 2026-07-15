@@ -90,7 +90,7 @@ test("verification gates pass when repo verified even without per-script checks"
       red: [],
       summary: { greenCount: 1, yellowCount: 0, redCount: 0, autoFixEligibleCount: 1 },
     },
-  } as PatchKitPayload);
+  } as unknown as PatchKitPayload);
   assert.equal(report.allRequiredPassed, true);
 });
 

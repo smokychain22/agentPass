@@ -120,6 +120,8 @@ export interface OkxOrderRecord {
   quoteId?: string;
   payer?: string;
   amountMicro?: string;
+  contractId?: string;
+  contractDigest?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -36,6 +36,9 @@ export async function POST(request: Request) {
       callbackUrl: typeof body.callbackUrl === "string" ? body.callbackUrl.trim() : undefined,
       githubToken: typeof body.githubToken === "string" ? body.githubToken.trim() : undefined,
       demo: body.demo === true,
+      contractId: typeof body.contractId === "string" ? body.contractId.trim() : undefined,
+      contractDigest:
+        typeof body.contractDigest === "string" ? body.contractDigest.trim() : undefined,
     });
 
     return NextResponse.json({ success: task.status === "completed" || !task.error, ...formatA2ATaskResponse(task) });

@@ -84,6 +84,9 @@ export function buildAgentCard() {
     },
     endpoints: {
       submitTask: `${baseUrl}/api/a2a/tasks`,
+      proposeMaintenanceContract: `${baseUrl}/api/green-pr/contracts`,
+      acceptMaintenanceContract: `${baseUrl}/api/green-pr/contracts/{contractId}/accept`,
+      verifyAttestation: `${baseUrl}/api/attestations/verify`,
       taskStatus: `${baseUrl}/api/a2a/tasks/{taskId}`,
       approveTask: `${baseUrl}/api/a2a/tasks/{taskId}/approve`,
       fundTask: `${baseUrl}/api/a2a/tasks/{taskId}/fund`,
@@ -93,6 +96,7 @@ export function buildAgentCard() {
       githubWebhook: `${baseUrl}/api/github/webhook`,
       manifest: `${baseUrl}/api/tools/manifest`,
       health: `${baseUrl}/api/tools/health`,
+      maintenanceContractSchema: `${baseUrl}/schemas/repodiet.contract.v1.schema.json`,
     },
     inputFormats: {
       submitTask: {
@@ -108,6 +112,8 @@ export function buildAgentCard() {
           callbackUrl: { type: "string", format: "uri" },
           githubToken: { type: "string" },
           demo: { type: "boolean" },
+          contractId: { type: "string" },
+          contractDigest: { type: "string" },
         },
       },
       approveTask: {
@@ -142,6 +148,7 @@ export function buildAgentCard() {
       "Max ZIP 25MB, 5000 files",
       "No automatic merge to main",
       "GitHub PR tasks require explicit approval",
+      "OKX Green PR orders require an accepted repodiet.contract/v1 digest",
       "Repo Guard monitors connected repositories after merges and on schedule",
     ],
     safetyPolicies: [

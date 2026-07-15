@@ -84,6 +84,7 @@ export async function createCleanupPullRequest(input: {
   demo?: boolean;
   githubToken?: string;
   sessionKey?: string;
+  cleanupBranch?: string;
 }) {
   return createCleanupPr(input);
 }

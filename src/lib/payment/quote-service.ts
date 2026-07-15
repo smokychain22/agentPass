@@ -9,7 +9,7 @@ import {
   X402_NETWORK,
   X402_RECIPIENT,
 } from "./constants";
-import { saveBoundQuote } from "./payment-store";
+import { getBoundQuote, saveBoundQuote, updateBoundQuote } from "./payment-store";
 import type { BoundQuote, VerificationProfile } from "./types";
 import { paymentRequiredBody } from "./x402";
 
@@ -47,6 +47,7 @@ export async function createBoundQuote(input: {
   idempotencyKey?: string;
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
+  contractDigest?: string;
 }): Promise<BoundQuote> {
   const quoteId = `quote_${nanoid(12)}`;
   const nonce = randomBytes(16).toString("hex");
@@ -68,6 +69,7 @@ export async function createBoundQuote(input: {
     scanId: input.scanId ?? "",
     transformedSourceHashes: hashTransformedSourceHashes(transformedSourceHashes),
     verificationProfile: input.verificationProfile ?? "standard",
+    contractDigest: input.contractDigest ?? "",
     amountMicro,
     currency: X402_CURRENCY,
     network: X402_NETWORK,
@@ -104,6 +106,7 @@ export async function createBoundQuote(input: {
     idempotencyKey: input.idempotencyKey,
     scanId: input.scanId,
     transformedSourceHashes,
+    contractDigest: input.contractDigest,
   };
 
   if (amountMicro !== "0") {
@@ -134,6 +137,7 @@ export function validateQuoteBinding(
     operation: CommerceOperation;
     scanId?: string;
     transformedSourceHashes?: Record<string, string>;
+    contractDigest?: string;
   }
 ): { ok: boolean; reason?: string; status?: BoundQuote["lifecycleStatus"] } {
   if (new Date(quote.expiresAt).getTime() < Date.now()) {
@@ -173,7 +177,54 @@ export function validateQuoteBinding(
       return { ok: false, reason: "Transformed source hash mismatch.", status: "invalid_payment" };
     }
   }
+  if (quote.contractDigest && quote.contractDigest !== context.contractDigest) {
+    return { ok: false, reason: "Maintenance contract digest mismatch.", status: "invalid_payment" };
+  }
   return { ok: true };
+}
+
+export async function bindQuoteToMaintenanceContract(
+  quoteId: string,
+  contractDigest: string
+): Promise<BoundQuote> {
+  const quote = await getBoundQuote(quoteId);
+  if (!quote) throw new Error("contract_quote_not_found");
+  if (new Date(quote.expiresAt).getTime() <= Date.now()) {
+    throw new Error("contract_quote_expired");
+  }
+  if (quote.status === "consumed" || quote.lifecycleStatus === "execution_started" ||
+      quote.lifecycleStatus === "completed" || quote.paymentStatus === "verified") {
+    throw new Error("contract_quote_already_used");
+  }
+  if (quote.contractDigest && quote.contractDigest !== contractDigest) {
+    throw new Error("contract_quote_digest_conflict");
+  }
+  const hashInput = {
+    operation: quote.operation,
+    repository: quote.repository,
+    branch: quote.branch,
+    commitSha: quote.commitSha,
+    findingIds: [...quote.findingIds].sort(),
+    scanId: quote.scanId ?? "",
+    transformedSourceHashes: hashTransformedSourceHashes(quote.transformedSourceHashes),
+    verificationProfile: quote.verificationProfile,
+    contractDigest,
+    amountMicro: quote.amountMicro,
+    currency: quote.currency,
+    network: quote.network,
+    recipient: quote.recipient,
+    nonce: quote.nonce,
+    expiresAt: quote.expiresAt,
+  };
+  const requestHashValue = requestHash(hashInput);
+  const bindingHash = requestHash({ ...hashInput, requestHash: requestHashValue });
+  const updated = await updateBoundQuote(quoteId, {
+    contractDigest,
+    requestHash: requestHashValue,
+    bindingHash,
+  });
+  if (!updated) throw new Error("contract_quote_bind_failed");
+  return updated;
 }
 
 export function signTestPaymentPayload(payload: Record<string, unknown>): string | null {

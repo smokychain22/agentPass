@@ -4,6 +4,12 @@ import { getAgentTask } from "@/lib/a2mcp/task-store";
 import type { CommerceBinding } from "./types";
 import { buildCommerceBinding } from "./commerce-gateway";
 import type { CommerceOperation } from "@/lib/payment/types";
+import {
+  decodeAttestationStatement,
+  getGreenPrAttestation,
+  getGreenPrReceipt,
+  getMaintenanceContractByDigest,
+} from "@/lib/green-pr";
 
 export async function resolveBindingFromBody(
   body: Record<string, unknown>,
@@ -17,6 +23,46 @@ export async function resolveBindingFromBody(
   const taskId = typeof body.taskId === "string" ? body.taskId.trim() : undefined;
   const repoUrl = typeof body.repoUrl === "string" ? body.repoUrl.trim() : undefined;
   const branch = typeof body.branch === "string" ? body.branch.trim() : "main";
+  const attestationId =
+    typeof body.attestationId === "string" ? body.attestationId.trim() : undefined;
+  const receiptId = typeof body.receiptId === "string" ? body.receiptId.trim() : undefined;
+
+  if (receiptId) {
+    const receipt = await getGreenPrReceipt(receiptId);
+    if (!receipt) throw new Error(`Receipt not found: ${receiptId}.`);
+    const contract = await getMaintenanceContractByDigest(receipt.payload.contractDigest);
+    if (!contract) throw new Error("Maintenance contract not found for receipt.");
+    return buildCommerceBinding({
+      operation,
+      repository: `${contract.contract.repository.owner}/${contract.contract.repository.name}`,
+      branch: contract.contract.repository.branch,
+      commitSha: contract.contract.repository.sourceCommit,
+      findingIds: [
+        ...contract.contract.scope.findingIds,
+        `contract:${contract.contractDigest}`,
+        `receipt:${receiptId}`,
+      ],
+    });
+  }
+
+  if (attestationId) {
+    const attestation = await getGreenPrAttestation(attestationId);
+    if (!attestation) throw new Error(`Attestation not found: ${attestationId}.`);
+    const statement = decodeAttestationStatement(attestation);
+    const contract = await getMaintenanceContractByDigest(statement.predicate.contractDigest);
+    if (!contract) throw new Error("Maintenance contract not found for attestation.");
+    return buildCommerceBinding({
+      operation,
+      repository: `${contract.contract.repository.owner}/${contract.contract.repository.name}`,
+      branch: contract.contract.repository.branch,
+      commitSha: contract.contract.repository.sourceCommit,
+      findingIds: [
+        ...contract.contract.scope.findingIds,
+        `contract:${contract.contractDigest}`,
+        `attestation:${attestationId}`,
+      ],
+    });
+  }
 
   if (scanId) {
     const findings = await getStoredFindings(scanId);

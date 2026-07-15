@@ -16,6 +16,8 @@ export async function POST(request: Request) {
       quoteId?: string;
       escrowReference?: string;
       callbackUrl?: string;
+      contractId?: string;
+      contractDigest?: string;
     };
 
     if (!body.serviceId || !body.repoUrl) {

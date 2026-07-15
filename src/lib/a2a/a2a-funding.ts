@@ -127,6 +127,21 @@ export async function validateVerifiedQuoteForA2aFund(
     return { ok: false, code: "quote_task_mismatch", reason: "Quote does not belong to this task." };
   }
 
+  if (task.input.contractDigest && quote.contractDigest !== task.input.contractDigest) {
+    return {
+      ok: false,
+      code: "quote_task_mismatch",
+      reason: "Quote is not bound to the task maintenance contract.",
+    };
+  }
+  if (order?.contractDigest && quote.contractDigest !== order.contractDigest) {
+    return {
+      ok: false,
+      code: "order_quote_mismatch",
+      reason: "Quote is not bound to the order maintenance contract.",
+    };
+  }
+
   if (order) {
     if (order.a2aTaskId && order.a2aTaskId !== task.id) {
       return { ok: false, code: "order_task_mismatch", reason: "Order does not belong to this task." };

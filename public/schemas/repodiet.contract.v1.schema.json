@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillswap-virid-kappa.vercel.app/schemas/repodiet.contract.v1.schema.json",
+  "title": "RepoDiet Maintenance Contract v1",
+  "description": "Machine-readable contract for a bounded RepoDiet Green PR delivery.",
+  "x-repodiet-schema": "repodiet.contract/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "contractVersion",
+    "contractId",
+    "repository",
+    "scope",
+    "verificationPolicy",
+    "delivery",
+    "commercialTerms",
+    "acceptancePolicy",
+    "warrantyPolicy"
+  ],
+  "properties": {
+    "schema": { "const": "repodiet.contract/v1" },
+    "contractVersion": { "const": "1" },
+    "contractId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name", "branch", "sourceCommit", "projectRoot"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "branch": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "sourceCommit": {
+          "type": "string",
+          "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"
+        },
+        "projectRoot": { "$ref": "#/$defs/projectRoot" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "findingIds",
+        "allowedPaths",
+        "protectedPaths",
+        "allowedOperations",
+        "maxFilesChanged",
+        "maxLinesAdded",
+        "maxLinesDeleted",
+        "maxDependencyChanges"
+      ],
+      "properties": {
+        "findingIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "allowedPaths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "protectedPaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "allowedOperations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "remove_unused_import",
+              "remove_unused_dependency",
+              "remove_empty_file",
+              "remove_backup_file",
+              "remove_temporary_file",
+              "delete_unreachable_module",
+              "consolidate_exact_duplicate"
+            ]
+          }
+        },
+        "maxFilesChanged": { "type": "integer", "minimum": 1 },
+        "maxLinesAdded": { "type": "integer", "minimum": 0 },
+        "maxLinesDeleted": { "type": "integer", "minimum": 1 },
+        "maxDependencyChanges": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verificationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineRequired",
+        "requiredCommands",
+        "requiredGitHubChecks",
+        "allowNewDiagnostics",
+        "allowSkippedChecks",
+        "timeoutSeconds"
+      ],
+      "properties": {
+        "baselineRequired": { "type": "boolean" },
+        "requiredCommands": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "requiredGitHubChecks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "allowNewDiagnostics": { "type": "boolean" },
+        "allowSkippedChecks": { "type": "boolean" },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "isolatedBranchRequired",
+        "pullRequestRequired",
+        "directMainPushAllowed",
+        "autoMergeAllowed",
+        "revisionLimit"
+      ],
+      "properties": {
+        "isolatedBranchRequired": { "const": true },
+        "pullRequestRequired": { "const": true },
+        "directMainPushAllowed": { "const": false },
+        "autoMergeAllowed": { "const": false },
+        "revisionLimit": { "type": "integer", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "commercialTerms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aspId",
+        "serviceId",
+        "quoteId",
+        "amount",
+        "asset",
+        "network",
+        "payer",
+        "recipient",
+        "expiry"
+      ],
+      "properties": {
+        "aspId": { "const": 5283 },
+        "serviceId": { "const": 32947 },
+        "quoteId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "amount": { "type": "string", "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]{1,18})?|0\\.(?=[0-9]{1,18}$)(?=[0-9]*[1-9])[0-9]+)$" },
+        "asset": { "const": "0x779ded0c9e1022225f8e0630b35a9b54be713736" },
+        "network": { "const": "eip155:196" },
+        "payer": { "$ref": "#/$defs/ethereumAddress" },
+        "recipient": { "const": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90" },
+        "expiry": { "type": "string", "format": "date-time" }
+      }
+    },
+    "acceptancePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blockingChecksMustPass",
+        "attestationMustVerify",
+        "sourceCommitMustMatch",
+        "scopeMustMatch",
+        "receiptMustVerify"
+      ],
+      "properties": {
+        "blockingChecksMustPass": { "const": true },
+        "attestationMustVerify": { "const": true },
+        "sourceCommitMustMatch": { "const": true },
+        "scopeMustMatch": { "const": true },
+        "receiptMustVerify": { "const": true }
+      }
+    },
+    "warrantyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "durationHours",
+        "monitoredChecks",
+        "attributableRegressionAction"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "durationHours": { "type": "integer", "minimum": 0, "maximum": 720 },
+        "monitoredChecks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "attributableRegressionAction": { "const": "OPEN_REPAIR" }
+      }
+    }
+  },
+  "$defs": {
+    "ethereumAddress": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]+$"
+    },
+    "projectRoot": {
+      "oneOf": [
+        { "const": "." },
+        { "$ref": "#/$defs/repositoryPath" }
+      ]
+    }
+  }
+}
