@@ -48,7 +48,7 @@ async function main() {
     findings?: {
       scanId?: string;
       repo?: { commitSha?: string };
-      unused?: { files?: Array<{ id?: string; path?: string }> };
+      unused?: { files?: Array<{ id?: string; path?: string; files?: string[] }> };
       riskBuckets?: { safeDelete?: string[] };
     };
     error?: string;
@@ -59,16 +59,38 @@ async function main() {
   const scanId = findingsBody.findings.scanId;
   const commitSha = findingsBody.findings.repo?.commitSha || "";
   const unusedIds = (findingsBody.findings.unused?.files || [])
-    .filter((f) =>
-      typeof f.path === "string" &&
-      (f.path.includes("unused/confirmed-unused") || f.path.includes("unused/empty-module"))
+    .map((f) => {
+      const path =
+        typeof f.path === "string"
+          ? f.path
+          : Array.isArray((f as { files?: unknown }).files)
+            ? String(((f as { files?: string[] }).files || [])[0] || "")
+            : "";
+      return { id: f.id, path };
+    })
+    .filter(
+      (f) =>
+        Boolean(f.id) &&
+        (f.path.includes("unused/confirmed-unused") || f.path.includes("unused/empty-module") ||
+          f.path.includes("archive/OldDashboard.backup") ||
+          f.path.endsWith("Dashboard.tsx"))
     )
-    .map((f) => f.id)
-    .filter((id): id is string => Boolean(id));
+    .map((f) => f.id as string);
+  // Prefer src/unused/* deletes only — mustKeep fixtures such as runtime-hook must stay.
+  const strictUnused = unusedIds.filter((id) => {
+    const entry = (findingsBody.findings.unused?.files || []).find((f) => f.id === id) as
+      | { files?: string[]; path?: string }
+      | undefined;
+    const path =
+      entry?.path ||
+      (Array.isArray(entry?.files) ? entry?.files[0] : "") ||
+      "";
+    return path.includes("unused/");
+  });
   const findingIds =
-    unusedIds.length > 0
-      ? unusedIds
-      : (findingsBody.findings.riskBuckets?.safeDelete || []).slice(0, 2);
+    strictUnused.length > 0
+      ? strictUnused
+      : unusedIds.slice(0, 2);
   if (findingIds.length === 0) {
     throw new Error("No unused/safe findingIds available for controlled acceptance.");
   }
