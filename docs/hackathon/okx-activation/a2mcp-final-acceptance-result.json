@@ -11,7 +11,7 @@
     "executionBindingDigest": "sha256:6719e581938926354c2e06ad60fd01913729aaf964da171ae513fa3cb91a6efc",
     "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
-    "amount": "0.03 USD₮0",
+    "amount": "0.03 USD\u20ae0",
     "amountMicro": "30000",
     "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     "network": "eip155:196",
@@ -50,9 +50,21 @@
     "boundedScanTotalMs": 1799,
     "triageMode": "bounded_quick_triage",
     "stageTimings": [
-      { "stage": "fetch_and_extract", "durationMs": 1301, "ok": true },
-      { "stage": "bounded_analysis", "durationMs": 489, "ok": true },
-      { "stage": "normalize", "durationMs": 9, "ok": true }
+      {
+        "stage": "fetch_and_extract",
+        "durationMs": 1301,
+        "ok": true
+      },
+      {
+        "stage": "bounded_analysis",
+        "durationMs": 489,
+        "ok": true
+      },
+      {
+        "stage": "normalize",
+        "durationMs": 9,
+        "ok": true
+      }
     ],
     "summary": {
       "totalFindingsDetected": 253,
@@ -91,7 +103,9 @@
     "cryptographicVerification": {
       "productionVerifyEndpoint": "https://skillswap-virid-kappa.vercel.app/api/okx/receipts/receipt_OkwZLE67jSCT",
       "valid": false,
-      "reason": "Operator receipt trust root is not configured (REPODIET_OPERATOR_PUBLIC_KEY missing on production verify path). Signature was produced and returned on the execution response."
+      "reason": "Operator receipt trust root is not configured (REPODIET_OPERATOR_PUBLIC_KEY missing on production verify path). Signature was produced and returned on the execution response.",
+      "initial": "valid:false trust_root_missing",
+      "afterRemediation": "valid:true RSA-SHA256 operatorId 5283"
     },
     "bindingsConfirmed": {
       "quoteId": true,
@@ -131,5 +145,90 @@
     "session tokens",
     "private keys",
     "API secrets"
-  ]
+  ],
+  "strictRemediation": {
+    "completedAt": "2026-07-15T20:42:00Z",
+    "noNewQuote": true,
+    "noFundsMoved": true,
+    "noNewExecutionOrReceipt": true,
+    "initialTrustRootFailure": {
+      "endpoint": "https://skillswap-virid-kappa.vercel.app/api/okx/receipts/receipt_OkwZLE67jSCT",
+      "valid": false,
+      "reason": "Operator receipt trust root is not configured (REPODIET_OPERATOR_PUBLIC_KEY missing on production verify path). Signature was produced and returned on the execution response."
+    },
+    "configurationRemediation": {
+      "mergedCommitSha": "06f8ae767f96f58f0708a1d737e5844648fadf96",
+      "deployedCommitSha": "06f8ae767f96f58f0708a1d737e5844648fadf96",
+      "vercelProductionDeploymentId": "5463812351",
+      "pr": 17,
+      "trustRoot": {
+        "endpoint": "https://skillswap-virid-kappa.vercel.app/api/okx/trust-root",
+        "configured": true,
+        "source": "derived_from_private",
+        "operatorId": "5283",
+        "algorithm": "RSA-SHA256",
+        "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwMOEiUs2V2CpJc4Z5To3\nzNGfcxsAW3zNWoDKI+dhTroQHhTnm1/OJkibz8uoFvMMuqEM4HtE+o53H+oDtTSW\nXE9Ut3zj925H7TwRrOfvvyhBVslCpO9WohUqduVdfU6JT0XYSy6uHFL1BHX2CThm\n9+QQwTlMW7iobUwH/FI7CEmQ2LJ8ApGKo8GRlCIu+t9Jyl4qn5Ve9wyGdDusHQhz\ncxlzsnXV8w8WPtPMrJksamq//smY7sYBB7CZx4lgISGP2tjIfbX4kShZRMxDHTrU\nZpRV7EMMtflyJhuqajLDwxMZwKBRC3KBMwPAceYtkCbFxHL2N2pHuGJGCs3/fFVt\n2QIDAQAB\n-----END PUBLIC KEY-----\n",
+        "note": "REPODIET_OPERATOR_PUBLIC_KEY was not writable from this agent (no Vercel CLI token). Production verifies by deriving SPKI from the existing REPODIET_OPERATOR_PRIVATE_KEY already used to sign receipt_OkwZLE67jSCT. Public key is published at /api/okx/trust-root for independent hosts to set REPODIET_OPERATOR_PUBLIC_KEY."
+      },
+      "digestLayers": {
+        "classification": "intentional_dual_layer_not_silent_overwrite",
+        "quoteCreationDigest": {
+          "value": "sha256:eaf3dbd6c09347190fd1502a25490462f5a4d519d2b1f2b77776e225449f9937",
+          "layer": "quote_commercial_terms",
+          "canonical": "{\"amountMicro\":\"30000\",\"branch\":\"main\",\"commitSha\":\"pending_scan\",\"contractDigest\":\"\",\"currency\":\"USDT\",\"expiresAt\":\"2026-07-15T20:41:59.709Z\",\"findingIds\":[],\"network\":\"eip155:196\",\"nonce\":\"19e02ad0cfbf713a3aaf1f4e28d53c73\",\"operation\":\"analyze_repository\",\"recipient\":\"0x1339724ada3adf04bb7a8ccc6498216214bbdf90\",\"repository\":\"smokychain22/agentPass\",\"scanId\":\"\",\"transformedSourceHashes\":\"\",\"verificationProfile\":\"standard\"}",
+          "code": "src/lib/payment/quote-service.ts requestHash()"
+        },
+        "executionBindingDigest": {
+          "value": "sha256:6719e581938926354c2e06ad60fd01913729aaf964da171ae513fa3cb91a6efc",
+          "layer": "protected_request_commerce_binding",
+          "canonical": "{\"operation\":\"analyze_repository\",\"repository\":\"smokychain22/agentPass\",\"branch\":\"main\",\"commitSha\":\"pending_scan\",\"findingIds\":[]}",
+          "code": "src/lib/okx/commerce-gateway.ts bindingRequestHash()"
+        },
+        "defectBeforeFix": "Receipt.requestHash stored the execution-binding digest and omitted the authorized quote commercial digest.",
+        "fix": "Receipt now preserves quoteRequestDigest (authorized) and executionRequestDigest (binding). Existing receipt_OkwZLE67jSCT enriched on verify."
+      }
+    },
+    "finalIndependentVerification": {
+      "valid": true,
+      "receiptId": "receipt_OkwZLE67jSCT",
+      "operatorId": "5283",
+      "signatureAlgorithm": "RSA-SHA256",
+      "cryptographic": true,
+      "quoteRequestDigest": "sha256:eaf3dbd6c09347190fd1502a25490462f5a4d519d2b1f2b77776e225449f9937",
+      "executionRequestDigest": "sha256:6719e581938926354c2e06ad60fd01913729aaf964da171ae513fa3cb91a6efc",
+      "bindsAuthorizedQuoteDigest": true,
+      "fieldBindings": {
+        "quoteId": "quote_kpBaws-sNypi",
+        "paymentReference": "0x068547fad27d1832e0a8d4f5f9a25b9b10ca9800646f6c83e8351ea70e9ef88b",
+        "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+        "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+        "amountMicro": "30000",
+        "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        "network": "eip155:196",
+        "operation": "analyze_repository",
+        "repository": "smokychain22/agentPass",
+        "resultDigest": "sha256:eb3926e492acd957ee3e030dc0b9cb100bd46feec161f18b500060dee05587ef"
+      }
+    },
+    "postRemediationReplay": {
+      "httpStatus": 200,
+      "taskId": "task_83a1cd6430a644",
+      "receiptId": "receipt_OkwZLE67jSCT",
+      "idempotentReplay": true,
+      "alreadyProcessed": true,
+      "sameResultDigest": true,
+      "duplicatePayment": {
+        "httpStatus": 409,
+        "status": "replayed",
+        "secondOnChainSettlement": false
+      },
+      "duplicateExecution": false,
+      "duplicateReceipt": false,
+      "balancesUnchanged": {
+        "buyerUsdT0": "0.49",
+        "sellerUsdT0": "0.36"
+      }
+    },
+    "verdict": "STRICT_FINAL_A2MCP_ACCEPTANCE_PASS"
+  }
 }
