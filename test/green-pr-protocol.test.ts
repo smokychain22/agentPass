@@ -335,4 +335,13 @@ test("signer construction rejects a public key that does not match its private k
   );
 });
 
+test("signer construction accepts harmless PEM whitespace from secret stores", () => {
+  const pair = generateKeyPairSync("ed25519");
+  const signer = createAsymmetricSigner({
+    privateKeyPem: pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    publicKeyPem: `${pair.publicKey.export({ type: "spki", format: "pem" }).toString()}\n`,
+  });
+  assert.equal(signer.algorithm, "ed25519");
+});
+
 console.log("green-pr-protocol.test.ts: ok");
