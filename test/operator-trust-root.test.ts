@@ -17,11 +17,12 @@ async function run() {
   });
 
   delete process.env.REPODIET_OPERATOR_PUBLIC_KEY;
+  delete process.env.VERCEL_ENV;
   process.env.REPODIET_OPERATOR_PRIVATE_KEY = privateKey;
 
   const derived = deriveOperatorPublicKeyPem();
   assert.ok(derived?.includes("BEGIN PUBLIC KEY"));
-  assert.equal(operatorTrustRootSource(), "derived_from_private");
+  assert.equal(operatorTrustRootSource(), "derived_from_private_dev_only");
   assert.equal(resolveOperatorPublicKeyPem()?.trim(), derived?.trim());
 
   const signed = signExecutionReceipt({
@@ -49,6 +50,12 @@ async function run() {
   process.env.REPODIET_OPERATOR_PUBLIC_KEY = publicKey;
   assert.equal(operatorTrustRootSource(), "public_env");
   assert.equal(resolveOperatorPublicKeyPem()?.trim(), publicKey.trim());
+
+  // Production must never silently derive from private key
+  delete process.env.REPODIET_OPERATOR_PUBLIC_KEY;
+  process.env.VERCEL_ENV = "production";
+  assert.equal(operatorTrustRootSource(), "pinned_constant");
+  assert.ok(resolveOperatorPublicKeyPem()?.includes("BEGIN PUBLIC KEY"));
 
   console.log("operator trust root: all passed");
 }
