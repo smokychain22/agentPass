@@ -215,7 +215,7 @@ export function LandingPage() {
               title={PRICING_SECTION.title}
               description={PRICING_SECTION.description}
             />
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-10 grid gap-4 sm:grid-cols-2">
               {PRICING_TIERS.map((tier) => (
                 <PricingCard key={tier.name} tier={tier} />
               ))}

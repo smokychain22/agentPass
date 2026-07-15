@@ -20,9 +20,9 @@ export function DeveloperToolsA2Mcp() {
       .catch(() => setBuildInfo(null));
   }, []);
 
-  const sample = `curl -X POST https://skillswap-skillswap7.vercel.app/api/a2mcp/quick-triage \\
+  const sample = `curl -X POST https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage \\
   -H "Content-Type: application/json" \\
-  -d '{"repoUrl":"https://github.com/owner/repo","maximumFindings":10}'`;
+  -d '{"repositoryUrl":"https://github.com/owner/repo","branch":"main","maximumFindings":5,"operation":"analyze_repository"}'`;
 
   const shortCommit =
     buildInfo?.gitCommit && buildInfo.gitCommit !== "unknown"
@@ -53,7 +53,7 @@ export function DeveloperToolsA2Mcp() {
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Price</dt>
-          <dd className="font-mono">0.03 USDT</dd>
+          <dd className="font-mono">0.03 USD₮0</dd>
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Endpoint</dt>

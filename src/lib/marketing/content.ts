@@ -11,10 +11,10 @@ export const TRUST_POINTS = [
 export const TRUST_LINE = TRUST_POINTS.join(" · ");
 
 export const FOOTER_OKX_COPY =
-  "RepoDiet is also available as an A2MCP-ready Software Utility for agent workflows.";
+  "RepoDiet on OKX.AI: A2MCP Quick Triage (x402) and A2A Verified Cleanup PR (escrow). ASP 5283 · production https://skillswap-virid-kappa.vercel.app";
 
 export const A2MCP_READINESS_COPY =
-  "RepoDiet endpoints are A2MCP-ready deterministic JSON tools. Payment/x402 enforcement can be added at the OKX listing or gateway layer. Public demo endpoints are open for hackathon review.";
+  "A2MCP Quick Triage (service 32948, analyze_repository) is live at 0.03 USD₮0 via x402 on X Layer. A2A Verified Cleanup PR (service 32947, create_cleanup_pr) uses negotiated task terms, escrow, and buyer acceptance — not x402 for every paid task.";
 
 export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
 export const DEMO_SCAN_STATS = getDemoScanStats();
@@ -168,7 +168,7 @@ export const TOP3_STORY = {
   before: "Scanner + report bundle",
   after: "Safe cleanup operator + GitHub PR action",
   asp:
-    "A2MCP: agent calls create_cleanup_pr. A2A: user hires RepoDiet Operator to clean their repo and deliver a PR.",
+    "A2MCP: standardized Quick Triage pay-per-call through x402. A2A: customized Verified Cleanup PR through negotiated task terms, escrow, and buyer acceptance.",
 };
 
 export const USE_CASES = [
@@ -411,50 +411,49 @@ export const API_SECTION = {
 };
 
 export const PRICING_SECTION = {
-  eyebrow: "Plans",
-  title: "Proof first. Action when you need it.",
+  eyebrow: "OKX services",
+  title: "Two live services. Clear protocol split.",
   description:
-    "RepoDiet does not just tell you what is wrong. It makes supported changes, proves what passed, and delivers a pull request you control.",
+    "A2MCP Quick Triage is standardized pay-per-call via x402. A2A Verified Cleanup PR is customized delivery via negotiated task terms, escrow, and buyer acceptance.",
   note:
-    "Launch pricing — kept accessible and crypto-native. Free proof requires no payment. Paid tiers unlock more fixes and GitHub cleanup PRs. Verified Cleanup PR price (1–3 USDT) depends on repository size.",
+    "Canonical production origin: https://skillswap-virid-kappa.vercel.app · ASP 5283 · A2MCP 32948 · A2A 32947. Settlement is live on X Layer for A2MCP; A2A uses escrow and buyer release — not a flat x402 rail for every task.",
 };
 
 export const CLEANUP_PR_PRICING_NOTE =
-  "Verified Cleanup PR: 1 USDT for small repos (≤150 source files), 2 USDT for medium (151–400), 3 USDT for larger supported repos.";
+  "A2A Verified Cleanup PR (create_cleanup_pr): negotiated price with default reference 1 USD₮0. Settlement uses A2A task agreement, escrow, delivery, buyer acceptance, and release.";
 
 export const AGENT_API_PRICING = [
-  { operation: "Structure scan", tool: "scan_repo_bloat", price: "0.02 USDT" },
-  { operation: "Findings analysis", tool: "scan_repo_bloat", price: "0.05 USDT" },
-  { operation: "Safe-fix proposal", tool: "generate_cleanup_patch", price: "0.10 USDT" },
-  { operation: "Verified limited cleanup", tool: "patch_bundle", price: "0.25 USDT" },
-  { operation: "Cleanup PR", tool: "create_cleanup_pr", price: "1–3 USDT" },
+  {
+    operation: "A2MCP Quick Triage",
+    tool: "analyze_repository",
+    price: "0.03 USD₮0",
+    protocol: "A2MCP",
+    settlement: "live x402 on X Layer",
+  },
+  {
+    operation: "A2A Verified Cleanup PR",
+    tool: "create_cleanup_pr",
+    price: "negotiated (default 1 USD₮0)",
+    protocol: "A2A",
+    settlement: "escrow + buyer acceptance",
+  },
 ] as const;
 
 export const A2MCP_TOOLS_HIGHLIGHT = [
-  "scan_repo_bloat",
-  "generate_cleanup_patch",
-  "generate_regression_checklist",
-  "create_cleanup_pr",
+  "analyze_repository",
+  "quick_triage",
 ] as const;
 
 export const A2MCP_TOOLS = TOOL_MANIFEST_ENTRIES.map((t) => t.name);
 
 export const A2MCP_TOOL_GROUPS = [
   {
-    category: "Analysis",
-    tools: ["detect_duplicate_code", "find_dead_files", "find_unused_dependencies"],
+    category: "A2MCP Quick Triage",
+    tools: ["analyze_repository"],
   },
   {
-    category: "Classification",
-    tools: ["scan_repo_bloat"],
-  },
-  {
-    category: "Generation",
-    tools: ["generate_cleanup_patch", "create_cleanup_pr"],
-  },
-  {
-    category: "Verification",
-    tools: ["generate_regression_checklist"],
+    category: "A2A delivery (not A2MCP pay-per-call)",
+    tools: ["create_cleanup_pr"],
   },
 ] as const;
 
@@ -468,86 +467,70 @@ export const DEMO_PROGRESS_STEPS = [
 
 export const PRICING_TIERS = [
   {
-    name: "Free Proof",
-    price: "Free",
-    description: "One real safe fix with verification — proof RepoDiet genuinely works.",
+    name: "A2MCP Quick Triage",
+    price: "0.03 USD₮0",
+    description:
+      "Bounded repository triage returning up to five prioritized findings. Standardized pay-per-call through live x402 on X Layer.",
     features: [
-      "Full structure scan",
-      "Findings analysis",
-      "Risk classification",
-      "One real safe fix",
-      "Real before-and-after diff",
-      "Basic verification",
-      "No GitHub mutation",
+      "Protocol: A2MCP",
+      "Operation: analyze_repository",
+      "Service ID: 32948",
+      "Settlement: live x402 on X Layer",
+      "Up to five prioritized findings",
+      "Signed operator receipt after successful delivery",
     ],
-    cta: "Fix One Safe Issue Free",
-    href: "/app?tab=cleanup",
+    cta: "View A2MCP Quick Triage",
+    href: "/okx#a2mcp-quick-triage",
     highlighted: false,
   },
   {
-    name: "Quick Cleanup",
-    price: "0.25 USDT",
-    description: "Processes every eligible safe fix with in-app diff review.",
+    name: "A2A Verified Cleanup PR",
+    price: "negotiated",
+    description:
+      "Customized repository cleanup delivered as a review-ready GitHub pull request. Default reference price 1 USD₮0.",
     features: [
-      "Up to 5 eligible safe fixes",
-      "Real code changes",
-      "In-app diff review",
-      "Patch validation",
-      "Basic lint/typecheck checks",
-      "No GitHub write unless authorized",
+      "Protocol: A2A",
+      "Operation: create_cleanup_pr",
+      "Service ID: 32947",
+      "Settlement: task agreement → escrow → delivery → buyer acceptance → release",
+      "Isolated cleanup branch (never pushes to main)",
+      "Default reference: 1 USD₮0",
     ],
-    cta: "Run Quick Cleanup",
-    href: "/app?tab=patch",
-    highlighted: false,
-  },
-  {
-    name: "Verified Cleanup PR",
-    price: "1–3 USDT",
-    description: CLEANUP_PR_PRICING_NOTE,
-    features: [
-      "Supported safe fixes",
-      "Cleanup branch + real commits",
-      "Verification results",
-      "GitHub pull request",
-      "Human merge approval",
-      "Execution receipt",
-    ],
-    cta: "Create Verified Cleanup PR",
-    href: "/app?tab=patch&demo=true",
+    cta: "View A2A Cleanup PR",
+    href: "/okx#a2a-cleanup-pr",
     highlighted: true,
-  },
-  {
-    name: "Repo Guard",
-    price: "3–5 USDT/month",
-    description: "Continuous monitoring with delta scans, policy enforcement, and monthly cleanup PR allowance.",
-    features: [
-      "One connected repository",
-      "Weekly scans + post-merge checks",
-      "New-debt alerts (ignored findings suppressed)",
-      "Monthly cleanup PR allowance",
-      "Protected paths per repository",
-      "Finding history and delta analysis",
-    ],
-    cta: "Activate Repo Guard",
-    href: "/app?tab=guard",
-    highlighted: false,
-    unavailable: false,
   },
 ];
 
 export const OKX_DEMO_FLOW = [
-  "Paste a public GitHub repository and scan",
-  "Run Findings Engine — evidence-backed risk buckets",
-  "Fix One Safe Issue Free — real diff + verification with proof ladder counts",
-  "Run Quick Cleanup — deterministic transformers with auditable stages",
-  "Create Verified Cleanup PR on a demo repository",
-  "Agent calls A2MCP tools and receives cleanupProof with PR URL and signed receipt",
+  "Hire ASP 5283 on OKX.AI once the public listing is live",
+  "A2MCP Quick Triage (32948): pay 0.03 USD₮0 via x402 for bounded analyze_repository",
+  "Inspect prioritized findings and signed receipt",
+  "A2A Verified Cleanup PR (32947): negotiate scope, fund escrow, accept delivery",
+  "Receive a review-ready GitHub cleanup PR — never an auto-merge to main",
 ];
 
-export const OKX_A2A_SERVICE = {
-  name: "RepoDiet Operator — Create a safe cleanup PR for my AI-built repo",
+export const OKX_A2MCP_SERVICE = {
+  name: "RepoDiet Quick Triage",
+  protocol: "A2MCP",
+  operation: "analyze_repository",
+  serviceId: "32948",
+  price: "0.03 USD₮0 per call",
+  settlement: "live x402 on X Layer",
   description:
-    "RepoDiet Operator scans an AI-built JavaScript/TypeScript repo, classifies cleanup risk, creates a safe cleanup branch, applies only safe candidate removals, adds cleanup artifacts, and opens a GitHub PR for review. It never pushes to main, never merges PRs, and protects routes, configs, env files, lockfiles, API handlers, and public assets.",
+    "Bounded repository triage returning up to five prioritized findings. Standardized A2MCP pay-per-call — not negotiated cleanup delivery.",
+};
+
+export const OKX_A2A_SERVICE = {
+  name: "RepoDiet Verified Cleanup PR",
+  protocol: "A2A",
+  operation: "create_cleanup_pr",
+  serviceId: "32947",
+  price: "negotiated",
+  defaultReferencePrice: "1 USD₮0",
+  settlement: "A2A task agreement, escrow, delivery, buyer acceptance and release",
+  description:
+    "Customized repository cleanup delivered as a review-ready GitHub pull request. Negotiated A2A delivery with escrow and buyer acceptance — not an A2MCP x402 pay-per-call.",
 };
 
 export const OKX_JUDGE_PITCH = {
@@ -564,14 +547,12 @@ export const OKX_JUDGE_PITCH = {
     "Code-review bots inspect new changes — RepoDiet cleans accumulated repository debt and can prevent it from returning.",
   ],
   agentUtility:
-    "A2MCP tools expose the same engine as the web app: scan_repository, generate_cleanup_patch, verify_cleanup, create_cleanup_pr. Agents pay for verified outcomes — diffs, verification logs, and PR URLs — not reports.",
+    "A2MCP Quick Triage (analyze_repository, service 32948) is standardized pay-per-call through x402 at 0.03 USD₮0. A2A Verified Cleanup PR (create_cleanup_pr, service 32947) is negotiated delivery with escrow and buyer acceptance (default reference 1 USD₮0). Agents pay for verified outcomes — findings, diffs, verification logs, and PR URLs — not reports alone.",
   demoProof: [
-    "Unused import removed with exact diff",
-    "Stale backup file deleted",
-    "Unused dependency removed from package.json and lockfile",
-    "Protected Next.js route left untouched",
-    "Typecheck, lint, and build passed on modified copy",
-    "Cleanup PR opened on repodiet/cleanup-* branch — main untouched",
+    "A2MCP Quick Triage returns up to five prioritized findings with a signed receipt",
+    "A2A Cleanup PR opens on an isolated cleanup branch — main untouched",
+    "Protected Next.js routes, configs, env files, and lockfiles left untouched",
+    "Buyer acceptance gates escrow release",
   ],
 };
 

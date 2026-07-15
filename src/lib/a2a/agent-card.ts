@@ -1,19 +1,25 @@
 import { getServerBaseUrl } from "@/lib/docs/base-url";
 import { A2MCP_VERSION } from "@/lib/a2mcp/constants";
-import { OKX_A2A_SERVICE } from "@/lib/marketing/content";
+import { OKX_A2A_SERVICE, OKX_A2MCP_SERVICE } from "@/lib/marketing/content";
 import type { A2ATaskType } from "./types";
+import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 
 export function buildAgentCard() {
   const baseUrl = getServerBaseUrl();
   const publicKey = process.env.REPODIET_OPERATOR_PUBLIC_KEY?.trim() ?? null;
+  const identity = getCanonicalOkxIdentity();
 
   return {
     name: "RepoDiet",
     version: A2MCP_VERSION,
-    description: OKX_A2A_SERVICE.description,
+    description:
+      "RepoDiet provides A2MCP Quick Triage (standardized x402 pay-per-call) and A2A Verified Cleanup PR (negotiated escrow delivery).",
     url: baseUrl,
     identity: {
       operator: "repodiet-operator",
+      aspAgentId: String(identity.aspAgentId),
+      a2aServiceId: String(identity.a2aServiceId),
+      a2mcpServiceId: String(identity.a2mcpServiceId),
       service: OKX_A2A_SERVICE.name,
       category: "repository_maintenance",
     },
@@ -22,68 +28,84 @@ export function buildAgentCard() {
       publicKey,
       signingAlgorithm: publicKey ? "RSA-SHA256" : null,
     },
+    services: {
+      a2mcp: {
+        name: OKX_A2MCP_SERVICE.name,
+        protocol: "A2MCP",
+        serviceId: OKX_A2MCP_SERVICE.serviceId,
+        operation: OKX_A2MCP_SERVICE.operation,
+        price: OKX_A2MCP_SERVICE.price,
+        settlement: OKX_A2MCP_SERVICE.settlement,
+        description: OKX_A2MCP_SERVICE.description,
+        endpoint: `${baseUrl}/api/a2mcp/quick-triage`,
+      },
+      a2a: {
+        name: OKX_A2A_SERVICE.name,
+        protocol: "A2A",
+        serviceId: OKX_A2A_SERVICE.serviceId,
+        operation: OKX_A2A_SERVICE.operation,
+        price: OKX_A2A_SERVICE.price,
+        defaultReferencePrice: OKX_A2A_SERVICE.defaultReferencePrice,
+        settlement: OKX_A2A_SERVICE.settlement,
+        description: OKX_A2A_SERVICE.description,
+      },
+    },
     supportedTaskTypes: [
       {
         type: "repository.analysis",
-        description: "Scan and analyze a public repository for cleanup risk.",
-        paymentRequired: false,
-      },
-      {
-        type: "repository.safe_cleanup",
-        description: "Execute one verified safe fix in an isolated workspace (free proof).",
-        paymentRequired: false,
-      },
-      {
-        type: "repository.verified_cleanup",
-        description: "Generate and verify a Patch Kit cleanup bundle.",
+        description:
+          "A2MCP Quick Triage — bounded analyze_repository returning up to five prioritized findings (0.03 USD₮0 via x402).",
         paymentRequired: true,
-        priceHint: "0.25 USDT",
+        priceHint: "0.03 USD₮0",
+        protocol: "A2MCP",
       },
       {
         type: "repository.cleanup_pr",
-        description: "Verified cleanup with human approval before GitHub PR creation.",
+        description:
+          "A2A Verified Cleanup PR — customized create_cleanup_pr delivery with negotiated terms, escrow, and buyer acceptance (default reference 1 USD₮0).",
         paymentRequired: true,
-        priceHint: "1–3 USDT",
+        priceHint: "negotiated (default 1 USD₮0)",
         requiresApproval: true,
-      },
-      {
-        type: "repository.guard_activation",
-        description: "Activate continuous repository monitoring with delta scans and policy enforcement.",
-        paymentRequired: true,
-        priceHint: "3–5 USDT/month",
-        available: true,
+        protocol: "A2A",
       },
     ] satisfies Array<{
-      type: A2ATaskType;
+      type: A2ATaskType | "repository.analysis";
       description: string;
       paymentRequired: boolean;
       priceHint?: string;
       requiresApproval?: boolean;
       available?: boolean;
+      protocol?: string;
     }>,
     authentication: {
       publicScan: "none",
       githubMutation: "github_app_installation_or_token",
-      paidTasks: "bound_quote_via_x402",
+      a2mcpPaidCalls: "x402_bound_quote",
+      a2aPaidTasks: "negotiated_task_agreement_and_escrow",
     },
     payment: {
-      protocol: "x402",
-      quoteEndpoint: `${baseUrl}/api/tasks/quote`,
-      payEndpoint: `${baseUrl}/api/tasks/pay`,
-      enforcement: process.env.REQUIRE_REAL_X402 === "1" ? "strict" : "test_or_demo",
-      binding: [
-        "quoteId",
-        "operation",
-        "repository",
-        "branch",
-        "commitSha",
-        "findingIds",
-        "requestHash",
-        "nonce",
-      ],
+      a2mcp: {
+        protocol: "x402",
+        network: "X Layer (eip155:196)",
+        amount: "0.03 USD₮0",
+        operation: "analyze_repository",
+        quoteEndpoint: `${baseUrl}/api/tasks/quote`,
+        payEndpoint: `${baseUrl}/api/tasks/pay`,
+        enforcement: process.env.REQUIRE_REAL_X402 === "1" ? "strict" : "test_or_demo",
+      },
+      a2a: {
+        protocol: "A2A_escrow",
+        network: "X Layer (eip155:196)",
+        pricing: "negotiated",
+        defaultReference: "1 USD₮0",
+        settlement: "task_agreement_escrow_delivery_buyer_acceptance_release",
+        operation: "create_cleanup_pr",
+      },
+      note: "Not all paid tasks use x402. A2MCP Quick Triage uses x402; A2A Verified Cleanup PR uses negotiated escrow.",
     },
     endpoints: {
       submitTask: `${baseUrl}/api/a2a/tasks`,
+      quickTriage: `${baseUrl}/api/a2mcp/quick-triage`,
       proposeMaintenanceContract: `${baseUrl}/api/green-pr/contracts`,
       acceptMaintenanceContract: `${baseUrl}/api/green-pr/contracts/{contractId}/accept`,
       verifyAttestation: `${baseUrl}/api/attestations/verify`,
@@ -91,9 +113,8 @@ export function buildAgentCard() {
       approveTask: `${baseUrl}/api/a2a/tasks/{taskId}/approve`,
       fundTask: `${baseUrl}/api/a2a/tasks/{taskId}/fund`,
       cancelTask: `${baseUrl}/api/a2a/tasks/{taskId}/cancel`,
-      guardRun: `${baseUrl}/api/guard/run`,
-      guardStatus: `${baseUrl}/api/guard/{repository}`,
-      githubWebhook: `${baseUrl}/api/github/webhook`,
+      trustRoot: `${baseUrl}/api/okx/trust-root`,
+      verifyReceipt: `${baseUrl}/api/okx/receipts/{receiptId}`,
       manifest: `${baseUrl}/api/tools/manifest`,
       health: `${baseUrl}/api/tools/health`,
       maintenanceContractSchema: `${baseUrl}/schemas/repodiet.contract.v1.schema.json`,
@@ -147,13 +168,12 @@ export function buildAgentCard() {
       "JavaScript/TypeScript focus",
       "Max ZIP 25MB, 5000 files",
       "No automatic merge to main",
-      "GitHub PR tasks require explicit approval",
+      "A2A GitHub PR tasks require explicit buyer acceptance",
       "OKX Green PR orders require an accepted repodiet.contract/v1 digest",
-      "Repo Guard monitors connected repositories after merges and on schedule",
+      "A2MCP create_cleanup_pr is not a paid listing — cleanup PR delivery is A2A only",
     ],
     safetyPolicies: [
       "Routes, configs, env files, lockfiles, and API handlers are protected by default",
-      "Only safe_candidate findings are auto-fixed in free proof",
       "verification_failed tasks are never marked completed",
       "Fallback analyzer results are labeled honestly",
     ],

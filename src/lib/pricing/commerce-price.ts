@@ -47,13 +47,17 @@ export function resolveCommercePrice(
           amountUsdt: test.amountUsdt,
         };
       }
-      const tier = classifyRepoSize(options?.sourceFileCount ?? 200);
-      const amountUsdt = tier === "small" ? 1 : tier === "medium" ? 2 : 3;
-      const amountMicro = String(amountUsdt * 1_000_000);
-      return { amountMicro, priceLabel: `${amountUsdt} USDT`, amountUsdt };
+      // Public default reference price for A2A Verified Cleanup PR (negotiated).
+      void options?.sourceFileCount;
+      return {
+        amountMicro: "1000000",
+        priceLabel: "negotiated (default 1 USD₮0)",
+        amountUsdt: 1,
+      };
     }
     case "repo_guard":
-      return { amountMicro: "4000000", priceLabel: "4 USDT/month", amountUsdt: 4 };
+      // Not part of the public OKX listing model.
+      return { amountMicro: "0", priceLabel: "not listed", amountUsdt: 0 };
     default:
       return { amountMicro: "0", priceLabel: "Free", amountUsdt: 0 };
   }
