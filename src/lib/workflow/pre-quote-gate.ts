@@ -121,16 +121,25 @@ export async function assertPreQuoteGate(input: PreQuoteGateInput): Promise<PreQ
   });
 
   if (baseline.status !== "baseline_ready") {
-    throw new PreQuoteGateError(formatBaselineInvalidMessage(baseline), {
-      code: baseline.status,
-      httpStatus: baseline.status === "baseline_infrastructure_failed" ? 503 : 422,
-      baseline,
-      invalidation: {
-        status: "invalid_source_baseline",
-        retryable: false,
-        requiresNewScan: true,
-      },
-    });
+    // Serverless ENOSPC / install flake: allow transform-preflight quotes to continue.
+    // Full repository verification still gates cleanup PR delivery later.
+    const message = formatBaselineInvalidMessage(baseline);
+    const softDependencyFailure =
+      baseline.classification === "baseline_dependency_failure" ||
+      baseline.status === "baseline_infrastructure_failed" ||
+      /ENOSPC|server temporary storage is full/i.test(message);
+    if (!softDependencyFailure || input.findingIds.length === 0) {
+      throw new PreQuoteGateError(message, {
+        code: baseline.status,
+        httpStatus: baseline.status === "baseline_infrastructure_failed" ? 503 : 422,
+        baseline,
+        invalidation: {
+          status: "invalid_source_baseline",
+          retryable: false,
+          requiresNewScan: true,
+        },
+      });
+    }
   }
 
   if (input.skipTransformPreflight) {
