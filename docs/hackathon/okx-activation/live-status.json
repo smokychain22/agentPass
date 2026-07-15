@@ -1,0 +1,121 @@
+{
+  "generatedAt": "2026-07-15T19:00:30Z",
+  "session": {
+    "source": "cursor-cloud-agent",
+    "repository": "smokychain22/agentPass",
+    "productionMain": "31b00755",
+    "canonicalProduction": "https://skillswap-virid-kappa.vercel.app",
+    "onchainOsSkillsInstalled": true,
+    "onchainOsSkillsSource": "https://github.com/okx/onchainos-skills",
+    "onchainOsCliVersion": "4.2.4",
+    "skillVersionChecked": "4.2.5",
+    "preflight": {
+      "ok": true,
+      "channel": "stable",
+      "currentVersion": "4.2.4",
+      "latestVersion": "4.2.4",
+      "integrity": "ok",
+      "action": null
+    }
+  },
+  "login": {
+    "status": "logged_in",
+    "email": "abdullahlp114@gmail.com",
+    "loggedIn": true,
+    "loginType": "email",
+    "isNew": false,
+    "currentAccountName": "Account 1",
+    "note": "OTP verified successfully. OTP value not stored."
+  },
+  "authenticatedLiveState": {
+    "aspAgent5283": {
+      "agentId": "5283",
+      "name": "RepoDiet",
+      "roleLabel": "ASP",
+      "status": 2,
+      "statusLabel": "not listed",
+      "approvalDisplayStatus": 2,
+      "approvalLabel": "Listing under review",
+      "approvalRemark": "AI quality review suggested pass",
+      "approvalStatusFromServiceList": 3,
+      "ownerAddress": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+      "agentWalletAddress": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+      "communicationAddress": "0x185d96F1ccbAe299263e789349028EF9569f9d22",
+      "onlineStatus": 2,
+      "categoryCode": ["SOFTWARE_SERVICES"],
+      "createdAt": "2026-07-13T08:39:33.343Z",
+      "updatedAt": "2026-07-13T10:55:35.472Z",
+      "lastOnlineTime": "2026-07-13T10:55:35.470Z",
+      "soldCount": 0,
+      "securityRate": null
+    },
+    "a2aServicesAttachedTo5283": [
+      {
+        "id": 32947,
+        "serviceName": "RepoDiet Cleanup Operator",
+        "serviceType": "A2A",
+        "fee": "1",
+        "feeDisplay": "1 USDT",
+        "endpoint": null,
+        "contractAddress": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        "chainIndex": 196
+      }
+    ],
+    "a2mcpServicesAttachedTo5283": [
+      {
+        "id": 32948,
+        "serviceName": "RepoDiet Quick Triage",
+        "serviceType": "A2MCP",
+        "fee": "0.03",
+        "feeDisplay": "0.03 USDT",
+        "endpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage",
+        "contractAddress": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        "chainIndex": 196
+      }
+    ],
+    "sellerAgenticWalletLive": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "sellerWalletMatchesExpected": true,
+    "xlayerBalanceSnapshot": {
+      "USD₮0": "0.3",
+      "OKB": "0.003",
+      "totalValueUsd": "0.54"
+    },
+    "marketplaceListingState": "under_review",
+    "approvalState": "Listing under review",
+    "reviewerRemarks": "AI quality review suggested pass",
+    "publicVisibility": "not_listed",
+    "recommendationEligibility": false,
+    "recommendationEligibilityEvidence": {
+      "findJobs": "No online ASP Agents found. Total 1 Agent(s), but status != 1 (online) or role != 2 (ASP)",
+      "recommendTask": "Wallet API error (code=4001): AgentApi.agentServices failed"
+    },
+    "taskRoutingEligibility": false,
+    "registeredEndpoints": [
+      "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
+    ],
+    "registeredPrices": {
+      "a2a_32947": "1 USDT",
+      "a2mcp_32948": "0.03 USDT"
+    },
+    "registeredPaymentRecipient": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "listingSubmissionTimestamp": "2026-07-13T08:39:33.343Z",
+    "lastStatusUpdateTimestamp": "2026-07-13T10:55:35.472Z",
+    "gateCheck": {
+      "ready": false,
+      "walletOk": true,
+      "identityOk": true,
+      "identityStatus": 2,
+      "communicationOk": false,
+      "communicationHint": "okx-a2a is not installed. Install and initialize it: run `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix`."
+    }
+  },
+  "serviceIdConflict": {
+    "historicalConflictingA2A": "32913",
+    "productionHealthClaimsA2A": "32947",
+    "liveAuthenticatedA2A": "32947",
+    "liveAuthenticatedA2MCP": "32948",
+    "resolution": "32947_is_authoritative",
+    "note": "Live service-list for ASP 5283 contains only A2A 32947 and A2MCP 32948. Historical 32913 is not present and is not authoritative."
+  },
+  "nextActionRequiringOwner": "No final listing resubmit while under_review. Choose whether to pursue a specific designated private task or locate/create the missing public task 'RepoDiet end-to-end cleanup'. Separate confirmation required before any A2MCP paid test or escrow apply."
+}

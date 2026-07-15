@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-07-15T19:00:30Z",
+  "expectedIdentity": {
+    "aspAgentId": "5283",
+    "expectedA2AServiceId": "32947",
+    "historicalConflictingA2AServiceId": "32913",
+    "expectedA2MCPServiceId": "32948",
+    "sellerAgenticWallet": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "buyerAgenticWallet": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "network": "eip155:196",
+    "assetUsdT0": "0x779ded0c9e1022225f8e0630b35a9b54be713736"
+  },
+  "productionGateway": {
+    "healthUrl": "https://skillswap-virid-kappa.vercel.app/api/okx/health",
+    "agentCardUrl": "https://skillswap-virid-kappa.vercel.app/.well-known/agent-card.json",
+    "keysUrl": "https://skillswap-virid-kappa.vercel.app/api/keys",
+    "quickTriageUrl": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage",
+    "operatorAgentId": "5283",
+    "operatorWallet": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "a2aServiceId": "32947",
+    "a2mcpServiceId": "32948",
+    "aspRegistration": "registered"
+  },
+  "authoritativeOkxRegistry": {
+    "status": "resolved_from_authenticated_service_list",
+    "aspRawStatus": {
+      "status": 2,
+      "statusLabel": "not listed",
+      "approvalDisplayStatus": 2,
+      "approvalLabel": "Listing under review",
+      "approvalRemark": "AI quality review suggested pass"
+    },
+    "authoritativeA2AServiceId": "32947",
+    "authoritativeA2MCPServiceId": "32948",
+    "resolution32913vs32947": "32947 is the only A2A service attached to ASP 5283; 32913 is historical/non-authoritative and absent from live service-list",
+    "sellerWalletConfirmedByWalletCli": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "services": [
+      {
+        "id": "32947",
+        "name": "RepoDiet Cleanup Operator",
+        "type": "A2A",
+        "fee": "1 USDT",
+        "endpoint": null
+      },
+      {
+        "id": "32948",
+        "name": "RepoDiet Quick Triage",
+        "type": "A2MCP",
+        "fee": "0.03 USDT",
+        "endpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
+      }
+    ]
+  },
+  "signingIdentities": {
+    "separationOfPowers": true,
+    "receipt": {
+      "use": "receipt",
+      "keyId": "receipt-ed25519-20260715-89c1393d1ca75088",
+      "keyVersion": "2026-07-15.1",
+      "algorithm": "ed25519",
+      "fingerprint": "sha256:40d4fbcaa1cce78e54bbb16a",
+      "active": true
+    },
+    "greenPrAttestation": {
+      "use": "green-pr-attestation",
+      "keyId": "green-pr-ed25519-20260715-242c0e7ca3401ca1",
+      "keyVersion": "2026-07-15.1",
+      "algorithm": "ed25519",
+      "fingerprint": "sha256:2a5322970ff701a3b4edfe1e",
+      "active": true
+    },
+    "note": "Receipt and attestation public keys are distinct active identities. Private keys redacted / not present."
+  },
+  "redactions": [
+    "OTPs",
+    "API keys",
+    "API secrets",
+    "passphrases",
+    "wallet private keys",
+    "signing private keys",
+    "session tokens",
+    "accountId"
+  ]
+}

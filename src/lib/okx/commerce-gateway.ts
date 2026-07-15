@@ -161,7 +161,8 @@ export async function gateA2mcpCall(input: {
     }
     throw new EntitlementDeniedError(
       entitlement.status,
-      entitlement.reason ?? "Entitlement verification failed."
+      entitlement.reason ?? "Entitlement verification failed.",
+      entitlement.status === "execution_started" ? 409 : 402
     );
   }
 

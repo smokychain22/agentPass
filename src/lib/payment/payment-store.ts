@@ -99,30 +99,136 @@ export async function getPaymentByIdempotencyKey(
   return getDurableRecord<PaymentRecord>("payments", `idem_${idempotencyKey}`);
 }
 
+/** Lease for in-flight EXECUTING quotes — expired leases may be reclaimed for retry. */
+export const QUOTE_EXECUTING_LEASE_MS = 90_000;
+
+export interface QuoteLockResult {
+  ok: boolean;
+  reason?: string;
+  quote?: BoundQuote;
+  alreadyCompleted?: boolean;
+  pending?: boolean;
+}
+
+function isExecutingLeaseActive(quote: BoundQuote, nowMs = Date.now()): boolean {
+  if (quote.executionState !== "EXECUTING") return false;
+  if (!quote.executionStartedAt) return true;
+  return nowMs - new Date(quote.executionStartedAt).getTime() < QUOTE_EXECUTING_LEASE_MS;
+}
+
+/**
+ * Begin paid execution. Does NOT mark the quote consumed.
+ * Consumption happens only on successful delivery via markQuoteSucceeded.
+ */
 export async function lockQuoteForExecution(
   quoteId: string,
   taskId: string,
   paymentReference: string
-): Promise<{ ok: boolean; reason?: string; quote?: BoundQuote }> {
+): Promise<QuoteLockResult> {
   const quote = await getBoundQuote(quoteId);
   if (!quote) return { ok: false, reason: "Quote not found." };
-  if (quote.status === "consumed") {
-    if (quote.taskId === taskId) return { ok: true, quote };
-    return { ok: false, reason: "Quote already consumed by another execution." };
+
+  if (quote.executionState === "SUCCEEDED" || quote.lifecycleStatus === "completed") {
+    return {
+      ok: false,
+      alreadyCompleted: true,
+      reason: "Quote already completed successfully.",
+      quote,
+    };
   }
-  if (quote.status !== "funded" && quote.lifecycleStatus !== "funded") {
-    return { ok: false, reason: `Quote not funded (status=${quote.status}).` };
+
+  if (quote.executionState === "FAILED_FINAL" || quote.status === "refunded") {
+    return { ok: false, reason: "Quote is no longer usable for execution.", quote };
+  }
+
+  if (quote.executionState === "EXECUTING" && quote.taskId === taskId) {
+    return { ok: true, quote };
+  }
+
+  if (quote.executionState === "EXECUTING" && quote.taskId !== taskId && isExecutingLeaseActive(quote)) {
+    return {
+      ok: false,
+      pending: true,
+      reason: "Execution already in progress for this funded quote.",
+      quote,
+    };
+  }
+
+  const fundedLike =
+    quote.status === "funded" ||
+    quote.lifecycleStatus === "funded" ||
+    quote.executionState === "FUNDED" ||
+    quote.executionState === "FAILED_RETRYABLE" ||
+    // reclaim stale EXECUTING lease
+    (quote.executionState === "EXECUTING" && !isExecutingLeaseActive(quote));
+
+  if (!fundedLike) {
+    if (quote.status === "consumed") {
+      return { ok: false, reason: "Quote already consumed by another execution.", quote };
+    }
+    return { ok: false, reason: `Quote not funded (status=${quote.status}).`, quote };
   }
 
   const updated: BoundQuote = {
     ...quote,
-    status: "consumed",
+    // Stay funded until successful delivery — never permanently consume on start.
+    status: "funded",
     lifecycleStatus: "execution_started",
+    executionState: "EXECUTING",
+    executionStartedAt: durableNow(),
     taskId,
-    paymentReference,
+    paymentReference: paymentReference || quote.paymentReference,
+    lastFailureReason: undefined,
   };
   await setDurableRecord("task_quotes", quoteId, updated);
   return { ok: true, quote: updated };
+}
+
+/** Restore funded entitlement after timeout or platform failure so buyer is not charged again. */
+export async function releaseQuoteForRetryableFailure(
+  quoteId: string,
+  taskId: string,
+  reason: string
+): Promise<BoundQuote | undefined> {
+  const quote = await getBoundQuote(quoteId);
+  if (!quote) return undefined;
+  if (quote.executionState === "SUCCEEDED" || quote.lifecycleStatus === "completed") {
+    return quote;
+  }
+  const updated: BoundQuote = {
+    ...quote,
+    status: "funded",
+    lifecycleStatus: "funded",
+    executionState: "FAILED_RETRYABLE",
+    lastFailureReason: reason,
+    lastFailedTaskId: taskId,
+    taskId: undefined,
+  };
+  await setDurableRecord("task_quotes", quoteId, updated);
+  return updated;
+}
+
+/** Mark successful delivery — only then may the quote become consumed. */
+export async function markQuoteSucceeded(
+  quoteId: string,
+  taskId: string,
+  receiptId?: string
+): Promise<BoundQuote | undefined> {
+  const quote = await getBoundQuote(quoteId);
+  if (!quote) return undefined;
+  const updated: BoundQuote = {
+    ...quote,
+    status: "consumed",
+    lifecycleStatus: "completed",
+    executionState: "SUCCEEDED",
+    executionCompletedAt: durableNow(),
+    taskId,
+    completedTaskId: taskId,
+    completedReceiptId: receiptId,
+    lastFailureReason: undefined,
+  };
+  await setDurableRecord("task_quotes", quoteId, updated);
+  return updated;
 }
 
 export function markQuoteLifecycle(
@@ -144,8 +250,18 @@ export async function persistQuoteLifecycle(
     ...patch,
     lifecycleStatus,
     ...(lifecycleStatus === "expired" ? { status: "expired" as const } : {}),
-    ...(lifecycleStatus === "funded" ? { status: "funded" as const } : {}),
-    ...(lifecycleStatus === "completed" ? { status: "consumed" as const } : {}),
+    ...(lifecycleStatus === "funded"
+      ? {
+          status: "funded" as const,
+          executionState: (patch.executionState ?? "FUNDED") as BoundQuote["executionState"],
+        }
+      : {}),
+    ...(lifecycleStatus === "completed"
+      ? {
+          status: "consumed" as const,
+          executionState: (patch.executionState ?? "SUCCEEDED") as BoundQuote["executionState"],
+        }
+      : {}),
   };
   await setDurableRecord("task_quotes", quoteId, updated);
   return updated;

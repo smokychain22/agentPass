@@ -18,6 +18,15 @@
     },
     "src/app/api/internal/sandbox-runs/execute/**": {
       "maxDuration": 300
+    },
+    "src/app/api/a2mcp/quick-triage/**": {
+      "maxDuration": 300
+    },
+    "src/app/api/tools/analyze_repository/**": {
+      "maxDuration": 300
+    },
+    "src/app/api/internal/a2mcp/**": {
+      "maxDuration": 300
     }
   }
 }

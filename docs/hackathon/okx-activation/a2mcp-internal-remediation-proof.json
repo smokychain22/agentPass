@@ -1,0 +1,46 @@
+{
+  "completedAt": "2026-07-15T20:15:00Z",
+  "mode": "non_billable_internal_proof",
+  "paymentCreated": false,
+  "balancesModified": false,
+  "oldQuoteReused": false,
+  "forbiddenQuoteId": "quote_oQs2zW2cmt7o",
+  "preservedFailedTx": "0x351daeb986fc656fd611aaf01226e297efe42cfc91be1082222b94702d5fa73f",
+  "diagnostic": {
+    "endpoint": "POST /api/internal/a2mcp/quick-triage-diagnostic",
+    "repository": "smokychain22/agentPass",
+    "operation": "analyze_repository",
+    "maximumFindings": 5,
+    "httpStatus": 200,
+    "elapsedMs": 1163,
+    "totalMs": 1130,
+    "timings": [
+      { "stage": "fetch_and_extract", "durationMs": 968, "ok": true },
+      { "stage": "bounded_analysis", "durationMs": 158, "ok": true },
+      { "stage": "normalize", "durationMs": 4, "ok": true }
+    ],
+    "summary": {
+      "totalFindingsDetected": 247,
+      "findingsReturned": 5,
+      "safeCandidates": 0,
+      "reviewFirst": 5,
+      "protected": 0
+    },
+    "triageMode": "bounded_quick_triage"
+  },
+  "paidPathFixture": {
+    "timeoutThenRetryWithoutNewPayment": true,
+    "httpEquivalentStatus": 200,
+    "receiptCreated": true,
+    "receiptCryptographicVerification": "PASS",
+    "idempotentReplaySameReceipt": true,
+    "secondPayment": false,
+    "secondExecutionRecord": false
+  },
+  "build": {
+    "typecheck": "PASS",
+    "productionBuild": "PASS"
+  },
+  "newRealPaymentSafe": "AFTER_DEPLOY_ONLY",
+  "note": "Do not authorize another 0.03 USD₮0 payment until this branch is deployed. Never reuse quote_oQs2zW2cmt7o."
+}

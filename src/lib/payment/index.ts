@@ -13,6 +13,11 @@ export {
   handleExecutionFailure,
   markQuoteCompleted,
 } from "./settlement";
-export { getBoundQuote, lockQuoteForExecution } from "./payment-store";
+export {
+  getBoundQuote,
+  lockQuoteForExecution,
+  markQuoteSucceeded,
+  releaseQuoteForRetryableFailure,
+} from "./payment-store";
 export { FAILURE_POLICY_DOCUMENT } from "./failure-policy";
 export { paymentRequiredBody, X402_NETWORK, X402_RECIPIENT } from "./x402";

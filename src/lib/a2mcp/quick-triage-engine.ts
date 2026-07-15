@@ -1,15 +1,17 @@
-import { analyzeRepository } from "@/lib/execution";
-import { Phase3InputSchemas, resolveFindingsPayload } from "@/lib/a2mcp/phase3-schemas";
+import { Phase3InputSchemas } from "@/lib/a2mcp/phase3-schemas";
 import {
   assertQuickTriageSummaryInvariants,
   buildQuickTriageResult,
 } from "@/lib/a2mcp/quick-triage-response";
+import { runBoundedQuickTriageScan } from "@/lib/a2mcp/quick-triage-bounded";
 import { getAgentTask, type AgentTaskRecord } from "@/lib/a2mcp/task-store";
+import type { FindingsPayload } from "@/lib/findings/types";
 
 async function completeQuickTriageTask(
   taskId: string,
-  analyzed: Awaited<ReturnType<typeof analyzeRepository>>,
-  maximumFindings: number
+  analyzed: FindingsPayload,
+  maximumFindings: number,
+  meta?: { timings?: unknown; totalMs?: number; mode?: string }
 ): Promise<AgentTaskRecord> {
   const result = buildQuickTriageResult(analyzed, maximumFindings);
   assertQuickTriageSummaryInvariants(result);
@@ -25,7 +27,12 @@ async function completeQuickTriageTask(
       commitSha: analyzed.repo.commitSha,
     },
     scanId: analyzed.scanId,
-    result: result as unknown as Record<string, unknown>,
+    result: {
+      ...(result as unknown as Record<string, unknown>),
+      ...(meta?.timings ? { timings: meta.timings } : {}),
+      ...(meta?.totalMs != null ? { totalMs: meta.totalMs } : {}),
+      ...(meta?.mode ? { triageMode: meta.mode } : {}),
+    },
     analyzers: {
       knip: {
         status: analyzed.rawToolReports.knip.status === "failed" ? "failed" : "ok",
@@ -40,7 +47,9 @@ async function completeQuickTriageTask(
         sourceMode: analyzed.rawToolReports.madge.sourceMode,
       },
     },
-    limitations: [],
+    limitations: [
+      "Bounded Quick Triage path: ZIP archive fetch only, no dependency install, no build/tests, no native knip/jscpd/madge CLI.",
+    ],
     receipt: {},
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -61,8 +70,26 @@ export async function executeQuickTriage(
     maximumFindingsRaw === undefined ? 10 : Number(maximumFindingsRaw);
 
   const ref = Phase3InputSchemas.repoRef(body);
-  const findings = await resolveFindingsPayload(ref, getAgentTask);
-  const analyzed = await analyzeRepository(findings);
 
-  return completeQuickTriageTask(taskId, analyzed, maximumFindings);
+  // Prefer cached findings when scanId/taskId are provided.
+  if (ref.scanId || ref.taskId) {
+    const { resolveFindingsPayload } = await import("@/lib/a2mcp/phase3-schemas");
+    const { analyzeRepository } = await import("@/lib/execution");
+    const findings = await resolveFindingsPayload(ref, getAgentTask);
+    const analyzed = await analyzeRepository(findings);
+    return completeQuickTriageTask(taskId, analyzed, maximumFindings, {
+      mode: "cached_findings",
+    });
+  }
+
+  if (!ref.repoUrl) {
+    throw new Error("repositoryUrl/repoUrl is required for Quick Triage.");
+  }
+
+  const bounded = await runBoundedQuickTriageScan(ref.repoUrl, ref.branch);
+  return completeQuickTriageTask(taskId, bounded.findings, maximumFindings, {
+    timings: bounded.timings,
+    totalMs: bounded.totalMs,
+    mode: "bounded_quick_triage",
+  });
 }

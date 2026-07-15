@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-07-15T19:00:30Z",
+  "aspAgentId": "5283",
+  "normalizedListingState": "under_review",
+  "normalizedListingStateReason": "Authenticated approvalLabel is 'Listing under review' and statusLabel is 'not listed'. Not inferred from numeric approval codes alone.",
+  "rawLabels": {
+    "status": 2,
+    "statusLabel": "not listed",
+    "approvalDisplayStatus": 2,
+    "approvalLabel": "Listing under review",
+    "approvalStatusFromServiceListAgentInfo": 3
+  },
+  "approvalState": "Listing under review",
+  "reviewerRemarks": "AI quality review suggested pass",
+  "publicVisibility": false,
+  "publicSearchVisibleAsRepoDiet": false,
+  "recommendationEligibility": false,
+  "taskRoutingEligibility": false,
+  "listingSubmissionTimestamp": "2026-07-13T08:39:33.343Z",
+  "lastStatusUpdateTimestamp": "2026-07-13T10:55:35.472Z",
+  "existingListingAction": {
+    "type": "activate_submit_approval_in_progress",
+    "agentId": "5283",
+    "doNotCreateReplacementAsp": true,
+    "doNotResubmitWhileUnderReview": true
+  },
+  "preparedListingCopy": {
+    "agentName": "RepoDiet — Verified Cleanup PRs",
+    "tagline": "Autonomous maintenance for AI-built repositories.",
+    "description": "RepoDiet accepts bounded repository-maintenance tasks, locks the exact scope in a machine-readable contract, performs conservative changes on an isolated branch, independently verifies the result and delivers a review-ready GitHub pull request with a signed Green PR attestation and receipt.",
+    "a2mcp": {
+      "name": "RepoDiet Quick Triage",
+      "price": "0.03 USD₮0",
+      "liveServiceId": "32948",
+      "liveEndpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
+    },
+    "a2a": {
+      "name": "RepoDiet Verified Cleanup PR",
+      "pricing": "Negotiated",
+      "defaultReference": "1 USD₮0",
+      "liveServiceId": "32947",
+      "liveRegisteredFee": "1 USDT",
+      "note": "Do not publish the temporary 0.2 task price as the normal public A2A price."
+    },
+    "website": "https://skillswap-virid-kappa.vercel.app",
+    "application": "https://skillswap-virid-kappa.vercel.app/app",
+    "health": "https://skillswap-virid-kappa.vercel.app/api/okx/health",
+    "agentCard": "https://skillswap-virid-kappa.vercel.app/.well-known/agent-card.json",
+    "contact": "abdullahlp114@gmail.com"
+  },
+  "guards": {
+    "doNotCreateReplacementAsp": true,
+    "doNotCreateReplacementA2A": true,
+    "doNotCreateReplacementA2MCP": true,
+    "stopBeforeFinalMarketplaceSubmissionConfirmation": true,
+    "stoppedBecauseAlreadyUnderReview": true
+  },
+  "ownerConfirmationRequired": "No marketplace resubmit while under_review. After approval, confirm before any activate republish or profile/service copy update."
+}

@@ -1,0 +1,65 @@
+{
+  "preparedAt": "2026-07-15T19:29:22.129Z",
+  "status": "awaiting_owner_payment_confirmation",
+  "fundsTransferred": false,
+  "authorized": false,
+  "serviceId": "32948",
+  "endpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage",
+  "quote": {
+    "quoteId": "quote_oQs2zW2cmt7o",
+    "requestDigest": "sha256:c8bce6d551fcf7d08a32a996b1828a13580bc7983112e38f2ec56ec5eb5bf3d6",
+    "bindingHash": "sha256:cafbaabbb0ccede9efb540a4e0aa206880e8495cdd491cba3abec26733a0378d",
+    "creationTime": "2026-07-15T19:29:22.129Z",
+    "expiry": "2026-07-15T19:44:22.127Z",
+    "remainingSecondsBeforeExpiry": 899,
+    "operation": "analyze_repository",
+    "repository": "smokychain22/agentPass",
+    "repositoryUrl": "https://github.com/smokychain22/agentPass",
+    "maximumFindings": 5,
+    "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "amount": "0.03",
+    "amountMinimumUnits": "30000",
+    "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "tokenSymbol": "USD\u20ae0",
+    "network": "eip155:196",
+    "nonce": "273126f24ba129a6646ac1ad5b61bb2e",
+    "notReusedExpiredQuote": true,
+    "discardedQuoteIds": [
+      "quote_-0wcmqlJNNUx",
+      "quote_EXFVEdLSrqVP"
+    ]
+  },
+  "balances": {
+    "buyerUsdT0BeforePayment": "0.55",
+    "estimatedRemainingAfterPayment": "0.52",
+    "estimatedNetworkFee": "0"
+  },
+  "challenge": {
+    "x402Version": 2,
+    "scheme": "exact",
+    "network": "eip155:196",
+    "asset": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "amount": "30000",
+    "payTo": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "resource": {
+      "url": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage",
+      "mimeType": "application/json"
+    },
+    "maxTimeoutSeconds": 300,
+    "extra": {
+      "version": "1",
+      "symbol": "USDT",
+      "name": "USDT",
+      "currency": "USDT",
+      "transferMethod": "eip3009",
+      "service": "RepoDiet",
+      "quoteId": "quote_oQs2zW2cmt7o"
+    }
+  },
+  "ownerMustConfirmBefore": [
+    "signing",
+    "settlement",
+    "protected request replay"
+  ]
+}

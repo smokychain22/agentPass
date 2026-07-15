@@ -30,6 +30,14 @@ export type PaymentLifecycleStatus =
   | "credited"
   | "refunded";
 
+/** Durable paid-execution state — never treat CONSUMED as success by itself. */
+export type QuoteExecutionState =
+  | "FUNDED"
+  | "EXECUTING"
+  | "SUCCEEDED"
+  | "FAILED_RETRYABLE"
+  | "FAILED_FINAL";
+
 export type PaymentStatus = "pending" | "verified" | "failed";
 
 export type QuoteStatus = "active" | "payment_required" | "funded" | "consumed" | "expired" | "refunded";
@@ -67,6 +75,14 @@ export interface BoundQuote {
   paymentStatus?: PaymentStatus;
   fundedAt?: string;
   verifiedAt?: string;
+  /** Explicit execution state for A2MCP/A2A paid delivery. */
+  executionState?: QuoteExecutionState;
+  executionStartedAt?: string;
+  executionCompletedAt?: string;
+  lastFailureReason?: string;
+  lastFailedTaskId?: string;
+  completedTaskId?: string;
+  completedReceiptId?: string;
 }
 
 export interface PaymentProof {

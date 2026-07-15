@@ -1,0 +1,113 @@
+{
+  "generatedAt": "2026-07-15T19:00:30Z",
+  "publicTaskTarget": {
+    "title": "RepoDiet end-to-end cleanup",
+    "observedPrice": "0.2 USDT",
+    "observedState": "awaiting an agent",
+    "foundInOpenMarketplace": false,
+    "openMarketplaceScan": {
+      "statusFilter": 0,
+      "pagesScanned": 8,
+      "totalOpenTasksReported": 386,
+      "exactTitleMatches": 0,
+      "keywordRepoDietMatches": 0
+    }
+  },
+  "inspection": {
+    "status": "target_public_task_not_found",
+    "taskId": null,
+    "buyer": null,
+    "budget": null,
+    "token": null,
+    "repository": null,
+    "deadline": null,
+    "requestedScope": null,
+    "requiredDelivery": null,
+    "proofRequirements": null,
+    "escrowStatus": null,
+    "eligibleService": "32947",
+    "assignmentStatus": "not_attempted"
+  },
+  "relatedPrivateTasksDesignatedToAsp5283": [
+    {
+      "jobId": "0x216efed0e180630405f0017c1802c355471af259d90ba90d60b92bcfbbae847a",
+      "internalId": "403073",
+      "title": "Clean up unused dependencies",
+      "budget": "1 USDT",
+      "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+      "visibility": "Private",
+      "status": "created — Awaiting acceptance",
+      "buyerUserAgentId": "1791",
+      "buyerName": "SandboxAgent",
+      "buyerWallet": "0xbc59eb75c55e3bf1e63aaee653c2b8e02bfd2033",
+      "buyerWalletMatchesExpectedBuyer": false,
+      "expectedBuyerWallet": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+      "eligibleService": "32947",
+      "repository": null,
+      "deadline": null,
+      "scope": "Identify and remove unused dependencies in our project's codebase and provide a review-ready pull request.",
+      "escrowState": "escrow payment mode configured; still created / not accepted",
+      "assignmentAttempted": false
+    },
+    {
+      "jobId": "0x38c08eb67689431c8b312b7b0031933ebf6330503af48beb648cee282a86cd4c",
+      "internalId": "403012",
+      "title": "Remove unused dependencies",
+      "budget": "1 USDT",
+      "buyerUserAgentId": "1791",
+      "visibility": "Private",
+      "status": "created — Awaiting acceptance",
+      "assignmentAttempted": false
+    },
+    {
+      "jobId": "0xdcee29744b4cffa1abb190c8661c5f145fca355edd27cd1f4c17854a776e6198",
+      "internalId": "403007",
+      "title": "Optimize JS codebase",
+      "budget": "1 USDT",
+      "buyerUserAgentId": "1791",
+      "visibility": "Private",
+      "status": "created — Awaiting acceptance",
+      "assignmentAttempted": false
+    }
+  ],
+  "assignmentPolicy": {
+    "attemptOnlyViaAsp": "5283",
+    "attemptOnlyViaAuthoritativeA2AService": "32947",
+    "doNotCreateAnotherTask": true,
+    "doNotAcceptUnrelatedTask": true,
+    "stopBeforeWalletConfirmation": true,
+    "stoppedBecauseExactPublicTaskMissing": true
+  },
+  "paymentSafety": {
+    "neverApprovePaymentAutomatically": true,
+    "a2mcpTestPreview": {
+      "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+      "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+      "amount": "0.03 USD₮0",
+      "network": "eip155:196",
+      "asset": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+      "requestDigest": "sha256:5343fb71dab27835ef0cc1babec8c66bb93ce9e232b1af30b938ec024f41914a",
+      "bindingHash": "sha256:174c919a73ec40e3bc8f7784b95b2023cfc57aad48ca11b508f49533366e48b0",
+      "quoteId": "quote_EXFVEdLSrqVP",
+      "expiry": "2026-07-15T19:14:26.876Z",
+      "operation": "analyze_repository",
+      "repository": "smokychain22/agentPass",
+      "fundsTransferred": false,
+      "ownerConfirmationRequired": true
+    },
+    "a2aTaskFlow": "native_task_escrow_only"
+  },
+  "productionA2mcpCompliance": {
+    "unpaidQuickTriageHttpStatus": 402,
+    "paymentRequiredHeaderPresent": true,
+    "decodedChallenge": {
+      "x402Version": 2,
+      "network": "eip155:196",
+      "asset": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+      "amount": "30000",
+      "payTo": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90"
+    },
+    "matchesExpectedChallenge": true,
+    "separateReceiptAndAttestationSigningIdentities": true
+  }
+}

@@ -93,8 +93,21 @@ export interface PaymentReceipt {
   requestHash: string;
   resultHash: string;
   signature?: string;
+  /** Canonical signed payload for independent cryptographic verification. */
+  signedReceipt?: Record<string, unknown>;
   operatorAgentId: string;
   timestamp: string;
+  quoteId?: string;
+  paymentReference?: string;
+  buyer?: string;
+  seller?: string;
+  amountMicro?: string;
+  token?: string;
+  network?: string;
+  operation?: string;
+  repository?: string;
+  resultDigest?: string;
+  completedAt?: string;
 }
 
 export interface CommerceBinding {
