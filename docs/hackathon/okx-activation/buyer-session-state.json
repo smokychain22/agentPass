@@ -1,0 +1,40 @@
+{
+  "savedAt": "2026-07-15T19:20:45Z",
+  "buyerEmail": "officialsmokychain@gmail.com",
+  "accountName": "Account 1",
+  "loginType": "email",
+  "isNew": false,
+  "buyerWallet": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+  "belongsToAuthenticatedAccount": true,
+  "signingAvailable": true,
+  "transactionSubmissionAvailable": true,
+  "balanceQueryAvailable": true,
+  "historyQueryAvailable": true,
+  "historyReturnedRows": 0,
+  "a2mcpPaymentAvailable": true,
+  "a2aTaskCreationAvailable": true,
+  "a2aDeliveryAcceptanceAvailable": true,
+  "userAgentId": "5295",
+  "userAgentName": "RepoDiet Buyer",
+  "userAgentStatus": "active",
+  "usdT0Balance": "0.55",
+  "nativeBalance": "0",
+  "nativeBalanceNote": "No X Layer OKB shown in wallet/portfolio balances; X Layer is gas-free for Agentic Wallet flows.",
+  "gateCheck": {
+    "walletOk": true,
+    "identityOk": true,
+    "communicationOk": false,
+    "ready": false,
+    "communicationHint": "okx-a2a runtime not installed in this environment"
+  },
+  "controlVerdict": "PASS — BUYER AND SELLER CONTROL CONFIRMED",
+  "explicitlyNotSaved": [
+    "OTP",
+    "cookies",
+    "session tokens",
+    "authorization headers",
+    "private keys",
+    "API credentials",
+    "accountId"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "savedAt": "2026-07-15T19:18:00Z",
+  "purpose": "Non-secret seller session snapshot before switching to buyer Agentic Wallet account",
+  "authenticatedAccount": {
+    "email": "abdullahlp114@gmail.com",
+    "accountName": "Account 1",
+    "loginType": "email"
+  },
+  "sellerWalletAddress": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+  "aspId": "5283",
+  "a2aServiceId": "32947",
+  "a2mcpServiceId": "32948",
+  "balances": {
+    "network": "eip155:196",
+    "usdT0": "0.3",
+    "usdT0Contract": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "nativeOkb": "0.003"
+  },
+  "listingState": "under_review",
+  "serviceStatus": {
+    "aspStatusLabel": "not listed",
+    "approvalLabel": "Listing under review",
+    "reviewerRemarks": "AI quality review suggested pass",
+    "a2a": {
+      "id": "32947",
+      "name": "RepoDiet Cleanup Operator",
+      "fee": "1 USDT"
+    },
+    "a2mcp": {
+      "id": "32948",
+      "name": "RepoDiet Quick Triage",
+      "fee": "0.03 USDT",
+      "endpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
+    }
+  },
+  "explicitlyNotSaved": [
+    "OTP",
+    "cookies",
+    "session tokens",
+    "authorization headers",
+    "private keys",
+    "API credentials"
+  ]
+}

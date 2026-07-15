@@ -113,19 +113,28 @@ export async function signOkxReceipt(input: {
   requestHash: string;
   result: unknown;
   quoteId?: string;
+  paymentReference?: string;
+  buyer?: string;
+  seller?: string;
+  amountMicro?: string;
+  token?: string;
+  network?: string;
+  operation?: string;
+  repository?: string;
 }): Promise<PaymentReceipt> {
   const receiptId = newReceiptId();
   const hash = resultHash(input.result);
+  const timestamp = new Date().toISOString();
   const signed = signExecutionReceipt({
     taskId: input.taskId,
-    repository: "",
+    repository: input.repository ?? "",
     commitSha: "",
     findingIds: [],
     patchHash: hash,
     verificationHash: hash,
     status: "verified",
     quoteId: input.quoteId,
-    timestamp: new Date().toISOString(),
+    timestamp,
   });
 
   const receipt: PaymentReceipt = {
@@ -135,9 +144,21 @@ export async function signOkxReceipt(input: {
     taskId: input.taskId,
     requestHash: input.requestHash,
     resultHash: hash,
+    resultDigest: hash,
     signature: signed.signature ?? undefined,
+    signedReceipt: signed.signedReceipt as unknown as Record<string, unknown>,
     operatorAgentId: getOperatorAgentId(),
-    timestamp: new Date().toISOString(),
+    timestamp,
+    completedAt: timestamp,
+    quoteId: input.quoteId,
+    paymentReference: input.paymentReference,
+    buyer: input.buyer,
+    seller: input.seller,
+    amountMicro: input.amountMicro,
+    token: input.token,
+    network: input.network,
+    operation: input.operation,
+    repository: input.repository,
   };
   await saveOkxReceipt(receipt);
   return receipt;

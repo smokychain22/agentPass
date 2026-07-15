@@ -6,8 +6,10 @@ import {
   getPaymentByReference,
   getPaymentByQuoteId,
   lockQuoteForExecution,
+  markQuoteSucceeded,
   newPaymentRecord,
   persistQuoteLifecycle,
+  releaseQuoteForRetryableFailure,
   savePaymentRecord,
 } from "./payment-store";
 import {
@@ -320,6 +322,9 @@ export async function requireEntitlement(
     (payment?.lifecycleStatus === "funded" && Boolean(quote.paymentReference));
 
   if (postPaymentVerified && context.taskId) {
+    if (quote.executionState === "SUCCEEDED" || quote.lifecycleStatus === "completed") {
+      return { ok: true, status: "completed", quote, existingTaskId: quote.completedTaskId ?? quote.taskId };
+    }
     if (quote.status === "consumed" && quote.taskId === context.taskId) {
       return { ok: true, status: "funded", quote };
     }
@@ -329,6 +334,18 @@ export async function requireEntitlement(
       quote.paymentReference ?? payment?.paymentReference ?? ""
     );
     if (!lock.ok) {
+      if (lock.alreadyCompleted) {
+        return {
+          ok: true,
+          status: "completed",
+          quote: lock.quote,
+          existingTaskId: lock.quote?.completedTaskId ?? lock.quote?.taskId,
+          reason: lock.reason,
+        };
+      }
+      if (lock.pending) {
+        return { ok: false, status: "execution_started", reason: lock.reason, quote: lock.quote };
+      }
       return { ok: false, status: "replayed", reason: lock.reason };
     }
     return { ok: true, status: "funded", quote: lock.quote };
@@ -413,6 +430,18 @@ export async function handleExecutionFailure(
   return policy;
 }
 
-export async function markQuoteCompleted(quoteId: string, taskId: string): Promise<void> {
-  await persistQuoteLifecycle(quoteId, "completed", { taskId, status: "consumed" });
+export async function markQuoteCompleted(
+  quoteId: string,
+  taskId: string,
+  receiptId?: string
+): Promise<void> {
+  await markQuoteSucceeded(quoteId, taskId, receiptId);
+}
+
+export async function markQuoteRetryableFailure(
+  quoteId: string,
+  taskId: string,
+  reason: string
+): Promise<BoundQuote | undefined> {
+  return releaseQuoteForRetryableFailure(quoteId, taskId, reason);
 }

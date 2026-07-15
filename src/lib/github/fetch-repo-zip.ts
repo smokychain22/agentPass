@@ -37,7 +37,13 @@ function zipUrl(owner: string, repo: string, branch: string): string {
   return `https://github.com/${owner}/${repo}/archive/refs/heads/${encodeURIComponent(branch)}.zip`;
 }
 
-async function tryFetch(url: string, redirectCount = 0): Promise<Response> {
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
+async function tryFetch(
+  url: string,
+  redirectCount = 0,
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS
+): Promise<Response> {
   if (redirectCount > 5) {
     throw new RepoFetchError("Too many redirects while fetching repository.");
   }
@@ -45,6 +51,7 @@ async function tryFetch(url: string, redirectCount = 0): Promise<Response> {
   const res = await fetch(url, {
     headers: GITHUB_HEADERS,
     redirect: "manual",
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (res.status >= 300 && res.status < 400) {

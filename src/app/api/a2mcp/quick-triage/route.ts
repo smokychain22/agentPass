@@ -102,10 +102,17 @@ export async function POST(request: Request) {
 
   const forwardedBody = {
     repoUrl: repositoryUrl,
+    repositoryUrl,
     branch,
     maximumFindings: Math.floor(maximumFindings),
     source: "quick_triage",
-    operation: "triage_repository",
+    operation: "analyze_repository",
+    quoteId: typeof body.quoteId === "string" ? body.quoteId : undefined,
+    paymentReference:
+      typeof body.paymentReference === "string" ? body.paymentReference : undefined,
+    payer: typeof body.payer === "string" ? body.payer : undefined,
+    idempotencyKey:
+      typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
   };
 
   const forwardedRequest = new Request(request.url, {
@@ -114,6 +121,8 @@ export async function POST(request: Request) {
     body: JSON.stringify(forwardedBody),
   });
 
-  return runPhase3ToolRoute("analyze_repository", forwardedRequest, executeQuickTriage);
+  return runPhase3ToolRoute("analyze_repository", forwardedRequest, executeQuickTriage, {
+    timeoutMs: undefined, // use QUICK_TRIAGE_TIMEOUT_MS via tool name
+  });
 }
 

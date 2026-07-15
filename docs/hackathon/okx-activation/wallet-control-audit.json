@@ -1,0 +1,58 @@
+{
+  "generatedAt": "2026-07-15T19:20:45Z",
+  "controlVerdict": "PASS — BUYER AND SELLER CONTROL CONFIRMED",
+  "developerPortal": {
+    "developerPortalWallet": "0xf3892F0eA6f84174BAeBd92143D11E87e4f816A2",
+    "projectId": "dedea8092028decd34fe1aca986601b2",
+    "purpose": "API project and API-key management",
+    "isRepoDietSellerWallet": false,
+    "isRepoDietBuyerWallet": false
+  },
+  "sellerAccount": {
+    "email": "abdullahlp114@gmail.com",
+    "accountName": "Account 1",
+    "sellerWallet": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "belongsToSellerEmail": true,
+    "signingAvailable": true,
+    "usdT0BalanceAtAudit": "0.3",
+    "associatedAsp": 5283,
+    "a2aServiceId": 32947,
+    "a2mcpServiceId": 32948,
+    "listingState": "under_review"
+  },
+  "buyerAccount": {
+    "email": "officialsmokychain@gmail.com",
+    "accountName": "Account 1",
+    "buyerWallet": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "belongsToBuyerEmail": true,
+    "signingAvailable": true,
+    "transactionSubmissionAvailable": true,
+    "a2mcpPaymentAvailable": true,
+    "a2aTaskCreationAvailable": true,
+    "a2aDeliveryAcceptanceAvailable": true,
+    "usdT0Balance": "0.55",
+    "nativeBalance": "0",
+    "associatedUserAgentId": "5295",
+    "associatedUserAgentName": "RepoDiet Buyer",
+    "currentlyAuthenticated": true
+  },
+  "currentSession": {
+    "email": "officialsmokychain@gmail.com",
+    "role": "buyer",
+    "loggedIn": true
+  },
+  "a2mcpPrepared": {
+    "quoteId": "quote_-0wcmqlJNNUx",
+    "status": "awaiting_owner_payment_confirmation",
+    "fundsTransferred": false
+  },
+  "redactions": [
+    "OTPs",
+    "session tokens",
+    "cookies",
+    "authorization headers",
+    "private keys",
+    "API credentials",
+    "accountId"
+  ]
+}

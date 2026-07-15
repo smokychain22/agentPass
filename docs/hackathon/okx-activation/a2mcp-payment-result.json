@@ -1,0 +1,89 @@
+{
+  "completedAt": "2026-07-15T19:36:30Z",
+  "authorization": {
+    "ownerAuthorized": true,
+    "authorizedQuoteId": "quote_oQs2zW2cmt7o",
+    "authorizedRequestDigest": "sha256:c8bce6d551fcf7d08a32a996b1828a13580bc7983112e38f2ec56ec5eb5bf3d6",
+    "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "amount": "0.03 USD₮0",
+    "amountMinimumUnits": "30000",
+    "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "network": "eip155:196",
+    "operation": "analyze_repository",
+    "repository": "smokychain22/agentPass",
+    "noOtherQuoteAuthorized": true
+  },
+  "settlement": {
+    "method": "eip3009_transferWithAuthorization_redeemed_on_xlayer",
+    "transactionHash": "0x351daeb986fc656fd611aaf01226e297efe42cfc91be1082222b94702d5fa73f",
+    "txStatus": "SUCCESS",
+    "transferredAmountUsdT0": "0.03",
+    "from": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "tokenContract": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "paymentReference": "0x351daeb986fc656fd611aaf01226e297efe42cfc91be1082222b94702d5fa73f"
+  },
+  "quoteFunding": {
+    "endpoint": "https://skillswap-virid-kappa.vercel.app/api/tasks/pay",
+    "httpStatus": 200,
+    "success": true,
+    "status": "funded",
+    "quoteId": "quote_oQs2zW2cmt7o",
+    "requestDigest": "sha256:c8bce6d551fcf7d08a32a996b1828a13580bc7983112e38f2ec56ec5eb5bf3d6",
+    "paymentStatus": "verified",
+    "lifecycleStatus": "funded",
+    "fundedAt": "2026-07-15T19:34:43.451Z"
+  },
+  "protectedRequest1": {
+    "endpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage",
+    "httpStatus": 504,
+    "success": false,
+    "taskId": "task_2c437d4679c246",
+    "tool": "analyze_repository",
+    "errorCode": "SCAN_TIMEOUT",
+    "errorMessage": "Tool \"analyze_repository\" timed out after 60 seconds.",
+    "receiptId": null,
+    "quickTriageResult": null,
+    "note": "Payment gate passed (not 402), but serverless scan timed out before a completed result/receipt was produced."
+  },
+  "protectedRequest2_idempotency": {
+    "httpStatus": 402,
+    "success": false,
+    "errorCode": "replayed",
+    "errorMessage": "Quote already consumed by another execution.",
+    "refundPayEndpoint": {
+      "success": false,
+      "status": "replayed",
+      "error": "Quote already consumed."
+    },
+    "secondPaymentCreated": false,
+    "secondReceiptCreated": false,
+    "secondSuccessfulExecution": false,
+    "proof": "Re-pay and re-execution against the same funded quote both returned 'Quote already consumed' / replayed. No additional on-chain settlement was broadcast for a second charge."
+  },
+  "receipt": {
+    "receiptId": null,
+    "cryptographicVerification": "not_applicable_no_receipt",
+    "reason": "Execution timed out before receipt signing."
+  },
+  "balancesAfterSettlement": {
+    "buyerUsdT0": "0.52",
+    "sellerUsdT0": "0.33",
+    "buyerDeltaFrom0_55": "-0.03",
+    "sellerDeltaFrom0_30": "+0.03"
+  },
+  "overall": {
+    "paymentSettled": true,
+    "serviceDeliveryCompleted": false,
+    "http200WithTriageResult": false,
+    "verdict": "PAYMENT_SUCCEEDED_BUT_A2MCP_EXECUTION_TIMED_OUT_AND_QUOTE_CONSUMED",
+    "nextOwnerAction": "Authorize a new fresh A2MCP quote/payment only if retry is desired. Do not reuse quote_oQs2zW2cmt7o. Investigate production analyze_repository 60s timeout on smokychain22/agentPass."
+  },
+  "redactions": [
+    "OTP",
+    "session tokens",
+    "PAYMENT-SIGNATURE raw value not written into committed docs beyond temporary runtime use",
+    "private keys",
+    "API secrets"
+  ]
+}
