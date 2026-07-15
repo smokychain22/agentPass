@@ -38,3 +38,18 @@ buyer creates A2A task
 
 RepoDiet creates the real GitHub Green PR and durable settlement evidence.  
 OKX marketplace escrow lock/release remains OKX-native; RepoDiet records the references and gates seller settlement evidence on buyer acceptance.
+
+## Temporary controlled test price (acceptance only)
+
+For the single funded A2A acceptance run, production may temporarily set:
+
+- `REPODIET_A2A_TEST_PRICE=1` → **0.20 USDT** cleanup quotes
+- `REPODIET_X402_TEST_MODE` / `REPODIET_X402_TEST_SECRET` → controlled test settlement helpers
+
+**After that acceptance passes, remove all three from Vercel Production** and keep:
+
+```bash
+ALLOW_INTERNAL_TEST_BUYER=0
+```
+
+(Correct spelling is `ALLOW_INTERNAL_TEST_BUYER`, not `ALLOW_INTERNAL_TEST_BUER`.)

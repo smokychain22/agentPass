@@ -1,4 +1,5 @@
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
+import { resolveAspGitHubToken } from "@/lib/asp/github-access";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { GitHubClient } from "@/lib/github/github-client";
 import { isRecentRepoInstallBinding } from "@/lib/github-app/binding-trust";
@@ -196,11 +197,21 @@ export async function resolveCleanupGitHubToken(
 
   const session = await readInstallationSession();
   if (!session) {
-    throw new ToolExecutionError(
-      "GITHUB_APP_NOT_CONNECTED",
-      "Grant repository access from the Patch tab before creating a cleanup PR.",
-      401
-    );
+    // A2A / seller delivery can run without a browser Patch-tab cookie when the
+    // RepoDiet GitHub App is already installed and verified on the target repo.
+    try {
+      return await resolveAspGitHubToken({
+        owner: opts.owner,
+        repo: opts.repo,
+      });
+    } catch (err) {
+      if (err instanceof ToolExecutionError) throw err;
+      throw new ToolExecutionError(
+        "GITHUB_APP_NOT_CONNECTED",
+        "Grant repository access from the Patch tab before creating a cleanup PR.",
+        401
+      );
+    }
   }
 
   const repositoryFullName = `${opts.owner}/${opts.repo}`;

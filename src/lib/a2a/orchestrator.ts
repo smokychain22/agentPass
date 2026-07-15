@@ -43,6 +43,7 @@ import {
 } from "./task-store";
 import { deliverTaskCallback, persistTask } from "./callbacks";
 import {
+  A2A_FAILURE_STATUSES,
   mapTaskTypeToOperation,
   requiresPayment,
   type A2ATaskInput,
@@ -331,7 +332,9 @@ async function ensurePayment(
         findings: flattenFindings(findings),
         repository,
         taskId: task.id,
-        skipTransformPreflight: Boolean(task.input.transformedSourceHashes),
+        // Empty scope quotes are allowed without transform hashes; payment still gates execution.
+        skipTransformPreflight:
+          Boolean(task.input.transformedSourceHashes) || findingIds.length === 0,
       });
     } catch (err) {
       if (err instanceof PreQuoteGateError) {
@@ -732,7 +735,11 @@ export async function submitA2ATask(type: A2ATaskType, input: A2ATaskInput): Pro
   }
 
   task = await ensurePayment(task, sm, findings);
-  if (task.status === "awaiting_payment" || task.status === "quote_required") {
+  if (
+    task.status === "awaiting_payment" ||
+    task.status === "quote_required" ||
+    A2A_FAILURE_STATUSES.includes(task.status)
+  ) {
     return task;
   }
 

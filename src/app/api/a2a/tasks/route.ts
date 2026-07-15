@@ -27,12 +27,15 @@ export async function POST(request: Request) {
     const task = await submitA2ATask(type, {
       repoUrl: body.repoUrl.trim(),
       branch: typeof body.branch === "string" ? body.branch.trim() : undefined,
+      scanId: typeof body.scanId === "string" ? body.scanId.trim() : undefined,
+      commitSha: typeof body.commitSha === "string" ? body.commitSha.trim() : undefined,
       findingIds: Array.isArray(body.findingIds)
         ? body.findingIds.filter((id): id is string => typeof id === "string")
         : undefined,
       quoteId: typeof body.quoteId === "string" ? body.quoteId.trim() : undefined,
       paymentReference:
         typeof body.paymentReference === "string" ? body.paymentReference.trim() : undefined,
+      payer: typeof body.payer === "string" ? body.payer.trim() : undefined,
       callbackUrl: typeof body.callbackUrl === "string" ? body.callbackUrl.trim() : undefined,
       githubToken: typeof body.githubToken === "string" ? body.githubToken.trim() : undefined,
       demo: body.demo === true,
