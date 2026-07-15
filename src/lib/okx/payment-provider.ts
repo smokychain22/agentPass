@@ -7,6 +7,10 @@ import {
 } from "@/lib/payment/settlement";
 import { quoteTo402Response } from "@/lib/payment/quote-service";
 import { signExecutionReceipt } from "@/lib/operator/sign-receipt";
+import {
+  buildSignedReceiptV2,
+  signSignedReceiptV2,
+} from "@/lib/operator/signed-receipt-v2";
 import type {
   OkxPaymentProvider,
   PaymentReceipt,
@@ -134,7 +138,8 @@ export async function signOkxReceipt(input: {
     input.executionRequestDigest && input.executionRequestDigest !== quoteRequestDigest
       ? input.executionRequestDigest
       : undefined;
-  const signed = signExecutionReceipt({
+  // Keep SignedReceiptV1 for backward compatibility with historical verifiers.
+  const signedV1 = signExecutionReceipt({
     taskId: input.taskId,
     repository: input.repository ?? "",
     commitSha: "",
@@ -147,6 +152,30 @@ export async function signOkxReceipt(input: {
     timestamp,
   });
 
+  // Future path: SignedReceiptV2 includes both digests + commerce bindings in the signed payload.
+  const signedV2 = signSignedReceiptV2(
+    buildSignedReceiptV2({
+      quoteId: input.quoteId ?? "",
+      quoteRequestDigest,
+      executionRequestDigest: executionRequestDigest ?? quoteRequestDigest,
+      transactionHash: input.paymentReference ?? "",
+      paymentReference: input.paymentReference ?? "",
+      taskId: input.taskId,
+      buyer: input.buyer ?? "",
+      seller: input.seller ?? "",
+      amount: input.amountMicro
+        ? (Number(input.amountMicro) / 1_000_000).toFixed(2)
+        : "",
+      amountMicro: input.amountMicro ?? "",
+      token: input.token ?? "",
+      network: input.network ?? "",
+      operation: input.operation ?? "",
+      repository: input.repository ?? "",
+      resultDigest: hash,
+      completionTimestamp: timestamp,
+    })
+  );
+
   const receipt: PaymentReceipt = {
     receiptId,
     serviceId: input.serviceId as PaymentReceipt["serviceId"],
@@ -158,8 +187,10 @@ export async function signOkxReceipt(input: {
     executionRequestDigest,
     resultHash: hash,
     resultDigest: hash,
-    signature: signed.signature ?? undefined,
-    signedReceipt: signed.signedReceipt as unknown as Record<string, unknown>,
+    signature: signedV1.signature ?? undefined,
+    signedReceipt: signedV1.signedReceipt as unknown as Record<string, unknown>,
+    signedReceiptV2: signedV2.signedReceipt as unknown as Record<string, unknown>,
+    signatureV2: signedV2.signature ?? undefined,
     operatorAgentId: getOperatorAgentId(),
     timestamp,
     completedAt: timestamp,
