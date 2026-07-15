@@ -1,0 +1,93 @@
+{
+  "generatedAt": "2026-07-15T23:14:00Z",
+  "verdict": "A2A_FUNDED_TEST_NOT_READY",
+  "stop": "No signing, escrow funding, wallet confirmation, or fund movement was performed.",
+  "production": {
+    "origin": "https://skillswap-virid-kappa.vercel.app",
+    "commitSha": "7a7888ecbf1eef607d1fdddfc933c78b8e8c4994",
+    "branch": "main",
+    "builtAt": "2026-07-15T23:11:35.012Z",
+    "contains": {
+      "cryptographicEvidenceRemediation": true,
+      "publicOkxMetadataCleanup": true,
+      "a2aLifecycleImplementation": true,
+      "a2aTestPriceAcceptanceFixes": true
+    }
+  },
+  "stalePublicMetadataGone": {
+    "a2mcpCreateCleanupPr": false,
+    "quickCleanup025": false,
+    "verifiedCleanupPr1to3": false,
+    "repoGuard3to5": false,
+    "allPaidTasksUseX402": false,
+    "homepageShows": {
+      "a2mcp": "Quick Triage / analyze_repository / 0.03 USD₮0 / x402 / 32948",
+      "a2a": "Verified Cleanup PR / create_cleanup_pr / negotiated / default 1 USD₮0 / 32947",
+      "create_cleanup_prContext": "A2A delivery (not A2MCP pay-per-call)"
+    },
+    "nextPublicOkxAgentUrl": "keep empty",
+    "nextPublicOkxAgentUrlAuto": "keep empty"
+  },
+  "plannedTest": {
+    "aspAgentId": "5283",
+    "a2aServiceId": "32947",
+    "operation": "create_cleanup_pr",
+    "buyer": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    "seller": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    "amount": "0.20",
+    "amountMicro": "200000",
+    "amountLabel": "0.20 USD₮0",
+    "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    "network": "eip155:196",
+    "repository": "smokychain22/agentPass",
+    "targetBranch": "main",
+    "sourceCommit": "7a7888ecbf1eef607d1fdddfc933c78b8e8c4994",
+    "preparedQuoteId": "quote_Z2hgXtKYkix9",
+    "quoteExpiresAt": "2026-07-15T23:26:47.063Z",
+    "taskId": null,
+    "contractId": null,
+    "orderId": null,
+    "requestedCleanupScope": null,
+    "acceptanceCriteria": [
+      "isolated cleanup branch",
+      "review-ready GitHub pull request",
+      "blocking verification checks pass",
+      "delivery evidence recorded",
+      "buyer acceptance",
+      "escrow release reference recorded",
+      "receipt / task evidence saved"
+    ],
+    "escrowProvider": "OKX-native marketplace escrow (external to RepoDiet)",
+    "escrowReferenceFormat": "opaque OKX escrow lock/release id string recorded via POST /api/okx/a2a/tasks/{taskId}/release as escrowReleaseReference",
+    "taskExpiry": "quote expiry (currently ~15m from quote creation; renew before funding)",
+    "buyerBalanceBeforeUsdt0": 0.49,
+    "expectedBuyerBalanceAfterUsdt0": 0.29,
+    "sellerBalanceBeforeUsdt0": 0.36,
+    "expectedReleaseAmountUsdt0": 0.2,
+    "estimatedNetworkFee": "unknown / wallet-dependent on X Layer (not charged by RepoDiet)",
+    "usesRealA2aEscrowPath": "intended — OKX escrow lock/release is external; RepoDiet records references and gates delivery evidence. Not authorized to fund yet."
+  },
+  "blockers": [
+    {
+      "id": "github_app_not_installed",
+      "detail": "GET /api/github/repository-status?repository=smokychain22/agentPass → installation_required. Green PR cannot be created until RepoDiet GitHub App is installed with Contents + Pull requests write."
+    },
+    {
+      "id": "scope_scan_incomplete",
+      "detail": "Findings scan of smokychain22/agentPass timed out before a safe cleanup scope could be contracted. Need a bounded findingIds / allowedPaths scope before funding."
+    },
+    {
+      "id": "no_task_or_order_yet",
+      "detail": "Stopped before contract accept / A2A order / escrow funding per preflight gate."
+    }
+  ],
+  "opsCleanup": {
+    "deletedPreviewSpamBranches": [
+      "repodiet/a2a-acceptance-fixture-1784152761",
+      "repodiet/a2a-mini-fixture-1784152959",
+      "repodiet/cleanup-20260715-Dwjeu_"
+    ],
+    "mergedPr": 22,
+    "mainCommit": "7a7888ecbf1eef607d1fdddfc933c78b8e8c4994"
+  }
+}
