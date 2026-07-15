@@ -37,6 +37,43 @@ async function main() {
   console.log(`A2A controlled acceptance → ${BASE}`);
   console.log(`repo=${REPO} buyer=${BUYER}`);
 
+  // Prefer unused/safe finding scope so fixture mustKeep files are not deleted.
+  const findingsRes = await fetch(`${BASE}/api/findings/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repoUrl: REPO, branch: BRANCH }),
+  });
+  const findingsBody = await json<{
+    success?: boolean;
+    findings?: {
+      scanId?: string;
+      repo?: { commitSha?: string };
+      unused?: { files?: Array<{ id?: string; path?: string }> };
+      riskBuckets?: { safeDelete?: string[] };
+    };
+    error?: string;
+  }>(findingsRes);
+  if (!findingsBody.success || !findingsBody.findings?.scanId) {
+    throw new Error(`findings scan failed: ${JSON.stringify(findingsBody)}`);
+  }
+  const scanId = findingsBody.findings.scanId;
+  const commitSha = findingsBody.findings.repo?.commitSha || "";
+  const unusedIds = (findingsBody.findings.unused?.files || [])
+    .filter((f) =>
+      typeof f.path === "string" &&
+      (f.path.includes("unused/confirmed-unused") || f.path.includes("unused/empty-module"))
+    )
+    .map((f) => f.id)
+    .filter((id): id is string => Boolean(id));
+  const findingIds =
+    unusedIds.length > 0
+      ? unusedIds
+      : (findingsBody.findings.riskBuckets?.safeDelete || []).slice(0, 2);
+  if (findingIds.length === 0) {
+    throw new Error("No unused/safe findingIds available for controlled acceptance.");
+  }
+  console.log(`scan=${scanId} commit=${commitSha} findingIds=${findingIds.join(",")}`);
+
   const submitRes = await fetch(`${BASE}/api/a2a/tasks`, {
     method: "POST",
     headers: {
@@ -47,6 +84,9 @@ async function main() {
       type: "repository.cleanup_pr",
       repoUrl: REPO,
       branch: BRANCH,
+      scanId,
+      commitSha,
+      findingIds,
       payer: BUYER,
     }),
   });
@@ -58,21 +98,18 @@ async function main() {
   let task = submitted;
   if (task.status === "awaiting_payment" || task.status === "quote_required") {
     const receipt = task.receipt as { quote?: Record<string, unknown> } | undefined;
-    const quote =
-      receipt?.quote ||
-      (
-        await json<{ quote?: Record<string, unknown> }>(
-          await fetch(`${BASE}/api/a2a/tasks/${taskId}`)
-        )
-      ).quote;
-    const quoteId = String(
-      (quote as { quoteId?: string } | undefined)?.quoteId ||
-        String(task.limitations || "")
-          .match(/Quote (quote_[A-Za-z0-9_-]+)/)?.[1] ||
-        ""
-    );
+    let quote = receipt?.quote as Record<string, unknown> | undefined;
+    if (!quote?.quoteId) {
+      const match = String((task.limitations as string[] | undefined)?.join(" ") || "").match(
+        /Quote (quote_[A-Za-z0-9_-]+)/
+      );
+      if (match?.[1]) {
+        quote = { quoteId: match[1] };
+      }
+    }
+    const quoteId = String(quote?.quoteId || "");
     if (!quoteId) throw new Error("awaiting_payment without quoteId");
-    const amountMicro = String((quote as { amountMicro?: string } | undefined)?.amountMicro || "");
+    const amountMicro = String(quote?.amountMicro || "");
     if (amountMicro && amountMicro !== "200000") {
       throw new Error(`expected test price 200000 micro, got ${amountMicro}`);
     }

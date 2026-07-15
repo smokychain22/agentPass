@@ -47,8 +47,10 @@ export function buildVerificationGateReport(
   const patched = patchKit.repositoryVerification?.patched as
     | { checks?: Array<{ name: string; status: string }> }
     | undefined;
-  const checks = [...(baseline?.checks ?? []), ...(patched?.checks ?? [])];
-  const uniqueChecks = new Map(checks.map((c) => [c.name, c]));
+  // Prefer patched-phase statuses; keep baseline when a check is absent from patched.
+  const uniqueChecks = new Map<string, { name: string; status: string }>();
+  for (const check of baseline?.checks ?? []) uniqueChecks.set(check.name, check);
+  for (const check of patched?.checks ?? []) uniqueChecks.set(check.name, check);
 
   const patchStatus = patchKit.patchValidation?.status;
   const repoVerification = patchKit.repositoryVerification?.status;
