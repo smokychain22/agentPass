@@ -154,3 +154,55 @@ Prerequisites before paying:
 
 - `docs/hackathon/okx-activation/a2mcp-payment-result.json` — payment PASS / delivery FAIL (unchanged semantics)
 - Tx `0x351daeb986fc656fd611aaf01226e297efe42cfc91be1082222b94702d5fa73f` — successful settlement with failed service delivery
+
+---
+
+## Production deployment validation (2026-07-15)
+
+PR [#16](https://github.com/smokychain22/agentPass/pull/16) merged to `main` and deployed to production.
+
+| Field | Value |
+|-------|-------|
+| Merged commit SHA | `8c26ba30c9c3705db6c1e506815b228991e9f3d9` |
+| Deployed commit SHA | `8c26ba30c9c3705db6c1e506815b228991e9f3d9` |
+| Vercel production deployment ID | `5463553606` |
+| Production URL | https://skillswap-virid-kappa.vercel.app |
+| Deployment status | **success** |
+| Commits match | **yes** |
+
+### Durable state storage (production)
+
+Quote lifecycle (`task_quotes`) and idempotency cache (`payment_entitlements`) use **`persistent-store.ts` → Upstash Redis REST** when `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` are configured (required for production; live payment quotes persist across instances). Keys: `repodiet:task_quotes:{quoteId}`, `repodiet:payment_entitlements:a2mcp_exec_{quoteId}_{requestHash}`. Not in-memory, not module Map, not ephemeral `/tmp` for entitlement state.
+
+### Diagnostic route security (production)
+
+`/api/internal/a2mcp/quick-triage-diagnostic` returns **403** without `x-repodiet-diagnostic-secret` matching `REPODIET_INTERNAL_DIAGNOSTIC_SECRET`. Production never enables free public Quick Triage via allow-flag alone.
+
+### Timeout configuration (deployed)
+
+| Layer | Budget |
+|-------|--------|
+| Vercel `maxDuration` (quick-triage + internal/a2mcp) | **300s** |
+| Application `QUICK_TRIAGE_TIMEOUT_MS` | **90s** |
+| Stage fetch | 15s |
+| Stage analysis | 25s |
+| Overall bounded scan | 45s |
+| Worst-case expected | <90s (well under 300s platform limit) |
+
+### Production test results (no payment, no new authorized quote)
+
+| Check | Result |
+|-------|--------|
+| Health | PASS — `/api/tools/health` 200, `/api/okx/health` 200 `live_x402` |
+| Unpaid Quick Triage | PASS — HTTP **402**, PAYMENT-REQUIRED present |
+| PAYMENT-REQUIRED decode | PASS — x402 v2, `eip155:196`, asset `0x779d…3736`, amount `30000`, payTo seller |
+| Bounded triage on production URL | **Not invoked** — diagnostic locked (403); deploy-parity at merged commit: HTTP 200 in **~1.2s**, 5 findings |
+| Old quote `quote_oQs2zW2cmt7o` | Still blocked — HTTP 402 `replayed` / already consumed |
+| Receipt / idempotency / timeout recovery | PASS at deployed commit via unit fixtures |
+| Production logs | Not accessible to validator; no 5xx on probes |
+
+Full JSON: `docs/hackathon/okx-activation/a2mcp-production-validation-result.json`
+
+### Verdict
+
+**PRODUCTION_READY_FOR_FINAL_PAID_TEST** — deploy complete, commerce gate correct, lifecycle/idempotency/receipt fixes live, bounded path proven at deployed commit. One **new** quote (≠ `quote_oQs2zW2cmt7o`) may be authorized for the final 0.03 USD₮0 acceptance test.
