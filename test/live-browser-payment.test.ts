@@ -156,6 +156,7 @@ async function run() {
         findingIds: ["f1"],
         operation: "verified_cleanup_pr",
         sourceFileCount: 100,
+        transformedSourceHashes: { f1: `sha256:${"a".repeat(64)}` },
       });
       // Non-test production price with a fake short reference must fail live verification.
       assert.notEqual(quote.amountMicro, "200000");

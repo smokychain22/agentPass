@@ -115,7 +115,12 @@ test("allows strong unused import with preflight as safe_candidate", () => {
     files: ["src/app.tsx"],
     evidence: {
       summary: "Unused import",
-      signals: ["symbol=useMemo", "preflight=actionable_candidate"],
+      signals: [
+        "symbol=useMemo",
+        "importLine=import { useMemo } from \"react\";",
+        "line=1",
+        "preflight=actionable_candidate",
+      ],
     },
   });
   const result = decide(finding, [], emptyChannels, {

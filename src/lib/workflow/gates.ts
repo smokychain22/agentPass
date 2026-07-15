@@ -138,7 +138,7 @@ export function computeWorkflowGates(input: {
   const githubConnected = Boolean(input.githubStatus?.connected);
   const fixPrUnlock = resolveFixPrUnlock({
     scanComplete: input.scanComplete,
-    commitSha: input.commitSha ?? findings?.repo.commitSha,
+    commitSha: input.commitSha ?? findings?.repo?.commitSha,
     github: input.githubStatus ?? null,
     selectedFindingIds,
     safeCandidateCount: selectedSafeCount,

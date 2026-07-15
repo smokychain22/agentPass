@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { cloneExactCommit, generateGitPatch, validateGitPatch } from "../src/lib/execution/git-clone";
 
 async function testShallowClonePatchApplyWithIndex(): Promise<void> {
-  const workRoot = path.join("/tmp", `repodiet-git-index-${Date.now()}`);
+  const workRoot = path.join(os.tmpdir(), `repodiet-git-index-${Date.now()}`);
   const baseCommitSha = "7c5df00e977a848459cf5407008ecce9c6a5b4b8";
   const repoUrl = "https://github.com/velz-cmd/repodiet-e2e-test";
 

@@ -28,7 +28,7 @@ test("patch failure uses plain language", () => {
       status: "failed",
       gitPatchValidation: { status: "failed", failureCode: "GIT_PATCH_INVALID" },
     },
-  } as PatchKitPayload;
+  } as unknown as PatchKitPayload;
   const message = userFacingPatchFailure(kit);
   assert.match(message, /Regenerate Quick Cleanup/);
   assert.doesNotMatch(message, /Git error:/);
@@ -43,7 +43,7 @@ test("git passed with blocked verification explains next step", () => {
       installAttempts: [],
       checks: [],
     },
-  } as PatchKitPayload;
+  } as unknown as PatchKitPayload;
   assert.match(userFacingPatchFailure(kit), /Git validation passed/i);
 });
 

@@ -59,6 +59,7 @@ export async function createQuoteForOperation(input: {
   idempotencyKey?: string;
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
+  contractDigest?: string;
 }): Promise<BoundQuote> {
   if (isKnownBaselineInvalidCommit(input.commitSha)) {
     throw new Error("baseline_invalid: Repository baseline is invalid at the pinned source commit.");
@@ -137,6 +138,7 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     operation: quote.operation,
     scanId: quote.scanId,
     transformedSourceHashes: quote.transformedSourceHashes,
+    contractDigest: quote.contractDigest,
   });
   if (!binding.ok) {
     const scenario = binding.status === "expired" ? "expired" : "invalid_payment";

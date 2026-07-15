@@ -63,6 +63,13 @@ import {
 } from "@/lib/workflow/pre-quote-gate";
 import { flattenFindings } from "@/lib/findings/client";
 import { monitorTaskPullRequestDelivery } from "@/lib/github/monitor-pr-delivery";
+import {
+  authorizeExecutorDispatch,
+  getMaintenanceContract,
+  type GreenPrOperation,
+} from "@/lib/green-pr";
+import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
+import type { Finding } from "@/lib/findings/types";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -154,6 +161,73 @@ async function loadFindings(task: A2ATaskRecord): Promise<FindingsPayload> {
     if (stored) return stored;
   }
   return scanRepository(task.input.repoUrl, task.input.branch);
+}
+
+async function assertBoundMaintenanceContract(
+  task: A2ATaskRecord,
+  findings: FindingsPayload
+): Promise<A2ATaskRecord> {
+  const { contractId, contractDigest } = task.input;
+  if (!contractId && !contractDigest) return task;
+  if (!contractId || !contractDigest) throw new Error("maintenance_contract_binding_incomplete");
+  const record = await getMaintenanceContract(contractId);
+  if (!record) throw new Error("maintenance_contract_not_found");
+  if (record.contractDigest !== contractDigest) throw new Error("contract_digest_mismatch");
+  if (record.status !== "accepted") throw new Error(`maintenance_contract_not_accepted:${record.status}`);
+  if (new Date(record.contract.commercialTerms.expiry).getTime() <= Date.now()) {
+    throw new Error("maintenance_contract_expired");
+  }
+  const repository = `${findings.repo.owner}/${findings.repo.name}`;
+  const contractedRepository = `${record.contract.repository.owner}/${record.contract.repository.name}`;
+  if (repository !== contractedRepository) throw new Error("contract_repository_mismatch");
+  if (findings.repo.branch !== record.contract.repository.branch) {
+    throw new Error("contract_branch_mismatch");
+  }
+  if (findings.repo.commitSha !== record.contract.repository.sourceCommit) {
+    throw new Error("contract_source_commit_mismatch");
+  }
+  if (task.input.quoteId !== record.contract.commercialTerms.quoteId) {
+    throw new Error("contract_quote_mismatch");
+  }
+  const selected = new Set(task.input.findingIds ?? []);
+  const contracted = new Set(record.contract.scope.findingIds);
+  if (selected.size !== contracted.size || [...contracted].some((id) => !selected.has(id))) {
+    throw new Error("contract_finding_scope_mismatch");
+  }
+  const updated: A2ATaskRecord = {
+    ...task,
+    result: {
+      ...task.result,
+      maintenanceContract: {
+        contractId: record.contractId,
+        contractDigest: record.contractDigest,
+        status: record.status,
+      },
+    },
+  };
+  return saveA2ATask(updated);
+}
+
+function contractedOperationForFinding(finding: Finding): GreenPrOperation {
+  const plugin = resolvePhase1Plugin(finding).id;
+  switch (plugin) {
+    case "remove_unused_import":
+      return "remove_unused_import";
+    case "remove_unused_dependency":
+      return "remove_unused_dependency";
+    case "remove_empty_file":
+      return "remove_empty_file";
+    case "remove_temp_file":
+      return finding.files.some((path) => /(?:backup|archive|\.old\.|\/old\/)/i.test(path))
+        ? "remove_backup_file"
+        : "remove_temporary_file";
+    case "remove_confirmed_unused_file":
+      return "delete_unreachable_module";
+    case "consolidate_exact_duplicate":
+      return "consolidate_exact_duplicate";
+    default:
+      throw new Error(`contract_operation_unresolved:${finding.id}`);
+  }
 }
 
 async function runAnalysisPhase(
@@ -300,6 +374,7 @@ async function ensurePayment(
     taskId: task.id,
     scanId: task.input.scanId ?? findings.scanId,
     transformedSourceHashes: task.input.transformedSourceHashes,
+    contractDigest: task.input.contractDigest,
   });
 
   if (!entitlement.ok) {
@@ -488,10 +563,45 @@ async function executeChanges(
         ]),
       ];
 
+      let greenPrExecution: Record<string, unknown> | undefined;
+      let contractedBranch: string | undefined;
+      if (input.contractId && input.contractDigest) {
+        const contractRecord = await getMaintenanceContract(input.contractId);
+        if (!contractRecord || contractRecord.contractDigest !== input.contractDigest) {
+          throw new Error("maintenance_contract_not_found_or_changed");
+        }
+        const findingById = new Map(
+          flattenFindings(analyzed).map((finding) => [finding.id, finding] as const)
+        );
+        const operations = patchKit.changeOperations ?? [];
+        if (operations.length === 0) throw new Error("contract_execution_manifest_missing");
+        const dispatch = authorizeExecutorDispatch(contractRecord, {
+          contractDigest: input.contractDigest,
+          sourceCommit: analyzed.repo.commitSha ?? input.commitSha ?? "",
+          findingIds: input.findingIds ?? [],
+          changes: operations.map((operation) => {
+            const finding = operation.findingIds
+              .map((findingId) => findingById.get(findingId))
+              .find((candidate): candidate is Finding => Boolean(candidate));
+            if (!finding) throw new Error(`contract_finding_missing_for_change:${operation.filePath}`);
+            const contractedOperation = contractedOperationForFinding(finding);
+            return {
+              path: operation.filePath,
+              operation: contractedOperation,
+              linesAdded: operation.linesAdded,
+              linesDeleted: operation.linesRemoved,
+              dependencyChanges: contractedOperation === "remove_unused_dependency" ? 1 : 0,
+            };
+          }),
+        });
+        contractedBranch = dispatch.branchName;
+        greenPrExecution = dispatch as unknown as Record<string, unknown>;
+      }
+
       const approval = {
-        summary: `${changedFiles.length} file(s) will change on branch repodiet/cleanup-${task.id}`,
+        summary: `${changedFiles.length} file(s) will change on branch ${contractedBranch ?? `repodiet/cleanup-${task.id}`}`,
         repository: `${analyzed.repo.owner}/${analyzed.repo.name}`,
-        branch: `repodiet/cleanup-${task.id}`,
+        branch: contractedBranch ?? `repodiet/cleanup-${task.id}`,
         changes: changedFiles.map((filePath) => ({
           path: filePath,
           action: (patchKit.summary.deletedPaths ?? []).includes(filePath)
@@ -521,7 +631,10 @@ async function executeChanges(
             limitations: patchKit.patchValidation?.userMessage
               ? [patchKit.patchValidation.userMessage]
               : undefined,
+            baseline: patchKit.repositoryVerification?.baseline,
+            patched: patchKit.repositoryVerification?.patched,
           },
+          greenPrExecution,
         },
       });
     } catch (err) {
@@ -599,6 +712,18 @@ export async function submitA2ATask(type: A2ATaskType, input: A2ATaskInput): Pro
   if (!("findings" in analysis)) return analysis;
   const { task: analyzedTask, findings } = analysis;
   task = analyzedTask;
+
+  try {
+    task = await assertBoundMaintenanceContract(task, findings);
+  } catch (error) {
+    return failTask(
+      task,
+      sm,
+      "analysis_failed",
+      error instanceof Error ? error.message : "Maintenance contract validation failed.",
+      "orchestrator"
+    );
+  }
 
   if (type === "repository.analysis") {
     return completeTask(task, sm, task.result);
@@ -780,6 +905,7 @@ export async function fundA2ATask(
     commitSha: fundedQuote.commitSha,
     findingIds: fundedQuote.findingIds,
     operation: fundedQuote.operation,
+    contractDigest: task.input.contractDigest,
   });
   if (!entitled.ok) {
     await releaseA2aFundLockIfToken(taskId, lockToken);
@@ -851,6 +977,10 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
       patchKit,
       demo: task.input.demo,
       githubToken: task.input.githubToken,
+      cleanupBranch:
+        typeof task.result.greenPrExecution?.branchName === "string"
+          ? task.result.greenPrExecution.branchName
+          : undefined,
     });
 
     return monitorTaskPullRequestDelivery({
@@ -890,7 +1020,17 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
     verification: task.result.verification ?? {},
     pullRequest: task.result.pullRequest ?? {},
     receipt: task.result.receipt ?? {},
+    maintenanceContract:
+      task.result.maintenanceContract ??
+      (task.input.contractId && task.input.contractDigest
+        ? {
+            contractId: task.input.contractId,
+            contractDigest: task.input.contractDigest,
+            status: "accepted",
+          }
+        : {}),
     prDelivery: task.result.prDelivery ?? {},
+    attestation: task.result.attestation ?? {},
     transitions: task.transitions,
     limitations: task.limitations,
     error: task.error,

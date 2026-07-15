@@ -61,6 +61,7 @@ export interface BoundQuote {
   a2aTaskId?: string;
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
+  contractDigest?: string;
   paymentReference?: string;
   payer?: string;
   paymentStatus?: PaymentStatus;
@@ -100,4 +101,5 @@ export interface EntitlementContext {
   taskId?: string;
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
+  contractDigest?: string;
 }

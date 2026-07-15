@@ -96,6 +96,8 @@ export async function withDurableDb<T>(
       repository_jobs: {},
       worker_instances: {},
       pr_delivery_monitors: {},
+      maintenance_contracts: {},
+      green_pr_attestations: {},
     };
     return fn(db);
   });

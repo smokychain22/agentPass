@@ -3,6 +3,10 @@ import { runPhase3ToolRoute } from "@/lib/a2mcp/phase3-route";
 import { executeQuickTriage } from "@/lib/a2mcp/quick-triage-engine";
 import { buildToolErrorResponse } from "@/lib/a2mcp/tool-contract";
 import { createTaskId } from "@/lib/a2mcp/task-store";
+import {
+  executeGreenPrVerification,
+  isGreenPrVerificationOperation,
+} from "@/lib/a2mcp/green-pr-verification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +44,21 @@ export async function POST(request: Request) {
 
   const repositoryUrl =
     typeof body.repositoryUrl === "string" ? body.repositoryUrl.trim() : "";
+  const requestedOperation = body.operation;
+
+  if (isGreenPrVerificationOperation(requestedOperation)) {
+    const forwardedRequest = new Request(request.url, {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(body),
+    });
+    // Preserve the existing paid A2MCP listing/service and its 0.03 USDT rail.
+    return runPhase3ToolRoute(
+      "analyze_repository",
+      forwardedRequest,
+      executeGreenPrVerification
+    );
+  }
   const branch = typeof body.branch === "string" ? body.branch.trim() : undefined;
   const maximumFindingsRaw = body.maximumFindings;
   const maximumFindings =
@@ -86,6 +105,7 @@ export async function POST(request: Request) {
     branch,
     maximumFindings: Math.floor(maximumFindings),
     source: "quick_triage",
+    operation: "triage_repository",
   };
 
   const forwardedRequest = new Request(request.url, {

@@ -126,7 +126,12 @@ test("computeWorkflowGates unlocks verify when patch validated with changes", ()
             reason: "test",
             evidence: {
               summary: "x",
-              signals: ["symbol=unusedFoo", "importLine=1", "classification=actionable_candidate"],
+              signals: [
+                "symbol=unusedFoo",
+                "importLine=import { unusedFoo } from \"./helpers\";",
+                "line=1",
+                "classification=actionable_candidate",
+              ],
             },
           },
         ],

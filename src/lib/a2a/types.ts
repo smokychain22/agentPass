@@ -100,6 +100,8 @@ export interface A2ATaskInput {
   githubToken?: string;
   demo?: boolean;
   transformedSourceHashes?: Record<string, string>;
+  contractId?: string;
+  contractDigest?: string;
 }
 
 export interface A2ATaskResult {
@@ -115,6 +117,8 @@ export interface A2ATaskResult {
     status: string;
     checks?: unknown[];
     limitations?: string[];
+    baseline?: unknown;
+    patched?: unknown;
   };
   pullRequest?: {
     url?: string;
@@ -126,6 +130,13 @@ export interface A2ATaskResult {
   guard?: Record<string, unknown>;
   baselineRun?: Record<string, unknown>;
   prDelivery?: Record<string, unknown>;
+  maintenanceContract?: {
+    contractId: string;
+    contractDigest: string;
+    status: string;
+  };
+  greenPrExecution?: Record<string, unknown>;
+  attestation?: Record<string, unknown>;
 }
 
 export interface A2ATaskWorkflowMeta {
