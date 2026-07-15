@@ -108,7 +108,10 @@ Until facilitator URL is configured, test mode works with `REPODIET_X402_TEST_SE
 | `NEXT_PUBLIC_OKX_ASP_AGENT_ID` | Public display only (same ID) |
 | `NEXT_PUBLIC_OKX_AGENT_URL` | Keep **unset** until `https://www.okx.ai/agents/5283` genuinely loads. Do not enable `NEXT_PUBLIC_OKX_AGENT_URL_AUTO` while the public agent page 404s. |
 | `XLAYER_RPC_URL` | Optional. Default `https://rpc.xlayer.tech` — used to verify direct-site ERC-20 USDT transfers |
-| `ALLOW_INTERNAL_TEST_BUYER` | Must be `0` in production. Internal E2E buyer only. |
+| `ALLOW_INTERNAL_TEST_BUYER` | Must be `0` in production (correct spelling: **BUYER**, not `BUER`). Internal E2E buyer only. |
+| `REPODIET_A2A_TEST_PRICE` | Temporary controlled **0.20 USDT** A2A price for funded acceptance only. **Remove after acceptance passes.** |
+| `REPODIET_X402_TEST_MODE` | Local/test settlement helper. **Remove from production after A2A acceptance.** |
+| `REPODIET_X402_TEST_SECRET` | Local/test HMAC settle helper. **Remove from production after A2A acceptance.** |
 | `REPODIET_OKX_A2MCP_PAID=1` | Enable paid A2MCP |
 | `REQUIRE_REAL_X402=1` | Production payment verification |
 | `GITHUB_APP_ID` | Existing RepoDiet GitHub App |
