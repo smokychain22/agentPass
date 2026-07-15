@@ -54,17 +54,27 @@ app.get("/api/catalog", (_req, res) => {
   ok(res, {
     name: "RepoDiet",
     description:
-      "Scans AI-built JavaScript/TypeScript repos for duplicate components, dead files, unused dependencies, and orphan routes. Returns a Patch Bundle and Regression Contract.",
-    a2mcp_tools: [
-      { name: "scan_repo_bloat", price_usdt: "0.05" },
-      { name: "detect_duplicate_code", price_usdt: "0.05" },
-      { name: "find_dead_files", price_usdt: "0.03" },
-      { name: "find_unused_dependencies", price_usdt: "0.03" },
-      { name: "generate_cleanup_patch", price_usdt: "0.15" },
-      { name: "generate_regression_checklist", price_usdt: "0.25" },
-    ],
-    a2a: "RepoDiet — Clean my AI-built app repo",
-    pricing: { quick_scan: "0.05 USDT", deep_scan: "0.15 USDT", patch_bundle: "0.25 USDT" },
+      "OKX ASP 5283 — A2MCP Quick Triage (analyze_repository, 0.03 USD₮0 via x402) and A2A Verified Cleanup PR (create_cleanup_pr, negotiated / default 1 USD₮0 escrow).",
+    a2mcp: {
+      serviceId: "32948",
+      operation: "analyze_repository",
+      price: "0.03 USD₮0",
+      settlement: "live x402 on X Layer",
+      description: "Bounded repository triage returning up to five prioritized findings.",
+    },
+    a2a: {
+      serviceId: "32947",
+      operation: "create_cleanup_pr",
+      price: "negotiated",
+      defaultReference: "1 USD₮0",
+      settlement: "task agreement, escrow, delivery, buyer acceptance and release",
+      description: "Customized repository cleanup delivered as a review-ready GitHub pull request.",
+    },
+    pricing: {
+      a2mcp_quick_triage: "0.03 USD₮0",
+      a2a_verified_cleanup_pr: "negotiated (default 1 USD₮0)",
+    },
+    note: "Not all paid tasks use x402. A2MCP uses x402; A2A uses escrow.",
   });
 });
 

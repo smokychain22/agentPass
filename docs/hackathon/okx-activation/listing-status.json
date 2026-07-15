@@ -30,17 +30,25 @@
     "description": "RepoDiet accepts bounded repository-maintenance tasks, locks the exact scope in a machine-readable contract, performs conservative changes on an isolated branch, independently verifies the result and delivers a review-ready GitHub pull request with a signed Green PR attestation and receipt.",
     "a2mcp": {
       "name": "RepoDiet Quick Triage",
-      "price": "0.03 USD₮0",
+      "protocol": "A2MCP",
+      "operation": "analyze_repository",
+      "price": "0.03 USD₮0 per call",
+      "settlement": "live x402 on X Layer",
+      "description": "Bounded repository triage returning up to five prioritized findings.",
       "liveServiceId": "32948",
       "liveEndpoint": "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
     },
     "a2a": {
       "name": "RepoDiet Verified Cleanup PR",
-      "pricing": "Negotiated",
+      "protocol": "A2A",
+      "operation": "create_cleanup_pr",
+      "pricing": "negotiated",
       "defaultReference": "1 USD₮0",
+      "settlement": "A2A task agreement, escrow, delivery, buyer acceptance and release",
+      "description": "Customized repository cleanup delivered as a review-ready GitHub pull request.",
       "liveServiceId": "32947",
       "liveRegisteredFee": "1 USDT",
-      "note": "Do not publish the temporary 0.2 task price as the normal public A2A price."
+      "note": "Do not publish temporary test task prices as the normal public A2A price. A2A is not an A2MCP x402 pay-per-call listing."
     },
     "website": "https://skillswap-virid-kappa.vercel.app",
     "application": "https://skillswap-virid-kappa.vercel.app/app",

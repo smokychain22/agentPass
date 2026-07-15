@@ -48,16 +48,10 @@ test("free proof CTA label", () => {
   assert.equal(cta.count, 1);
 });
 
-test("cleanup PR small repo price", () => {
+test("cleanup PR default reference price is 1 USD₮0", () => {
   assert.equal(quoteCleanupPrPrice(100).amountUsdt, 1);
-});
-
-test("cleanup PR medium repo price", () => {
-  assert.equal(quoteCleanupPrPrice(200).amountUsdt, 2);
-});
-
-test("cleanup PR large repo price", () => {
-  assert.equal(quoteCleanupPrPrice(500).amountUsdt, 3);
+  assert.equal(quoteCleanupPrPrice(200).amountUsdt, 1);
+  assert.equal(quoteCleanupPrPrice(500).amountUsdt, 1);
 });
 
 test("execution engine exports required functions", () => {

@@ -142,28 +142,33 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | Behavior | Select → patch → validate → baseline → retain or rollback |
 | Limitations | Free proof max 1; Quick Cleanup still uses patch-kit batch path |
 
-### 9. Quick Cleanup (0.25 USDT)
-
-| Field | Value |
-|-------|-------|
-| **Status** | **PARTIAL** |
-| Frontend route | `/app?tab=patch` |
-| API route | `POST /api/jobs/patch` |
-| Execution service | `runPatchKitEngine` (not yet unified one-fix loop) |
-| Payment | Bound quote via `POST /api/tasks/quote` + `POST /api/tasks/pay` |
-| Limitations | Up to 5 fixes via patch kit, not per-finding loop yet |
-
-### 10. Verified Cleanup PR (1–3 USDT)
+### 9. A2MCP Quick Triage (0.03 USD₮0)
 
 | Field | Value |
 |-------|-------|
 | **Status** | **REAL** |
+| Protocol | A2MCP · service **32948** |
+| Operation | `analyze_repository` |
+| API route | `POST /api/a2mcp/quick-triage` |
+| Price | **0.03 USD₮0** per call |
+| Settlement | Live x402 on X Layer |
+| Description | Bounded repository triage returning up to five prioritized findings |
+| Note | This is the public A2MCP listing — not negotiated cleanup PR delivery |
+
+### 10. A2A Verified Cleanup PR (negotiated · default 1 USD₮0)
+
+| Field | Value |
+|-------|-------|
+| **Status** | **REAL** |
+| Protocol | A2A · service **32947** |
+| Operation | `create_cleanup_pr` |
 | Frontend route | Patch tab → RepoDiet Operator section |
-| API route | `POST /api/tools/create_cleanup_pr` |
+| API route | `POST /api/a2a/tasks` / ASP job APIs |
 | Execution service | `createCleanupPullRequest` |
 | Persistence | GitHub branch + PR; `execution_receipts` |
-| Payment | Bound quote + entitlement on A2A/orchestrator path; legacy demo header on tool route |
-| Limitations | Requires GitHub App install or demo token |
+| Price | Negotiated; default reference **1 USD₮0** |
+| Settlement | Task agreement → escrow → delivery → buyer acceptance → release |
+| Limitations | Requires GitHub App install; never auto-merges main |
 
 ### 11. GitHub App integration
 
@@ -246,7 +251,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 | Status | `GET /api/guard/{owner/repo}` |
 | Delta analysis | `src/lib/guard/delta-analysis.ts` — new/resolved/recurring/ignored |
 | Triggers | PR merged, default branch push, manifest change, file-count spike, manual, weekly |
-| Pricing | 3–5 USDT/month (launch quote 4 USDT) |
+| Pricing | Not part of the public OKX two-service model |
 | Verification | `npm run verify:guard` |
 
 ### 18. Repository memory / policies
@@ -273,7 +278,7 @@ This document classifies every product capability as **REAL**, **PARTIAL**, **DE
 |-------|-------|
 | **Status** | **REAL** |
 | Route | `/pricing` |
-| CTAs | Free Proof, Quick Cleanup, Verified PR → real app tabs; Repo Guard → Coming Soon |
+| CTAs | A2MCP Quick Triage (0.03 USD₮0 x402) · A2A Verified Cleanup PR (negotiated / default 1 USD₮0 escrow) |
 
 ---
 

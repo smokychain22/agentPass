@@ -59,7 +59,8 @@ export const PHASE3_TOOL_ENTRIES: ToolManifestEntry[] = [
     name: "analyze_repository",
     endpoint: "/api/tools/analyze_repository",
     method: "POST",
-    description: "Analyze repository findings (by scanId, taskId, or repoUrl). Paid A2MCP tool — 0.03 USDT via x402 when REPODIET_OKX_A2MCP_PAID=1.",
+    description:
+      "A2MCP Quick Triage — bounded repository triage returning up to five prioritized findings. Live paid listing: 0.03 USD₮0 per call via x402 on X Layer (service 32948).",
     inputSchema: {
       ...repoRefInput,
       properties: {
@@ -227,7 +228,8 @@ export const PHASE3_TOOL_ENTRIES: ToolManifestEntry[] = [
     name: "create_cleanup_pr",
     endpoint: "/api/tools/create_cleanup_pr",
     method: "POST",
-    description: "Create a review-ready GitHub cleanup pull request.",
+    description:
+      "A2A Verified Cleanup PR delivery primitive (operation create_cleanup_pr). Not an A2MCP x402 pay-per-call listing — public settlement is negotiated A2A escrow with buyer acceptance (service 32947, default reference 1 USD₮0).",
     inputSchema: {
       type: "object",
       required: ["repoUrl"],
@@ -266,7 +268,8 @@ export const PHASE3_TOOL_ENTRIES: ToolManifestEntry[] = [
     name: "activate_repo_guard",
     endpoint: "/api/tools/activate_repo_guard",
     method: "POST",
-    description: "Activate Repo Guard monitoring (returns honest not-available until Phase 4).",
+    description:
+      "Legacy endpoint — Repo Guard is not part of the public OKX two-service model (A2MCP Quick Triage + A2A Verified Cleanup PR).",
     inputSchema: repoInput,
     outputSchema: actionOutputSchema,
     exampleRequest: { repoUrl: "https://github.com/user/repo" },

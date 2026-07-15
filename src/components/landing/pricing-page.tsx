@@ -35,7 +35,7 @@ export function PricingPage() {
             description={PRICING_SECTION.description}
           />
 
-          <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" id="repo-guard">
+          <div className="mt-14 grid gap-4 sm:grid-cols-2" id="okx-services">
             {PRICING_TIERS.map((tier) => (
               <PricingCard key={tier.name} tier={tier} />
             ))}
@@ -49,14 +49,19 @@ export function PricingPage() {
           </p>
 
           <section className="mt-16" id="agent-api">
-            <h2 className="mb-4 text-lg font-semibold text-foreground">Agent API (launch pricing)</h2>
+            <h2 className="mb-4 text-lg font-semibold text-foreground">
+              Live OKX service pricing
+            </h2>
             <Panel variant="elevated" padding="md">
-              <ul className="space-y-2 text-sm text-muted-foreground">
+              <ul className="space-y-3 text-sm text-muted-foreground">
                 {AGENT_API_PRICING.map((row) => (
                   <li key={row.operation} className="flex flex-wrap items-center justify-between gap-2">
                     <span>
                       <span className="font-medium text-foreground">{row.operation}</span>
                       <span className="ml-2 font-mono text-xs text-muted-foreground">{row.tool}</span>
+                      <span className="ml-2 text-xs">
+                        {row.protocol} · {row.settlement}
+                      </span>
                     </span>
                     <span className="font-mono text-electric">{row.price}</span>
                   </li>
