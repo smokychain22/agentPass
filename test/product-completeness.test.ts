@@ -9,8 +9,8 @@ const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
 test("homepage gives buyers a production-oriented primary journey", () => {
   const hero = read("src/components/landing/hero-cta.tsx");
   const content = read("src/lib/marketing/content.ts");
-  assert.match(hero, /Analyze a Repository/);
-  assert.match(hero, /How RepoDiet Works/);
+  assert.match(hero, /Scan a Repository/);
+  assert.match(hero, /Watch Live Execution/);
   assert.doesNotMatch(hero, /Watch Live Demo/);
   assert.match(content, /Turn repository debt into a verified cleanup pull request/);
 });
