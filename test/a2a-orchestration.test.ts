@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatA2ATaskResponse } from "../src/lib/a2a/orchestrator";
+import { buildInitialTask } from "../src/lib/a2a/task-store";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -44,6 +46,20 @@ test("orchestrator uses execution engine", () => {
   assert.match(src, /executeFreeProof/);
   assert.match(src, /scanRepository/);
   assert.match(src, /createCleanupPullRequest/);
+});
+
+test("public cleanup task responses use the canonical OKX operation", () => {
+  const task = buildInitialTask(
+    "repository.cleanup_pr",
+    { repoUrl: "https://github.com/smokychain22/agentPass", branch: "main" },
+    {
+      owner: "smokychain22",
+      name: "agentPass",
+      branch: "main",
+      url: "https://github.com/smokychain22/agentPass",
+    }
+  );
+  assert.equal(formatA2ATaskResponse(task).operation, "create_cleanup_pr");
 });
 
 test("a2a_tasks persistence collection", () => {

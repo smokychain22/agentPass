@@ -15,6 +15,7 @@ import {
   PreQuoteGateError,
   preQuoteGateErrorResponse,
 } from "@/lib/workflow/pre-quote-gate";
+import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -152,7 +153,7 @@ export async function POST(request: Request) {
       quote: quote ? formatWorkflowQuote(quote) : null,
       github,
       serviceId: String(okxIdentity.a2aServiceId),
-      operation: "verified_cleanup_pr",
+      operation: OKX_A2A_PUBLIC_OPERATION,
       aspAgentId: String(okxIdentity.aspAgentId),
     });
   } catch (err) {

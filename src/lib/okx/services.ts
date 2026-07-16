@@ -3,6 +3,9 @@ import { getAnalyzeRepositoryPrice } from "@/lib/payment/analyze-repository-pric
 
 const analyzeRepositoryPrice = getAnalyzeRepositoryPrice();
 
+/** Canonical operation name exposed by the public OKX A2A service. */
+export const OKX_A2A_PUBLIC_OPERATION = "create_cleanup_pr" as const;
+
 export const A2MCP_SERVICES: Record<A2mcpServiceId, OkxServiceDefinition> = {
   scan_repository: {
     serviceId: "scan_repository",
@@ -126,8 +129,14 @@ export function isPaidA2mcpService(serviceId: string): boolean {
   return Boolean(svc && svc.amountMicro !== "0");
 }
 
-export function listOkxServices(): OkxServiceDefinition[] {
+export function listOkxServices() {
   // Keep legacy definitions available to internal adapters while exposing only
   // the two services that are actually registered against ASP 5283.
-  return [A2MCP_SERVICES.analyze_repository, A2A_SERVICES.verified_cleanup_pr];
+  return [
+    A2MCP_SERVICES.analyze_repository,
+    {
+      ...A2A_SERVICES.verified_cleanup_pr,
+      operation: OKX_A2A_PUBLIC_OPERATION,
+    },
+  ];
 }

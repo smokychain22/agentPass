@@ -2,7 +2,7 @@ import { submitA2ATask, formatA2ATaskResponse } from "@/lib/a2a/orchestrator";
 import { selectSafeFixes } from "@/lib/execution";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import type { A2aServiceId } from "./types";
-import { getA2aService } from "./services";
+import { getA2aService, OKX_A2A_PUBLIC_OPERATION } from "./services";
 import { newOkxOrderId, saveOkxOrder } from "./store";
 import { durableNow } from "@/lib/store/durable-store";
 import { getMaintenanceContract, type MaintenanceContractRecord } from "@/lib/green-pr";
@@ -156,10 +156,12 @@ export async function createA2aOrder(input: CreateA2aOrderInput) {
     orderId,
     taskId: task.id,
     status: task.status,
+    operation: OKX_A2A_PUBLIC_OPERATION,
     task: formatA2ATaskResponse(task),
     preflight,
     service: {
       serviceId: service.serviceId,
+      operation: OKX_A2A_PUBLIC_OPERATION,
       label: service.label,
       priceLabel: service.priceLabel,
       requiresEscrow: service.requiresEscrow,
