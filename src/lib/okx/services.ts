@@ -127,5 +127,7 @@ export function isPaidA2mcpService(serviceId: string): boolean {
 }
 
 export function listOkxServices(): OkxServiceDefinition[] {
-  return [...Object.values(A2MCP_SERVICES), ...Object.values(A2A_SERVICES)];
+  // Keep legacy definitions available to internal adapters while exposing only
+  // the two services that are actually registered against ASP 5283.
+  return [A2MCP_SERVICES.analyze_repository, A2A_SERVICES.verified_cleanup_pr];
 }
