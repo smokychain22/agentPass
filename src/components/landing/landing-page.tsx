@@ -35,7 +35,7 @@ export function LandingPage() {
       <SiteHeader />
 
       <main className="relative z-10">
-        <section className="relative overflow-hidden pb-10 pt-8 sm:pb-12 sm:pt-10 lg:pt-9">
+        <section className="relative overflow-hidden pb-8 pt-7 sm:pb-10 sm:pt-8 lg:pt-8">
           <Container>
             <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,0.44fr)_minmax(0,0.56fr)] lg:items-center lg:gap-9">
               <div className="min-w-0">
