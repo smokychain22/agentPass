@@ -52,11 +52,12 @@ function phaseIndex(phase: ScanPhase | "idle"): number {
 export function ScanTab() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { session, setScanComplete, setSelectedProjectRoot, resetSession } = useAppSession();
+  const { session, setScanComplete, setScanPhase, setSelectedProjectRoot, resetSession } =
+    useAppSession();
   const { show, Toast } = useFeedbackToast();
   // Blank form until the user pastes/types a URL or starts a demo — do not hydrate from prior session.
   const [repoUrl, setRepoUrl] = useState("");
-  const [branch, setBranch] = useState("main");
+  const [branch, setBranch] = useState("");
   const [phase, setPhase] = useState<ScanPhase | "idle">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScanPayload | null>(null);
@@ -85,6 +86,7 @@ export function ScanTab() {
       if (!isDemo && branch.trim()) {
         /* keep branch as entered */
       }
+      setScanPhase("running");
       show("info", isDemo ? "Loading demo repository…" : "Repository scan started");
 
       try {
@@ -94,7 +96,7 @@ export function ScanTab() {
           setPhase
         );
         setResult(data);
-        setBranch(data.repo.branch || branch.trim() || "main");
+        setBranch(data.repo.branch || branch.trim() || "");
         setScanComplete(target, data.repo.branch || branch.trim(), data);
         show("success", "Scan complete — review findings next");
         if (isDemo) {
@@ -102,12 +104,13 @@ export function ScanTab() {
         }
       } catch (err) {
         setPhase("failed");
+        setScanPhase("failed");
         const msg = err instanceof Error ? err.message : "Scan failed unexpectedly.";
         setError(msg);
         show("error", classifyScanError(msg).title);
       }
     },
-    [branch, router, setScanComplete, show]
+    [branch, router, setScanComplete, setScanPhase, show]
   );
 
   useEffect(() => {
@@ -149,8 +152,9 @@ export function ScanTab() {
     setPhase("idle");
     setError(null);
     setRepoUrl("");
-    setBranch("main");
+    setBranch("");
     setIsDemoMode(false);
+    setScanPhase("idle");
     resetSession();
   };
 
@@ -159,7 +163,11 @@ export function ScanTab() {
       {Toast}
 
       {isDemoMode && (
-        <FeedbackBanner variant="info" message={DEMO_NOTICE} dismissible={false} />
+        <FeedbackBanner
+          variant="info"
+          message={`Example Repository — ${DEMO_NOTICE}`}
+          dismissible={false}
+        />
       )}
 
       <WorkspaceSection
@@ -204,16 +212,18 @@ export function ScanTab() {
                 </Button>
               </div>
             </div>
-            <div className="space-y-2 sm:w-40">
+            <div className="space-y-2 sm:w-48">
               <Label htmlFor="branch">Branch</Label>
               <Input
                 id="branch"
-                placeholder="main"
+                placeholder="Auto-detect default branch"
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
                 disabled={isLoading}
               />
-              <p className="text-[10px] text-muted-foreground">Leave empty for default branch</p>
+              <p className="text-[10px] text-muted-foreground">
+                Leave empty and RepoDiet will detect the repository&apos;s default branch.
+              </p>
             </div>
           </div>
 
@@ -242,15 +252,27 @@ export function ScanTab() {
                 "Scan Repository"
               )}
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="lg"
-              onClick={() => startScan(DEMO_REPO, true)}
-              disabled={isLoading}
-            >
-              Try Demo Repository
-            </Button>
+            {isDemoMode ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                onClick={startFresh}
+                disabled={isLoading}
+              >
+                Exit Example / Analyze My Repository
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                onClick={() => void startScan(DEMO_REPO, true)}
+                disabled={isLoading}
+              >
+                Try Demo Repository
+              </Button>
+            )}
           </div>
         </form>
       </Panel>

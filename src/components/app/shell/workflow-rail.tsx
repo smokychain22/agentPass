@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Lock, AlertCircle, AlertTriangle } from "lucide-react";
+import { Check, Lock, AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { QuickCleanupWorkflowState } from "@/lib/workflow/gates";
+import type { WorkflowStepState, WorkflowTabId } from "@/lib/workflow/step-states";
 
-export type WorkflowStepId = "scan" | "findings" | "patch" | "verify" | "cleanup";
+export type WorkflowStepId = WorkflowTabId;
 
-export type StepState = "inactive" | "active" | "completed" | "locked" | "failed" | "blocked";
+export type StepState = "inactive" | "active" | "completed" | "locked" | "failed" | "blocked" | "running";
 
 interface WorkflowStep {
   id: WorkflowStepId;
@@ -18,158 +18,52 @@ interface WorkflowStep {
 }
 
 interface WorkflowRailProps {
-  activeStep: WorkflowStepId;
-  scanComplete: boolean;
-  findingsUnlocked: boolean;
-  findingsReady: boolean;
-  fixPrUnlocked: boolean;
-  fixPrLockBody?: string;
-  verifyUnlocked: boolean;
-  verifyLockBody?: string;
-  quickCleanupState?: QuickCleanupWorkflowState;
+  steps: WorkflowStepState[];
   className?: string;
 }
 
-function resolveState(
-  stepId: WorkflowStepId,
-  activeStep: WorkflowStepId,
-  scanComplete: boolean,
-  findingsUnlocked: boolean,
-  findingsReady: boolean,
-  fixPrUnlocked: boolean,
-  fixPrLockBody: string | undefined,
-  verifyUnlocked: boolean,
-  verifyLockBody: string | undefined
-): { state: StepState; lockReason?: string } {
-  const order: WorkflowStepId[] = ["scan", "findings", "patch", "verify"];
-  const idx = order.indexOf(stepId);
-  const activeIdx = order.indexOf(activeStep);
-
-  if (stepId === "scan") {
-    if (activeStep === "scan") return { state: scanComplete ? "completed" : "active" };
-    return { state: scanComplete ? "completed" : "inactive" };
+function toRailState(status: WorkflowStepState["status"]): StepState {
+  switch (status) {
+    case "complete":
+      return "completed";
+    case "current":
+      return "active";
+    case "running":
+      return "running";
+    case "locked":
+      return "locked";
+    case "failed":
+      return "failed";
+    case "inactive":
+      return "inactive";
+    default:
+      return "inactive";
   }
-  if (stepId === "findings") {
-    if (!findingsUnlocked) {
-      return {
-        state: "locked",
-        lockReason: scanComplete
-          ? "Select which application RepoDiet should analyze"
-          : "Complete repository scan first",
-      };
-    }
-    if (activeStep === "findings") return { state: findingsReady ? "completed" : "active" };
-    return { state: findingsReady ? "completed" : "inactive" };
-  }
-  if (stepId === "patch") {
-    if (!findingsReady) return { state: "locked", lockReason: "Run findings analysis first" };
-    if (!fixPrUnlocked) {
-      return {
-        state: "locked",
-        lockReason: fixPrLockBody ?? "Select safe scope and confirm GitHub access",
-      };
-    }
-    if (activeStep === "patch") return { state: "active" };
-    return { state: idx < activeIdx ? "completed" : "inactive" };
-  }
-  if (stepId === "verify") {
-    if (!verifyUnlocked) {
-      return {
-        state: "locked",
-        lockReason: verifyLockBody ?? "Review & Accept unlocks after paid cleanup execution starts",
-      };
-    }
-    if (activeStep === "verify") return { state: "active" };
-    return { state: idx < activeIdx ? "completed" : "inactive" };
-  }
-  return { state: "inactive" };
 }
 
-export function WorkflowRail({
-  activeStep,
-  scanComplete,
-  findingsUnlocked,
-  findingsReady,
-  fixPrUnlocked,
-  fixPrLockBody,
-  verifyUnlocked,
-  verifyLockBody,
-  className,
-}: WorkflowRailProps) {
-  const steps: WorkflowStep[] = [
-    {
-      id: "scan",
-      label: "Connect Repository",
-      href: "/app",
-      ...resolveState(
-        "scan",
-        activeStep,
-        scanComplete,
-        findingsUnlocked,
-        findingsReady,
-        fixPrUnlocked,
-        fixPrLockBody,
-        verifyUnlocked,
-        verifyLockBody
-      ),
-    },
-    {
-      id: "findings",
-      label: "Review Findings",
-      href: "/app?tab=findings",
-      ...resolveState(
-        "findings",
-        activeStep,
-        scanComplete,
-        findingsUnlocked,
-        findingsReady,
-        fixPrUnlocked,
-        fixPrLockBody,
-        verifyUnlocked,
-        verifyLockBody
-      ),
-    },
-    {
-      id: "patch",
-      label: "Create Cleanup PR",
-      href: "/app?tab=patch",
-      ...resolveState(
-        "patch",
-        activeStep,
-        scanComplete,
-        findingsUnlocked,
-        findingsReady,
-        fixPrUnlocked,
-        fixPrLockBody,
-        verifyUnlocked,
-        verifyLockBody
-      ),
-    },
-    {
-      id: "verify",
-      label: "Review & Accept",
-      href: "/app?tab=verify",
-      ...resolveState(
-        "verify",
-        activeStep,
-        scanComplete,
-        findingsUnlocked,
-        findingsReady,
-        fixPrUnlocked,
-        fixPrLockBody,
-        verifyUnlocked,
-        verifyLockBody
-      ),
-    },
-  ];
+const HREF: Record<WorkflowTabId, string> = {
+  scan: "/app",
+  findings: "/app?tab=findings",
+  patch: "/app?tab=patch",
+  verify: "/app?tab=verify",
+};
+
+export function WorkflowRail({ steps, className }: WorkflowRailProps) {
+  const railSteps: WorkflowStep[] = steps.map((step) => ({
+    id: step.tabId,
+    label: step.title,
+    href: HREF[step.tabId],
+    state: toRailState(step.status),
+    lockReason: step.explanation,
+  }));
 
   return (
     <nav aria-label="Workflow progress" className={cn("w-full", className)}>
       <ol className="flex items-stretch gap-1 overflow-x-auto pb-1 scrollbar-thin sm:gap-0">
-        {steps.map((step, i) => (
+        {railSteps.map((step, i) => (
           <li key={step.id} className="flex min-w-[88px] flex-1 items-stretch sm:min-w-0">
             <WorkflowStepLink step={step} />
-            {i < steps.length - 1 && (
+            {i < railSteps.length - 1 && (
               <div
                 className={cn(
                   "mx-1 hidden w-6 shrink-0 self-center border-t sm:block",
@@ -200,6 +94,7 @@ function WorkflowStepLink({ step }: { step: WorkflowStep }) {
   const className = cn(
     "flex w-full flex-col items-center gap-1.5 rounded-md border px-2 py-2.5 text-center transition-colors sm:flex-row sm:justify-center sm:px-3",
     step.state === "active" && "border-electric/40 bg-electric/10 text-electric",
+    step.state === "running" && "border-electric/40 bg-electric/10 text-electric",
     step.state === "completed" && "border-signal/30 bg-signal/5 text-signal",
     step.state === "locked" && "border-border/40 bg-card/40 text-muted-foreground cursor-not-allowed",
     step.state === "blocked" && "border-amber-500/30 bg-amber-500/5 text-amber-200 cursor-not-allowed",
@@ -227,6 +122,7 @@ function StepIcon({ state }: { state: StepState }) {
   if (state === "locked") return <Lock className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />;
   if (state === "blocked") return <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />;
   if (state === "failed") return <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />;
+  if (state === "running") return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />;
   return (
     <span
       className={cn(

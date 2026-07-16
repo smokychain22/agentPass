@@ -23,6 +23,11 @@ import {
   type PersistedSession,
 } from "@/lib/session/persist-session";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import {
+  isFindingsBoundToActiveScan,
+  isRepositoryConnected,
+  type ScanLifecyclePhase,
+} from "@/lib/workflow/step-states";
 
 function defaultSelectedFindingIds(payload: FindingsPayload): string[] {
   return [
@@ -49,6 +54,7 @@ export interface ScanSession {
   scanRecordId?: string;
   selectedProjectRoot?: string;
   projectRootConfirmed: boolean;
+  scanPhase: ScanLifecyclePhase;
 }
 
 interface AppSessionContextValue {
@@ -60,6 +66,7 @@ interface AppSessionContextValue {
   scopeReviewed: boolean;
   hydrating: boolean;
   setScanComplete: (repoUrl: string, branch: string, result: ScanPayload) => void;
+  setScanPhase: (phase: ScanLifecyclePhase) => void;
   setSelectedProjectRoot: (projectRoot: string) => void;
   setFindings: (findings: FindingsPayload | null) => void;
   setPatchKit: (patchKit: PatchKitPayload | null) => void;
@@ -78,6 +85,7 @@ const emptySession: ScanSession = {
   scanResult: null,
   scanComplete: false,
   projectRootConfirmed: false,
+  scanPhase: "idle",
 };
 
 const AppSessionContext = createContext<AppSessionContextValue | null>(null);
@@ -128,14 +136,15 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       repoUrl: stored.repoUrl,
       branch: stored.branch,
       scanResult: null,
-      // Wait for persisted scan payload before claiming complete in the UI.
+      // Wait for a validated scan payload before claiming complete in the UI.
       scanComplete: false,
       scanRecordId: stored.scanRecordId ?? stored.scanId,
       selectedProjectRoot: stored.selectedProjectRoot,
-      projectRootConfirmed: stored.projectRootConfirmed ?? true,
+      projectRootConfirmed: stored.projectRootConfirmed ?? false,
+      scanPhase: "idle",
     });
-    setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
-    setScopeReviewedState(stored.scopeReviewed ?? false);
+    setSelectedFindingIdsState([]);
+    setScopeReviewedState(false);
 
     void Promise.all([
       fetchPersistedFindings(scanKey).catch(() => null),
@@ -146,36 +155,94 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         : Promise.resolve(null),
     ])
       .then(([findingsPayload, scanPayload, patchPayload, taskPayload]) => {
-        if (findingsPayload) {
+        const connected =
+          Boolean(scanPayload) &&
+          isRepositoryConnected({
+            scanResult: scanPayload,
+            scanComplete: true,
+            scanRecordId: scanPayload?.id,
+          });
+
+        if (!connected) {
+          // Incomplete or inconsistent persisted scan — return to empty truthful state.
+          setSession(emptySession);
+          setFindings(null);
+          setPatchKit(null);
+          setA2aTaskState(null);
+          setSelectedFindingIdsState([]);
+          setScopeReviewedState(false);
+          clearPersistedSession();
+          return;
+        }
+
+        const needsSelection = scanPayload!.repositoryModel?.needsProjectRootSelection ?? false;
+        const restoredSession: ScanSession = {
+          repoUrl: stored.repoUrl || `https://github.com/${scanPayload!.repo.owner}/${scanPayload!.repo.name}`,
+          branch: stored.branch || scanPayload!.repo.branch || "",
+          scanResult: scanPayload!,
+          scanComplete: true,
+          scanRecordId: scanPayload!.id,
+          selectedProjectRoot:
+            stored.selectedProjectRoot ?? scanPayload!.repositoryModel?.primaryProjectRoot,
+          projectRootConfirmed:
+            stored.projectRootConfirmed ??
+            (!needsSelection || Boolean(stored.selectedProjectRoot)),
+          scanPhase: "complete",
+        };
+        setSession(restoredSession);
+
+        const findingsBound = isFindingsBoundToActiveScan({
+          scanResult: scanPayload!,
+          scanComplete: true,
+          scanRecordId: scanPayload!.id,
+          findings: findingsPayload,
+        });
+
+        if (findingsBound && findingsPayload) {
           setFindings(findingsPayload);
           // Restore only an explicit saved selection — never invent a bulk selection.
           setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
-        }
-        if (scanPayload) {
-          const needsSelection = scanPayload.repositoryModel?.needsProjectRootSelection ?? false;
-          setSession((prev) => ({
-            ...prev,
-            scanResult: scanPayload,
-            scanComplete: true,
-            scanRecordId: scanPayload.id,
-            selectedProjectRoot:
-              stored.selectedProjectRoot ??
-              scanPayload.repositoryModel?.primaryProjectRoot,
-            projectRootConfirmed:
-              stored.projectRootConfirmed ??
-              (!needsSelection || Boolean(stored.selectedProjectRoot)),
-          }));
+          setScopeReviewedState(stored.scopeReviewed ?? false);
+          if (patchPayload && patchPayload.scanId === findingsPayload.scanId) {
+            setPatchKit(patchPayload);
+          }
         } else {
-          setSession((prev) => ({
-            ...prev,
-            scanComplete: false,
-            scanResult: null,
-          }));
+          setFindings(null);
+          setPatchKit(null);
+          setSelectedFindingIdsState([]);
+          setScopeReviewedState(false);
         }
-        if (patchPayload) setPatchKit(patchPayload);
-        if (taskPayload?.task) setA2aTaskState(taskPayload.task);
+
+        const task = taskPayload?.task ?? null;
+        if (
+          task &&
+          task.repository.owner?.toLowerCase() === scanPayload!.repo.owner.toLowerCase() &&
+          task.repository.name?.toLowerCase() === scanPayload!.repo.name.toLowerCase() &&
+          (!task.repository.commitSha ||
+            !scanPayload!.repo.commitSha ||
+            task.repository.commitSha === scanPayload!.repo.commitSha)
+        ) {
+          setA2aTaskState(task);
+        } else {
+          setA2aTaskState(null);
+        }
+
+        persist(
+          restoredSession,
+          findingsBound ? findingsPayload : null,
+          findingsBound ? stored.selectedFindingIds ?? [] : [],
+          findingsBound && patchPayload?.scanId === findingsPayload?.scanId ? patchPayload : null,
+          task?.taskId,
+          findingsBound ? stored.scopeReviewed ?? false : false
+        );
       })
-      .catch(() => clearPersistedSession())
+      .catch(() => {
+        clearPersistedSession();
+        setSession(emptySession);
+        setFindings(null);
+        setPatchKit(null);
+        setA2aTaskState(null);
+      })
       .finally(() => setHydrating(false));
   }, []);
 
@@ -206,15 +273,23 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const setScanComplete = useCallback(
     (repoUrl: string, branch: string, result: ScanPayload) => {
       const needsSelection = result.repositoryModel?.needsProjectRootSelection ?? false;
-      const nextSession = {
-        repoUrl,
-        branch,
+      const connected = isRepositoryConnected({
         scanResult: result,
         scanComplete: true,
         scanRecordId: result.id,
+      });
+      const nextSession: ScanSession = {
+        repoUrl,
+        branch: branch || result.repo.branch || "",
+        scanResult: result,
+        // Only mark complete when the scan pinned a real commit SHA and identity.
+        scanComplete: connected,
+        scanRecordId: result.id,
         selectedProjectRoot: result.repositoryModel?.primaryProjectRoot,
         projectRootConfirmed: !needsSelection,
+        scanPhase: connected ? "complete" : "failed",
       };
+      // New repository scan invalidates prior findings/task/scope for the active session.
       setSession(nextSession);
       setFindings(null);
       setPatchKit(null);
@@ -225,6 +300,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     },
     []
   );
+
+  const setScanPhase = useCallback((phase: ScanLifecyclePhase) => {
+    setSession((prev) => ({ ...prev, scanPhase: phase }));
+  }, []);
 
   const setSelectedProjectRoot = useCallback((projectRoot: string) => {
     setSession((prev) => {
@@ -341,6 +420,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       scopeReviewed,
       hydrating,
       setScanComplete,
+      setScanPhase,
       setSelectedProjectRoot,
       setFindings: setFindingsState,
       setPatchKit: setPatchKitState,
@@ -361,6 +441,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       scopeReviewed,
       hydrating,
       setScanComplete,
+      setScanPhase,
       setSelectedProjectRoot,
       setFindingsState,
       setPatchKitState,
