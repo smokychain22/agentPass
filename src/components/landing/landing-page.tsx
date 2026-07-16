@@ -16,6 +16,7 @@ import { SectionHeader } from "@/components/design-system/section-header";
 import { GridBackground } from "@/components/design-system/grid-background";
 import { Panel } from "@/components/design-system/panel";
 import { PricingCard } from "@/components/design-system/pricing-card";
+import { VerifiedDeliveryVisual } from "@/components/landing/verified-delivery-visual";
 import {
   API_SECTION,
   HERO,
@@ -61,28 +62,7 @@ export function LandingPage() {
                   ))}
                 </ul>
               </div>
-              <Panel variant="cyan" padding="lg">
-                <p className="ds-label text-electric">What you receive</p>
-                <h2 className="mt-3 text-2xl font-semibold text-foreground">
-                  One review-ready maintenance delivery
-                </h2>
-                <ol className="mt-6 space-y-4">
-                  {[
-                    ["01", "Prioritized findings", "Repository-backed evidence, not generic advice."],
-                    ["02", "Approved cleanup scope", "Only the changes the buyer selected."],
-                    ["03", "Real GitHub pull request", "An isolated branch ready for repository-owner review."],
-                    ["04", "Verification result", "Checks, protected-path status, and delivery evidence."],
-                  ].map(([step, title, description]) => (
-                    <li key={step} className="flex gap-3 border-b border-border/40 pb-4 last:border-0 last:pb-0">
-                      <span className="font-mono text-xs text-electric">{step}</span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{title}</p>
-                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              </Panel>
+              <VerifiedDeliveryVisual />
             </div>
           </Container>
         </section>
