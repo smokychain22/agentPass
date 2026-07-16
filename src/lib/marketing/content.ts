@@ -23,7 +23,7 @@ export const HERO = {
   badge: "VERIFIED REPOSITORY MAINTENANCE",
   headline: "Turn repository debt into a verified cleanup pull request.",
   productSubheadline:
-    "RepoDiet analyzes AI-built repositories, performs only approved cleanup work, opens a real GitHub pull request, and verifies the result before delivery is accepted.",
+    "RepoDiet finds evidence-backed cleanup work, locks the approved scope, applies bounded changes on an isolated branch, independently verifies the result and delivers a review-ready GitHub pull request.",
   subheadline:
     "RepoDiet finds duplicate logic, dead files, dependency drift, and orphan modules—then applies verified fixes (remove imports, delete temp files, uninstall packages) and opens a review-ready cleanup PR. You merge when ready.",
 };

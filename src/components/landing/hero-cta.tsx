@@ -9,15 +9,15 @@ interface HeroCtaProps {
 
 export function HeroCta({ className }: HeroCtaProps) {
   return (
-    <div className={cn("flex flex-wrap gap-3", className)}>
-      <Button asChild size="lg">
+    <div className={cn("flex flex-wrap items-center gap-3", className)}>
+      <Button asChild size="lg" className="rounded-[0.8rem]">
         <Link href="/app">
-          Analyze a Repository
+          Scan a Repository
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Link>
       </Button>
-      <Button asChild variant="secondary" size="lg">
-        <Link href="/how-it-works">How RepoDiet Works</Link>
+      <Button asChild variant="secondary" size="lg" className="rounded-[0.8rem]">
+        <Link href="/#product-engine">Watch Live Execution</Link>
       </Button>
     </div>
   );
