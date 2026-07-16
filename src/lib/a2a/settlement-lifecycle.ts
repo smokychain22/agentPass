@@ -28,6 +28,9 @@ import { deliverTaskCallback } from "./callbacks";
 export async function submitA2aDeliveryEvidence(taskId: string): Promise<A2ATaskRecord> {
   const task = await getA2ATask(taskId);
   if (!task) throw new Error("Task not found.");
+  if (task.input.purchaseChannel === "direct_site") {
+    throw new Error("Direct-site delivery does not use OKX marketplace settlement.");
+  }
 
   if (task.status === "delivery_submitted" || task.status === "buyer_accepted") {
     return task;
@@ -113,6 +116,9 @@ export async function acceptA2aDeliveryByBuyer(
 ): Promise<A2ATaskRecord> {
   const task = await getA2ATask(taskId);
   if (!task) throw new Error("Task not found.");
+  if (task.input.purchaseChannel === "direct_site") {
+    throw new Error("Direct-site delivery must be reviewed in the RepoDiet workspace.");
+  }
 
   if (task.status === "buyer_accepted" || task.status === "escrow_released" || task.status === "completed") {
     return task;
@@ -127,8 +133,8 @@ export async function acceptA2aDeliveryByBuyer(
     );
   }
 
-  const identity = getCanonicalOkxIdentity();
-  const buyerWallet = (input.buyerWallet ?? identity.buyerWallet).toLowerCase();
+  if (!input.buyerWallet?.trim()) throw new Error("buyer_wallet_required");
+  const buyerWallet = input.buyerWallet.trim().toLowerCase();
   const order = await getOkxOrderByA2aTask(taskId);
   if (order) {
     await updateOkxOrder(order.orderId, { status: "buyer_accepted", payer: buyerWallet });
@@ -168,6 +174,9 @@ export async function recordA2aEscrowRelease(
 ): Promise<A2ATaskRecord> {
   const task = await getA2ATask(taskId);
   if (!task) throw new Error("Task not found.");
+  if (task.input.purchaseChannel === "direct_site") {
+    throw new Error("Direct-site payment has no OKX escrow release step.");
+  }
 
   if (task.status === "escrow_released" || task.status === "completed") {
     return task;

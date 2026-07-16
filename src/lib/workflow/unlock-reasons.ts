@@ -70,8 +70,8 @@ export function resolveFixPrUnlock(input: {
       return {
         unlocked: false,
         reasons,
-        title: "GitHub App is not configured",
-        body: "This deployment is missing GitHub App credentials. Set GITHUB_APP_* environment variables on Vercel.",
+        title: "GitHub delivery is temporarily unavailable",
+        body: "RepoDiet cannot verify repository access or create a pull request right now. No quote or payment will be created.",
         secondaryAction: "Back to findings",
       };
     }

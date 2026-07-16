@@ -22,9 +22,9 @@ test("trusted test quote is detected from settlement mode", () => {
   assert.equal(isTrustedTestQuote(quote), true);
 });
 
-test("trusted test quote falls back to 0.20 USDT label", () => {
+test("a price label alone can never enable test payment", () => {
   const quote = { priceLabel: "0.20 USDT" } as WorkflowQuote;
-  assert.equal(isTrustedTestQuote(quote), true);
+  assert.equal(isTrustedTestQuote(quote), false);
 });
 
 test("payment reference is a valid 0x hash", () => {

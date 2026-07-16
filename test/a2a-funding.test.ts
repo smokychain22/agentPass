@@ -130,6 +130,8 @@ async function run() {
   });
 
   await test("2. valid signature verifies and funds the quote", async () => {
+    process.env.ALLOW_INTERNAL_TEST_BUYER = "1";
+    process.env.REPODIET_X402_TEST_MODE = "1";
     process.env.REPODIET_X402_TEST_SECRET = "test-secret";
     const quote = await createBoundQuote({
       repository: "owner/repo",
@@ -385,7 +387,8 @@ async function run() {
     });
   });
 
-  await withEnv("REPODIET_A2A_TEST_PRICE", "1", async () => {
+  await withEnv("ALLOW_INTERNAL_TEST_BUYER", "1", async () => {
+    await withEnv("REPODIET_A2A_TEST_PRICE", "1", async () => {
     await test("14. REPODIET_A2A_TEST_PRICE=0.20 applies to cleanup-PR test", async () => {
       const price = resolveCommercePrice("verified_cleanup_pr", { sourceFileCount: 100 });
       assert.equal(price.amountMicro, "200000");
@@ -418,6 +421,7 @@ async function run() {
         assert.equal(funded.ok, true, funded.reason);
         assert.equal(funded.quote?.paymentStatus, "verified");
       });
+    });
     });
   });
 

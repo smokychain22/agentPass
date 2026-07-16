@@ -11,10 +11,14 @@ export function resolveEntitlementMode(): EntitlementMode {
   ) {
     return "free_beta";
   }
-  if (process.env.REPODIET_X402_TEST_MODE === "1" || process.env.REPODIET_X402_TEST_SECRET) {
+  if (
+    process.env.ALLOW_INTERNAL_TEST_BUYER === "1" &&
+    process.env.VERCEL_ENV !== "production" &&
+    (process.env.REPODIET_X402_TEST_MODE === "1" || process.env.REPODIET_X402_TEST_SECRET)
+  ) {
     return "test_payment";
   }
-  return "free_beta";
+  return "live_x402";
 }
 
 const FREE_BETA_TOOLS = new Set([

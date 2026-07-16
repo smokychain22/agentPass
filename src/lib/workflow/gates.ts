@@ -41,6 +41,18 @@ const EXECUTING_STATUSES = new Set([
   "awaiting_approval",
 ]);
 
+const REVIEWABLE_STATUSES = new Set([
+  "monitoring_checks",
+  "checks_failed",
+  "diagnosis_ready",
+  "owner_action_required",
+  "delivery_ready",
+  "delivery_submitted",
+  "buyer_accepted",
+  "escrow_released",
+  "completed",
+]);
+
 export interface WorkflowGates {
   scanComplete: boolean;
   projectRootConfirmed: boolean;
@@ -94,7 +106,7 @@ function mapA2aPhase(task: WorkflowA2ATaskSnapshot | null | undefined): A2AWorkf
       return "failed";
     default:
       if (EXECUTING_STATUSES.has(task.status)) return "executing";
-      if (task.status === "awaiting_approval") return "delivery_ready";
+      if (REVIEWABLE_STATUSES.has(task.status)) return "delivery_ready";
       return "scope_ready";
   }
 }
@@ -181,7 +193,7 @@ export function computeWorkflowGates(input: {
   const verifyFromA2a =
     Boolean(input.a2aTask) &&
     (EXECUTING_STATUSES.has(input.a2aTask!.status) ||
-      input.a2aTask!.status === "completed" ||
+      REVIEWABLE_STATUSES.has(input.a2aTask!.status) ||
       input.a2aTask!.status === "awaiting_approval");
 
   return {

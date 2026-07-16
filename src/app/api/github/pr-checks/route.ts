@@ -9,6 +9,9 @@ import {
   getPrDeliveryMonitor,
   getPrDeliveryMonitorByTaskId,
 } from "@/lib/github/pr-delivery-store";
+import { getA2ATask } from "@/lib/a2a/task-store";
+import { buildSessionKey } from "@/lib/github-app/browser-session";
+import { assertDirectTaskOwner } from "@/lib/workflow/task-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -34,6 +37,20 @@ export async function GET(request: NextRequest) {
   const installationIdRaw = params.get("installation_id") ?? params.get("github_installation_id");
   const installationId = installationIdRaw ? Number(installationIdRaw) : undefined;
   const poll = params.get("poll") === "true";
+
+  if (taskId) {
+    const task = await getA2ATask(taskId);
+    if (task) {
+      try {
+        assertDirectTaskOwner(task, await buildSessionKey(request));
+      } catch {
+        return NextResponse.json(
+          { ok: false, error: "Task access denied." },
+          { status: 403, headers: NO_STORE }
+        );
+      }
+    }
+  }
 
   if (taskId) {
     const existing = await getPrDeliveryMonitorByTaskId(taskId);
@@ -111,6 +128,19 @@ export async function POST(request: Request) {
   const owner = body.owner?.trim();
   const repo = body.repo?.trim();
   const prNumber = body.prNumber;
+  if (body.taskId) {
+    const task = await getA2ATask(body.taskId);
+    if (task) {
+      try {
+        assertDirectTaskOwner(task, await buildSessionKey(request));
+      } catch {
+        return NextResponse.json(
+          { ok: false, error: "Task access denied." },
+          { status: 403, headers: NO_STORE }
+        );
+      }
+    }
+  }
   if (!owner || !repo || !prNumber) {
     return NextResponse.json(
       { ok: false, error: "owner, repo, and prNumber are required." },

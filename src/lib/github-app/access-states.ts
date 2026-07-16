@@ -74,8 +74,8 @@ export function accessCopyForState(
       };
     case "not_configured":
       return {
-        title: "GitHub App is not configured",
-        body: "This deployment cannot connect to GitHub yet.",
+        title: "GitHub delivery is temporarily unavailable",
+        body: "RepoDiet cannot verify repository access or create a pull request right now. No payment has been requested.",
       };
   }
 }

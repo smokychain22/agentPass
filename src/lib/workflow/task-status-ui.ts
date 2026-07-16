@@ -9,14 +9,14 @@ const STATUS_LABELS: Record<string, string> = {
   awaiting_approval: "Ready to open pull request",
   creating_pull_request: "Creating pull request",
   monitoring_checks: "Monitoring required GitHub checks",
-  delivery_ready: "Green PR ready — seller can submit delivery evidence",
+  delivery_ready: "Cleanup pull request ready for buyer review",
   delivery_submitted: "Delivery evidence submitted — awaiting buyer acceptance",
   buyer_accepted: "Buyer accepted — awaiting escrow release",
   escrow_released: "Escrow released to seller",
   checks_failed: "Required provider checks failed",
   diagnosis_ready: "Check failure diagnosed — review required",
-  owner_action_required: "Owner action required in deployment provider",
-  completed: "A2A settlement complete (PR delivered + escrow released)",
+  owner_action_required: "Owner action required before delivery can continue",
+  completed: "Delivery complete",
   payment_failed: "Payment failed",
   verification_failed: "Verification failed",
   delivery_failed: "Pull request delivery failed",
@@ -92,10 +92,10 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
   }
 
   if (task.status === "delivery_failed") {
-    return "Payment was accepted, but GitHub pull-request delivery did not complete. Your test payment was not a wallet transfer in test mode. Start a new cleanup attempt after reviewing the error below.";
+    return "Payment was accepted, but GitHub pull-request delivery did not complete. Review the error below and retry without paying again.";
   }
   if (task.status === "checks_failed" || task.status === "owner_action_required") {
-    return "Required GitHub or provider checks failed after the pull request was created. Review the Verify tab diagnosis, fix provider configuration or repository issues, then retry failed checks.";
+    return "Required GitHub or provider checks failed after the pull request was created. Review the Review & Accept diagnosis, fix the repository or provider issue, then retry without paying again.";
   }
   if (task.status === "verification_failed") {
     return "Payment was accepted, but RepoDiet could not verify cleanup changes for the selected scope. Try fewer safe findings or re-run eligibility preflight before paying again.";

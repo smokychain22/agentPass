@@ -73,6 +73,7 @@ import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins"
 import type { Finding } from "@/lib/findings/types";
 import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
 import { buildMaintenanceOutcome } from "@/lib/maintenance/outcome";
+import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -276,7 +277,16 @@ async function runAnalysisPhase(
     }
     task = await syncTask(task, sm, {
       scanId: findings.scanId,
-      repository: { ...task.repository, commitSha: findings.repo.commitSha },
+      repository: {
+        ...task.repository,
+        branch: findings.repo.branch,
+        commitSha: findings.repo.commitSha,
+      },
+      input: {
+        ...task.input,
+        branch: findings.repo.branch,
+        commitSha: findings.repo.commitSha ?? task.input.commitSha,
+      },
     });
   } catch (err) {
     return failTask(
@@ -822,7 +832,7 @@ export async function fundA2ATask(
     const paymentSignature =
       input.paymentSignature ??
       proof?.paymentSignature ??
-      (process.env.REPODIET_X402_TEST_SECRET
+      (process.env.REPODIET_X402_TEST_SECRET && isInternalTestBuyerAllowed()
         ? signTestPaymentPayload({
             quoteId,
             paymentReference:
@@ -979,6 +989,22 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
   const task = await getA2ATask(taskId);
   if (!task) throw new Error("Task not found.");
   if (task.status !== "awaiting_approval") {
+    if (
+      task.result.pullRequest?.url ||
+      [
+        "creating_pull_request",
+        "monitoring_checks",
+        "checks_failed",
+        "diagnosis_ready",
+        "owner_action_required",
+        "delivery_ready",
+        "delivery_submitted",
+        "buyer_accepted",
+        "completed",
+      ].includes(task.status)
+    ) {
+      return task;
+    }
     throw new Error(`Task is not awaiting approval (status=${task.status}).`);
   }
   if (task.approval?.expiresAt && new Date(task.approval.expiresAt).getTime() < Date.now()) {
@@ -1026,7 +1052,7 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
       cleanupBranch:
         typeof task.result.greenPrExecution?.branchName === "string"
           ? task.result.greenPrExecution.branchName
-          : undefined,
+          : task.approval?.branch ?? `repodiet/cleanup-${task.id}`,
     });
 
     current = await syncTask(current, sm, {
@@ -1069,6 +1095,7 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
         ? OKX_A2A_PUBLIC_OPERATION
         : mapTaskTypeToOperation(task.type),
     status: task.status,
+    purchaseChannel: task.input.purchaseChannel ?? "okx_marketplace",
     repository: task.repository,
     scanId: task.scanId,
     approval: task.approval,
@@ -1089,6 +1116,7 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
         : {}),
     prDelivery: task.result.prDelivery ?? {},
     attestation: task.result.attestation ?? {},
+    settlement: task.result.settlement ?? {},
     transitions: task.transitions,
     limitations: task.limitations,
     error: task.error,

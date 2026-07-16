@@ -36,7 +36,7 @@ test("workspace step names describe user outcomes", () => {
     "Connect Repository",
     "Review Findings",
     "Create Cleanup PR",
-    "Verify Delivery",
+    "Review & Accept",
   ]) {
     assert.match(rail, new RegExp(label));
   }

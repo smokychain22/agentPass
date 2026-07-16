@@ -1,4 +1,5 @@
 import { microToUsdtLabel } from "./micro-usdt";
+import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
 
 /** Production verified cleanup PR / A2A escrow price tiers (USDT). */
 export const A2A_CLEANUP_PR_PRICE_PRODUCTION = {
@@ -16,7 +17,7 @@ export const A2A_CLEANUP_PR_PRICE_TEST = {
 } as const;
 
 function isA2aTestPriceEnabled(): boolean {
-  return process.env.REPODIET_A2A_TEST_PRICE === "1";
+  return process.env.REPODIET_A2A_TEST_PRICE === "1" && isInternalTestBuyerAllowed();
 }
 
 export function getA2aCleanupPrTestPrice(): {
@@ -42,7 +43,8 @@ export function isA2aTestPriceActive(): boolean {
   return (
     isA2aTestPriceEnabled() ||
     Boolean(
-      process.env.REPODIET_A2A_TEST_PRICE_MICRO &&
+      isInternalTestBuyerAllowed() &&
+        process.env.REPODIET_A2A_TEST_PRICE_MICRO &&
         /^\d+$/.test(process.env.REPODIET_A2A_TEST_PRICE_MICRO)
     )
   );
@@ -65,9 +67,11 @@ export function resolveWorkflowSettlementMode(input: {
   amountMicro?: string;
 }): WorkflowSettlementMode {
   if (isA2aTestPriceQuote(input)) return "trusted_test";
-  if (process.env.REQUIRE_REAL_X402 === "1") return "live_x402";
-  if (process.env.REPODIET_X402_TEST_MODE === "1" || process.env.REPODIET_X402_TEST_SECRET) {
+  if (
+    isInternalTestBuyerAllowed() &&
+    (process.env.REPODIET_X402_TEST_MODE === "1" || process.env.REPODIET_X402_TEST_SECRET)
+  ) {
     return "test_hmac";
   }
-  return "trusted_test";
+  return "live_x402";
 }

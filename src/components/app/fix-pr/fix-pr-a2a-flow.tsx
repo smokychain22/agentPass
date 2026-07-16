@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
 import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
+import { CustomerPathSelector } from "@/components/wallet/customer-path-selector";
 import { useWallet } from "@/components/wallet/wallet-provider";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
@@ -75,11 +76,16 @@ export function FixPrA2AFlow({
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baselineInvalid, setBaselineInvalid] = useState<BaselineInvalidUi | null>(null);
-  const { setPaymentState } = useWallet();
+  const { setPaymentState, customerMode, setCustomerMode } = useWallet();
   const cleanedReturnUrl = useRef(false);
   const githubBootstrapped = useRef<string | null>(null);
 
   const trustedTestPayment = isTrustedTestQuote(quote);
+
+  useEffect(() => {
+    if (!a2aTask?.purchaseChannel) return;
+    setCustomerMode(a2aTask.purchaseChannel === "okx_marketplace" ? "okx_marketplace" : "direct");
+  }, [a2aTask?.purchaseChannel, setCustomerMode]);
 
   const githubVerified =
     github?.authoritativeState === "repository_verified" && github?.connected === true;
@@ -256,7 +262,7 @@ export function FixPrA2AFlow({
   }, [a2aTask?.taskId, a2aTask?.status, onTaskUpdate]);
 
   const startQuote = useCallback(async () => {
-    if (!commitSha || selectedSafe.length === 0) return;
+    if (customerMode !== "direct" || !commitSha || selectedSafe.length === 0) return;
     setLoading(true);
     setError(null);
     setBaselineInvalid(null);
@@ -283,7 +289,7 @@ export function FixPrA2AFlow({
     } finally {
       setLoading(false);
     }
-  }, [branch, commitSha, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
+  }, [branch, commitSha, customerMode, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
 
   const authorizePayment = useCallback(
     async (input: { payer: string; paymentReference: string; paymentSignature?: string }) => {
@@ -408,6 +414,9 @@ export function FixPrA2AFlow({
 
   return (
     <div className="space-y-4">
+      {!a2aTask && (
+        <CustomerPathSelector mode={customerMode} onModeChange={setCustomerMode} />
+      )}
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-3">Repository connection</p>
         {githubVerifying ? (
@@ -424,10 +433,10 @@ export function FixPrA2AFlow({
           </div>
         ) : github?.authoritativeState === "app_not_configured" || github?.configured === false ? (
           <div className="space-y-1 text-sm">
-            <p className="font-medium text-foreground">GitHub App is not configured</p>
+            <p className="font-medium text-foreground">GitHub delivery is temporarily unavailable</p>
             <p className="text-muted-foreground">
-              This deployment is missing GitHub App credentials. Set GITHUB_APP_* environment
-              variables on Vercel to enable Fix &amp; PR.
+              RepoDiet cannot verify repository access or create a pull request right now. No
+              quote or payment has been created. Please try again later.
             </p>
           </div>
         ) : (
@@ -611,7 +620,7 @@ export function FixPrA2AFlow({
                     </a>
                   </Button>
                   <Button asChild variant="secondary">
-                    <Link href="/app?tab=verify">Verify Delivery</Link>
+                    <Link href="/app?tab=verify">Review &amp; Accept</Link>
                   </Button>
                 </div>
               </div>
@@ -700,12 +709,12 @@ export function FixPrA2AFlow({
         {error && !showBaselineBlock && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {!quote && !hideQuoteButton && (
+          {customerMode === "direct" && !quote && !hideQuoteButton && (
             <Button onClick={startQuote} disabled={loading || !githubVerified || selectedSafe.length === 0}>
               {loading ? <Loader2 className="animate-spin" /> : scopeReviewed ? "Refresh quote" : "Review cleanup scope"}
             </Button>
           )}
-          {quote && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
+          {customerMode === "direct" && quote && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
             <PaymentAuthorizationPanel
               quote={quote}
               loading={loading}

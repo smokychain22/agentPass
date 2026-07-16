@@ -54,7 +54,7 @@ const workflow = [
     evidence: "Review-ready GitHub pull request",
   },
   {
-    title: "Verify delivery",
+    title: "Review and accept",
     body: "RepoDiet compares the result with the pinned source, checks scope and protected paths, and reports build and test outcomes.",
     evidence: "Verification result and receipt",
   },

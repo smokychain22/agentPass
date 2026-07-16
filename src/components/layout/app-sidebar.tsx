@@ -52,10 +52,10 @@ const mainNav = [
   },
   {
     href: "/app?tab=verify",
-    label: "Verify Delivery",
+    label: "Review & Accept",
     icon: ShieldCheck,
     tab: "verify",
-    lockReason: "Paid cleanup execution must start first",
+    lockReason: "A paid cleanup must reach delivery review first",
     needsScan: true,
     needsFindings: true,
     needsFixPr: false,

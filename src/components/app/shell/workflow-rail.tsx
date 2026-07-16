@@ -76,7 +76,7 @@ function resolveState(
     if (!verifyUnlocked) {
       return {
         state: "locked",
-        lockReason: verifyLockBody ?? "Verify unlocks after paid cleanup execution starts",
+        lockReason: verifyLockBody ?? "Review & Accept unlocks after paid cleanup execution starts",
       };
     }
     if (activeStep === "verify") return { state: "active" };
@@ -147,7 +147,7 @@ export function WorkflowRail({
     },
     {
       id: "verify",
-      label: "Verify Delivery",
+      label: "Review & Accept",
       href: "/app?tab=verify",
       ...resolveState(
         "verify",

@@ -16,6 +16,10 @@ import {
   preQuoteGateErrorResponse,
 } from "@/lib/workflow/pre-quote-gate";
 import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
+import { hashTaskOwnerSession, assertDirectTaskOwner } from "@/lib/workflow/task-access";
+import {
+  reviewDirectSiteDelivery,
+} from "@/lib/a2a/direct-site-lifecycle";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -128,6 +132,8 @@ export async function POST(request: Request) {
       commitSha: body.commitSha,
       findingIds: gateResult.eligibleFindingIds,
       transformedSourceHashes: gateResult.transformedSourceHashes,
+      purchaseChannel: "direct_site",
+      ownerSessionKeyHash: hashTaskOwnerSession(sessionKey),
     });
 
     const quoteId =
@@ -174,6 +180,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "Task not found." }, { status: 404 });
   }
 
+  const sessionKey = await buildSessionKey(request);
+  try {
+    assertDirectTaskOwner(task, sessionKey);
+  } catch {
+    return NextResponse.json({ ok: false, error: "Task access denied." }, { status: 403 });
+  }
+
   const quoteId = task.input.quoteId;
   const quote = quoteId ? await getBoundQuote(quoteId) : null;
 
@@ -186,21 +199,46 @@ export async function GET(request: Request) {
   });
 }
 
-/** Auto-approve PR delivery after successful cleanup (browser flow). */
+/** Record an explicit direct-site scope or delivery decision. */
 export async function PATCH(request: Request) {
   try {
-    const body = (await request.json()) as { taskId: string; action?: "approve" };
+    const body = (await request.json()) as {
+      taskId: string;
+      action?: "approve" | "approve_scope" | "accept_delivery" | "request_changes" | "reject_delivery";
+      note?: string;
+    };
     if (!body.taskId) {
       return NextResponse.json({ ok: false, error: "taskId is required." }, { status: 400 });
     }
-    if (body.action !== "approve") {
+    if (!body.action) {
       return NextResponse.json({ ok: false, error: "Unsupported action." }, { status: 400 });
     }
 
-    const task = await approveA2ATask(body.taskId, true);
+    const existing = await getA2ATask(body.taskId);
+    if (!existing) {
+      return NextResponse.json({ ok: false, error: "Task not found." }, { status: 404 });
+    }
+    const sessionKey = await buildSessionKey(request);
+    assertDirectTaskOwner(existing, sessionKey);
+
+    const task =
+      body.action === "approve" || body.action === "approve_scope"
+        ? await approveA2ATask(body.taskId, true)
+        : await reviewDirectSiteDelivery(body.taskId, {
+            decision:
+              body.action === "accept_delivery"
+                ? "accept"
+                : body.action === "request_changes"
+                  ? "request_changes"
+                  : "reject",
+            note: body.note,
+          });
     return NextResponse.json({ ok: true, task: formatA2ATaskResponse(task) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Approval failed.";
-    return NextResponse.json({ ok: false, error: message }, { status: 422 });
+    return NextResponse.json(
+      { ok: false, error: message === "task_access_denied" ? "Task access denied." : message },
+      { status: message === "task_access_denied" ? 403 : 422 }
+    );
   }
 }

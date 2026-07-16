@@ -71,6 +71,8 @@ export async function runPreflight(input: CreateA2aOrderInput): Promise<{
   reason?: string;
   alternative?: string;
   safeFixCount?: number;
+  branch?: string;
+  commitSha?: string;
 }> {
   const parsed = parseGitHubUrl(input.repoUrl);
   if (!parsed) {
@@ -89,7 +91,12 @@ export async function runPreflight(input: CreateA2aOrderInput): Promise<{
         safeFixCount: 0,
       };
     }
-    return { ok: true, safeFixCount: safe.length };
+    return {
+      ok: true,
+      safeFixCount: safe.length,
+      branch: payload.repo.branch,
+      commitSha: payload.repo.commitSha,
+    };
   } catch (err) {
     return {
       ok: false,
@@ -118,16 +125,21 @@ export async function createA2aOrder(input: CreateA2aOrderInput) {
 
   const orderId = newOkxOrderId();
   const taskType = SERVICE_TO_TASK_TYPE[input.serviceId];
+  const resolvedBranch =
+    input.branch ?? contractRecord?.contract.repository.branch ?? preflight.branch;
+  const resolvedCommitSha =
+    input.commitSha ?? contractRecord?.contract.repository.sourceCommit ?? preflight.commitSha;
 
   const task = await submitA2ATask(taskType, {
     repoUrl: input.repoUrl,
-    branch: input.branch,
+    branch: resolvedBranch,
     findingIds: input.findingIds ?? contractRecord?.contract.scope.findingIds,
     quoteId: input.quoteId ?? contractRecord?.contract.commercialTerms.quoteId,
     callbackUrl: input.callbackUrl,
-    commitSha: input.commitSha ?? contractRecord?.contract.repository.sourceCommit,
+    commitSha: resolvedCommitSha,
     contractId: contractRecord?.contractId,
     contractDigest: contractRecord?.contractDigest,
+    purchaseChannel: "okx_marketplace",
   });
 
   const parsed = parseGitHubUrl(input.repoUrl);
@@ -138,8 +150,8 @@ export async function createA2aOrder(input: CreateA2aOrderInput) {
     serviceId: input.serviceId,
     serviceType: "A2A" as const,
     repository,
-    branch: input.branch ?? "main",
-    commitSha: input.commitSha ?? "unknown",
+    branch: task.repository.branch,
+    commitSha: resolvedCommitSha ?? task.repository.commitSha ?? "unknown",
     status: task.status,
     escrowReference: input.escrowReference,
     taskId: task.id,

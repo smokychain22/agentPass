@@ -14,6 +14,7 @@ import {
   ensureTaskInvalidationMetadata,
   scanBlocksFixPr,
 } from "./source-invalidation";
+import { isA2aTestPriceActive } from "@/lib/payment/a2a-test-price";
 
 export class PreQuoteGateError extends Error {
   readonly code: string;
@@ -125,7 +126,7 @@ export async function assertPreQuoteGate(input: PreQuoteGateInput): Promise<PreQ
     // serverless ENOSPC / jsx-tsconfig parse noise. Full repository verification
     // still gates cleanup PR delivery later.
     const message = formatBaselineInvalidMessage(baseline);
-    const controlledTestPrice = process.env.REPODIET_A2A_TEST_PRICE === "1";
+    const controlledTestPrice = isA2aTestPriceActive();
     const softBaselineFailure =
       controlledTestPrice ||
       baseline.classification === "baseline_dependency_failure" ||
