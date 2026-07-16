@@ -183,11 +183,12 @@ export function PaymentAuthorizationPanel({
   return (
     <div className="mt-4 w-full space-y-3">
       <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Authorize live payment</p>
+        <p className="font-medium text-foreground">Direct X Layer payment</p>
         <p className="mt-1">
           Connect your own wallet on X Layer. It will send exactly {quote.priceLabel} to{" "}
           <span className="font-mono text-xs">{quote.recipient}</span>. RepoDiet verifies the
-          Transfer on-chain before cleanup starts.
+          transfer on-chain before cleanup starts. This is a direct payment to RepoDiet, not
+          OKX escrow.
         </p>
       </div>
 

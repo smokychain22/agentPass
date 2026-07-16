@@ -7,6 +7,8 @@ export type A2ATaskType =
   | "repository.cleanup_pr"
   | "repository.guard_activation";
 
+export type PurchaseChannel = "okx_marketplace" | "direct_site";
+
 export type A2ATaskStatus =
   | "submitted"
   | "validating"
@@ -119,6 +121,10 @@ export interface A2ATaskInput {
   transformedSourceHashes?: Record<string, string>;
   contractId?: string;
   contractDigest?: string;
+  /** Commercial route chosen before the task is created. */
+  purchaseChannel?: PurchaseChannel;
+  /** SHA-256 of the originating browser session for direct-site task ownership. */
+  ownerSessionKeyHash?: string;
 }
 
 export interface A2ATaskResult {

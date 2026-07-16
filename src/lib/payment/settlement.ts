@@ -28,12 +28,18 @@ import {
   isKnownBaselineInvalidCommit,
 } from "@/lib/workflow/baseline-readiness";
 import { ensureScanInvalidationMetadata, scanBlocksFixPr } from "@/lib/workflow/source-invalidation";
+import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
 
 function isRealX402(): boolean {
-  return process.env.REQUIRE_REAL_X402 === "1";
+  return (
+    process.env.REQUIRE_REAL_X402 === "1" ||
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NODE_ENV === "production"
+  );
 }
 
 function isTestX402(quote?: BoundQuote): boolean {
+  if (!isInternalTestBuyerAllowed()) return false;
   if (quote && isA2aTestPriceQuote(quote)) return true;
   return process.env.REPODIET_X402_TEST_MODE === "1" || !isRealX402();
 }

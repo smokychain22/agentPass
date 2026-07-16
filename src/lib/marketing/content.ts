@@ -20,8 +20,10 @@ export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
 export const DEMO_SCAN_STATS = getDemoScanStats();
 
 export const HERO = {
-  badge: "REPOSITORY INTELLIGENCE",
-  headline: "Your AI-built repo is getting heavier every commit.",
+  badge: "VERIFIED REPOSITORY MAINTENANCE",
+  headline: "Turn repository debt into a verified cleanup pull request.",
+  productSubheadline:
+    "RepoDiet analyzes AI-built repositories, performs only approved cleanup work, opens a real GitHub pull request, and verifies the result before delivery is accepted.",
   subheadline:
     "RepoDiet finds duplicate logic, dead files, dependency drift, and orphan modules—then applies verified fixes (remove imports, delete temp files, uninstall packages) and opens a review-ready cleanup PR. You merge when ready.",
 };
@@ -173,7 +175,7 @@ export const TOP3_STORY = {
 
 export const USE_CASES = [
   {
-    title: "Before hackathon submission",
+    title: "Before a production release",
     description:
       "Create a cleanup PR that removes obvious archive/tmp/backup files and adds a regression checklist.",
   },
@@ -183,7 +185,7 @@ export const USE_CASES = [
       "Show a professional cleanup report and PR instead of handing over messy AI-generated code.",
   },
   {
-    title: "After heavy Cursor/Claude sessions",
+    title: "After rapid AI-assisted development",
     description:
       "Find AI-created leftovers and open a review-safe cleanup branch.",
   },
@@ -397,8 +399,10 @@ export const SAFETY_CARDS = SAFETY_PRINCIPLES.map((p) => ({
 }));
 
 export const DEMO_SECTION = {
-  eyebrow: "Live demo",
-  title: "See RepoDiet on a repo built to be messy.",
+  eyebrow: "Interactive sample",
+  title: "Explore a clearly labeled example repository.",
+  productDescription:
+    "This interactive sample uses a bundled fixture with intentional repository-debt patterns. Every number in this section belongs to that example repository, never to a visitor's real scan.",
   description:
     "The demo repo contains intentional AI-code-bloat patterns — duplicate components, dead files, unused packages, and safe-delete candidates. Same engine as production scans. No fake findings.",
 };

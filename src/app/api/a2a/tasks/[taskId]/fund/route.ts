@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { fundA2ATask, formatA2ATaskResponse } from "@/lib/a2a/orchestrator";
 import { getA2ATask } from "@/lib/a2a/task-store";
 import { getA2aFundLock } from "@/lib/payment/payment-store";
+import { buildSessionKey } from "@/lib/github-app/browser-session";
+import { assertDirectTaskOwner } from "@/lib/workflow/task-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,6 +22,11 @@ export async function POST(
   };
 
   try {
+    const existing = await getA2ATask(taskId);
+    if (!existing) {
+      return NextResponse.json({ success: false, error: "Task not found." }, { status: 404 });
+    }
+    assertDirectTaskOwner(existing, await buildSessionKey(request));
     const task = await fundA2ATask(taskId, body, request);
     return NextResponse.json({
       success: task.status === "completed" || task.status === "awaiting_approval",
@@ -27,6 +34,9 @@ export async function POST(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Funding failed.";
+    if (message === "task_access_denied") {
+      return NextResponse.json({ success: false, error: "Task access denied." }, { status: 403 });
+    }
     if (message.includes("not awaiting payment")) {
       const task = await getA2ATask(taskId);
       const lock = await getA2aFundLock(taskId);

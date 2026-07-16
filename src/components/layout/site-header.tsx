@@ -10,15 +10,17 @@ import { RepodietLogo } from "@/components/layout/repodiet-logo";
 
 const navLinks = [
   { href: "/#product", label: "Product" },
-  { href: "/app?demo=true", label: "Demo" },
-  { href: "/docs", label: "Docs" },
+  { href: "/how-it-works", label: "How It Works" },
+  { href: "/app", label: "Workspace" },
   { href: "/pricing", label: "Pricing" },
+  { href: "/docs", label: "Documentation" },
 ];
 
 const footerLinks = [
   { href: "/#product", label: "Product" },
-  { href: "/app?demo=true", label: "Demo" },
-  { href: "/docs", label: "Docs" },
+  { href: "/how-it-works", label: "How It Works" },
+  { href: "/app", label: "Workspace" },
+  { href: "/docs", label: "Documentation" },
   { href: "/pricing", label: "Pricing" },
   { href: "/docs", label: "API" },
   { href: "/okx", label: "OKX integration" },
@@ -117,7 +119,7 @@ export function SiteFooter({ variant = "default" }: SiteFooterProps) {
               <p className="text-sm font-semibold text-foreground">RepoDiet</p>
             </div>
             <p className="mt-2 max-w-xs text-sm text-muted-foreground">
-              Review-first cleanup intelligence for AI-built repositories.
+              Verified repository maintenance delivered as a review-ready pull request.
             </p>
           </div>
 

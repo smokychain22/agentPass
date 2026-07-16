@@ -22,6 +22,7 @@ export interface WorkflowA2ATask {
   taskId: string;
   type: string;
   status: string;
+  purchaseChannel: "okx_marketplace" | "direct_site";
   repository: {
     owner: string;
     name: string;
@@ -30,9 +31,19 @@ export interface WorkflowA2ATask {
   };
   transitions: Array<{ status: string; at: string; detail?: string }>;
   pullRequest?: { url?: string; branch?: string; number?: number; title?: string };
+  changes?: { changedFiles?: string[]; unifiedDiff?: string; finalDecision?: string };
   receipt?: Record<string, unknown>;
+  settlement?: {
+    escrowReference?: string;
+    deliveryId?: string;
+    deliverySubmittedAt?: string;
+    buyerAcceptedAt?: string;
+    buyerWallet?: string;
+    escrowReleasedAt?: string;
+    escrowReleaseReference?: string;
+  };
   prDelivery?: PrDeliveryMonitor;
-  verification?: { status?: string };
+  verification?: { status?: string; checks?: unknown[]; limitations?: string[] };
   error?: string;
   limitations?: string[];
   approval?: {
@@ -79,6 +90,12 @@ export interface PrDeliveryMonitor {
   ownerActions: string[];
   prUrl: string;
   prNumber: number;
+  headSha?: string;
+  baseSha?: string;
+  sourceCommitSha?: string;
+  patchCommitSha?: string;
+  branch?: string;
+  lastPolledAt?: string;
 }
 
 export async function fetchRepositoryStatus(input: {
@@ -290,11 +307,34 @@ export async function approveWorkflowDelivery(taskId: string): Promise<WorkflowA
   const res = await fetch("/api/workflow/a2a", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ taskId, action: "approve" }),
+    body: JSON.stringify({ taskId, action: "approve_scope" }),
   });
   const data = (await res.json()) as { ok: boolean; task?: WorkflowA2ATask; error?: string };
   if (!res.ok || !data.ok || !data.task) {
     throw new Error(data.error ?? "PR approval failed.");
+  }
+  return data.task;
+}
+
+export async function reviewWorkflowDelivery(input: {
+  taskId: string;
+  decision: "accept" | "request_changes" | "reject";
+  note?: string;
+}): Promise<WorkflowA2ATask> {
+  const action =
+    input.decision === "accept"
+      ? "accept_delivery"
+      : input.decision === "request_changes"
+        ? "request_changes"
+        : "reject_delivery";
+  const res = await fetch("/api/workflow/a2a", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ taskId: input.taskId, action, note: input.note }),
+  });
+  const data = (await res.json()) as { ok: boolean; task?: WorkflowA2ATask; error?: string };
+  if (!res.ok || !data.ok || !data.task) {
+    throw new Error(data.error ?? "Delivery review failed.");
   }
   return data.task;
 }

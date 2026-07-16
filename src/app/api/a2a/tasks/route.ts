@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       contractId: typeof body.contractId === "string" ? body.contractId.trim() : undefined,
       contractDigest:
         typeof body.contractDigest === "string" ? body.contractDigest.trim() : undefined,
+      purchaseChannel: "okx_marketplace",
     });
 
     return NextResponse.json({ success: task.status === "completed" || !task.error, ...formatA2ATaskResponse(task) });

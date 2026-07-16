@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
 import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
+import { CustomerPathSelector } from "@/components/wallet/customer-path-selector";
 import { useWallet } from "@/components/wallet/wallet-provider";
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
@@ -75,11 +76,16 @@ export function FixPrA2AFlow({
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baselineInvalid, setBaselineInvalid] = useState<BaselineInvalidUi | null>(null);
-  const { setPaymentState } = useWallet();
+  const { setPaymentState, customerMode, setCustomerMode } = useWallet();
   const cleanedReturnUrl = useRef(false);
   const githubBootstrapped = useRef<string | null>(null);
 
   const trustedTestPayment = isTrustedTestQuote(quote);
+
+  useEffect(() => {
+    if (!a2aTask?.purchaseChannel) return;
+    setCustomerMode(a2aTask.purchaseChannel === "okx_marketplace" ? "okx_marketplace" : "direct");
+  }, [a2aTask?.purchaseChannel, setCustomerMode]);
 
   const githubVerified =
     github?.authoritativeState === "repository_verified" && github?.connected === true;
@@ -245,13 +251,6 @@ export function FixPrA2AFlow({
         const { task, quote: q } = await fetchWorkflowA2ATask(a2aTask.taskId);
         onTaskUpdate(task);
         if (q) setQuote(q);
-        if (
-          task.status === "awaiting_approval" &&
-          (task.approval?.changes?.length ?? 0) > 0
-        ) {
-          const approved = await approveWorkflowDelivery(task.taskId);
-          onTaskUpdate(approved);
-        }
       } catch {
         /* polling best-effort */
       }
@@ -263,7 +262,7 @@ export function FixPrA2AFlow({
   }, [a2aTask?.taskId, a2aTask?.status, onTaskUpdate]);
 
   const startQuote = useCallback(async () => {
-    if (!commitSha || selectedSafe.length === 0) return;
+    if (customerMode !== "direct" || !commitSha || selectedSafe.length === 0) return;
     setLoading(true);
     setError(null);
     setBaselineInvalid(null);
@@ -290,7 +289,7 @@ export function FixPrA2AFlow({
     } finally {
       setLoading(false);
     }
-  }, [branch, commitSha, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
+  }, [branch, commitSha, customerMode, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
 
   const authorizePayment = useCallback(
     async (input: { payer: string; paymentReference: string; paymentSignature?: string }) => {
@@ -335,6 +334,20 @@ export function FixPrA2AFlow({
     setBaselineInvalid(null);
   }, [onTaskUpdate]);
 
+  const approveProposedChanges = useCallback(async () => {
+    if (!a2aTask?.taskId || a2aTask.status !== "awaiting_approval") return;
+    setLoading(true);
+    setError(null);
+    try {
+      const approved = await approveWorkflowDelivery(a2aTask.taskId);
+      onTaskUpdate(approved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not approve the proposed changes.");
+    } finally {
+      setLoading(false);
+    }
+  }, [a2aTask?.status, a2aTask?.taskId, onTaskUpdate]);
+
   const taskBaselineInvalid = useMemo(() => {
     if (!a2aTask?.error) return null;
     return parseBaselineInvalidUi({
@@ -359,7 +372,8 @@ export function FixPrA2AFlow({
   const executing =
     Boolean(a2aTask) &&
     !isWorkflowTaskTerminal(a2aTask) &&
-    a2aTask!.status !== "awaiting_payment";
+    a2aTask!.status !== "awaiting_payment" &&
+    a2aTask!.status !== "awaiting_approval";
 
   const recheckGitHubAccess = useCallback(async () => {
     setGithubRecheckLoading(true);
@@ -400,6 +414,9 @@ export function FixPrA2AFlow({
 
   return (
     <div className="space-y-4">
+      {!a2aTask && (
+        <CustomerPathSelector mode={customerMode} onModeChange={setCustomerMode} />
+      )}
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-3">Repository connection</p>
         {githubVerifying ? (
@@ -416,10 +433,10 @@ export function FixPrA2AFlow({
           </div>
         ) : github?.authoritativeState === "app_not_configured" || github?.configured === false ? (
           <div className="space-y-1 text-sm">
-            <p className="font-medium text-foreground">GitHub App is not configured</p>
+            <p className="font-medium text-foreground">GitHub delivery is temporarily unavailable</p>
             <p className="text-muted-foreground">
-              This deployment is missing GitHub App credentials. Set GITHUB_APP_* environment
-              variables on Vercel to enable Fix &amp; PR.
+              RepoDiet cannot verify repository access or create a pull request right now. No
+              quote or payment has been created. Please try again later.
             </p>
           </div>
         ) : (
@@ -538,6 +555,20 @@ export function FixPrA2AFlow({
                 <span>RepoDiet is applying and verifying your selected cleanup scope. This can take a few minutes on large repositories.</span>
               </div>
             )}
+            {a2aTask.status === "awaiting_approval" && (
+              <div className="space-y-3 rounded-md border border-electric/25 bg-electric/5 p-3">
+                <div>
+                  <p className="font-medium text-foreground">Review the proposed cleanup before RepoDiet opens the pull request</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    RepoDiet prepared {a2aTask.approval?.changes?.length ?? 0} bounded change
+                    {(a2aTask.approval?.changes?.length ?? 0) === 1 ? "" : "s"}. Nothing is merged automatically.
+                  </p>
+                </div>
+                <Button onClick={() => void approveProposedChanges()} disabled={loading}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Approve changes and create pull request"}
+                </Button>
+              </div>
+            )}
             {isWorkflowTaskFailure(a2aTask) && (
               <FeedbackBanner
                 variant="error"
@@ -548,17 +579,50 @@ export function FixPrA2AFlow({
                 }
               />
             )}
-            {a2aTask.status === "completed" && a2aTask.pullRequest?.url && (
-              <div className="space-y-1">
-                <p className="text-signal">Cleanup pull request created</p>
-                <a
-                  className="font-mono text-xs text-electric underline"
-                  href={a2aTask.pullRequest.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {a2aTask.pullRequest.url}
-                </a>
+            {a2aTask.pullRequest?.url && (
+              <div className="space-y-4 rounded-md border border-signal/30 bg-signal/5 p-4">
+                <div>
+                  <p className="text-base font-semibold text-signal">Your cleanup pull request is ready</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Review the changed files and GitHub checks. Merge only when the result matches your expectations.
+                  </p>
+                </div>
+                <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-muted-foreground">Repository</dt>
+                    <dd className="font-mono text-xs">{repository}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Pull request</dt>
+                    <dd className="font-mono text-xs">#{a2aTask.pullRequest.number ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Source branch</dt>
+                    <dd className="font-mono text-xs">{a2aTask.pullRequest.branch ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Target branch</dt>
+                    <dd className="font-mono text-xs">{findings.repo.branch}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Changed files</dt>
+                    <dd>{a2aTask.approval?.changes?.length ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Verification</dt>
+                    <dd>{a2aTask.verification?.status ?? a2aTask.prDelivery?.deliveryState ?? "Not verified"}</dd>
+                  </div>
+                </dl>
+                <div className="flex flex-wrap gap-2">
+                  <Button asChild>
+                    <a href={a2aTask.pullRequest.url} target="_blank" rel="noreferrer">
+                      Review Pull Request
+                    </a>
+                  </Button>
+                  <Button asChild variant="secondary">
+                    <Link href="/app?tab=verify">Review &amp; Accept</Link>
+                  </Button>
+                </div>
               </div>
             )}
             {a2aTask.status === "completed" && a2aTask.receipt && (
@@ -645,12 +709,12 @@ export function FixPrA2AFlow({
         {error && !showBaselineBlock && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {!quote && !hideQuoteButton && (
+          {customerMode === "direct" && !quote && !hideQuoteButton && (
             <Button onClick={startQuote} disabled={loading || !githubVerified || selectedSafe.length === 0}>
               {loading ? <Loader2 className="animate-spin" /> : scopeReviewed ? "Refresh quote" : "Review cleanup scope"}
             </Button>
           )}
-          {quote && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
+          {customerMode === "direct" && quote && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
             <PaymentAuthorizationPanel
               quote={quote}
               loading={loading}

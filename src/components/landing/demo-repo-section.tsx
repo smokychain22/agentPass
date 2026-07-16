@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Check, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,32 +15,20 @@ import { RiskBadge } from "@/components/design-system/risk-badge";
 import { cn } from "@/lib/utils";
 
 export function DemoRepoSection() {
-  const [progressStep, setProgressStep] = useState(0);
-
-  useEffect(() => {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion) {
-      setProgressStep(DEMO_PROGRESS_STEPS.length);
-      return;
-    }
-    const timer = setInterval(() => {
-      setProgressStep((s) => Math.min(s + 1, DEMO_PROGRESS_STEPS.length));
-    }, 1200);
-    return () => clearInterval(timer);
-  }, []);
+  const progressStep = DEMO_PROGRESS_STEPS.length;
 
   return (
     <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
       <div>
         <p className="ds-label">{DEMO_SECTION.eyebrow}</p>
         <h2 className="ds-section-title mt-2">{DEMO_SECTION.title}</h2>
-        <p className="mt-4 leading-relaxed text-muted-foreground">{DEMO_SECTION.description}</p>
+        <p className="mt-4 leading-relaxed text-muted-foreground">{DEMO_SECTION.productDescription}</p>
         <p className="mt-3 font-mono text-xs text-muted-foreground">{DEMO_REPO_URL}</p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Button asChild>
             <Link href="/app?demo=true">
               <FlaskConical className="h-4 w-4" aria-hidden />
-              Run full demo flow
+              Open interactive sample
             </Link>
           </Button>
           <Button asChild variant="secondary">
@@ -54,7 +41,7 @@ export function DemoRepoSection() {
 
       <Panel variant="elevated" padding="lg">
         <div className="mb-4 flex items-center justify-between gap-2">
-          <p className="ds-label text-electric">Live demo scan</p>
+          <p className="ds-label text-electric">Example repository result</p>
           <RiskBadge level="cyan">{DEMO_SCAN_STATS.framework}</RiskBadge>
         </div>
 
@@ -114,7 +101,7 @@ export function DemoRepoSection() {
           href="/app?demo=true"
           className="mt-4 inline-flex items-center gap-1 text-sm text-electric hover:underline"
         >
-          Open full demo workspace
+          Open interactive sample workspace
           <ArrowRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
       </Panel>

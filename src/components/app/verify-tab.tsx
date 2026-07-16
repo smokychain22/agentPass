@@ -9,43 +9,33 @@ import { useAppSession } from "@/components/app/app-session";
 import { LockedTab, WorkspaceSection } from "@/components/app/locked-tab";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
 import {
+  fetchWorkflowA2ATask,
   fetchPrDeliveryMonitor,
+  reviewWorkflowDelivery,
   retryPrDeliveryChecks,
   type PrDeliveryMonitor,
 } from "@/lib/workflow/client";
 import { cn } from "@/lib/utils";
+import { resolveOkxAgentUrl } from "@/lib/wallet/okx-agent-url";
 
 const TIMELINE_STEPS = [
-  "Payment verified",
-  "Scope locked",
-  "Isolated branch created",
-  "Approved changes applied",
-  "Patch validated",
-  "Verification completed",
-  "Pull request created",
-  "Required checks monitored",
-  "Delivery receipt signed",
+  { label: "Payment verified", evidence: ["funded"] },
+  { label: "Scope locked", evidence: ["awaiting_approval"] },
+  { label: "Isolated branch created", evidence: ["creating_pull_request"] },
+  { label: "Approved changes applied", evidence: ["generating_changes"] },
+  { label: "Patch validated", evidence: ["validating_patch"] },
+  { label: "Verification completed", evidence: ["verifying"] },
+  { label: "Pull request created", evidence: ["monitoring_checks"] },
+  { label: "Required checks passed", evidence: ["delivery_ready", "delivery_submitted", "buyer_accepted", "completed"] },
+  { label: "Buyer accepted delivery", evidence: ["buyer_accepted", "completed"] },
 ] as const;
 
-function stepDone(status: string, index: number): boolean {
-  const order = [
-    "awaiting_payment",
-    "funded",
-    "generating_changes",
-    "validating_patch",
-    "verifying",
-    "creating_pull_request",
-    "monitoring_checks",
-    "awaiting_approval",
-    "delivery_ready",
-    "completed",
-    "checks_failed",
-    "diagnosis_ready",
-    "owner_action_required",
-  ];
-  const pos = order.indexOf(status);
-  if (status === "delivery_ready" || status === "completed") return true;
-  return pos >= index + 1;
+function stepDone(
+  transitions: Array<{ status: string }>,
+  evidence: readonly string[]
+): boolean {
+  const observed = new Set(transitions.map((transition) => transition.status));
+  return evidence.some((status) => observed.has(status));
 }
 
 function checkIcon(conclusion: string | null | undefined, pending: boolean) {
@@ -66,11 +56,13 @@ function cleanupCausedLabel(value: boolean | "unknown"): string {
 }
 
 export function VerifyTab() {
-  const { session, findings, patchKit, a2aTask } = useAppSession();
+  const { session, findings, patchKit, a2aTask, setA2aTask } = useAppSession();
   const [monitor, setMonitor] = useState<PrDeliveryMonitor | null>(null);
   const [loadingChecks, setLoadingChecks] = useState(false);
   const [retryLoading, setRetryLoading] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   const gates = useMemo(
     () =>
@@ -92,15 +84,25 @@ export function VerifyTab() {
     task?.status === "owner_action_required";
 
   const prDelivery = (task?.prDelivery as PrDeliveryMonitor | undefined) ?? monitor;
+  const requiredChecks = prDelivery?.checks.filter((check) => check.required) ?? [];
+  const requiredChecksPassed =
+    requiredChecks.length === 0
+      ? Boolean(prDelivery?.deliveryReady)
+      : requiredChecks.every(
+          (check) => check.status === "completed" && check.conclusion === "success"
+        );
+  const mergeReady = Boolean(task?.pullRequest?.url && prDelivery?.deliveryReady && requiredChecksPassed);
+  const marketplace = task?.purchaseChannel === "okx_marketplace";
+  const okxUrl = resolveOkxAgentUrl();
 
   const refreshChecks = useCallback(async () => {
-    if (!task?.pullRequest?.number || !findings) return;
+    if (!task?.pullRequest?.number) return;
     setLoadingChecks(true);
     setCheckError(null);
     try {
       const { monitor: next } = await fetchPrDeliveryMonitor({
-        owner: findings.repo.owner,
-        repo: findings.repo.name,
+        owner: task.repository.owner,
+        repo: task.repository.name,
         prNumber: task.pullRequest.number,
         taskId: task.taskId,
         poll: true,
@@ -111,7 +113,7 @@ export function VerifyTab() {
     } finally {
       setLoadingChecks(false);
     }
-  }, [findings, task?.pullRequest?.number, task?.taskId]);
+  }, [task?.pullRequest?.number, task?.repository.name, task?.repository.owner, task?.taskId]);
 
   useEffect(() => {
     if (!task?.pullRequest?.number || prDelivery) return;
@@ -122,19 +124,19 @@ export function VerifyTab() {
     return (
       <LockedTab
         step="04"
-        title="Verification"
-        description="Verify unlocks after paid cleanup execution starts or a previous delivery exists."
+        title="Review & Accept"
+        description="Review & Accept unlocks after paid cleanup execution starts or a previous delivery exists."
       />
     );
   }
 
   const handleRetry = async () => {
-    if (!task?.pullRequest?.number || !findings) return;
+    if (!task?.pullRequest?.number) return;
     setRetryLoading(true);
     try {
       const result = await retryPrDeliveryChecks({
-        owner: findings.repo.owner,
-        repo: findings.repo.name,
+        owner: task.repository.owner,
+        repo: task.repository.name,
         prNumber: task.pullRequest.number,
         taskId: task.taskId,
       });
@@ -146,22 +148,61 @@ export function VerifyTab() {
     }
   };
 
+  const handleReview = async (decision: "accept" | "request_changes" | "reject") => {
+    if (!task || marketplace) return;
+    let note: string | undefined;
+    if (decision === "request_changes") {
+      const response = window.prompt("What should RepoDiet change in this pull request?");
+      if (response === null) return;
+      note = response.trim() || "Buyer requested changes in the pull request";
+    }
+    if (decision === "reject") {
+      const confirmed = window.confirm(
+        "Reject this delivery? This records the decision but does not reverse a direct X Layer transfer."
+      );
+      if (!confirmed) return;
+    }
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      setA2aTask(await reviewWorkflowDelivery({ taskId: task.taskId, decision, note }));
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Could not record delivery review.");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const syncTask = async () => {
+    if (!task) return;
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const refreshed = await fetchWorkflowA2ATask(task.taskId);
+      setA2aTask(refreshed.task);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Could not sync delivery status.");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <WorkspaceSection
         label="Delivery evidence"
-        title="Verify"
-        description="RepoDiet monitors required GitHub and provider checks after your pull request is created."
+        title="Review & Accept"
+        description="Inspect the exact cleanup, required checks, and delivery evidence before you accept or merge anything."
       />
 
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-3">Execution timeline</p>
         <ol className="space-y-2 text-sm">
-          {TIMELINE_STEPS.map((label, index) => {
-            const done = task ? stepDone(task.status, index) : false;
+          {TIMELINE_STEPS.map((step, index) => {
+            const done = task ? stepDone(task.transitions, step.evidence) : false;
             const failedHere = failed && index >= 7;
             return (
-              <li key={label} className="flex items-start gap-2">
+              <li key={step.label} className="flex items-start gap-2">
                 {failedHere ? (
                   <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" aria-hidden />
                 ) : done ? (
@@ -169,7 +210,7 @@ export function VerifyTab() {
                 ) : (
                   <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                 )}
-                <span className={cn(done && !failedHere && "text-signal")}>{label}</span>
+                <span className={cn(done && !failedHere && "text-signal")}>{step.label}</span>
               </li>
             );
           })}
@@ -184,8 +225,8 @@ export function VerifyTab() {
               <dd className="font-mono text-xs">{task.taskId}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Status</dt>
-              <dd className="font-mono">{task.status}</dd>
+              <dt className="text-muted-foreground">Delivery state</dt>
+              <dd>{task.status.replaceAll("_", " ")}</dd>
             </div>
             {task.pullRequest?.url && (
               <div className="sm:col-span-2">
@@ -198,10 +239,8 @@ export function VerifyTab() {
               </div>
             )}
             <div>
-              <dt className="text-muted-foreground">Delivery ready</dt>
-              <dd className="font-mono">
-                {receipt.deliveryReady === true || prDelivery?.deliveryReady ? "true" : "false"}
-              </dd>
+              <dt className="text-muted-foreground">Payment route</dt>
+              <dd>{marketplace ? "OKX.AI marketplace" : "Direct X Layer payment"}</dd>
             </div>
             {typeof receipt.receiptId === "string" && (
               <div>
@@ -323,6 +362,102 @@ export function VerifyTab() {
             </Panel>
           )}
         </>
+      )}
+
+      {task?.pullRequest?.url && (
+        <Panel variant="elevated" padding="md">
+          <p className="ds-label mb-3">Merge readiness</p>
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Pull request</dt>
+              <dd>#{task.pullRequest.number ?? "—"} opened from {task.pullRequest.branch ?? "cleanup branch"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Changed files</dt>
+              <dd>{task.changes?.changedFiles?.length ?? task.approval?.changes?.length ?? "—"}</dd>
+            </div>
+            {prDelivery?.baseSha && (
+              <div>
+                <dt className="text-muted-foreground">Base commit</dt>
+                <dd className="font-mono text-xs">{prDelivery.baseSha.slice(0, 12)}</dd>
+              </div>
+            )}
+            {prDelivery?.headSha && (
+              <div>
+                <dt className="text-muted-foreground">PR head commit</dt>
+                <dd className="font-mono text-xs">{prDelivery.headSha.slice(0, 12)}</dd>
+              </div>
+            )}
+            <div>
+              <dt className="text-muted-foreground">Required checks</dt>
+              <dd>{requiredChecksPassed ? "Passed" : "Not yet passed"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">RepoDiet delivery</dt>
+              <dd>{mergeReady ? "Ready for owner review" : "Not ready to merge"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Merge control</dt>
+              <dd>Repository owner only; RepoDiet never merges automatically</dd>
+            </div>
+          </dl>
+          <Button asChild className="mt-4" variant={mergeReady ? "default" : "secondary"}>
+            <a href={task.pullRequest.url} target="_blank" rel="noreferrer">
+              {mergeReady ? "Open PR to merge" : "Review pull request"}
+              <ExternalLink className="ml-2 h-4 w-4" />
+            </a>
+          </Button>
+        </Panel>
+      )}
+
+      {task && (task.status === "delivery_ready" || task.status === "delivery_submitted" || task.status === "buyer_accepted" || task.status === "owner_action_required" || task.status === "completed") && (
+        <Panel variant="elevated" padding="md">
+          <p className="ds-label mb-2">Buyer decision</p>
+          {marketplace ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                This order was purchased through OKX.AI. Accept, request changes, reject, and
+                escrow release must remain in the official marketplace task. RepoDiet will not
+                simulate those actions on this website.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {okxUrl && (
+                  <Button asChild>
+                    <a href={okxUrl} target="_blank" rel="noreferrer">Review in OKX.AI</a>
+                  </Button>
+                )}
+                <Button variant="secondary" onClick={() => void syncTask()} disabled={reviewLoading}>
+                  {reviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  <span className="ml-2">Sync marketplace status</span>
+                </Button>
+              </div>
+              {!okxUrl && <p className="text-xs text-muted-foreground">Open your OKX.AI Agentic Wallet task and find RepoDiet ASP 5283.</p>}
+            </div>
+          ) : task.status === "completed" ? (
+            <p className="text-sm text-signal">Delivery accepted. The direct X Layer payment was settled when it was sent.</p>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                Accept only after the pull request matches the agreed scope and all required
+                checks pass. A direct payment is not OKX escrow and is not automatically reversed
+                by rejecting a delivery.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void handleReview("accept")} disabled={reviewLoading || !mergeReady}>
+                  {reviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Accept delivery
+                </Button>
+                <Button variant="secondary" onClick={() => void handleReview("request_changes")} disabled={reviewLoading}>
+                  Request changes
+                </Button>
+                <Button variant="destructive" onClick={() => void handleReview("reject")} disabled={reviewLoading}>
+                  Reject delivery
+                </Button>
+              </div>
+            </div>
+          )}
+          {reviewError && <p className="mt-3 text-sm text-red-300">{reviewError}</p>}
+        </Panel>
       )}
 
       {checkError && <p className="text-sm text-red-300">{checkError}</p>}

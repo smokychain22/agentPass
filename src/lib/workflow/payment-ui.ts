@@ -5,7 +5,8 @@ const WALLET_STORAGE_KEY = "repodiet_payer_wallet";
 
 export function isTrustedTestQuote(quote: WorkflowQuote | null | undefined): boolean {
   if (!quote) return false;
-  return quote.settlementMode === "trusted_test" || quote.priceLabel === "0.20 USDT";
+  if (process.env.NODE_ENV === "production") return false;
+  return quote.settlementMode === "trusted_test";
 }
 
 export function readStoredPayerWallet(): string {

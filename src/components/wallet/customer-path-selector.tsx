@@ -28,7 +28,7 @@ export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelecto
               : "border-border/60 bg-card/40 hover:border-border"
           }`}
         >
-          <p className="font-medium text-foreground">Connect wallet and continue directly</p>
+          <p className="font-medium text-foreground">Direct X Layer payment</p>
           <p className="mt-1 text-muted-foreground">
             Pay from your own wallet on X Layer. RepoDiet verifies payment server-side before
             execution.
@@ -46,8 +46,8 @@ export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelecto
         >
           <p className="font-medium text-foreground">Use through OKX.AI</p>
           <p className="mt-1 text-muted-foreground">
-            Hire ASP 5283 on OKX.AI. Your Agentic Wallet funds A2A escrow — no website wallet
-            needed.
+            Hire RepoDiet through OKX.AI. Payment, delivery review, and release stay in the
+            official marketplace flow.
           </p>
         </button>
       </div>
@@ -56,8 +56,9 @@ export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelecto
         <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
           <p className="mb-2 font-medium text-foreground">OKX.AI marketplace path</p>
           <ul className="list-inside list-disc space-y-1">
-            <li>A2MCP 32948 — callable Quick Triage via x402</li>
-            <li>A2A 32947 — negotiated Cleanup Operator with escrow and acceptance</li>
+            <li>Choose RepoDiet Cleanup Operator (A2A 32947)</li>
+            <li>Agree the repository and cleanup scope in OKX.AI</li>
+            <li>Return here only to inspect the delivered pull request</li>
           </ul>
           {okxUrl ? (
             <Button asChild size="sm" className="mt-3">
@@ -67,9 +68,8 @@ export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelecto
             </Button>
           ) : (
             <p className="mt-2 text-xs">
-              OKX agent listing link is not configured. Set{" "}
-              <span className="font-mono">NEXT_PUBLIC_OKX_AGENT_URL</span> on Vercel when ASP 5283
-              is publicly listed.
+              The public agent page is not available yet. Open OKX.AI and search for RepoDiet
+              (ASP 5283) after the listing goes live.
             </p>
           )}
         </div>

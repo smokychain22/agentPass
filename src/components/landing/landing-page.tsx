@@ -1,13 +1,11 @@
 import Link from "next/link";
-import { ArrowRight, Shield } from "lucide-react";
+import { ArrowRight, CheckCircle2, Shield } from "lucide-react";
 import { SiteHeader, SiteFooter } from "@/components/layout/site-header";
-import { HeroCleanupEngine } from "@/components/landing/hero-cleanup-engine";
 import { HeroCta } from "@/components/landing/hero-cta";
 import { RepositoryDebtBento } from "@/components/landing/repository-debt-bento";
 import { WorkflowPipeline } from "@/components/landing/workflow-pipeline";
 import { ScanToPrSection } from "@/components/landing/scan-to-pr-section";
 import { TransformationSection } from "@/components/landing/transformation-section";
-import { PatchBundleWorkspace } from "@/components/landing/patch-bundle-workspace";
 import { SafetyBoundary } from "@/components/landing/safety-boundary";
 import { DemoRepoSection } from "@/components/landing/demo-repo-section";
 import { A2mcpToolsSection } from "@/components/landing/a2mcp-tools-section";
@@ -21,7 +19,6 @@ import { PricingCard } from "@/components/design-system/pricing-card";
 import {
   API_SECTION,
   HERO,
-  OUTPUTS_SECTION,
   PRICING_SECTION,
   PRICING_TIERS,
   PROBLEM_SECTION,
@@ -52,7 +49,7 @@ export function LandingPage() {
                 </Badge>
                 <h1 className="ds-hero-title">{HERO.headline}</h1>
                 <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                  {HERO.subheadline}
+                  {HERO.productSubheadline}
                 </p>
                 <HeroCta className="mt-8" />
                 <ul className="mt-6 flex flex-wrap gap-x-4 gap-y-2" aria-label="Trust points">
@@ -64,7 +61,63 @@ export function LandingPage() {
                   ))}
                 </ul>
               </div>
-              <HeroCleanupEngine />
+              <Panel variant="cyan" padding="lg">
+                <p className="ds-label text-electric">What you receive</p>
+                <h2 className="mt-3 text-2xl font-semibold text-foreground">
+                  One review-ready maintenance delivery
+                </h2>
+                <ol className="mt-6 space-y-4">
+                  {[
+                    ["01", "Prioritized findings", "Repository-backed evidence, not generic advice."],
+                    ["02", "Approved cleanup scope", "Only the changes the buyer selected."],
+                    ["03", "Real GitHub pull request", "An isolated branch ready for repository-owner review."],
+                    ["04", "Verification result", "Checks, protected-path status, and delivery evidence."],
+                  ].map(([step, title, description]) => (
+                    <li key={step} className="flex gap-3 border-b border-border/40 pb-4 last:border-0 last:pb-0">
+                      <span className="font-mono text-xs text-electric">{step}</span>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{title}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </Panel>
+            </div>
+          </Container>
+        </section>
+
+        <section className="border-y border-border/60 bg-card/30 py-14 sm:py-16">
+          <Container as="section">
+            <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
+              <div>
+                <p className="ds-label">Why teams use RepoDiet</p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+                  Most tools stop at recommendations. RepoDiet completes the maintenance job.
+                </h2>
+                <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+                  The result is a bounded, reviewable GitHub pull request backed by repository checks—not a list the buyer must implement alone.
+                </p>
+                <Button asChild variant="secondary" className="mt-6">
+                  <Link href="/how-it-works">
+                    See the complete workflow <ArrowRight className="h-4 w-4" aria-hidden />
+                  </Link>
+                </Button>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  ["Reduce repository bloat", "Find high-value maintenance work using the repository's actual files and dependency graph."],
+                  ["Avoid unsafe manual cleanup", "Protected paths and review-only findings stay outside automatic changes."],
+                  ["Receive a real pull request", "RepoDiet opens an isolated branch and PR instead of ending with a report."],
+                  ["Review evidence before acceptance", "See scope, changed files, checks, and delivery evidence before deciding."],
+                ].map(([title, description]) => (
+                  <Panel key={title} variant="elevated" padding="md">
+                    <CheckCircle2 className="h-5 w-5 text-signal" aria-hidden />
+                    <h3 className="mt-3 text-sm font-semibold text-foreground">{title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+                  </Panel>
+                ))}
+              </div>
             </div>
           </Container>
         </section>
@@ -150,20 +203,6 @@ export function LandingPage() {
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
                 </Panel>
               ))}
-            </div>
-          </Container>
-        </section>
-
-        {/* Patch bundle workspace */}
-        <section className="relative py-16 sm:py-20">
-          <Container as="section">
-            <SectionHeader
-              label={OUTPUTS_SECTION.eyebrow}
-              title={OUTPUTS_SECTION.title}
-              description={OUTPUTS_SECTION.subtitle}
-            />
-            <div className="mt-10">
-              <PatchBundleWorkspace />
             </div>
           </Container>
         </section>

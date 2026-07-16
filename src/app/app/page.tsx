@@ -15,16 +15,32 @@ import { WorkflowRail, type WorkflowStepId } from "@/components/app/shell/workfl
 import { Container } from "@/components/design-system/container";
 import { GridBackground } from "@/components/design-system/grid-background";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
-import { fetchRepositoryStatus } from "@/lib/workflow/client";
+import { fetchRepositoryStatus, fetchWorkflowA2ATask } from "@/lib/workflow/client";
 import type { RepositoryConnectionStatus } from "@/lib/workflow/github-repository-status";
 
 function AppWorkspace() {
   const searchParams = useSearchParams();
   const tab = (searchParams.get("tab") || "scan") as WorkflowStepId;
   const isDemo = searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
-  const { session, findings, patchKit, a2aTask, selectedFindingIds, scopeReviewed } = useAppSession();
+  const {
+    session,
+    findings,
+    patchKit,
+    a2aTask,
+    selectedFindingIds,
+    scopeReviewed,
+    setA2aTask,
+  } = useAppSession();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [githubStatus, setGithubStatus] = useState<RepositoryConnectionStatus | null>(null);
+  const linkedTaskId = searchParams.get("taskId") ?? searchParams.get("task");
+
+  useEffect(() => {
+    if (!linkedTaskId || a2aTask?.taskId === linkedTaskId) return;
+    void fetchWorkflowA2ATask(linkedTaskId)
+      .then(({ task }) => setA2aTask(task))
+      .catch(() => undefined);
+  }, [a2aTask?.taskId, linkedTaskId, setA2aTask]);
 
   const repository =
     findings?.repo.owner && findings?.repo.name
@@ -113,7 +129,7 @@ function AppWorkspace() {
               verifyLockBody={
                 gates.verifyUnlocked
                   ? undefined
-                  : "Verify unlocks after paid cleanup execution starts"
+                  : "Review & Accept unlocks after paid cleanup execution starts"
               }
               className="mb-6"
             />

@@ -7,6 +7,10 @@ import {
   verifyAndFundQuote,
 } from "@/lib/payment";
 import { isA2aTestPriceQuote } from "@/lib/payment/a2a-test-price";
+import { getA2ATask } from "@/lib/a2a/task-store";
+import { buildSessionKey } from "@/lib/github-app/browser-session";
+import { assertDirectTaskOwner } from "@/lib/workflow/task-access";
+import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
 
 export const runtime = "nodejs";
 
@@ -24,6 +28,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: "Quote not found." }, { status: 404 });
     }
 
+    if (quote.a2aTaskId) {
+      const task = await getA2ATask(quote.a2aTaskId);
+      if (task) {
+        try {
+          assertDirectTaskOwner(task, await buildSessionKey(request));
+        } catch {
+          return NextResponse.json({ success: false, error: "Task access denied." }, { status: 403 });
+        }
+      }
+    }
+
     proof = {
       ...proof,
       amountMicro: quote.amountMicro,
@@ -38,7 +53,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: buyerGuard.reason }, { status: 403 });
     }
 
-    if (!proof.paymentSignature && process.env.REPODIET_X402_TEST_SECRET) {
+    if (
+      !proof.paymentSignature &&
+      process.env.REPODIET_X402_TEST_SECRET &&
+      isInternalTestBuyerAllowed()
+    ) {
       proof.paymentSignature =
         signTestPaymentPayload({
           quoteId: proof.quoteId,
@@ -50,7 +69,7 @@ export async function POST(request: Request) {
         }) ?? undefined;
     }
 
-    if (!proof.paymentSignature && isA2aTestPriceQuote(quote)) {
+    if (!proof.paymentSignature && isA2aTestPriceQuote(quote) && isInternalTestBuyerAllowed()) {
       proof.paymentSignature =
         signTestPaymentPayload({
           quoteId: proof.quoteId,

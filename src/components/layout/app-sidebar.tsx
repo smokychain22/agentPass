@@ -19,7 +19,7 @@ import { RepodietLogo } from "@/components/layout/repodiet-logo";
 const mainNav = [
   {
     href: "/app",
-    label: "Scan",
+    label: "Connect Repository",
     icon: ScanSearch,
     tab: "scan",
     lockReason: undefined as string | undefined,
@@ -30,7 +30,7 @@ const mainNav = [
   },
   {
     href: "/app?tab=findings",
-    label: "Findings",
+    label: "Review Findings",
     icon: FileSearch,
     tab: "findings",
     lockReason: "Complete repository scan first",
@@ -41,7 +41,7 @@ const mainNav = [
   },
   {
     href: "/app?tab=patch",
-    label: "Fix & PR",
+    label: "Create Cleanup PR",
     icon: Package,
     tab: "patch",
     lockReason: "Select safe scope and confirm GitHub access",
@@ -52,10 +52,10 @@ const mainNav = [
   },
   {
     href: "/app?tab=verify",
-    label: "Verify",
+    label: "Review & Accept",
     icon: ShieldCheck,
     tab: "verify",
-    lockReason: "Paid cleanup execution must start first",
+    lockReason: "A paid cleanup must reach delivery review first",
     needsScan: true,
     needsFindings: true,
     needsFixPr: false,

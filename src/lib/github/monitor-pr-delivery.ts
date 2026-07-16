@@ -333,13 +333,17 @@ export async function monitorTaskPullRequestDelivery(input: {
     await saveA2ATask(finalized);
     await deliverTaskCallback(finalized);
 
-    // Seller submits delivery evidence; quote entitlement closes only after escrow release.
-    try {
-      const { submitA2aDeliveryEvidence } = await import("@/lib/a2a/settlement-lifecycle");
-      return await submitA2aDeliveryEvidence(finalized.id);
-    } catch {
-      return finalized;
+    // Only OKX marketplace orders enter the escrow delivery lifecycle. Direct-site
+    // payments remain delivery_ready until the buyer explicitly accepts here.
+    if (finalized.input.purchaseChannel !== "direct_site") {
+      try {
+        const { submitA2aDeliveryEvidence } = await import("@/lib/a2a/settlement-lifecycle");
+        return await submitA2aDeliveryEvidence(finalized.id);
+      } catch {
+        return finalized;
+      }
     }
+    return finalized;
   }
 
   const failureStatus =

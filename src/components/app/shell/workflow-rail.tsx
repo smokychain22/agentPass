@@ -76,7 +76,7 @@ function resolveState(
     if (!verifyUnlocked) {
       return {
         state: "locked",
-        lockReason: verifyLockBody ?? "Verify unlocks after paid cleanup execution starts",
+        lockReason: verifyLockBody ?? "Review & Accept unlocks after paid cleanup execution starts",
       };
     }
     if (activeStep === "verify") return { state: "active" };
@@ -99,7 +99,7 @@ export function WorkflowRail({
   const steps: WorkflowStep[] = [
     {
       id: "scan",
-      label: "Scan",
+      label: "Connect Repository",
       href: "/app",
       ...resolveState(
         "scan",
@@ -115,7 +115,7 @@ export function WorkflowRail({
     },
     {
       id: "findings",
-      label: "Findings",
+      label: "Review Findings",
       href: "/app?tab=findings",
       ...resolveState(
         "findings",
@@ -131,7 +131,7 @@ export function WorkflowRail({
     },
     {
       id: "patch",
-      label: "Fix & PR",
+      label: "Create Cleanup PR",
       href: "/app?tab=patch",
       ...resolveState(
         "patch",
@@ -147,7 +147,7 @@ export function WorkflowRail({
     },
     {
       id: "verify",
-      label: "Verify",
+      label: "Review & Accept",
       href: "/app?tab=verify",
       ...resolveState(
         "verify",
