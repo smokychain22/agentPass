@@ -7,22 +7,68 @@ function normalizeRel(p: string): string {
   return p.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
-function moduleSpecifiersForTarget(relPath: string): string[] {
-  const norm = normalizeRel(relPath);
-  const noExt = norm.replace(/\.(tsx?|jsx?|mjs|cjs)$/i, "");
-  const base = path.basename(norm);
-  const baseNoExt = base.replace(/\.(tsx?|jsx?|mjs|cjs)$/i, "");
-  return [
-    norm,
-    `./${norm}`,
-    `../${norm}`,
-    noExt,
-    `./${noExt}`,
-    base,
-    baseNoExt,
-    `@/${noExt}`,
-    `@/${norm}`,
+function withoutSourceExtension(value: string): string {
+  return value.replace(/\.(tsx?|jsx?|mjs|cjs)$/i, "");
+}
+
+export interface ModuleReference {
+  specifier: string;
+  start: number;
+  end: number;
+  line: number;
+}
+
+export function findModuleReferences(source: string): ModuleReference[] {
+  const references: ModuleReference[] = [];
+  const patterns = [
+    /\b(?:import|export)\s+(?:type\s+)?(?:[^;"']*?\s+from\s+)?["']([^"']+)["']/g,
+    /\b(?:require|import)\s*\(\s*["']([^"']+)["']\s*\)/g,
   ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const specifier = match[1];
+      if (!specifier || match.index === undefined) continue;
+      const offset = match[0].lastIndexOf(specifier);
+      if (offset < 0) continue;
+      const start = match.index + offset;
+      references.push({
+        specifier,
+        start,
+        end: start + specifier.length,
+        line: source.slice(0, start).split("\n").length,
+      });
+    }
+  }
+  return references
+    .filter((reference, index, all) =>
+      all.findIndex((candidate) =>
+        candidate.start === reference.start && candidate.end === reference.end
+      ) === index
+    )
+    .sort((left, right) => left.start - right.start);
+}
+
+export function moduleSpecifierTargetsFile(
+  importerFile: string,
+  specifier: string,
+  targetRelPath: string
+): boolean {
+  const target = withoutSourceExtension(normalizeRel(targetRelPath));
+  const normalizedSpecifier = normalizeRel(specifier);
+
+  if (specifier.startsWith(".")) {
+    const resolved = path.posix.normalize(
+      path.posix.join(path.posix.dirname(normalizeRel(importerFile)), specifier)
+    );
+    return withoutSourceExtension(normalizeRel(resolved)) === target;
+  }
+
+  if (specifier.startsWith("@/")) {
+    const aliasPath = withoutSourceExtension(normalizedSpecifier.slice(2));
+    return aliasPath === target || aliasPath === target.replace(/^src\//, "");
+  }
+
+  return withoutSourceExtension(normalizedSpecifier) === target;
 }
 
 async function walkSourceFiles(rootDir: string, dir = rootDir): Promise<string[]> {
@@ -50,7 +96,6 @@ export async function countInboundReferences(
   targetRelPath: string
 ): Promise<number> {
   const target = normalizeRel(targetRelPath);
-  const specs = new Set(moduleSpecifiersForTarget(target));
   const files = await walkSourceFiles(rootDir);
   let count = 0;
 
@@ -62,21 +107,9 @@ export async function countInboundReferences(
     } catch {
       continue;
     }
-    for (const line of source.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("import ") && !trimmed.includes("require(")) continue;
-      for (const spec of specs) {
-        if (
-          trimmed.includes(`'${spec}'`) ||
-          trimmed.includes(`"${spec}"`) ||
-          trimmed.includes(`'${spec}.`) ||
-          trimmed.includes(`"${spec}.`)
-        ) {
-          count += 1;
-          break;
-        }
-      }
-    }
+    count += findModuleReferences(source).filter((reference) =>
+      moduleSpecifierTargetsFile(file, reference.specifier, target)
+    ).length;
   }
 
   return count;
@@ -87,7 +120,6 @@ export async function findFilesImporting(
   targetRelPath: string
 ): Promise<Array<{ file: string; lines: number[] }>> {
   const target = normalizeRel(targetRelPath);
-  const specs = new Set(moduleSpecifiersForTarget(target));
   const files = await walkSourceFiles(rootDir);
   const hits: Array<{ file: string; lines: number[] }> = [];
 
@@ -99,17 +131,13 @@ export async function findFilesImporting(
     } catch {
       continue;
     }
-    const lines: number[] = [];
-    source.split("\n").forEach((line, idx) => {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("import ") && !trimmed.includes("require(")) return;
-      for (const spec of specs) {
-        if (trimmed.includes(`'${spec}'`) || trimmed.includes(`"${spec}"`)) {
-          lines.push(idx + 1);
-          break;
-        }
-      }
-    });
+    const lines = [...new Set(
+      findModuleReferences(source)
+        .filter((reference) =>
+          moduleSpecifierTargetsFile(file, reference.specifier, target)
+        )
+        .map((reference) => reference.line)
+    )];
     if (lines.length) hits.push({ file, lines });
   }
 

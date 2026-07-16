@@ -9,6 +9,7 @@ import {
   listAutomaticTransformers,
   getTransformerDefinition,
 } from "../src/lib/execution/transformer-registry";
+import { buildMaintenanceOutcome } from "../src/lib/maintenance/outcome";
 
 const E2E_REPO_URL = "https://github.com/smokychain22/repodiet-e2e-test";
 
@@ -42,7 +43,7 @@ async function main() {
     const exactDup = findings.duplicates.filter((f) =>
       f.evidence.signals.some((s) => s === "exact_file_duplicate=true")
     );
-    assert.ok(exactDup.length >= 1, "Expected exact duplicate finding");
+    assert.ok(exactDup.length >= 2, "Expected two exact duplicate findings for a 3-to-1 outcome");
     const emptyFile = findings.unused.files.find((f) =>
       f.evidence.signals.some((s) => s === "empty_file=true")
     );
@@ -75,6 +76,34 @@ async function main() {
     assert.ok(dashboardEdit, "Expected Dashboard.tsx validated edit");
     assert.doesNotMatch(dashboardEdit!.content, /\bClock\b/);
     assert.match(dashboardEdit!.content, /CheckCircle/);
+  });
+
+  await test("validated patch proves a prepared 3-to-1 canonicalization outcome", () => {
+    const outcome = buildMaintenanceOutcome({
+      findings: findings!,
+      changeOperations: patchKit!.changeOperations,
+      verificationStatus:
+        patchKit!.repositoryVerification?.status ?? patchKit!.patchValidation?.status,
+    });
+    const canonicalization = outcome.canonicalizations.find(
+      (entry) => entry.canonicalPath === "src/lib/exact-dup-canonical.ts"
+    );
+
+    assert.equal(outcome.kind, "exact_duplicate_canonicalization");
+    assert.equal(
+      outcome.headline,
+      "3 byte-identical implementations will be consolidated into 1 canonical implementation"
+    );
+    assert.ok(canonicalization, "Expected exact duplicate canonicalization outcome");
+    assert.equal(canonicalization!.beforeImplementations, 3);
+    assert.equal(canonicalization!.afterImplementations, 1);
+    assert.deepEqual(canonicalization!.removedDuplicatePaths, [
+      "src/lib/exact-dup-copy-two.ts",
+      "src/lib/exact-dup-copy.ts",
+    ]);
+    assert.deepEqual(canonicalization!.rewiredImporterPaths, [
+      "src/lib/exact-dup-consumer.ts",
+    ]);
   });
 
   await test("verification runs real repository commands", async () => {

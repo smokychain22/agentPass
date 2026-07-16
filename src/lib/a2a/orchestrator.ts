@@ -72,6 +72,7 @@ import {
 import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
 import type { Finding } from "@/lib/findings/types";
 import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
+import { buildMaintenanceOutcome } from "@/lib/maintenance/outcome";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -616,8 +617,17 @@ async function executeChanges(
         greenPrExecution = dispatch as unknown as Record<string, unknown>;
       }
 
+      const verificationStatus = patchKit.repositoryVerification?.status ??
+        patchKit.patchValidation?.status ??
+        "unknown";
+      const maintenanceOutcome = buildMaintenanceOutcome({
+        findings: analyzed,
+        changeOperations: patchKit.changeOperations,
+        verificationStatus,
+      });
+
       const approval = {
-        summary: `${changedFiles.length} file(s) will change on branch ${contractedBranch ?? `repodiet/cleanup-${task.id}`}`,
+        summary: `${maintenanceOutcome.headline}. ${changedFiles.length} file(s) will change on branch ${contractedBranch ?? `repodiet/cleanup-${task.id}`}`,
         repository: `${analyzed.repo.owner}/${analyzed.repo.name}`,
         branch: contractedBranch ?? `repodiet/cleanup-${task.id}`,
         changes: changedFiles.map((filePath) => ({
@@ -635,6 +645,7 @@ async function executeChanges(
       return syncTask(task, sm, {
         approval,
         result: {
+          maintenanceOutcome,
           findings: task.result.findings,
           changes: {
             changedFiles,
@@ -644,9 +655,7 @@ async function executeChanges(
             finalDecision: "verified_fix",
           },
           verification: {
-            status: patchKit.repositoryVerification?.status ??
-              patchKit.patchValidation?.status ??
-              "unknown",
+            status: verificationStatus,
             checks: patchKit.repositoryVerification?.checks,
             limitations: patchKit.patchValidation?.userMessage
               ? [patchKit.patchValidation.userMessage]
@@ -1020,6 +1029,13 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
           : undefined,
     });
 
+    current = await syncTask(current, sm, {
+      result: {
+        ...current.result,
+        maintenanceOutcome: pr.data.actionSummary.maintenanceOutcome,
+      },
+    });
+
     return monitorTaskPullRequestDelivery({
       task: current,
       prNumber: pr.data.pullRequest.number,
@@ -1057,6 +1073,7 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
     scanId: task.scanId,
     approval: task.approval,
     findings: task.result.findings ?? {},
+    maintenanceOutcome: task.result.maintenanceOutcome ?? {},
     changes: task.result.changes ?? {},
     verification: task.result.verification ?? {},
     pullRequest: task.result.pullRequest ?? {},

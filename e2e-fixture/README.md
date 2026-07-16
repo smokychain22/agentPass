@@ -19,12 +19,14 @@ Controlled Next.js fixture for verifying [RepoDiet](https://skillswap-virid-kapp
 | 5 | `orphan-a.ts` / `orphan-b.ts` | Orphan module group | **Review first** |
 | 6 | `src/app/page.tsx`, `layout.tsx` | Next.js entry points | **Protected** |
 | 7 | `left-pad` in `package.json` | Unused dependency | Finding; careful removal only |
+| 8 | `exact-dup-canonical.ts` plus two byte-identical copies | Exact duplicate implementations with active importers | **Canonicalize** — rewire importers and remove both copies |
 
 ## Best first test
 
 1. Unused `Clock` import → real edit in `Dashboard.tsx`
 2. Backup file → real deletion of `src/archive/OldDashboard.backup.tsx`
 3. `unused-helper.ts` → review-first, **no** automatic deletion
+4. Three byte-identical implementations → one canonical implementation with importers rewired
 
 ### Expected import edit
 

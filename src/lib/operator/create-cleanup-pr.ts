@@ -12,6 +12,10 @@ import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
 import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
 import { resolveValidatedDeliveryOps } from "./delivery-operations";
+import {
+  buildMaintenanceOutcome,
+  type MaintenanceOutcome,
+} from "@/lib/maintenance/outcome";
 
 export type CleanupPrMode = "safe_only" | "report_only";
 
@@ -72,7 +76,18 @@ function buildCleanupBranchName(): string {
   return `repodiet/cleanup-${ymd}-${nanoid(6)}`;
 }
 
-function buildPrTitle(filesEdited: number, filesDeleted: number): string {
+function buildPrTitle(
+  filesEdited: number,
+  filesDeleted: number,
+  maintenanceOutcome: MaintenanceOutcome
+): string {
+  if (
+    maintenanceOutcome.kind === "exact_duplicate_canonicalization" &&
+    maintenanceOutcome.canonicalizations.length === 1
+  ) {
+    const before = maintenanceOutcome.canonicalizations[0]!.beforeImplementations;
+    return `RepoDiet: consolidate ${before} byte-identical implementations`;
+  }
   const total = filesEdited + filesDeleted;
   if (total <= 0) return `${PR_TITLE_PREFIX} cleanup bundle`;
   return `${PR_TITLE_PREFIX} ${total} verified repository issue${total === 1 ? "" : "s"}`;
@@ -85,7 +100,8 @@ function buildPrBody(
   buckets: ClassifiedBuckets,
   patchKit: PatchKitPayload,
   editedPaths: string[],
-  filesDeleted: number
+  filesDeleted: number,
+  maintenanceOutcome: MaintenanceOutcome
 ): string {
   const s = findings.summary;
   const pk = patchKit.summary;
@@ -96,6 +112,24 @@ function buildPrBody(
     "",
     "> RepoDiet did not push to main or merge this PR. You review and merge.",
     "",
+    "### Purchased outcome",
+    `**${maintenanceOutcome.headline}.**`,
+    "",
+    maintenanceOutcome.evidenceStatement,
+    "",
+  ];
+
+  for (const canonicalization of maintenanceOutcome.canonicalizations) {
+    lines.push(
+      `- Canonical implementation: \`${canonicalization.canonicalPath}\``,
+      `- Removed byte-identical copies: ${canonicalization.removedDuplicatePaths.map((path) => `\`${path}\``).join(", ")}`,
+      `- Rewired importers: ${canonicalization.rewiredImporterPaths.length > 0 ? canonicalization.rewiredImporterPaths.map((path) => `\`${path}\``).join(", ") : "none required"}`,
+      `- Content hash evidence: \`${canonicalization.contentHash}\``,
+      ""
+    );
+  }
+
+  lines.push(
     "### Scanned repository",
     `- Commit: \`${findings.repo.commitSha ?? "unknown"}\``,
     `- Branch: \`${findings.repo.branch}\``,
@@ -106,8 +140,8 @@ function buildPrBody(
     `- Files deleted: **${filesDeleted}**`,
     `- Lines added: **${pk.patchLines ? "see patch" : "—"}**`,
     `- Patch validation: **${patchKit.patchValidation?.status ?? pk.patchValidationStatus ?? "unknown"}**`,
-    "",
-  ];
+    ""
+  );
 
   if (editedPaths.length > 0) {
     lines.push("### Edited files", "", ...editedPaths.map((p) => `- \`${p}\``), "");
@@ -258,6 +292,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   await client.createBranch(parsed.owner, parsed.repo, cleanupBranch, baseSha);
 
   let filesDeleted = 0;
+  const deletedPathsApplied: string[] = [];
 
   const artifacts = patchKit.artifacts;
   const artifactEntries: Array<{ path: string; content: string; message: string }> = [
@@ -340,6 +375,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       );
       if (deleted) {
         filesDeleted += 1;
+        deletedPathsApplied.push(path);
       } else {
         warnings.push(`Safe candidate not found on branch and was skipped: ${path}`);
       }
@@ -347,7 +383,23 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   }
 
   const editedPaths = deliveryOps.contentEdits.map((e) => e.path);
-  const prTitle = buildPrTitle(editedPaths.length, filesDeleted);
+  const deliveredPathSet = new Set(
+    [...editedPaths, ...deletedPathsApplied].map((filePath) =>
+      filePath.replace(/\\/g, "/").replace(/^\.\//, "")
+    )
+  );
+  const maintenanceOutcome = buildMaintenanceOutcome({
+    findings,
+    changeOperations: patchKit.changeOperations?.filter((operation) =>
+      deliveredPathSet.has(operation.filePath.replace(/\\/g, "/").replace(/^\.\//, ""))
+    ),
+    verificationStatus:
+      patchKit.repositoryVerification?.status ??
+      patchKit.patchValidation?.status ??
+      "unknown",
+    deliveryState: "delivered",
+  });
+  const prTitle = buildPrTitle(editedPaths.length, filesDeleted, maintenanceOutcome);
 
   const pr = await client.createPullRequest(
     parsed.owner,
@@ -355,7 +407,16 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     prTitle,
     cleanupBranch,
     baseBranch,
-    buildPrBody(mode, deliveryOps.deletePaths, findings, buckets, patchKit, editedPaths, filesDeleted)
+    buildPrBody(
+      mode,
+      deletedPathsApplied,
+      findings,
+      buckets,
+      patchKit,
+      editedPaths,
+      filesDeleted,
+      maintenanceOutcome
+    )
   );
 
   return {
@@ -374,6 +435,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
       },
       actionSummary: {
         mode,
+        maintenanceOutcome,
         filesDeleted,
         artifactsAdded: artifactEntries.length,
         safeCandidatesApplied:

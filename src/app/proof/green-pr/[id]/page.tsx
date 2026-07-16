@@ -55,14 +55,15 @@ export default async function GreenPrProofPage({
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12 sm:px-6">
         <div className="mb-8 max-w-3xl">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-electric">
-            RepoDiet Green PR Protocol
+            RepoDiet delivered maintenance
           </p>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Proof-carrying repository maintenance
+            The cleanup job ended in a verified pull request
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            This page verifies the signed contract, bounded execution, pull-request head,
-            required checks, receipt binding and acceptance recommendation.
+            This is the buyer-facing delivery record: what was purchased, which files changed,
+            the real pull request, required checks, and whether the result is ready to accept.
+            Signatures and digests stay underneath as supporting evidence.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <Status ok={verification.valid}>
