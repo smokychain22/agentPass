@@ -5,7 +5,11 @@ import { createHash } from "node:crypto";
 import type { Finding } from "@/lib/findings/types";
 import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
-import { findFilesImporting } from "../reference-graph";
+import {
+  findFilesImporting,
+  findModuleReferences,
+  moduleSpecifierTargetsFile,
+} from "../reference-graph";
 import { buildTextDiff } from "../fix-preflight";
 import type { AppliedFix } from "./apply-phase1-fix";
 import type { Phase1PluginId } from "./phase1-plugins";
@@ -46,15 +50,14 @@ function rewriteImportsToCanonical(
   const importTarget = toCanonical.startsWith(".") ? toCanonical : `./${toCanonical}`;
   const normalizedImport = importTarget.replace(/\.(tsx?|jsx?|mjs|cjs)$/i, "");
 
-  const dupBase = path.posix.basename(duplicateRel).replace(/\.(tsx?|jsx?|mjs|cjs)$/i, "");
-  const patterns = [
-    new RegExp(`(['"])(\\.\\./[^'"]*${dupBase}|\\./[^'"]*${dupBase}|@/[^'"]*${dupBase})\\1`, "g"),
-    new RegExp(`(['"])${duplicateRel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`, "g"),
-  ];
-
   let next = source;
-  for (const re of patterns) {
-    next = next.replace(re, `$1${normalizedImport}$1`);
+  const references = findModuleReferences(source)
+    .filter((reference) =>
+      moduleSpecifierTargetsFile(importerFile, reference.specifier, duplicateRel)
+    )
+    .sort((left, right) => right.start - left.start);
+  for (const reference of references) {
+    next = `${next.slice(0, reference.start)}${normalizedImport}${next.slice(reference.end)}`;
   }
   return next;
 }
@@ -171,10 +174,16 @@ export async function applyConsolidateExactDuplicate(
     }
   }
 
+  const unresolvedImporters = await findFilesImporting(rootDir, duplicate);
+  if (unresolvedImporters.length > 0) {
+    throw new Error(
+      `import_rewrite_failed: ${unresolvedImporters.map((hit) => hit.file).join(", ")}`
+    );
+  }
+
   await fs.unlink(duplicateFull);
   modifiedSources[duplicate] = "";
   changedPaths.add(duplicate);
-  for (const p of importers.map((h) => h.file)) changedPaths.add(p);
 
   let diff = await gitDiff(rootDir);
   if (!diff.trim()) {

@@ -1,3 +1,5 @@
+import type { MaintenanceOutcome } from "@/lib/maintenance/outcome";
+
 export type A2ATaskType =
   | "repository.analysis"
   | "repository.safe_cleanup"
@@ -120,6 +122,8 @@ export interface A2ATaskInput {
 }
 
 export interface A2ATaskResult {
+  /** Concrete repository outcome derived from delivered patch operations, never a score. */
+  maintenanceOutcome?: MaintenanceOutcome;
   findings?: Record<string, unknown>;
   changes?: {
     changedFiles: string[];

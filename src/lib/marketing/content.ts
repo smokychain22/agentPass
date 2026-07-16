@@ -534,25 +534,25 @@ export const OKX_A2A_SERVICE = {
 };
 
 export const OKX_JUDGE_PITCH = {
-  headline: "Autonomous repository repair for AI-built codebases",
+  headline: "The verified cleanup contractor for AI-built repositories",
   problem:
-    "AI coding tools help teams ship faster but leave duplicate logic, dead files, unused dependencies, and abandoned modules behind. General coding agents can fix these issues when explicitly prompted — but they require judgment, prompt engineering, and manual Git workflow.",
+    "AI coding tools create repository debt faster than teams can safely remove it: duplicate implementations, abandoned modules, dead imports, and dependencies that nobody wants to delete without proof.",
   differentiation:
-    "RepoDiet is a vertical cleanup operator — not a horizontal coding agent. Connect a repository and RepoDiet automatically detects evidence-backed debt, applies deterministic transformations, verifies the repository, and delivers a review-ready pull request without cleanup prompts.",
+    "Hire RepoDiet for a bounded maintenance outcome. It pins the source commit, changes only the agreed scope on an isolated branch, opens a real GitHub pull request, and independently checks the result before the buyer accepts delivery.",
   proofContract:
-    "Every action moves through an auditable proof ladder: Detected → Eligible → Attempted → Generated → Validated → Verified → Delivered. Numbers come from backend execution, not scan-time estimates.",
+    "The product is the completed cleanup job, not a score or badge: the buyer sees the exact requested scope, before/after repository outcome, PR, checks, acceptance, and settlement evidence.",
   vsAgents: [
-    "Cursor, Claude Code, and Codex can edit repositories — but users must instruct each cleanup step and manage safety.",
-    "Sonar, Knip, and jscpd mostly detect — RepoDiet removes imports, deletes confirmed dead files, uninstalls packages, and opens PRs.",
-    "Code-review bots inspect new changes — RepoDiet cleans accumulated repository debt and can prevent it from returning.",
+    "Coding assistants generate edits; RepoDiet accepts responsibility for a narrowly contracted maintenance result and delivers it through GitHub.",
+    "Static analyzers report debt; RepoDiet safely executes supported removals and canonicalizations, verifies them, and opens the review-ready PR.",
+    "The first canonicalization job is intentionally provable: byte-identical implementations are rewired to one retained file. Near-duplicate semantic merging remains review-only.",
   ],
   agentUtility:
-    "A2MCP Quick Triage (analyze_repository, service 32948) is standardized pay-per-call through x402 at 0.03 USD₮0. A2A Verified Cleanup PR (create_cleanup_pr, service 32947) is negotiated delivery with escrow and buyer acceptance (default reference 1 USD₮0). Agents pay for verified outcomes — findings, diffs, verification logs, and PR URLs — not reports alone.",
+    "A2MCP Quick Triage (analyze_repository, service 32948) lets an agent inspect a repository before hiring. A2A Verified Cleanup PR (create_cleanup_pr, service 32947) negotiates the actual job through escrow and buyer acceptance. The agent pays for a delivered repository change, not another report.",
   demoProof: [
-    "A2MCP Quick Triage returns up to five prioritized findings with a signed receipt",
-    "A2A Cleanup PR opens on an isolated cleanup branch — main untouched",
-    "Protected Next.js routes, configs, env files, and lockfiles left untouched",
-    "Buyer acceptance gates escrow release",
+    "Buyer hires RepoDiet for an exact repository scope and pinned source commit",
+    "Three byte-identical implementations become one canonical implementation with importers rewired",
+    "A real GitHub PR opens on an isolated branch and required checks run; main remains untouched",
+    "Buyer acceptance gates escrow release after the delivered result is reviewable",
   ],
 };
 

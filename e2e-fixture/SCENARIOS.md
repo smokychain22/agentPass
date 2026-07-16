@@ -22,6 +22,7 @@ Use this checklist when running against production RepoDiet.
 | Orphan modules | `orphan-a.ts`, `orphan-b.ts` | Review first |
 | Protected route | `src/app/page.tsx` | Do not touch |
 | Unused dependency | `left-pad` | Review / package suggestion |
+| Exact duplicate canonicalization | `exact-dup-canonical.ts` plus two copies | Supported → rewire importer and delete both copies |
 
 ## Quick Cleanup — minimum proof
 
@@ -31,6 +32,7 @@ Use this checklist when running against production RepoDiet.
 | Generated changes | ≥ 1 |
 | Validated changes | ≥ 1 after `git apply --check` |
 | Patch validation | `passed` (not `skipped` / `not_generated`) |
+| Purchased outcome | `3 byte-identical implementations consolidated into 1 canonical implementation` |
 
 ## Verify tab
 

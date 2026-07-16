@@ -79,10 +79,11 @@ export function OkxPageContent() {
         </Badge>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">RepoDiet on OKX.AI</h1>
         <p className="mt-4 max-w-2xl text-muted-foreground leading-relaxed">
-          RepoDiet Operator is a Software Utility ASP with an explicit protocol split:{" "}
-          <strong className="text-foreground">A2MCP</strong> standardizes Quick Triage pay-per-call
-          through x402; <strong className="text-foreground">A2A</strong> delivers customized cleanup
-          PRs through negotiated task terms, escrow, and buyer acceptance.
+          Hire RepoDiet to clean an AI-built repository. It changes only the agreed scope, opens a
+          real GitHub pull request, independently verifies the result, and lets the buyer accept
+          delivery before escrow is released. <strong className="text-foreground">A2MCP</strong>{" "}
+          provides fast paid triage; <strong className="text-foreground">A2A</strong> contracts and
+          delivers the repository work.
         </p>
 
         <div className="mt-6 flex flex-wrap gap-2">
