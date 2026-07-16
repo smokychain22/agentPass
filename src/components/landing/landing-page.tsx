@@ -41,19 +41,19 @@ export function LandingPage() {
 
       <main className="relative z-10">
         {/* Hero */}
-        <section className="relative overflow-hidden pb-20 pt-14 sm:pt-24">
+        <section className="relative overflow-hidden pb-12 pt-8 sm:pb-14 sm:pt-12 lg:pt-10">
           <Container>
-            <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-14">
-              <div>
-                <Badge variant="cyan" className="mb-5 font-mono text-[10px] uppercase tracking-[0.2em]">
+            <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,0.43fr)_minmax(0,0.57fr)] lg:items-center lg:gap-9 xl:gap-10">
+              <div className="min-w-0">
+                <Badge variant="cyan" className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em]">
                   {HERO.badge}
                 </Badge>
                 <h1 className="ds-hero-title">{HERO.headline}</h1>
-                <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+                <p className="mt-3 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-[1.05rem]">
                   {HERO.productSubheadline}
                 </p>
-                <HeroCta className="mt-8" />
-                <ul className="mt-6 flex flex-wrap gap-x-4 gap-y-2" aria-label="Trust points">
+                <HeroCta className="mt-5 sm:mt-6" />
+                <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-2" aria-label="Trust points">
                   {TRUST_POINTS.map((point) => (
                     <li key={point} className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
                       <span className="h-1 w-1 rounded-full bg-signal" aria-hidden />
@@ -62,7 +62,9 @@ export function LandingPage() {
                   ))}
                 </ul>
               </div>
-              <VerifiedDeliveryVisual />
+              <div className="min-w-0 lg:self-center">
+                <VerifiedDeliveryVisual />
+              </div>
             </div>
           </Container>
         </section>
