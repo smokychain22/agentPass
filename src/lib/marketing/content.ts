@@ -168,7 +168,7 @@ export const TOP3_STORY = {
   before: "Scanner + report bundle",
   after: "Safe cleanup operator + GitHub PR action",
   asp:
-    "A2MCP: standardized Quick Triage pay-per-call through x402. A2A: customized Verified Cleanup PR through negotiated task terms, escrow, and buyer acceptance.",
+    "A2MCP: agents call analyze_repository for fast repository triage. A2A: users hire RepoDiet Operator to negotiate and deliver a review-ready cleanup PR.",
 };
 
 export const USE_CASES = [
