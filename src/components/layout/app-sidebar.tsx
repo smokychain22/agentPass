@@ -11,57 +11,28 @@ import {
   Blocks,
   Lock,
   X,
+  Check,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "@/components/design-system/status-indicator";
 import { RepodietLogo } from "@/components/layout/repodiet-logo";
+import type { WorkflowStepState, WorkflowTabId } from "@/lib/workflow/step-states";
 
-const mainNav = [
-  {
-    href: "/app",
-    label: "Connect Repository",
-    icon: ScanSearch,
-    tab: "scan",
-    lockReason: undefined as string | undefined,
-    needsScan: false,
-    needsFindings: false,
-    needsFixPr: false,
-    needsVerify: false,
-  },
-  {
-    href: "/app?tab=findings",
-    label: "Review Findings",
-    icon: FileSearch,
-    tab: "findings",
-    lockReason: "Complete repository scan first",
-    needsScan: true,
-    needsFindings: false,
-    needsFixPr: false,
-    needsVerify: false,
-  },
-  {
-    href: "/app?tab=patch",
-    label: "Create Cleanup PR",
-    icon: Package,
-    tab: "patch",
-    lockReason: "Select safe scope and confirm GitHub access",
-    needsScan: true,
-    needsFindings: true,
-    needsFixPr: true,
-    needsVerify: false,
-  },
-  {
-    href: "/app?tab=verify",
-    label: "Review & Accept",
-    icon: ShieldCheck,
-    tab: "verify",
-    lockReason: "A paid cleanup must reach delivery review first",
-    needsScan: true,
-    needsFindings: true,
-    needsFixPr: false,
-    needsVerify: true,
-  },
-];
+const ICONS: Record<WorkflowTabId, typeof ScanSearch> = {
+  scan: ScanSearch,
+  findings: FileSearch,
+  patch: Package,
+  verify: ShieldCheck,
+};
+
+const HREF: Record<WorkflowTabId, string> = {
+  scan: "/app",
+  findings: "/app?tab=findings",
+  patch: "/app?tab=patch",
+  verify: "/app?tab=verify",
+};
 
 const secondaryNav = [
   { href: "/docs", label: "Docs", icon: BookOpen },
@@ -69,29 +40,21 @@ const secondaryNav = [
 ];
 
 interface AppSidebarProps {
-  scanComplete?: boolean;
-  findingsUnlocked?: boolean;
-  findingsReady?: boolean;
-  fixPrUnlocked?: boolean;
-  fixPrLockBody?: string;
-  verifyUnlocked?: boolean;
+  steps: WorkflowStepState[];
+  repositoryConnected?: boolean;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
 
 export function AppSidebar({
-  scanComplete = false,
-  findingsUnlocked = false,
-  findingsReady = false,
-  fixPrUnlocked = false,
-  fixPrLockBody,
-  verifyUnlocked = false,
+  steps,
+  repositoryConnected = false,
   mobileOpen = false,
   onMobileClose,
 }: AppSidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const activeTab = searchParams.get("tab") || "scan";
+  const activeTab = (searchParams.get("tab") || "scan") as WorkflowTabId;
 
   const content = (
     <>
@@ -115,57 +78,44 @@ export function AppSidebar({
         <div>
           <p className="mb-2 px-2 ds-label">Workflow</p>
           <ul className="space-y-0.5">
-            {mainNav.map((item) => {
-              let locked = false;
-              let lockReason = item.lockReason;
-
-              if (item.needsScan && !scanComplete) locked = true;
-              else if (item.needsFindings && !findingsUnlocked) {
-                locked = true;
-                lockReason = scanComplete
-                  ? "Select which application RepoDiet should analyze"
-                  : item.lockReason;
-              }               else if (item.needsFindings && !findingsReady && item.tab === "patch") locked = true;
-              else if ("needsFixPr" in item && item.needsFixPr && !fixPrUnlocked) {
-                locked = true;
-                lockReason = fixPrLockBody ?? item.lockReason;
-              } else if (item.needsVerify && !verifyUnlocked) {
-                locked = true;
-                lockReason = item.lockReason;
-              }
-
-              const active = pathname === "/app" && activeTab === item.tab;
+            {steps.map((step) => {
+              const Icon = ICONS[step.tabId];
+              const locked = step.status === "locked";
+              const active = pathname === "/app" && activeTab === step.tabId;
 
               return (
-                <li key={item.tab}>
+                <li key={step.id}>
                   {locked ? (
                     <span
                       className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground/50"
-                      title={lockReason}
+                      title={step.explanation}
                     >
-                      <item.icon className="h-4 w-4 shrink-0 opacity-50" aria-hidden />
-                      <span className="flex-1">{item.label}</span>
+                      <Icon className="h-4 w-4 shrink-0 opacity-50" aria-hidden />
+                      <span className="flex-1">{step.title}</span>
                       <Lock className="h-3 w-3 shrink-0" aria-hidden />
                     </span>
                   ) : (
                     <Link
-                      href={item.href}
+                      href={HREF[step.tabId]}
                       onClick={onMobileClose}
                       className={cn(
                         "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
-                        active
+                        active || step.status === "current"
                           ? "border border-electric/30 bg-electric/10 text-electric"
-                          : "text-muted-foreground hover:bg-card-elevated hover:text-foreground"
+                          : step.status === "complete"
+                            ? "text-signal hover:bg-card-elevated"
+                            : "text-muted-foreground hover:bg-card-elevated hover:text-foreground"
                       )}
                       aria-current={active ? "page" : undefined}
                     >
-                      <item.icon className="h-4 w-4 shrink-0" aria-hidden />
-                      {item.label}
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                      <span className="flex-1">{step.title}</span>
+                      <SidebarStepIcon status={step.status} />
                     </Link>
                   )}
-                  {locked && lockReason && (
+                  {locked && step.explanation && (
                     <p className="px-2.5 pb-1 pt-0.5 text-[10px] leading-snug text-muted-foreground/60">
-                      {lockReason}
+                      {step.explanation}
                     </p>
                   )}
                 </li>
@@ -201,12 +151,12 @@ export function AppSidebar({
       <div className="border-t border-border/60 p-4 lg:p-5">
         <p className="ds-label mb-2">Session</p>
         <StatusIndicator
-          label={scanComplete ? "Repository connected" : "Awaiting scan"}
-          status={scanComplete ? "complete" : "pending"}
+          label={repositoryConnected ? "Repository connected" : "Awaiting scan"}
+          status={repositoryConnected ? "complete" : "pending"}
         />
         <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-          Workflow restores after refresh when scan, findings, and patch data are persisted
-          server-side.
+          Workflow restores after refresh only when scan, findings, and delivery records match the
+          active repository.
         </p>
       </div>
     </>
@@ -233,4 +183,11 @@ export function AppSidebar({
       )}
     </>
   );
+}
+
+function SidebarStepIcon({ status }: { status: WorkflowStepState["status"] }) {
+  if (status === "complete") return <Check className="h-3 w-3 shrink-0 text-signal" aria-hidden />;
+  if (status === "running") return <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />;
+  if (status === "failed") return <AlertCircle className="h-3 w-3 shrink-0 text-danger" aria-hidden />;
+  return null;
 }

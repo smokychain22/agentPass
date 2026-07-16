@@ -136,14 +136,15 @@ export function FindingsTab() {
   });
 
   if (!gates.findingsUnlocked) {
+    const connected = Boolean(session.scanComplete && session.scanResult?.repo?.commitSha);
     return (
       <LockedTab
         step="02"
         title="Findings Engine"
         description={
-          session.scanComplete
+          connected && !session.projectRootConfirmed
             ? "Select which application RepoDiet should analyze on the Scan tab before running findings."
-            : "Available after repository scan. Complete a scan first to unlock findings analysis."
+            : "Review Findings becomes available after RepoDiet successfully scans and pins the repository commit."
         }
       />
     );

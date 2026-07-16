@@ -27,10 +27,12 @@ test("scan tab does not auto-display restored session scan results", () => {
   assert.match(src, /showSuccess = phase === "complete" && Boolean\(result\)/);
 });
 
-test("app header stays idle on scan tab until user leaves scan", () => {
+test("app header and workflow rail use repositoryConnected, not blank-form cosmetics", () => {
   const src = fs.readFileSync(path.join(ROOT, "src/app/app/page.tsx"), "utf8");
-  assert.match(src, /tab === "scan"/);
+  assert.match(src, /isRepositoryConnected/);
+  assert.match(src, /resolveWorkflowStepStates/);
   assert.match(src, /headerRepoUrl/);
+  assert.match(src, /repositoryConnected \? "complete" : "idle"/);
 });
 
 console.log("scan-tab-blank-slate: all passed");

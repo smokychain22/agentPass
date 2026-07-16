@@ -68,7 +68,7 @@ export function AppTopBar({
             {branch && (
               <span className="font-mono text-[10px] text-muted-foreground">branch: {branch}</span>
             )}
-            {isDemo && <RiskBadge level="cyan">Demo Repository</RiskBadge>}
+            {isDemo && <RiskBadge level="cyan">Example Repository</RiskBadge>}
           </div>
         </div>
       </div>

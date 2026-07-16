@@ -80,12 +80,20 @@ export async function fetchBranchCommitSha(
   branch: string
 ): Promise<string | null> {
   try {
-    const res = await tryFetch(
+    const refRes = await tryFetch(
       `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`
     );
-    if (!res.ok) return null;
-    const data = (await res.json()) as { object?: { sha?: string } };
-    return data.object?.sha ?? null;
+    if (refRes.ok) {
+      const data = (await refRes.json()) as { object?: { sha?: string } };
+      if (data.object?.sha) return data.object.sha;
+    }
+    // Fallback: commits API (works for branch names and short SHAs when refs API is unavailable).
+    const commitRes = await tryFetch(
+      `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`
+    );
+    if (!commitRes.ok) return null;
+    const commit = (await commitRes.json()) as { sha?: string };
+    return commit.sha ?? null;
   } catch {
     return null;
   }
