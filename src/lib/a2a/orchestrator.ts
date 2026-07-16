@@ -71,6 +71,7 @@ import {
 } from "@/lib/green-pr";
 import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
 import type { Finding } from "@/lib/findings/types";
+import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -1047,6 +1048,10 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
   return {
     taskId: task.id,
     type: task.type,
+    operation:
+      task.type === "repository.cleanup_pr" || task.type === "repository.verified_cleanup"
+        ? OKX_A2A_PUBLIC_OPERATION
+        : mapTaskTypeToOperation(task.type),
     status: task.status,
     repository: task.repository,
     scanId: task.scanId,
