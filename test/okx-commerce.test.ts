@@ -21,7 +21,7 @@ function test(name: string, fn: () => void | Promise<void>) {
 async function run() {
   console.log("OKX commerce gateway tests");
 
-  await test("A2MCP service catalog has five launch tools", () => {
+  await test("internal A2MCP catalog retains supported legacy tools", () => {
     assert.equal(Object.keys(A2MCP_SERVICES).length, 5);
     const analyzePrice = priceForOperation("analyze_repository");
     assert.equal(getA2mcpService("analyze_repository")?.amountMicro, analyzePrice.amountMicro);
@@ -56,7 +56,10 @@ async function run() {
     assert.equal(health.ok, true);
     assert.equal(health.architecture.a2mcp, "fixed-price x402 per call");
     assert.match(health.architecture.doubleChargePolicy, /never pays A2MCP/i);
-    assert.ok(health.services.length >= 8);
+    assert.deepEqual(
+      health.services.map((service) => service.serviceId),
+      ["analyze_repository", "verified_cleanup_pr"]
+    );
   });
 
   await test("paid mode respects REPODIET_OKX_A2MCP_PAID", () => {
