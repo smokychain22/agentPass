@@ -362,14 +362,7 @@ export function DeliveryEngine() {
           <span>A2A · Cleanup PR delivery</span>
         </div>
       </footer>
-      <p
-        className="de-hint"
-        style={{
-          padding: "0 0.85rem 0.75rem",
-          marginTop: "-0.25rem",
-          color: "rgba(155, 170, 194, 0.7)",
-        }}
-      >
+      <p className="de-engine__tagline">
         Analysis discovers the work. A2A delivers the approved result.
       </p>
     </section>
