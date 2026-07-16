@@ -239,7 +239,7 @@ export function DeliveryEngine() {
               );
             })}
           </div>
-          <p className="sr-only">
+          <p className="de-sr-only">
             Illustrative repository tree with evidence markers for unused code, duplicates,
             dependencies, and protected paths.
           </p>
@@ -286,7 +286,7 @@ export function DeliveryEngine() {
               ))}
             </ul>
           </div>
-          <p className="sr-only">Only approved changes pass. Protected paths are blocked.</p>
+          <p className="de-sr-only">Only approved changes pass. Protected paths are blocked.</p>
         </div>
 
         {/* RIGHT — Verified PR */}

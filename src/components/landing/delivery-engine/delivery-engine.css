@@ -1,5 +1,17 @@
 /* RepoDiet Delivery Engine — restrained CSS motion only */
 
+.de-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .de-engine {
   --de-bg: rgba(5, 8, 13, 0.72);
   --de-line: rgba(155, 170, 194, 0.18);
@@ -77,11 +89,17 @@
   border: 1px solid rgba(155, 170, 194, 0.1);
   border-radius: 0.5rem;
   background: rgba(5, 8, 13, 0.45);
-  padding: 0.65rem 0.7rem;
+  padding: 0.55rem 0.65rem;
   transition:
     border-color 0.35s ease,
     box-shadow 0.35s ease,
     background-color 0.35s ease;
+}
+
+.de-zone--pr {
+  background:
+    radial-gradient(ellipse 80% 60% at 70% 20%, rgba(32, 230, 168, 0.08), transparent 55%),
+    rgba(5, 8, 13, 0.55);
 }
 
 .de-zone.is-active {
