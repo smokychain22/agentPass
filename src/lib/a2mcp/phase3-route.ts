@@ -24,6 +24,10 @@ import {
 } from "@/lib/a2mcp/a2mcp-execution-store";
 import { markQuoteRetryableFailure, markQuoteCompleted } from "@/lib/payment/settlement";
 import { getBoundQuote } from "@/lib/payment/payment-store";
+import {
+  logMarketplaceTelemetry,
+  touchMarketplaceHealth,
+} from "@/lib/okx/marketplace-telemetry";
 
 export interface Phase3RouteOptions {
   paid?: boolean;
@@ -51,6 +55,9 @@ export async function runPhase3ToolRoute(
   const paid = options?.paid ?? Boolean(getA2mcpService(tool));
   const operation = options?.operation ?? (tool as CommerceOperation);
   const timeoutMs = resolveTimeoutMs(tool, options);
+  const requestStarted = Date.now();
+
+  logMarketplaceTelemetry("a2mcp_request_received", { tool, paid, taskId });
 
   let gateQuoteId: string | undefined;
   let requestHash: string | undefined;
@@ -89,6 +96,11 @@ export async function runPhase3ToolRoute(
         for (const digest of digests) {
           const cached = await getCompletedA2mcpExecution(quoteId, digest);
           if (cached) {
+            logMarketplaceTelemetry("a2mcp_replay_served", {
+              quoteId,
+              taskId,
+              receiptId: cached.receiptId,
+            });
             return NextResponse.json(
               {
                 ...cached.responseBody,
@@ -128,6 +140,16 @@ export async function runPhase3ToolRoute(
       executionRequestDigest = gate.requestHash ?? executionRequestDigest;
       // Prefer authorized quote commercial digest for receipt binding.
       requestHash = gate.quote?.requestHash ?? gate.requestHash;
+      logMarketplaceTelemetry("a2mcp_payment_verified", {
+        quoteId: gateQuoteId,
+        executionState: gate.quote?.executionState,
+        taskId,
+      });
+      logMarketplaceTelemetry("a2mcp_entitlement_state", {
+        quoteId: gateQuoteId,
+        status: gate.quote?.lifecycleStatus,
+        executionState: gate.quote?.executionState,
+      });
 
       if (gateQuoteId) {
         const completedQuote = await getBoundQuote(gateQuoteId);
@@ -184,22 +206,34 @@ export async function runPhase3ToolRoute(
     }
 
     let task: AgentTaskRecord;
+    logMarketplaceTelemetry("a2mcp_business_started", { tool, taskId, quoteId: gateQuoteId });
     try {
       task = await withTimeout(handler(body, taskId), timeoutMs, tool);
     } catch (err) {
       const mapped = mapErrorToToolError(err, tool);
       if (paid && gateQuoteId && (mapped.code === "SCAN_TIMEOUT" || mapped.status >= 500)) {
         await markQuoteRetryableFailure(gateQuoteId, taskId, mapped.message);
+        logMarketplaceTelemetry("a2mcp_business_completed", {
+          tool,
+          taskId,
+          quoteId: gateQuoteId,
+          outcome: "FAILED_RETRYABLE",
+          durationMs: Date.now() - requestStarted,
+        });
         return NextResponse.json(
           {
             ...buildToolErrorResponse(tool, taskId, mapped.code, mapped.message),
             recoverable: true,
+            retryable: true,
+            paymentRequired: false,
+            paymentAlreadySettled: true,
             executionState: "FAILED_RETRYABLE",
             quoteId: gateQuoteId,
+            requestId: taskId,
             requestHash,
             hint: "Funded entitlement preserved — retry the same quoteId without a new payment.",
           },
-          { status: mapped.status }
+          { status: 200 }
         );
       }
       throw err;
@@ -264,8 +298,28 @@ export async function runPhase3ToolRoute(
             requestHash: execDigest,
           });
         }
+        logMarketplaceTelemetry("a2mcp_result_persisted", { quoteId: gateQuoteId, taskId });
+        logMarketplaceTelemetry("a2mcp_receipt_persisted", {
+          quoteId: gateQuoteId,
+          taskId,
+          receiptId: receipt.receiptId,
+        });
+        await touchMarketplaceHealth({ a2mcpLastSuccessfulPaidCall: new Date().toISOString() });
       }
     }
+
+    logMarketplaceTelemetry("a2mcp_business_completed", {
+      tool,
+      taskId,
+      quoteId: gateQuoteId,
+      outcome: task.status,
+      durationMs: Date.now() - requestStarted,
+    });
+    logMarketplaceTelemetry("a2mcp_response_duration", {
+      tool,
+      taskId,
+      durationMs: Date.now() - requestStarted,
+    });
 
     const response = buildToolActionResponse(tool, task);
     if (paid) {
@@ -276,6 +330,7 @@ export async function runPhase3ToolRoute(
     });
   } catch (err) {
     if (err instanceof PaymentRequiredError) {
+      logMarketplaceTelemetry("a2mcp_402_issued", { tool, taskId, quoteId: err.quoteId });
       return paymentRequiredJsonResponse(err.body, 402);
     }
     if (err instanceof EntitlementDeniedError) {
@@ -297,6 +352,20 @@ export async function runPhase3ToolRoute(
     const mapped = mapErrorToToolError(err, tool);
     if (paid && gateQuoteId && mapped.status >= 500) {
       await markQuoteRetryableFailure(gateQuoteId, taskId, mapped.message).catch(() => undefined);
+      return NextResponse.json(
+        {
+          ...buildToolErrorResponse(tool, taskId, mapped.code, mapped.message),
+          recoverable: true,
+          retryable: true,
+          paymentRequired: false,
+          paymentAlreadySettled: true,
+          executionState: "FAILED_RETRYABLE",
+          quoteId: gateQuoteId,
+          requestId: taskId,
+          requestHash,
+        },
+        { status: 200 }
+      );
     }
     return NextResponse.json(
       buildToolErrorResponse(tool, taskId, mapped.code, mapped.message),

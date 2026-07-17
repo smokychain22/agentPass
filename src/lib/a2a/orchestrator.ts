@@ -74,6 +74,14 @@ import type { Finding } from "@/lib/findings/types";
 import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
 import { buildMaintenanceOutcome } from "@/lib/maintenance/outcome";
 import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
+import { after } from "next/server";
+import { getServerBaseUrl } from "@/lib/docs/base-url";
+import {
+  buildAsyncTaskAcknowledgement,
+} from "@/lib/a2a/marketplace-intake";
+import {
+  logMarketplaceTelemetry,
+} from "@/lib/okx/marketplace-telemetry";
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 
@@ -742,11 +750,54 @@ async function executeChanges(
   return failTask(task, sm, "unsupported", "Unsupported task type.");
 }
 
-export async function submitA2ATask(type: A2ATaskType, input: A2ATaskInput): Promise<A2ATaskRecord> {
+export async function submitA2ATask(
+  type: A2ATaskType,
+  input: A2ATaskInput,
+  options?: { asyncDelivery?: boolean }
+): Promise<A2ATaskRecord> {
   let task = buildInitialTask(type, input, repoFromUrl(input.repoUrl, input.branch));
   const sm = new A2ATaskStateMachine(task.transitions);
   await saveA2ATask(task);
 
+  if (options?.asyncDelivery) {
+    sm.emit("queued", "orchestrator", "Async delivery queued");
+    task = await syncTask(task, sm);
+    logMarketplaceTelemetry("a2a_task_queued", { taskId: task.id, type });
+    after(() => {
+      void continueA2ATaskExecution(task.id).catch((err) => {
+        console.error("[repodiet-a2a-async] execution failed", task.id, err);
+      });
+    });
+    return task;
+  }
+
+  return runA2ATaskPipeline(task, sm, type);
+}
+
+export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskRecord | undefined> {
+  const existing = await getA2ATask(taskId);
+  if (!existing) return undefined;
+  if (!["submitted", "queued"].includes(existing.status)) return existing;
+  const sm = new A2ATaskStateMachine(existing.transitions);
+  return runA2ATaskPipeline(existing, sm, existing.type);
+}
+
+export function formatAsyncA2ATaskAcknowledgement(task: A2ATaskRecord) {
+  const baseUrl = getServerBaseUrl();
+  const workerUnavailable = process.env.REPODIET_WORKER_UNAVAILABLE === "1";
+  return buildAsyncTaskAcknowledgement({
+    taskId: task.id,
+    contractState: task.input.contractDigest ? "SCOPE_LOCKED" : "SCOPE_PENDING",
+    statusUrl: `${baseUrl}/api/a2a/tasks/${task.id}`,
+    workerUnavailable,
+  });
+}
+
+async function runA2ATaskPipeline(
+  task: A2ATaskRecord,
+  sm: A2ATaskStateMachine,
+  type: A2ATaskType
+): Promise<A2ATaskRecord> {
   const analysis = await runAnalysisPhase(task, sm);
   if (!("findings" in analysis)) return analysis;
   const { task: analyzedTask, findings } = analysis;

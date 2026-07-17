@@ -111,6 +111,7 @@ export function buildAgentCard() {
       acceptMaintenanceContract: `${baseUrl}/api/green-pr/contracts/{contractId}/accept`,
       verifyAttestation: `${baseUrl}/api/attestations/verify`,
       taskStatus: `${baseUrl}/api/a2a/tasks/{taskId}`,
+      a2aIntake: `${baseUrl}/api/okx/a2a/intake`,
       approveTask: `${baseUrl}/api/a2a/tasks/{taskId}/approve`,
       fundTask: `${baseUrl}/api/a2a/tasks/{taskId}/fund`,
       cancelTask: `${baseUrl}/api/a2a/tasks/{taskId}/cancel`,

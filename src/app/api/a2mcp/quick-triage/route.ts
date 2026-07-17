@@ -10,7 +10,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 25;
 
 function isValidPublicGitHubRepository(url: string): boolean {
   try {

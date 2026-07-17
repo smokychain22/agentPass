@@ -17,6 +17,14 @@ export interface QuickTriageFinding {
 }
 
 export interface QuickTriageResult {
+  status?: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+  coverage?: {
+    mode: string;
+    filesInspected: number;
+    maximumFiles: number;
+    limitations: string[];
+  };
+  recommendedNextAction?: string;
   scanId: string;
   summary: {
     totalFindingsDetected: number;
@@ -60,7 +68,12 @@ function toQuickTriageFinding(finding: Finding): QuickTriageFinding {
 
 export function buildQuickTriageResult(
   analyzed: FindingsPayload,
-  maximumFindings: number
+  maximumFindings: number,
+  meta?: {
+    status?: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+    coverage?: QuickTriageResult["coverage"];
+    recommendedNextAction?: string;
+  }
 ): QuickTriageResult {
   const limit = Math.max(1, Math.min(10, Math.floor(maximumFindings)));
   const allFindings = sortFindingsByPriority(flattenFindings(analyzed));
@@ -69,6 +82,9 @@ export function buildQuickTriageResult(
   const internalStats = computeCanonicalStats(allFindings);
 
   return {
+    ...(meta?.status ? { status: meta.status } : {}),
+    ...(meta?.coverage ? { coverage: meta.coverage } : {}),
+    ...(meta?.recommendedNextAction ? { recommendedNextAction: meta.recommendedNextAction } : {}),
     scanId: analyzed.scanId,
     summary: {
       totalFindingsDetected: internalStats.totalFindings,

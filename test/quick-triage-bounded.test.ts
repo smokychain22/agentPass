@@ -37,8 +37,8 @@ async function run() {
   const elapsed = Date.now() - started;
   assert.ok(scanned.findings.scanId);
   assert.ok(Array.isArray(scanned.timings));
-  assert.ok(elapsed < 60_000, `bounded triage took too long: ${elapsed}ms`);
-  assert.ok(scanned.totalMs < 60_000);
+  assert.ok(elapsed < 25_000, `bounded triage took too long: ${elapsed}ms`);
+  assert.ok(scanned.totalMs < 25_000);
 
   const result = buildQuickTriageResult(scanned.findings, 5);
   assert.ok(result.summary.findingsReturned <= 5);

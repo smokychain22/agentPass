@@ -1,4 +1,5 @@
 import type { ErrorCode } from "./schemas";
+import { QUICK_TRIAGE_TIMEOUT_MS } from "./constants";
 
 export class ToolExecutionError extends Error {
   readonly code: ErrorCode;
@@ -20,7 +21,7 @@ export function mapErrorToToolError(err: unknown, tool: string): ToolExecutionEr
   if (err instanceof Error && err.name === "AbortError") {
     return new ToolExecutionError(
       "SCAN_TIMEOUT",
-      `Tool "${tool}" timed out after ${60} seconds.`,
+      `Tool "${tool}" timed out after ${Math.round(QUICK_TRIAGE_TIMEOUT_MS / 1000)} seconds.`,
       504
     );
   }

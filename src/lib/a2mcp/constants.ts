@@ -5,8 +5,8 @@ export const MAX_REPO_ZIP_BYTES = 25 * 1024 * 1024;
 export const MAX_FILES_ANALYZED = 5000;
 export const MAX_SINGLE_FILE_BYTES = 500 * 1024;
 export const TOOL_TIMEOUT_MS = 60_000;
-/** Quick Triage / analyze_repository paid path — within Vercel maxDuration 300s. */
-export const QUICK_TRIAGE_TIMEOUT_MS = 90_000;
+/** Quick Triage / analyze_repository paid path — OKX marketplace budget (20s). */
+export { QUICK_TRIAGE_TIMEOUT_MS } from "./quick-triage-budget";
 export const OPERATOR_TOOL_TIMEOUT_MS = 300_000;
 
 export const DEFAULT_PROTECTED_FILES = [
