@@ -4,5 +4,5 @@ import { buildOkxHealthResponse } from "@/lib/okx/health";
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json(buildOkxHealthResponse());
+  return NextResponse.json(await buildOkxHealthResponse());
 }

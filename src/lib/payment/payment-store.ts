@@ -7,6 +7,7 @@ import {
   setDurableRecordIfAbsentWithTtl,
 } from "@/lib/store/durable-store";
 import type { BoundQuote, PaymentLifecycleStatus } from "./types";
+import { isMisConsumedWithoutDelivery } from "./quote-repair";
 
 /** In-progress fund lock TTL — expired locks can be reclaimed after a crash. */
 export const A2A_FUND_LOCK_TTL_MS = 5 * 60 * 1000;
@@ -159,6 +160,7 @@ export async function lockQuoteForExecution(
     quote.lifecycleStatus === "funded" ||
     quote.executionState === "FUNDED" ||
     quote.executionState === "FAILED_RETRYABLE" ||
+    isMisConsumedWithoutDelivery(quote) ||
     // reclaim stale EXECUTING lease
     (quote.executionState === "EXECUTING" && !isExecutingLeaseActive(quote));
 

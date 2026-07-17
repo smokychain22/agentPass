@@ -154,7 +154,7 @@ async function main() {
     );
     record(
       "F completes below timeout",
-      elapsed < 60_000 && Number(result?.totalMs ?? elapsed) < 60_000,
+      elapsed < 25_000 && Number(result?.totalMs ?? elapsed) < 25_000,
       `elapsed=${elapsed}ms totalMs=${result?.totalMs}`
     );
 

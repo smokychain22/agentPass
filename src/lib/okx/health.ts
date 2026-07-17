@@ -2,14 +2,17 @@ import { resolveEntitlementMode } from "@/lib/entitlement/service";
 import { isOkxPaidMode } from "./entitlement";
 import { buildOperatorProfile } from "./operator-identity";
 import { listOkxServices } from "./services";
+import { getMarketplaceHealthSnapshot } from "./marketplace-telemetry";
 
-export function buildOkxHealthResponse() {
+export async function buildOkxHealthResponse() {
+  const marketplace = await getMarketplaceHealthSnapshot();
   return {
     ok: true,
     service: "RepoDiet OKX Commerce Gateway",
     operator: buildOperatorProfile(),
     entitlementMode: resolveEntitlementMode(),
     a2mcpPaidMode: isOkxPaidMode(),
+    ...marketplace,
     services: listOkxServices().map((s) => ({
       serviceId: s.serviceId,
       serviceType: s.serviceType,

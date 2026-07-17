@@ -143,8 +143,12 @@ export function validateQuoteBinding(
   if (new Date(quote.expiresAt).getTime() < Date.now()) {
     return { ok: false, reason: "Quote expired.", status: "expired" };
   }
-  if (quote.status === "consumed") {
+  if (quote.status === "consumed" && quote.completedReceiptId) {
     return { ok: false, reason: "Quote already consumed.", status: "replayed" };
+  }
+  if (quote.status === "consumed" && !quote.completedReceiptId && quote.paymentStatus === "verified") {
+    // Mis-consumed without delivery — entitlement repair allows retry without new payment.
+    return { ok: true };
   }
   if (quote.repository !== context.repository) {
     return { ok: false, reason: "Repository mismatch.", status: "invalid_payment" };

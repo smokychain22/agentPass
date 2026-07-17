@@ -82,8 +82,8 @@ async function run() {
     assert.match(binding.requestHash, /^sha256:/);
   });
 
-  await test("OKX health response includes hybrid architecture", () => {
-    const health = buildOkxHealthResponse();
+  await test("OKX health response includes hybrid architecture", async () => {
+    const health = await buildOkxHealthResponse();
     assert.equal(health.ok, true);
     assert.equal(health.architecture.a2mcp, "fixed-price x402 per call");
     assert.match(health.architecture.doubleChargePolicy, /never pays A2MCP/i);

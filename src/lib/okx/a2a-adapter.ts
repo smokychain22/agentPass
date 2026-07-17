@@ -1,4 +1,4 @@
-import { submitA2ATask, formatA2ATaskResponse } from "@/lib/a2a/orchestrator";
+import { submitA2ATask, formatA2ATaskResponse, formatAsyncA2ATaskAcknowledgement } from "@/lib/a2a/orchestrator";
 import { selectSafeFixes } from "@/lib/execution";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import type { A2aServiceId } from "./types";
@@ -140,7 +140,7 @@ export async function createA2aOrder(input: CreateA2aOrderInput) {
     contractId: contractRecord?.contractId,
     contractDigest: contractRecord?.contractDigest,
     purchaseChannel: "okx_marketplace",
-  });
+  }, { asyncDelivery: true });
 
   const parsed = parseGitHubUrl(input.repoUrl);
   const repository = parsed ? `${parsed.owner}/${parsed.repo}` : input.repoUrl;
@@ -170,6 +170,10 @@ export async function createA2aOrder(input: CreateA2aOrderInput) {
     status: task.status,
     operation: OKX_A2A_PUBLIC_OPERATION,
     task: formatA2ATaskResponse(task),
+    acknowledgement:
+      task.status === "queued" || task.status === "submitted"
+        ? formatAsyncA2ATaskAcknowledgement(task)
+        : undefined,
     preflight,
     service: {
       serviceId: service.serviceId,

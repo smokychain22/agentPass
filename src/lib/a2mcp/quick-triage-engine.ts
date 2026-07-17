@@ -11,9 +11,25 @@ async function completeQuickTriageTask(
   taskId: string,
   analyzed: FindingsPayload,
   maximumFindings: number,
-  meta?: { timings?: unknown; totalMs?: number; mode?: string }
+  meta?: {
+    timings?: unknown;
+    totalMs?: number;
+    mode?: string;
+    status?: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+    coverage?: {
+      mode: string;
+      filesInspected: number;
+      maximumFiles: number;
+      limitations: string[];
+    };
+    recommendedNextAction?: string;
+  }
 ): Promise<AgentTaskRecord> {
-  const result = buildQuickTriageResult(analyzed, maximumFindings);
+  const result = buildQuickTriageResult(analyzed, maximumFindings, {
+    status: meta?.status,
+    coverage: meta?.coverage,
+    recommendedNextAction: meta?.recommendedNextAction,
+  });
   assertQuickTriageSummaryInvariants(result);
 
   const task: AgentTaskRecord = {
@@ -90,6 +106,9 @@ export async function executeQuickTriage(
   return completeQuickTriageTask(taskId, bounded.findings, maximumFindings, {
     timings: bounded.timings,
     totalMs: bounded.totalMs,
-    mode: "bounded_quick_triage",
+    mode: bounded.coverage.mode,
+    status: bounded.status,
+    coverage: bounded.coverage,
+    recommendedNextAction: bounded.recommendedNextAction,
   });
 }

@@ -12,6 +12,7 @@ import {
   releaseQuoteForRetryableFailure,
   savePaymentRecord,
 } from "./payment-store";
+import { isMisConsumedWithoutDelivery, repairMisConsumedQuote } from "./quote-repair";
 import {
   createBoundQuote,
   signTestPaymentPayload,
@@ -313,9 +314,13 @@ async function verifyLiveOrTestPayment(
 export async function requireEntitlement(
   context: EntitlementContext
 ): Promise<PaymentVerificationResult> {
-  const quote = await getBoundQuote(context.quoteId);
+  let quote = await getBoundQuote(context.quoteId);
   if (!quote) {
     return { ok: false, status: "invalid_payment", reason: "Quote not found." };
+  }
+
+  if (isMisConsumedWithoutDelivery(quote)) {
+    quote = (await repairMisConsumedQuote(context.quoteId)) ?? quote;
   }
 
   if (quote.amountMicro === "0") {
