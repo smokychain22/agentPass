@@ -236,14 +236,19 @@ export async function startDurableFindingsAnalysis(input: {
   return accepted;
 }
 
+/** Max time the browser will wait in QUEUED with no claim before surfacing a delayed state. */
+export const FINDINGS_MAX_QUEUE_WAIT_MS = 10 * 60_000;
+
 export async function pollDurableFindingsJob(
   statusUrl: string,
   onProgress: (progress: FindingsJobProgress) => void,
-  options?: { intervalMs?: number; timeoutMs?: number }
+  options?: { intervalMs?: number; timeoutMs?: number; maxQueueWaitMs?: number }
 ): Promise<FindingsJobProgress> {
   const intervalMs = options?.intervalMs ?? 2_000;
   const timeoutMs = options?.timeoutMs ?? 30 * 60_000;
+  const maxQueueWaitMs = options?.maxQueueWaitMs ?? FINDINGS_MAX_QUEUE_WAIT_MS;
   const started = Date.now();
+  let firstSeenQueuedAt: number | null = null;
 
   while (Date.now() - started < timeoutMs) {
     let res: Response;
@@ -290,22 +295,45 @@ export async function pollDurableFindingsJob(
     };
     onProgress(progress);
 
+    const stage = String(progress.stage);
+    if (stage === "QUEUED" || progress.status === "queued") {
+      if (firstSeenQueuedAt == null) firstSeenQueuedAt = Date.now();
+      if (Date.now() - firstSeenQueuedAt >= maxQueueWaitMs) {
+        throw analysisError({
+          code: "QUEUE_WAIT_EXCEEDED",
+          message:
+            "No analysis worker claimed this job within the queue-wait budget. The durable job remains queued — resume later or cancel.",
+          retryable: true,
+          requestId: createRequestId(),
+          jobId: progress.jobId,
+          statusUrl,
+          requiredAction: "RESUME_LATER_OR_CANCEL",
+        });
+      }
+    } else {
+      firstSeenQueuedAt = null;
+    }
+
     if (progress.stage === "READY" || progress.stage === "COMPLETED" || progress.status === "complete") {
       return progress;
     }
     if (
       progress.stage === "FAILED" ||
       progress.stage === "FAILED_TERMINAL" ||
+      progress.stage === "CANCELLED" ||
       progress.status === "failed"
     ) {
       throw analysisError({
-        code: (progress.failureCode as AnalysisErrorContract["code"]) || "ANALYZER_FAILED",
+        code:
+          progress.stage === "CANCELLED"
+            ? "CANCELLED"
+            : ((progress.failureCode as AnalysisErrorContract["code"]) || "ANALYZER_FAILED"),
         message: progress.failureMessage || "Findings analysis failed.",
         retryable: progress.stage === "FAILED_RETRYABLE",
         requestId: createRequestId(),
         jobId: progress.jobId,
         statusUrl,
-        requiredAction: "RETRY",
+        requiredAction: progress.stage === "CANCELLED" ? "START_NEW_ANALYSIS" : "RETRY",
       });
     }
 

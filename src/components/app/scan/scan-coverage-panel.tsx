@@ -73,27 +73,35 @@ export function ScanCoveragePanel({
 
       <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <dt className="text-muted-foreground">Files discovered</dt>
-          <dd className="font-mono text-lg">{coverage.filesDiscovered.toLocaleString()}</dd>
+          <dt className="text-muted-foreground">Total files</dt>
+          <dd className="font-mono text-lg">
+            {(coverage.contract?.totalFiles ?? coverage.filesDiscovered).toLocaleString()}
+          </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Classified (structure index)</dt>
+          <dt className="text-muted-foreground">Classified files</dt>
           <dd className="font-mono text-lg">{coverage.filesClassified.toLocaleString()}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Supported JS/TS source</dt>
+          <dt className="text-muted-foreground">Supported JS/TS source files</dt>
           <dd className="font-mono text-lg">
             {(coverage.contract?.supportedSourceFiles ?? coverage.filesAnalyzable).toLocaleString()}
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Analyzed source (structure index)</dt>
+          <dt className="text-muted-foreground">Analyzed source files</dt>
           <dd className="font-mono text-lg">
-            {(coverage.contract?.analyzedSourceFiles ?? coverage.filesClassified).toLocaleString()}
+            {(coverage.contract?.analyzedSourceFiles ?? 0).toLocaleString()}
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Entry points detected</dt>
+          <dt className="text-muted-foreground">Configuration files</dt>
+          <dd className="font-mono text-lg">
+            {(coverage.contract?.configurationFilesIndexed ?? 0).toLocaleString()}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Entry points</dt>
           <dd className="font-mono text-lg">{coverage.entryPointsDetected.toLocaleString()}</dd>
         </div>
         <div>
@@ -101,8 +109,30 @@ export function ScanCoveragePanel({
           <dd className="font-mono text-lg">{coverage.filesProtected.toLocaleString()}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Excluded / unclassified</dt>
+          <dt className="text-muted-foreground">Excluded files</dt>
           <dd className="font-mono text-lg">{coverage.filesExcluded.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Top-level folders</dt>
+          <dd className="font-mono text-lg">
+            {(
+              scan.topLevelFolders?.length ??
+              manifest?.inventory.totalFolders ??
+              scan.summary.totalFolders ??
+              0
+            ).toLocaleString()}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Total directories</dt>
+          <dd className="font-mono text-lg">
+            {(
+              manifest?.inventory.totalFolders ??
+              scan.intelligenceManifest?.inventory.totalFolders ??
+              scan.summary.totalFolders ??
+              0
+            ).toLocaleString()}
+          </dd>
         </div>
         <div className="sm:col-span-2">
           <dt className="text-muted-foreground">Findings readiness</dt>
