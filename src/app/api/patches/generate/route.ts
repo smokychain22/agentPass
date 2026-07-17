@@ -3,7 +3,11 @@ import { enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
 import { jobOwnerKey } from "@/lib/jobs/types";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { createPatchJob, runPatchJob } from "@/lib/jobs/run-patch-job";
-import { filterFindingsBySelection } from "@/lib/patch-kit/filter-findings";
+import {
+  filterFindingsBySelection,
+  filterFindingsByValidatedSelection,
+  FindingSelectionValidationError,
+} from "@/lib/patch-kit/filter-findings";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
 import { enforcePayment } from "@/lib/payment/x402";
 import type { FindingsPayload } from "@/lib/findings/types";
@@ -46,7 +50,23 @@ export async function POST(request: Request) {
 
     enforcePayment(request, "patch_bundle", { free: isDemoRepoUrl(repoUrl) });
 
-    const filtered = filterFindingsBySelection(findings, body.selectedFindingIds);
+    let filtered: FindingsPayload;
+    try {
+      filtered =
+        body.selectedFindingIds && body.selectedFindingIds.length > 0
+          ? filterFindingsByValidatedSelection(findings, body.selectedFindingIds, {
+              expectedScanId: body.scanId ?? findings.scanId,
+            })
+          : filterFindingsBySelection(findings, body.selectedFindingIds);
+    } catch (err) {
+      if (err instanceof FindingSelectionValidationError) {
+        return NextResponse.json(
+          { success: false, error: err.message, code: err.code, findingId: err.findingId },
+          { status: 400 }
+        );
+      }
+      throw err;
+    }
 
     const job = await createPatchJob(repoUrl, body.branch ?? filtered.repo.branch, ownerKey, filtered);
     const completed = await runPatchJob(job.id, filtered, body.selectedFindingIds);

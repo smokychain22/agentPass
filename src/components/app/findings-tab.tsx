@@ -569,7 +569,7 @@ export function FindingsTab() {
 
           <FindingsProgressionBanner
             findings={findings}
-            selectedCount={selectedFindingIds.length}
+            selectedCount={selectedEligibleCount}
             onSelectAllSafe={selectAllSafeFindings}
             onClearSelection={clearFindingSelection}
           />

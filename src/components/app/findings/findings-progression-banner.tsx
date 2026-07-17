@@ -115,8 +115,8 @@ export function FindingsProgressionBanner({
           )}
           {canContinue ? (
             <Button asChild>
-              <Link href="/app?tab=patch">
-                Continue with {selectedCount} cleanup{selectedCount === 1 ? "" : "s"}
+              <Link href="/app?tab=patch" data-continue-selected={selectedCount}>
+                Continue to Quick Cleanup · {selectedCount} selected for cleanup
               </Link>
             </Button>
           ) : (

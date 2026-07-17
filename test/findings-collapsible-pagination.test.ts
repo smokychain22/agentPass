@@ -76,4 +76,22 @@ test("filters remain independent of pagination window", () => {
   assert.equal(paginate(filtered, true, 1, 25).length, 1);
 });
 
+test("selection keys by finding id across pages", () => {
+  const findings = Array.from({ length: 40 }, (_, i) =>
+    finding({
+      id: `f${i}`,
+      type: "unused_file",
+      action: i < 6 ? "safe_candidate" : "review_first",
+    })
+  );
+  const selected = new Set<string>(["f0"]);
+  const page1 = paginate(findings, true, 1, 25);
+  const page2 = paginate(findings, true, 2, 25);
+  assert.ok(page1.some((f) => selected.has(f.id)));
+  // Unmount page1 / mount page2 — selection still holds f0 by id.
+  assert.ok(selected.has("f0"));
+  assert.ok(!page2.some((f) => f.id === "f0"));
+  assert.equal(selected.size, 1);
+});
+
 console.log("findings-collapsible-pagination: all passed");

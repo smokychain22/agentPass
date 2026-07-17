@@ -24,20 +24,18 @@ import {
 } from "@/lib/session/persist-session";
 import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
 import {
+  flattenFindingsPayload,
+  sanitizeSelectedFindingIds,
+  sanitizeSelectedFindingIdsFromPayload,
+} from "@/lib/findings/selection";
+import {
   isFindingsBoundToActiveScan,
   isRepositoryConnected,
   type ScanLifecyclePhase,
 } from "@/lib/workflow/step-states";
 
 function defaultSafeSelectedIds(payload: FindingsPayload): string[] {
-  return [
-    ...payload.duplicates,
-    ...payload.unused.files,
-    ...payload.unused.dependencies,
-    ...payload.unused.exports,
-    ...payload.orphans,
-    ...payload.slopSignals,
-  ]
+  return flattenFindingsPayload(payload)
     .filter(isCleanupEligible)
     .map((f) => f.id);
 }
@@ -196,8 +194,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
         if (findingsBound && findingsPayload) {
           setFindings(findingsPayload);
-          // Restore only an explicit saved selection — never invent a bulk selection.
-          setSelectedFindingIdsState(stored.selectedFindingIds ?? []);
+          // Restore only an explicit saved selection — drop stale/non-eligible IDs.
+          const restoredSelection = sanitizeSelectedFindingIdsFromPayload(
+            findingsPayload,
+            stored.selectedFindingIds ?? []
+          );
+          setSelectedFindingIdsState(restoredSelection);
           setScopeReviewedState(stored.scopeReviewed ?? false);
           if (patchPayload && patchPayload.scanId === findingsPayload.scanId) {
             setPatchKit(patchPayload);
@@ -226,7 +228,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         persist(
           restoredSession,
           findingsBound ? findingsPayload : null,
-          findingsBound ? stored.selectedFindingIds ?? [] : [],
+          findingsBound
+            ? sanitizeSelectedFindingIdsFromPayload(
+                findingsPayload,
+                stored.selectedFindingIds ?? []
+              )
+            : [],
           findingsBound && patchPayload?.scanId === findingsPayload?.scanId ? patchPayload : null,
           task?.taskId,
           findingsBound ? stored.scopeReviewed ?? false : false
@@ -361,10 +368,26 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const toggleFindingSelection = useCallback(
     (findingId: string) => {
+      if (!findings) return;
+      const all = flattenFindingsPayload(findings);
+      const target = all.find((f) => f.id === findingId);
+      // Only cleanup-eligible findings may enter selectedFindingIds.
+      if (!target || !isCleanupEligible(target)) {
+        if (!target) return;
+        // Deselect stale id if somehow present.
+        setSelectedFindingIdsState((prev) => {
+          if (!prev.includes(findingId)) return prev;
+          const next = prev.filter((id) => id !== findingId);
+          setScopeReviewedState(false);
+          persist(session, findings, next, patchKit, a2aTask?.taskId, false);
+          return next;
+        });
+        return;
+      }
       setSelectedFindingIdsState((prev) => {
         const next = prev.includes(findingId)
           ? prev.filter((id) => id !== findingId)
-          : [...prev, findingId];
+          : sanitizeSelectedFindingIds(all, [...prev, findingId]);
         setScopeReviewedState(false);
         persist(session, findings, next, patchKit, a2aTask?.taskId, false);
         return next;
@@ -375,9 +398,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const setSelectedFindingIds = useCallback(
     (ids: string[]) => {
-      setSelectedFindingIdsState(ids);
+      const next = sanitizeSelectedFindingIdsFromPayload(findings, ids);
+      setSelectedFindingIdsState(next);
       setScopeReviewedState(false);
-      persist(session, findings, ids, patchKit, a2aTask?.taskId, false);
+      persist(session, findings, next, patchKit, a2aTask?.taskId, false);
     },
     [session, findings, patchKit, a2aTask?.taskId]
   );
@@ -395,6 +419,17 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     setScopeReviewedState(false);
     persist(session, findings, [], patchKit, a2aTask?.taskId, false);
   }, [a2aTask?.taskId, findings, patchKit, session]);
+
+  // Drop stale / non-eligible IDs after findings changes, filters, or hydration drift.
+  useEffect(() => {
+    if (!findings) return;
+    setSelectedFindingIdsState((prev) => {
+      const next = sanitizeSelectedFindingIdsFromPayload(findings, prev);
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return prev;
+      persist(session, findings, next, patchKit, a2aTask?.taskId, scopeReviewed);
+      return next;
+    });
+  }, [findings, session, patchKit, a2aTask?.taskId, scopeReviewed]);
 
   const resetSession = useCallback(() => {
     setSession(emptySession);

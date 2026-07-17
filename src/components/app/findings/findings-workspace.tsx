@@ -20,6 +20,7 @@ import {
 } from "../findings/findings-utils";
 import { cn } from "@/lib/utils";
 import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
+import { FindingSelectionCheckbox } from "./finding-selection-checkbox";
 
 type CategoryKey =
   | "all"
@@ -251,26 +252,28 @@ export function FindingsWorkspace({
     document.getElementById("findings-browse-top")?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const renderFindingRow = (finding: Finding) => {
+  const renderFindingRow = (finding: Finding, options?: { compact?: boolean }) => {
     const expanded = expandedIds.includes(finding.id);
+    const eligible = isCleanupEligible(finding);
+    const compact = options?.compact === true;
     return (
-      <li key={finding.id} data-finding-card={finding.id}>
+      <li key={finding.id} data-finding-card={finding.id} data-finding-id={finding.id}>
         <div
           className={cn(
             "flex w-full border-b border-border/40 transition-colors",
             selected?.id === finding.id ? "bg-electric/5 border-l-2 border-l-electric" : "hover:bg-card"
           )}
         >
-          {onTogglePatchSelection && isCleanupEligible(finding) && (
-            <label className="flex items-start px-3 py-3">
-              <input
-                type="checkbox"
-                checked={selectedForPatch.includes(finding.id)}
-                onChange={() => onTogglePatchSelection(finding.id)}
-                className="mt-1 h-3.5 w-3.5 accent-electric"
-                aria-label={`Include ${finding.title} in patch bundle`}
-              />
-            </label>
+          {onTogglePatchSelection ? (
+            <FindingSelectionCheckbox
+              findingId={finding.id}
+              title={finding.title}
+              checked={selectedForPatch.includes(finding.id)}
+              enabled={eligible}
+              onToggle={onTogglePatchSelection}
+            />
+          ) : (
+            <span className="w-10 shrink-0" aria-hidden />
           )}
           <button
             type="button"
@@ -303,9 +306,16 @@ export function FindingsWorkspace({
             <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
               {findingTarget(finding)}
             </p>
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              {typeLabel(finding.type)} · {formatFindingAnalyzerLabel(finding, rawToolReports)}
-            </p>
+            {!compact ? (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {typeLabel(finding.type)} · {formatFindingAnalyzerLabel(finding, rawToolReports)}
+                {eligible ? " · cleanup-eligible" : " · not eligible for automatic cleanup"}
+              </p>
+            ) : (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {eligible ? "Cleanup-eligible" : "Not eligible for automatic cleanup"}
+              </p>
+            )}
           </button>
         </div>
         {expanded && selected?.id === finding.id ? (
@@ -334,31 +344,8 @@ export function FindingsWorkspace({
             title={`${label} — ${group.length}`}
             defaultOpen={false}
           >
-            <ul className="max-h-64 overflow-y-auto scrollbar-thin" role="list">
-              {group.slice(0, 25).map((f) => (
-                <li key={f.id} className="border-b border-border/30 py-2 text-sm last:border-0">
-                  <button
-                    type="button"
-                    className="w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-electric"
-                    onClick={() => {
-                      setBrowseOpen(true);
-                      setBucket(
-                        f.action === "safe_candidate"
-                          ? "safe_candidate"
-                          : f.action === "do_not_touch"
-                            ? "do_not_touch"
-                            : "review_first"
-                      );
-                      selectFinding(f.id);
-                    }}
-                  >
-                    <span className="font-medium">{f.title}</span>
-                    <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
-                      {findingTarget(f)}
-                    </span>
-                  </button>
-                </li>
-              ))}
+            <ul className="max-h-80 overflow-y-auto scrollbar-thin" role="list">
+              {group.slice(0, 25).map((f) => renderFindingRow(f, { compact: true }))}
               {group.length > 25 ? (
                 <li className="py-2 text-xs text-muted-foreground">
                   Showing first 25 of {group.length}. Use Browse findings for the full list.
@@ -382,8 +369,14 @@ export function FindingsWorkspace({
         >
           <p className="mb-2 text-sm text-muted-foreground">
             Risk bucket SAFE. Cleanup requires transformer preflight (
-            {findings.filter(isCleanupEligible).length} cleanup-eligible).
+            {findings.filter(isCleanupEligible).length} cleanup-eligible). Use the checkbox on a
+            single row to select exactly one cleanup candidate.
           </p>
+          {selectedCount > 0 ? (
+            <p className="mb-2 font-mono text-xs text-signal" data-selected-count={selectedCount}>
+              {selectedCount} selected for cleanup
+            </p>
+          ) : null}
           {renderTypeGroups(safeFindings, safeGroupOpen)}
         </FindingsAccordion>
         <FindingsAccordion
@@ -536,7 +529,9 @@ export function FindingsWorkspace({
                         disabled={selectableEligible.length === 0}
                         onClick={() => onSelectFindingIds(selectableEligible)}
                       >
-                        Select cleanup-eligible ({selectableEligible.length})
+                        {selectableEligible.length > 0
+                          ? `Select all cleanup-eligible findings (${selectableEligible.length})`
+                          : "No cleanup-eligible findings in view"}
                       </Button>
                     )}
                   </>
@@ -555,7 +550,7 @@ export function FindingsWorkspace({
                   No findings match filters.
                 </li>
               ) : (
-                pageItems.map(renderFindingRow)
+                pageItems.map((finding) => renderFindingRow(finding))
               )}
             </ul>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 px-3 py-2 text-[10px] text-muted-foreground">

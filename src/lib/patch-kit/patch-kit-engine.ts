@@ -78,10 +78,21 @@ import type {
 } from "./types";
 
 async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayload> {
+  const { filterFindingsByValidatedSelection } = await import("./filter-findings");
   if (body.findings?.scanId && body.findings?.repo?.owner) {
+    if (body.selectedFindingIds?.length) {
+      return filterFindingsByValidatedSelection(body.findings, body.selectedFindingIds, {
+        expectedScanId: body.findings.scanId,
+      });
+    }
     return filterFindingsBySelection(body.findings, body.selectedFindingIds);
   }
   const full = await runFindingsEngine(body.repoUrl, body.branch);
+  if (body.selectedFindingIds?.length) {
+    return filterFindingsByValidatedSelection(full, body.selectedFindingIds, {
+      expectedScanId: full.scanId,
+    });
+  }
   return filterFindingsBySelection(full, body.selectedFindingIds);
 }
 

@@ -9,6 +9,10 @@ import { enforcePayment } from "@/lib/payment/x402";
 import { getJob } from "@/lib/jobs/job-store";
 import type { PatchJob } from "@/lib/jobs/types";
 import type { FindingsPayload } from "@/lib/findings/types";
+import {
+  filterFindingsByValidatedSelection,
+  FindingSelectionValidationError,
+} from "@/lib/patch-kit/filter-findings";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -53,8 +57,27 @@ export async function POST(request: Request) {
 
     enforcePayment(request, "patch_bundle", { free: isDemoRepoUrl(repoUrl) });
 
-    const job = await createPatchJob(repoUrl, branch, ownerKey, findings);
-    await runPatchJob(job.id, findings, body.selectedFindingIds);
+    let findingsForJob = findings;
+    if (findings && body.selectedFindingIds?.length) {
+      try {
+        findingsForJob = filterFindingsByValidatedSelection(
+          findings,
+          body.selectedFindingIds,
+          { expectedScanId: body.scanId ?? findings.scanId }
+        );
+      } catch (err) {
+        if (err instanceof FindingSelectionValidationError) {
+          return NextResponse.json(
+            { success: false, error: err.message, code: err.code, findingId: err.findingId },
+            { status: 400 }
+          );
+        }
+        throw err;
+      }
+    }
+
+    const job = await createPatchJob(repoUrl, branch, ownerKey, findingsForJob);
+    await runPatchJob(job.id, findingsForJob, body.selectedFindingIds);
 
     const completed = (await getJob(job.id)) as PatchJob | undefined;
     if (!completed) {
