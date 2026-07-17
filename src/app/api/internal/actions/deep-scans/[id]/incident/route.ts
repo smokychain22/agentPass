@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   assertWorkerAuthorized,
+  assertWorkerCallbackAuthorized,
   WorkerAuthError,
 } from "@/lib/worker/worker-auth";
 import {
@@ -8,21 +9,36 @@ import {
   getDeepScanJob,
   updateDeepScanStage,
 } from "@/lib/deep-scan/job-store";
+import {
+  assertCallbackTimestampFresh,
+  consumeCompletionNonce,
+  type ActionsCallbackPayload,
+  verifyActionsCallbackSignature,
+} from "@/lib/github-actions/callback-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 /**
  * Authenticated incident callback for pre-claim / claim-stage failures.
- * Does NOT require a claim token — Worker API key + optional callback secret only.
- * Used when claim itself fails so jobs never stay CLAIMED_STUCK / DISPATCHED forever.
+ * Does NOT require a claim token.
+ * Accepts either worker API key (claim job) or signed callback secret (complete job).
  */
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  let authMode: "api_key" | "callback" = "api_key";
   try {
-    assertWorkerAuthorized(request);
+    if (
+      request.headers.get("x-worker-callback-secret") ||
+      request.headers.get("x-repodiet-callback-secret")
+    ) {
+      assertWorkerCallbackAuthorized(request);
+      authMode = "callback";
+    } else {
+      assertWorkerAuthorized(request);
+    }
   } catch (err) {
     if (err instanceof WorkerAuthError) {
       return NextResponse.json(
@@ -40,8 +56,13 @@ export async function POST(
     terminal?: boolean;
     workflowRunId?: string;
     workflowRunUrl?: string;
+    workflowRunAttempt?: string | number;
+    workflowName?: string;
+    repository?: string;
     requestId?: string;
     stage?: "pre_claim" | "claim" | "archive" | "complete";
+    completionNonce?: string;
+    timestamp?: string;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -50,6 +71,57 @@ export async function POST(
       { ok: false, code: "INVALID_INPUT", error: "JSON body required." },
       { status: 400 }
     );
+  }
+
+  // When using callback auth with a signature, enforce HMAC + nonce.
+  if (authMode === "callback" && body.completionNonce && body.timestamp && body.workflowRunId) {
+    const payload: ActionsCallbackPayload = {
+      jobId,
+      workflowRunId: String(body.workflowRunId),
+      workflowRunAttempt: String(body.workflowRunAttempt ?? "1"),
+      workflowName: body.workflowName?.trim() || "RepoDiet analysis worker",
+      repository: body.repository?.trim() || "smokychain22/agentPass",
+      completionNonce: body.completionNonce.trim(),
+      timestamp: body.timestamp.trim(),
+      stage: body.stage,
+      code: body.code,
+    };
+    const signature =
+      request.headers.get("x-worker-callback-signature") ||
+      request.headers.get("x-repodiet-callback-signature");
+    if (!verifyActionsCallbackSignature(payload, signature)) {
+      return NextResponse.json(
+        { ok: false, code: "CALLBACK_SIGNATURE_INVALID", error: "Invalid callback signature." },
+        { status: 401 }
+      );
+    }
+    if (!assertCallbackTimestampFresh(payload.timestamp)) {
+      return NextResponse.json(
+        { ok: false, code: "CALLBACK_TIMESTAMP_STALE", error: "Stale callback timestamp." },
+        { status: 401 }
+      );
+    }
+    const nonceOk = await consumeCompletionNonce(payload.completionNonce, jobId);
+    if (!nonceOk) {
+      const existing = await getDeepScanJob(jobId);
+      if (
+        existing &&
+        (existing.stage === "FAILED_RETRYABLE" ||
+          existing.stage === "FAILED_TERMINAL" ||
+          existing.stage === "CANCELLED")
+      ) {
+        return NextResponse.json({
+          ok: true,
+          alreadyTerminal: true,
+          jobId,
+          stage: existing.stage,
+        });
+      }
+      return NextResponse.json(
+        { ok: false, code: "COMPLETION_NONCE_REPLAY", error: "Completion nonce already used." },
+        { status: 409 }
+      );
+    }
   }
 
   const job = await getDeepScanJob(jobId);
@@ -85,7 +157,6 @@ export async function POST(
     code === "LEGACY_REPOSITORY_IDENTITY_MISSING" ||
     code === "REPOSITORY_IDENTITY_INCOMPLETE";
 
-  // Prefer archive-prep helper so lease + claim token are always cleared.
   const updated = await failDeepScanArchivePreparation(jobId, code, message, {
     terminal,
     workflowRunId: body.workflowRunId?.trim(),
@@ -93,7 +164,6 @@ export async function POST(
     requestId: body.requestId?.trim(),
   });
 
-  // Ensure status history notes the incident stage.
   if (updated && body.stage) {
     await updateDeepScanStage(jobId, updated.stage, `incident:${body.stage}`, {
       resultSummary: {

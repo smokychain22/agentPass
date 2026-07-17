@@ -79,7 +79,10 @@ export interface DeepScanJob {
   failureCode?: string;
   failureMessage?: string;
   claimedBy?: string;
+  /** Server-side only — never returned to Actions complete/analyze or artifacts. */
   claimToken?: string;
+  /** Opaque non-secret handle returned to claim job for correlation only (not authorizing). */
+  claimHandle?: string;
   claimedAt?: string;
   heartbeatAt?: string;
   leaseExpiresAt?: string;
@@ -89,9 +92,14 @@ export interface DeepScanJob {
   dispatchNonce?: string;
   dispatchNonceUsedAt?: string;
   workflowRunId?: string;
+  workflowRunAttempt?: string;
+  workflowName?: string;
+  workflowRepository?: string;
   workflowRunUrl?: string;
   dispatchedAt?: string;
   analysisConfigDigest?: string;
+  /** One-use completion nonce digest tracking (optional). */
+  lastCompletionNonce?: string;
   attemptCount: number;
   statusHistory: Array<{ stage: DeepScanStage; at: string; detail?: string }>;
   createdAt: string;

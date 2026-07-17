@@ -380,12 +380,15 @@ export async function claimDeepScanJobById(
 async function finalizeDeepScanClaim(job: DeepScanJob, workerId: string): Promise<DeepScanJob> {
   const t = nowIso();
   const claimToken = `claim_${nanoid(16)}`;
+  const { createClaimHandle } = await import("@/lib/github-actions/callback-auth");
+  const claimHandle = createClaimHandle();
   const claimed: DeepScanJob = {
     ...job,
     status: "running",
     stage: "CLAIMED",
     claimedBy: workerId,
     claimToken,
+    claimHandle,
     claimedAt: t,
     heartbeatAt: t,
     leaseExpiresAt: leaseExpiresAt(),

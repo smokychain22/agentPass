@@ -192,22 +192,62 @@ async function run() {
     );
   });
 
-  await test("claim script emits claim outputs before archive download", () => {
+  await test("claim token stays server-side — no artifacts or outputs", () => {
     const claim = fs.readFileSync("scripts/actions-worker/claim.ts", "utf8");
-    const secretWrite = claim.indexOf("claim-secret.json");
-    const archiveThrow = claim.indexOf("ARCHIVE_PREPARATION_FAILED");
-    assert.ok(secretWrite > 0 && archiveThrow > secretWrite, "claim secret must be written before archive failure");
-    assert.match(claim, /\/incident/);
-    assert.equal(
-      /console\.log\(`::add-mask::/.test(claim) || /::add-mask::\$\{/.test(claim),
-      false,
-      "must not mask claim token (Actions strips masked job outputs)"
-    );
+    const complete = fs.readFileSync("scripts/actions-worker/complete.ts", "utf8");
     const wf = fs.readFileSync(".github/workflows/repodiet-analysis-worker.yml", "utf8");
-    assert.match(wf, /claim-secret-/);
-    assert.equal(/INPUT_CLAIM_TOKEN:\s*\$\{\{\s*needs\.claim\.outputs\.claim_token/.test(wf), false);
+    const exchange = fs.readFileSync(
+      "src/app/api/internal/actions/claim-exchange/route.ts",
+      "utf8"
+    );
+
+    assert.equal(claim.includes("claim-secret.json"), false);
+    assert.equal(wf.includes("claim-secret"), false);
+    assert.equal(/claimToken\s*:/.test(wf), false);
+    assert.equal(/INPUT_CLAIM_TOKEN/.test(wf), false);
+    assert.equal(/outputs:[\s\S]*claim_token/.test(wf), false);
+    assert.match(claim, /SERVER_SIDE_ONLY|claimHandle/);
+    assert.match(claim, /must not return claimToken/);
+    assert.match(complete, /SERVER_SIDE_ONLY|x-worker-callback-signature/);
+    assert.equal(complete.includes("claim-secret.json"), false);
+    assert.equal(/claimToken:\s*updated\.claimToken/.test(exchange), false);
+    assert.match(exchange, /claimHandle/);
+    assert.match(complete, /RESULT_ARTIFACT_MISSING/);
+    assert.match(wf, /if:\s*always\(\)/);
+    // Complete must not receive worker API key (callback secret only).
+    const completeBlock = wf.split("complete:")[1] ?? "";
+    assert.equal(completeBlock.includes("REPODIET_WORKER_API_KEY"), false);
+    assert.match(completeBlock, /REPODIET_WORKER_CALLBACK_SECRET/);
     const analyzeBlock = wf.split("analyze:")[1]?.split("complete:")[0] ?? "";
-    assert.equal(analyzeBlock.includes("claim-secret"), false, "analyze must not download claim secret");
+    assert.equal(analyzeBlock.includes("REPODIET_WORKER"), false);
+    assert.equal(analyzeBlock.includes("secrets."), false);
+  });
+
+  await test("callback HMAC rejects wrong signature and accepts valid", async () => {
+    process.env.WORKER_CALLBACK_SECRET = "test_callback_secret_value_32chars!!";
+    const {
+      signActionsCallback,
+      verifyActionsCallbackSignature,
+      assertCallbackTimestampFresh,
+      createCompletionNonce,
+    } = await import("../src/lib/github-actions/callback-auth");
+    const payload = {
+      jobId: "deep_scan_test",
+      workflowRunId: "123",
+      workflowRunAttempt: "1",
+      workflowName: "RepoDiet analysis worker",
+      repository: "smokychain22/agentPass",
+      completionNonce: createCompletionNonce(),
+      timestamp: new Date().toISOString(),
+      resultDigest: "abc",
+      stage: "READY",
+    };
+    const sig = signActionsCallback(payload);
+    assert.equal(verifyActionsCallbackSignature(payload, `sha256=${sig}`), true);
+    assert.equal(verifyActionsCallbackSignature(payload, "sha256=deadbeef"), false);
+    assert.equal(assertCallbackTimestampFresh(payload.timestamp), true);
+    assert.equal(assertCallbackTimestampFresh("2000-01-01T00:00:00.000Z"), false);
+    delete process.env.WORKER_CALLBACK_SECRET;
   });
 
   await test("claim/analyze/complete scripts enforce secret separation", () => {
@@ -221,6 +261,8 @@ async function run() {
     assert.match(claim, /INPUT_WORKFLOW_RUN_ID/);
     const complete = fs.readFileSync("scripts/actions-worker/complete.ts", "utf8");
     assert.match(complete, /RESULT_ARTIFACT_MISSING/);
+    assert.match(complete, /x-worker-callback-signature/);
+    assert.equal(complete.includes("claimToken:"), false);
   });
 
   await test("analyze route uses repository_dispatch and does not invent run ids", () => {
