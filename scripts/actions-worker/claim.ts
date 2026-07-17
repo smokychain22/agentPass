@@ -137,13 +137,20 @@ async function main(): Promise<void> {
   const sourceCommit = json.job?.sourceCommit || json.archive?.sourceCommit || "";
   const archiveUrl = json.archive?.url || "";
 
-  if (json.claimToken) {
-    console.log(`::add-mask::${json.claimToken}`);
-  }
+  // GitHub Actions strips job outputs that were registered via ::add-mask::.
+  // Pass the claim token to the trusted complete job via a private artifact instead.
   await setOutput("already_claimed", json.alreadyClaimed ? "true" : "false");
-  await setOutput("claim_token", json.claimToken || "");
   await setOutput("source_commit", String(sourceCommit));
   await setOutput("archive_url", archiveUrl);
+  await setOutput("has_claim_secret", json.claimToken ? "true" : "false");
+
+  if (json.claimToken) {
+    await fs.writeFile(
+      path.join(WORK, "claim-secret.json"),
+      JSON.stringify({ claimToken: json.claimToken, jobId, workerId: WORKER_ID }),
+      { mode: 0o600 }
+    );
+  }
 
   if (json.alreadyClaimed) {
     console.log("ALREADY_CLAIMED by this worker identity — skip analyze.");

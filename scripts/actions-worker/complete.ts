@@ -69,9 +69,21 @@ async function main(): Promise<void> {
   const apiKey = requireEnv("REPODIET_WORKER_API_KEY");
   const apiBase = requireEnv("INPUT_API_BASE_URL").replace(/\/$/, "");
   const jobId = requireEnv("INPUT_JOB_ID");
-  const claimToken = process.env.INPUT_CLAIM_TOKEN?.trim();
   const analyzeResult = process.env.INPUT_ANALYZE_RESULT?.trim() || "success";
   const requestId = process.env.INPUT_REQUEST_ID?.trim();
+
+  // Prefer claim-secret artifact (GitHub strips masked job outputs).
+  let claimToken = process.env.INPUT_CLAIM_TOKEN?.trim() || "";
+  if (!claimToken) {
+    try {
+      const secret = JSON.parse(
+        await fs.readFile(path.join(WORK, "claim-secret.json"), "utf8")
+      ) as { claimToken?: string };
+      claimToken = secret.claimToken?.trim() || "";
+    } catch {
+      claimToken = "";
+    }
+  }
 
   const bundlePath = path.join(WORK, "result-bundle.json");
   let bundle: Record<string, unknown> | null = null;

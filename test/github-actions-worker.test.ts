@@ -194,10 +194,16 @@ async function run() {
 
   await test("claim script emits claim outputs before archive download", () => {
     const claim = fs.readFileSync("scripts/actions-worker/claim.ts", "utf8");
-    const tokenOut = claim.indexOf('setOutput("claim_token"');
+    const secretWrite = claim.indexOf("claim-secret.json");
     const archiveThrow = claim.indexOf("ARCHIVE_PREPARATION_FAILED");
-    assert.ok(tokenOut > 0 && archiveThrow > tokenOut, "claim_token must be written before archive failure");
+    assert.ok(secretWrite > 0 && archiveThrow > secretWrite, "claim secret must be written before archive failure");
     assert.match(claim, /\/incident/);
+    assert.equal(claim.includes("::add-mask::"), false, "must not mask claim token (Actions strips masked job outputs)");
+    const wf = fs.readFileSync(".github/workflows/repodiet-analysis-worker.yml", "utf8");
+    assert.match(wf, /claim-secret-/);
+    assert.equal(/INPUT_CLAIM_TOKEN:\s*\$\{\{\s*needs\.claim\.outputs\.claim_token/.test(wf), false);
+    const analyzeBlock = wf.split("analyze:")[1]?.split("complete:")[0] ?? "";
+    assert.equal(analyzeBlock.includes("claim-secret"), false, "analyze must not download claim secret");
   });
 
   await test("claim/analyze/complete scripts enforce secret separation", () => {
