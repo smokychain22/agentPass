@@ -240,11 +240,7 @@ export async function POST(request: Request) {
     ).replace(/\/$/, "");
 
     const environment =
-      process.env.VERCEL_ENV === "production"
-        ? "production"
-        : process.env.VERCEL_ENV === "preview"
-          ? "preview"
-          : "development";
+      process.env.VERCEL_ENV === "preview" ? "preview" : "production";
 
     const dispatched = await dispatchAnalysisWorkflow({
       jobId: job.id,
@@ -256,26 +252,30 @@ export async function POST(request: Request) {
 
     if (dispatched.ok) {
       job =
-        (await updateDeepScanStage(job.id, "DISPATCHED", "GitHub Actions workflow requested", {
+        (await updateDeepScanStage(job.id, "DISPATCHED", "repository_dispatch accepted (HTTP 204)", {
           dispatchNonce: nonce,
-          workflowRunId: dispatched.workflowRunId,
-          workflowRunUrl: dispatched.workflowRunUrl,
           dispatchedAt: dispatched.dispatchedAt,
           workerMode: "github_actions_on_demand",
           analysisConfigDigest: digest,
+          // Do not invent workflowRunId — claim job records github.run_id.
+          workflowRunId: undefined,
+          workflowRunUrl: undefined,
+          resultSummary: {
+            ...(job.resultSummary ?? {}),
+            dispatch: {
+              eventType: dispatched.eventType,
+              dispatchNonceDigest: dispatched.dispatchNonceDigest,
+              dispatchState: "DISPATCHED",
+              dispatchRequestedAt: dispatched.dispatchedAt,
+            },
+          },
         })) ?? job;
-      if (dispatched.workflowRunId) {
-        job =
-          (await updateDeepScanStage(
-            job.id,
-            "WAITING_FOR_RUNNER",
-            "Waiting for GitHub Actions runner",
-            {
-              workflowRunId: dispatched.workflowRunId,
-              workflowRunUrl: dispatched.workflowRunUrl,
-            }
-          )) ?? job;
-      }
+      job =
+        (await updateDeepScanStage(
+          job.id,
+          "WAITING_FOR_RUNNER",
+          "Waiting for GitHub Actions runner"
+        )) ?? job;
       await touchMarketplaceHealth({
         dispatcherReady: true,
         workerMode: "github_actions_on_demand",

@@ -46,6 +46,8 @@ export async function buildOkxHealthResponse() {
     },
     workerMode: marketplace.workerMode ?? "github_actions_on_demand",
     dispatcherReady: Boolean(marketplace.dispatcherReady),
+    dispatcherReadyReason: marketplace.dispatcherReadyReason ?? null,
+    dispatcherReadyMessage: marketplace.dispatcherReadyMessage ?? null,
     activeWorkflowRuns: marketplace.activeWorkflowRuns ?? 0,
     lastSuccessfulWorkerRun: marketplace.lastSuccessfulWorkerRun ?? null,
     recentDispatchSuccessRate: marketplace.recentDispatchSuccessRate ?? null,

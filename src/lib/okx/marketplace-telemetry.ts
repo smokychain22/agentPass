@@ -41,6 +41,8 @@ export interface MarketplaceHealthSnapshot {
   /** Ephemeral GitHub Actions worker model */
   workerMode?: "github_actions_on_demand" | "always_on" | "unset";
   dispatcherReady?: boolean;
+  dispatcherReadyReason?: string;
+  dispatcherReadyMessage?: string;
   activeWorkflowRuns?: number;
   lastSuccessfulWorkerRun?: string | null;
   recentDispatchSuccessRate?: number | null;
@@ -147,7 +149,7 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     "@/lib/worker/worker-instance-store"
   );
   const { getDeepScanCapacitySnapshot } = await import("@/lib/deep-scan/capacity");
-  const { isActionsDispatcherConfigured } = await import(
+  const { probeActionsDispatcherHealth } = await import(
     "@/lib/github-actions/dispatch-analysis"
   );
   const latest = await getLatestWorkerHeartbeat();
@@ -155,7 +157,8 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
   const heartbeatAgeMs = latest ? Date.now() - Date.parse(latest.heartbeatAt) : null;
   const capacity = await getDeepScanCapacitySnapshot();
   const a2aIntakeReady = existing.a2aInitialResponseReady !== false;
-  const dispatcherReady = isActionsDispatcherConfigured();
+  const probe = await probeActionsDispatcherHealth();
+  const dispatcherReady = probe.dispatcherReady;
 
   const githubAppReady = Boolean(
     process.env.GITHUB_APP_ID?.trim() && process.env.GITHUB_APP_PRIVATE_KEY?.trim()
@@ -184,6 +187,8 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     a2aInitialResponseReady: a2aIntakeReady,
     workerMode,
     dispatcherReady,
+    dispatcherReadyReason: probe.reason,
+    dispatcherReadyMessage: probe.message,
     // For Actions mode, "workerReady" means dispatcher can start a run (not a permanent daemon).
     workerReady: dispatcherReady || workerHeartbeatReady,
     workerReadySource: dispatcherReady
