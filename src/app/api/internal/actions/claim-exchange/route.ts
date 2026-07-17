@@ -7,6 +7,7 @@ import { consumeDispatchNonce } from "@/lib/github-actions/dispatch-nonce-store"
 import { ACTIONS_WORKER_ID } from "@/lib/github-actions/dispatch-analysis";
 import { claimDeepScanJobById, getDeepScanJob, updateDeepScanStage } from "@/lib/deep-scan/job-store";
 import { ACTIONS_ANALYSIS_LIMITS } from "@/lib/github-actions/limits";
+import { buildArchiveDescriptor } from "@/lib/github-actions/archive-descriptor";
 import { touchMarketplaceHealth } from "@/lib/okx/marketplace-telemetry";
 
 export const runtime = "nodejs";
@@ -166,23 +167,5 @@ function sanitizeJob(job: Awaited<ReturnType<typeof getDeepScanJob>>) {
     workflowRunId: job.workflowRunId,
     workflowRunUrl: job.workflowRunUrl,
     analysisConfigDigest: job.analysisConfigDigest,
-  };
-}
-
-function buildArchiveDescriptor(job: NonNullable<Awaited<ReturnType<typeof getDeepScanJob>>>) {
-  const owner = job.repositoryOwner;
-  const name = job.repositoryName;
-  const branch = job.branch || job.request.branch || "main";
-  // Public zip for initial Meridian acceptance. Private repos use short-lived exchange later.
-  const url =
-    owner && name
-      ? `https://github.com/${owner}/${name}/archive/refs/heads/${encodeURIComponent(branch)}.zip`
-      : null;
-  return {
-    url,
-    sourceCommit: job.sourceCommit || job.request.sourceCommit,
-    branch,
-    maxBytes: ACTIONS_ANALYSIS_LIMITS.maxArchiveBytes,
-    maxFiles: ACTIONS_ANALYSIS_LIMITS.maxFiles,
   };
 }
