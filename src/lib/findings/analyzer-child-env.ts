@@ -15,7 +15,8 @@ export function analyzerChildEnv(): NodeJS.ProcessEnv {
     NODE_PATH: nodePath,
     PATH: process.env.PATH,
     HOME: process.env.HOME ?? "/tmp",
-  };
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  } as NodeJS.ProcessEnv;
 }
 
 /**

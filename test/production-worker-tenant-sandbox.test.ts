@@ -35,7 +35,7 @@ test("secret firewall strips GitHub App and signing keys", () => {
     WORKER_API_KEY: "SECRET",
     npm_config_cache: "/tmp/npm",
     CI: "true",
-  } as NodeJS.ProcessEnv);
+  } as unknown as NodeJS.ProcessEnv);
   assert.equal(env.GITHUB_APP_PRIVATE_KEY, undefined);
   assert.equal(env.RECEIPT_SIGNING_PRIVATE_KEY, undefined);
   assert.equal(env.OKX_API_KEY, undefined);

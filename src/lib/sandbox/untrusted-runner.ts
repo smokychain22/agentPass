@@ -114,7 +114,8 @@ export async function runUntrustedInDocker(input: {
     env: {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
-    },
+      NODE_ENV: "production",
+    } as NodeJS.ProcessEnv,
   });
 
   return {

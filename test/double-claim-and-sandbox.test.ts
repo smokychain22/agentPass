@@ -73,7 +73,7 @@ async function run() {
       UPSTASH_REDIS_REST_TOKEN: "x",
       GITHUB_APP_PRIVATE_KEY: "x",
       REPODIET_RECEIPT_PRIVATE_KEY: "x",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     assert.equal(env.WORKER_API_KEY, undefined);
     assert.equal(env.UPSTASH_REDIS_REST_TOKEN, undefined);
     assert.equal(env.GITHUB_APP_PRIVATE_KEY, undefined);
