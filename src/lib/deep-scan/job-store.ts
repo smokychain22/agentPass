@@ -5,6 +5,7 @@ import {
   setPersistentRecord,
 } from "@/lib/store/persistent-store";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
+import { trackDeepScanActive } from "./capacity";
 import type { DeepScanJob, DeepScanJobRequest, DeepScanStage } from "./types";
 import { DEEP_SCAN_LEASE_MS, DEEP_SCAN_MAX_ATTEMPTS, stagePercent } from "./types";
 
@@ -95,6 +96,7 @@ export async function createDeepScanJob(
     stage: "QUEUED",
     progress: { stage: "QUEUED", percent: 0, detail: "Deep scan queued", updatedAt: t },
     request,
+    tenantId: request.tenantId,
     projectRoot: request.projectRoot || ".",
     branch: request.branch,
     sourceCommit: request.sourceCommit,
@@ -106,6 +108,7 @@ export async function createDeepScanJob(
 
   await saveDeepScanJob(job);
   await enqueueDeepScan(job.id);
+  await trackDeepScanActive(job.id, true);
   if (options?.idempotencyKey) {
     await setPersistentRecord(COLLECTION, `idem:${options.idempotencyKey}`, job.id);
   }
@@ -121,11 +124,28 @@ export async function updateDeepScanStage(
   const job = await getDeepScanJob(id);
   if (!job) return undefined;
   const t = nowIso();
+  const terminal =
+    stage === "READY" ||
+    stage === "COMPLETED" ||
+    stage === "FAILED" ||
+    stage === "FAILED_RETRYABLE" ||
+    stage === "FAILED_TERMINAL" ||
+    stage === "CANCELLED";
   const next: DeepScanJob = {
     ...job,
     ...patch,
     stage,
-    status: stage === "READY" ? "complete" : stage === "FAILED" ? "failed" : "running",
+    status:
+      stage === "READY" || stage === "COMPLETED"
+        ? "complete"
+        : stage === "FAILED" ||
+            stage === "FAILED_RETRYABLE" ||
+            stage === "FAILED_TERMINAL" ||
+            stage === "CANCELLED"
+          ? "failed"
+          : stage === "QUEUED"
+            ? "queued"
+            : "running",
     progress: {
       stage,
       percent: stagePercent(stage),
@@ -134,9 +154,12 @@ export async function updateDeepScanStage(
     },
     statusHistory: [...job.statusHistory, { stage, at: t, detail }],
     updatedAt: t,
-    completedAt: stage === "READY" || stage === "FAILED" ? t : job.completedAt,
+    completedAt: terminal ? t : job.completedAt,
   };
   await saveDeepScanJob(next);
+  if (terminal) {
+    await trackDeepScanActive(id, false);
+  }
   return next;
 }
 
@@ -159,32 +182,37 @@ export async function claimNextDeepScanJob(workerId: string): Promise<DeepScanJo
       continue;
     }
     const t = nowIso();
+    const claimToken = `claim_${nanoid(16)}`;
+    const nextStage: DeepScanStage = job.stage === "QUEUED" ? "CLAIMED" : job.stage;
     const claimed: DeepScanJob = {
       ...job,
       status: "running",
-      stage: job.stage === "QUEUED" ? "INVENTORY" : job.stage,
+      stage: nextStage,
       claimedBy: workerId,
+      claimToken,
       claimedAt: t,
       heartbeatAt: t,
       leaseExpiresAt: leaseExpiresAt(),
+      workerHost: process.env.HOSTNAME?.trim() || process.env.WORKER_HOST?.trim(),
       attemptCount: (job.attemptCount ?? 0) + 1,
       updatedAt: t,
       progress: {
-        stage: job.stage === "QUEUED" ? "INVENTORY" : job.stage,
-        percent: stagePercent(job.stage === "QUEUED" ? "INVENTORY" : job.stage),
+        stage: nextStage,
+        percent: stagePercent(nextStage),
         detail: `Claimed by ${workerId}`,
         updatedAt: t,
       },
       statusHistory: [
         ...job.statusHistory,
         {
-          stage: job.stage === "QUEUED" ? "INVENTORY" : job.stage,
+          stage: nextStage,
           at: t,
-          detail: `claimed by ${workerId}`,
+          detail: `claimed by ${workerId} token=${claimToken}`,
         },
       ],
     };
     await saveDeepScanJob(claimed);
+    await trackDeepScanActive(claimed.id, true);
     return claimed;
   }
   return undefined;
@@ -216,12 +244,51 @@ export async function heartbeatDeepScanJob(
 export async function failDeepScanJob(
   id: string,
   code: string,
-  message: string
+  message: string,
+  options?: { terminal?: boolean }
 ): Promise<DeepScanJob | undefined> {
-  return updateDeepScanStage(id, "FAILED", message, {
+  const job = await getDeepScanJob(id);
+  if (!job) return undefined;
+  const attempts = job.attemptCount ?? 0;
+  const terminal =
+    options?.terminal === true || attempts >= DEEP_SCAN_MAX_ATTEMPTS || code === "MAX_ATTEMPTS";
+
+  if (terminal) {
+    return updateDeepScanStage(id, "FAILED_TERMINAL", message, {
+      failureCode: code,
+      failureMessage: message,
+    });
+  }
+
+  const t = nowIso();
+  const retryable: DeepScanJob = {
+    ...job,
+    status: "queued",
+    stage: "QUEUED",
     failureCode: code,
     failureMessage: message,
-  });
+    claimedBy: undefined,
+    claimToken: undefined,
+    leaseExpiresAt: undefined,
+    heartbeatAt: undefined,
+    completedAt: undefined,
+    progress: {
+      stage: "QUEUED",
+      percent: 0,
+      detail: `Retryable failure: ${message}`,
+      updatedAt: t,
+    },
+    statusHistory: [
+      ...job.statusHistory,
+      { stage: "FAILED_RETRYABLE", at: t, detail: message },
+      { stage: "QUEUED", at: t, detail: "re-queued after retryable failure" },
+    ],
+    updatedAt: t,
+  };
+  await saveDeepScanJob(retryable);
+  await enqueueDeepScan(id);
+  await trackDeepScanActive(id, true);
+  return retryable;
 }
 
 export async function abandonStaleDeepScanClaims(): Promise<number> {

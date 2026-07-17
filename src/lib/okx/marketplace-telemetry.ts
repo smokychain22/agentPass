@@ -1,6 +1,5 @@
 import { durableNow, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
 import { QUICK_TRIAGE_TIMEOUT_MS } from "@/lib/a2mcp/quick-triage-budget";
-import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 
 export type MarketplaceTelemetryEvent =
   | "a2mcp_request_received"
@@ -29,6 +28,16 @@ export interface MarketplaceHealthSnapshot {
   workerReady: boolean;
   workerReadySource: "heartbeat" | "unset";
   deepScanQueueReady: boolean;
+  githubAppReady: boolean;
+  paymentVerifierReady: boolean;
+  receiptSignerReady: boolean;
+  attestationSignerReady: boolean;
+  queueDepth: number | null;
+  activeWorkers: number;
+  workerHeartbeatAgeMs: number | null;
+  workerVersion?: string | null;
+  activeJobs?: number;
+  oldestQueuedTaskAgeSeconds?: number | null;
   updatedAt: string;
 }
 
@@ -85,12 +94,18 @@ function defaultHealth(): MarketplaceHealthSnapshot {
     a2mcpQuickTriageReady: true,
     a2mcpMaximumExecutionMs: QUICK_TRIAGE_TIMEOUT_MS,
     a2mcpLastSuccessfulPaidCall: null,
-    // Fail-closed: never claim A2A runtime/worker ready without evidence.
     a2aRuntimeReady: false,
     a2aInitialResponseReady: true,
     workerReady: false,
     workerReadySource: "unset",
     deepScanQueueReady: true,
+    githubAppReady: false,
+    paymentVerifierReady: false,
+    receiptSignerReady: false,
+    attestationSignerReady: false,
+    queueDepth: null,
+    activeWorkers: 0,
+    workerHeartbeatAgeMs: null,
     updatedAt: durableNow(),
   };
 }
@@ -115,11 +130,25 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     (await getDurableRecord<MarketplaceHealthSnapshot>("marketplace_deliveries", HEALTH_KEY)) ??
     defaultHealth();
 
-  const workerHeartbeatReady = await isWorkerAvailable();
+  const { getLatestWorkerHeartbeat, isWorkerRecentlyOnline } = await import(
+    "@/lib/worker/worker-instance-store"
+  );
+  const { getDeepScanCapacitySnapshot } = await import("@/lib/deep-scan/capacity");
+  const latest = await getLatestWorkerHeartbeat();
+  const workerHeartbeatReady = isWorkerRecentlyOnline(latest);
+  const heartbeatAgeMs = latest ? Date.now() - Date.parse(latest.heartbeatAt) : null;
+  const capacity = await getDeepScanCapacitySnapshot();
   const a2aIntakeReady = existing.a2aInitialResponseReady !== false;
 
-  // Fail-closed merge: heartbeat wins for workerReady; a2aRuntimeReady requires intake + worker
-  // unless explicitly marked ready after a successful async acknowledgement path.
+  const githubAppReady = Boolean(
+    process.env.GITHUB_APP_ID?.trim() && process.env.GITHUB_APP_PRIVATE_KEY?.trim()
+  );
+  const paymentVerifierReady = process.env.REQUIRE_REAL_X402 === "1";
+  const receiptSignerReady = Boolean(
+    process.env.RECEIPT_SIGNING_PRIVATE_KEY?.trim() || process.env.GREEN_PR_SIGNING_PRIVATE_KEY?.trim()
+  );
+  const attestationSignerReady = Boolean(process.env.GREEN_PR_SIGNING_PRIVATE_KEY?.trim());
+
   return {
     ...existing,
     a2mcpQuickTriageReady: existing.a2mcpQuickTriageReady !== false,
@@ -127,9 +156,18 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     a2aInitialResponseReady: a2aIntakeReady,
     workerReady: workerHeartbeatReady,
     workerReadySource: workerHeartbeatReady ? "heartbeat" : "unset",
-    // Runtime is ready for fast intake always; durable cleanup requires worker.
     a2aRuntimeReady: a2aIntakeReady,
     deepScanQueueReady: existing.deepScanQueueReady !== false,
+    githubAppReady,
+    paymentVerifierReady,
+    receiptSignerReady,
+    attestationSignerReady,
+    queueDepth: capacity.queueDepth,
+    activeWorkers: workerHeartbeatReady ? 1 : 0,
+    workerHeartbeatAgeMs: heartbeatAgeMs,
+    workerVersion: latest?.version ?? existing.workerVersion ?? null,
+    activeJobs: capacity.activeJobs,
+    oldestQueuedTaskAgeSeconds: capacity.oldestQueuedTaskAgeSeconds,
     updatedAt: durableNow(),
   };
 }

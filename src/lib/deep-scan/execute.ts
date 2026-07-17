@@ -18,11 +18,9 @@ import {
 } from "./job-store";
 import type { DeepScanJob } from "./types";
 
-function proofRoleFor(owner: string, name: string): string {
-  if (name === "repodiet-e2e-test") return "REGRESSION_FIXTURE_ONLY — not primary product proof";
-  if (owner === "velz-cmd" && name === "Meridian") return "PRIMARY_COMPLEX_PROOF";
-  if (owner === "smokychain22" && name === "agentPass") return "DOGFOOD_PROOF";
-  return "CUSTOMER_OR_OTHER";
+/** No repository receives privileged marketplace treatment by name. */
+function repositoryClassLabel(_owner: string, _name: string): string {
+  return "CUSTOMER_REPOSITORY";
 }
 
 async function detectBaselineCommands(rootDir: string): Promise<{
@@ -209,10 +207,11 @@ export async function executeDeepScanJob(
         },
         evidenceStandardCount: evidenceFindings.length,
         graphId: graph.id,
-        proofRoleNote: proofRoleFor(
+        repositoryClass: repositoryClassLabel(
           parsed?.owner ?? scan.repo.owner,
           parsed?.repo ?? scan.repo.name
         ),
+        tenantId: job.request.tenantId,
       };
 
       job =

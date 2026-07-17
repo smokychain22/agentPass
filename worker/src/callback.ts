@@ -83,3 +83,58 @@ export async function claimNextJob(apiBase: string, apiKey: string, workerId: st
   const data = (await response.json()) as { ok: boolean; job: import("../../src/lib/worker/types").RepositoryJob | null };
   return data.job;
 }
+
+export async function claimNextDeepScanJob(
+  apiBase: string,
+  apiKey: string,
+  workerId: string
+): Promise<import("../../src/lib/deep-scan/types").DeepScanJob | null> {
+  const response = await fetch(
+    `${apiBase.replace(/\/$/, "")}/api/internal/worker/deep-scans/claim-next`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      // execute:false — analysis runs in this worker process, not inside the Vercel claim route.
+      body: JSON.stringify({ workerId, execute: false }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Deep-scan claim failed: ${response.status}`);
+  }
+  const data = (await response.json()) as {
+    ok: boolean;
+    job: import("../../src/lib/deep-scan/types").DeepScanJob | null;
+  };
+  return data.job;
+}
+
+export async function postDeepScanProgress(
+  apiBase: string,
+  apiKey: string,
+  jobId: string,
+  body: Record<string, unknown>
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    authorization: `Bearer ${apiKey}`,
+  };
+  if (callbackSecret) {
+    headers["x-worker-callback-secret"] = callbackSecret;
+  }
+  const response = await fetch(
+    `${apiBase.replace(/\/$/, "")}/api/internal/worker/deep-scans/${jobId}/progress`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Deep-scan progress failed (${response.status}): ${text}`);
+  }
+}
+

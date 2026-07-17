@@ -69,6 +69,12 @@ export function verifyPayment(request: Request, expectedMicro: string): PaymentV
     }
   }
 
+  // Unsigned payment-signature is never sufficient under REQUIRE_REAL_X402.
+  // Marketplace paid paths must verify through the A2MCP/A2A payment pipelines.
+  if (process.env.REQUIRE_REAL_X402 === "1") {
+    return { ok: false };
+  }
+
   const sig =
     request.headers.get("payment-signature") || request.headers.get("x-payment-signature");
   if (sig) {
@@ -88,6 +94,21 @@ export function enforcePayment(
   toolKey: string,
   options?: { free?: boolean; amountMicro?: string }
 ): PaymentVerification {
+  // Demo-repo free paths are never allowed under live marketplace payment mode.
+  const live =
+    process.env.REQUIRE_REAL_X402 === "1" ||
+    (process.env.NODE_ENV === "production" &&
+      process.env.VERCEL_ENV === "production" &&
+      process.env.PUBLIC_BETA_FREE !== "1" &&
+      process.env.REPODIET_PUBLIC_BETA_FREE !== "1");
+  if (options?.free && live) {
+    const amount = options.amountMicro ?? priceFor(toolKey);
+    const url = new URL(request.url).toString();
+    const err = new Error("Payment required");
+    (err as Error & { status: number; body: unknown }).status = 402;
+    (err as Error & { status: number; body: unknown }).body = paymentRequiredBody(url, amount);
+    throw err;
+  }
   if (options?.free) {
     return { ok: true, mode: "free", amount: "0", paidAt: new Date().toISOString() };
   }

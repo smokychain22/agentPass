@@ -6,6 +6,8 @@ import type { WorkflowInvalidationMeta } from "@/lib/workflow/source-invalidatio
 export interface StoredAppScan {
   scanId: string;
   ownerKey?: string;
+  /** Explicit tenant binding — required for cross-tenant isolation. */
+  tenantId?: string;
   payload: ScanPayload;
   repositoryModel?: ScanPayload["repositoryModel"];
   workflowMeta?: WorkflowInvalidationMeta;
@@ -18,12 +20,18 @@ export function createScanId(): string {
 
 export async function storeAppScan(
   scanId: string,
-  input: { payload: ScanPayload; ownerKey?: string; workflowMeta?: WorkflowInvalidationMeta }
+  input: {
+    payload: ScanPayload;
+    ownerKey?: string;
+    tenantId?: string;
+    workflowMeta?: WorkflowInvalidationMeta;
+  }
 ): Promise<StoredAppScan> {
   const existing = await getAppScan(scanId);
   const record: StoredAppScan = {
     scanId,
     ownerKey: input.ownerKey,
+    tenantId: input.tenantId ?? existing?.tenantId,
     payload: input.payload,
     repositoryModel: input.payload.repositoryModel,
     workflowMeta: input.workflowMeta ?? existing?.workflowMeta,
