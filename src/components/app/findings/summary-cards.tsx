@@ -90,10 +90,11 @@ function buildMetrics(payload: FindingsPayload): SummaryMetric[] {
     },
     {
       key: "eligible",
-      value: summary.eligibleFindings ?? summary.actionableFixes ?? 0,
+      value: summary.eligibleFindings ?? 0,
       title: "Cleanup-eligible",
       subtitle: "Preflight-confirmed",
-      explanation: "Findings with native evidence and a transformer preflight that produced a real content change.",
+      explanation:
+        "Findings with SAFE risk, native evidence, and a transformer preflight that produced a real content change.",
     },
   ];
 }

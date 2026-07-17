@@ -15,15 +15,24 @@ export type FindingsPhase =
   | "dispatched"
   | "waiting_runner"
   | "claimed"
+  | "preparing_archive"
+  | "downloading_archive"
+  | "archive_ready"
   | "inventory"
   | "resolving"
   | "graph"
+  | "running_jscpd"
+  | "running_knip"
+  | "running_madge"
+  | "running_heuristics"
   | "analyzers"
   | "normalizing"
   | "validating"
+  | "persisting"
   | "baseline"
   | "ready"
-  | "failed";
+  | "failed"
+  | "worker_stalled";
 
 export const FINDINGS_STEPS: { phase: FindingsPhase; label: string }[] = [
   { phase: "queued", label: "Queued" },
@@ -31,12 +40,20 @@ export const FINDINGS_STEPS: { phase: FindingsPhase; label: string }[] = [
   { phase: "dispatched", label: "GitHub worker requested" },
   { phase: "waiting_runner", label: "Waiting for GitHub Actions runner" },
   { phase: "claimed", label: "Claimed by GitHub runner" },
+  { phase: "preparing_archive", label: "Preparing repository archive" },
+  { phase: "downloading_archive", label: "Downloading commit-pinned source" },
+  { phase: "archive_ready", label: "Archive ready" },
   { phase: "inventory", label: "Inventory" },
   { phase: "resolving", label: "Resolving projects" },
   { phase: "graph", label: "Building graph" },
+  { phase: "running_jscpd", label: "Running jscpd" },
+  { phase: "running_knip", label: "Running Knip" },
+  { phase: "running_madge", label: "Running Madge" },
+  { phase: "running_heuristics", label: "Running heuristics" },
   { phase: "analyzers", label: "Running analyzers" },
   { phase: "normalizing", label: "Normalizing findings" },
   { phase: "validating", label: "Validating evidence" },
+  { phase: "persisting", label: "Persisting results" },
   { phase: "baseline", label: "Baseline verification" },
   { phase: "ready", label: "Ready" },
 ];
@@ -47,15 +64,24 @@ const STAGE_TO_PHASE: Record<string, FindingsPhase> = {
   DISPATCHED: "dispatched",
   WAITING_FOR_RUNNER: "waiting_runner",
   CLAIMED: "claimed",
+  PREPARING_ARCHIVE: "preparing_archive",
+  DOWNLOADING_ARCHIVE: "downloading_archive",
+  ARCHIVE_READY: "archive_ready",
   INVENTORY: "inventory",
   RESOLVING_PROJECTS: "resolving",
   BUILDING_GRAPH: "graph",
+  RUNNING_JSCpd: "running_jscpd",
+  RUNNING_KNIP: "running_knip",
+  RUNNING_MADGE: "running_madge",
+  RUNNING_INTERNAL_HEURISTICS: "running_heuristics",
   RUNNING_ANALYZERS: "analyzers",
   NORMALIZING_FINDINGS: "normalizing",
   VALIDATING_EVIDENCE: "validating",
+  PERSISTING_RESULTS: "persisting",
   BASELINE_VERIFICATION: "baseline",
   READY: "ready",
   COMPLETED: "ready",
+  WORKER_STALLED: "worker_stalled",
   FAILED: "failed",
   FAILED_RETRYABLE: "failed",
   FAILED_TERMINAL: "failed",
@@ -110,6 +136,7 @@ export interface FindingsJobProgress {
   workflowRunUrl?: string;
   claimedBy?: string;
   workerHost?: string;
+  workerIdentity?: string;
   findingsId?: string;
   graphId?: string;
   failureCode?: string;
@@ -120,6 +147,25 @@ export interface FindingsJobProgress {
   completedAt?: string;
   sourceCommit?: string;
   heartbeatAt?: string;
+  stageStartedAt?: string;
+  lastActivityAt?: string;
+  progressMessage?: string;
+  completedUnits?: number;
+  totalUnits?: number;
+  timingBreakdown?: Record<string, number>;
+  progress?: {
+    stage?: string;
+    detail?: string;
+    message?: string;
+    updatedAt?: string;
+    stageStartedAt?: string;
+    lastActivityAt?: string;
+    completedUnits?: number;
+    totalUnits?: number;
+  };
+  leaseExpiresAt?: string;
+  repositoryOwner?: string;
+  repositoryName?: string;
 }
 
 const ANALYSIS_JOB_STORAGE_KEY = "repodiet.analysisJob.v1";
@@ -270,10 +316,10 @@ export async function pollDurableFindingsJob(
   const intervalMs = options?.intervalMs ?? 2_000;
   const timeoutMs = options?.timeoutMs ?? 30 * 60_000;
   const maxQueueWaitMs = options?.maxQueueWaitMs ?? FINDINGS_MAX_QUEUE_WAIT_MS;
-  const started = Date.now();
+  let deadline = Date.now() + timeoutMs;
   let firstSeenQueuedAt: number | null = null;
 
-  while (Date.now() - started < timeoutMs) {
+  while (Date.now() < deadline) {
     let res: Response;
     try {
       res = await fetch(statusUrl, { credentials: "same-origin" });
@@ -306,6 +352,7 @@ export async function pollDurableFindingsJob(
       stage: json.job.stage,
       claimedBy: json.job.claimedBy,
       workerHost: json.job.workerHost,
+      workerIdentity: (json.job as FindingsJobProgress).workerIdentity,
       findingsId: json.job.findingsId,
       graphId: json.job.graphId,
       failureCode: json.job.failureCode,
@@ -319,6 +366,16 @@ export async function pollDurableFindingsJob(
       workflowRunUrl: (json.job as { workflowRunUrl?: string }).workflowRunUrl,
       workerMode: (json.job as { workerMode?: string }).workerMode,
       heartbeatAt: (json.job as { heartbeatAt?: string }).heartbeatAt,
+      stageStartedAt: (json.job as FindingsJobProgress).stageStartedAt,
+      lastActivityAt: (json.job as FindingsJobProgress).lastActivityAt,
+      progressMessage: (json.job as FindingsJobProgress).progressMessage,
+      completedUnits: (json.job as FindingsJobProgress).completedUnits,
+      totalUnits: (json.job as FindingsJobProgress).totalUnits,
+      timingBreakdown: (json.job as FindingsJobProgress).timingBreakdown,
+      progress: (json.job as FindingsJobProgress).progress,
+      leaseExpiresAt: (json.job as FindingsJobProgress).leaseExpiresAt,
+      repositoryOwner: (json.job as FindingsJobProgress).repositoryOwner,
+      repositoryName: (json.job as FindingsJobProgress).repositoryName,
     };
     onProgress(progress);
 
@@ -351,6 +408,22 @@ export async function pollDurableFindingsJob(
       return progress;
     }
     if (
+      progress.stage === "WORKER_STALLED" ||
+      progress.failureCode === "WORKER_STALLED"
+    ) {
+      throw analysisError({
+        code: "WORKER_STALLED",
+        message:
+          progress.failureMessage ||
+          "Authenticated worker activity became stale beyond the lease. Retry the analysis.",
+        retryable: true,
+        requestId: createRequestId(),
+        jobId: progress.jobId,
+        statusUrl,
+        requiredAction: "RETRY",
+      });
+    }
+    if (
       progress.stage === "FAILED" ||
       progress.stage === "FAILED_TERMINAL" ||
       progress.stage === "CANCELLED" ||
@@ -362,7 +435,7 @@ export async function pollDurableFindingsJob(
             ? "CANCELLED"
             : ((progress.failureCode as AnalysisErrorContract["code"]) || "ANALYZER_FAILED"),
         message: progress.failureMessage || "Findings analysis failed.",
-        retryable: progress.stage === "FAILED_RETRYABLE",
+        retryable: progress.stage === "FAILED_RETRYABLE" || progress.stage === "WORKER_STALLED",
         requestId: createRequestId(),
         jobId: progress.jobId,
         statusUrl,
@@ -370,12 +443,21 @@ export async function pollDurableFindingsJob(
       });
     }
 
+    // Fresh authenticated activity — do not show timed out; slide the deadline forward.
+    const activityAt = progress.lastActivityAt || progress.heartbeatAt || progress.updatedAt;
+    const activityFresh =
+      activityAt && Date.now() - Date.parse(activityAt) < 5 * 60_000;
+    if (activityFresh) {
+      deadline = Math.max(deadline, Date.now() + timeoutMs);
+    }
+
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 
   throw analysisError({
     code: "WORKER_LOST",
-    message: "Timed out waiting for findings analysis. The durable job may still complete — refresh to resume.",
+    message:
+      "Timed out waiting for findings analysis. The durable job may still complete — refresh to resume.",
     retryable: true,
     requestId: createRequestId(),
     statusUrl,

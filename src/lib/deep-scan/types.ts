@@ -4,12 +4,20 @@ export const DEEP_SCAN_STAGES = [
   "DISPATCHED",
   "WAITING_FOR_RUNNER",
   "CLAIMED",
+  "PREPARING_ARCHIVE",
+  "DOWNLOADING_ARCHIVE",
+  "ARCHIVE_READY",
   "INVENTORY",
   "RESOLVING_PROJECTS",
   "BUILDING_GRAPH",
   "RUNNING_ANALYZERS",
+  "RUNNING_JSCpd",
+  "RUNNING_KNIP",
+  "RUNNING_MADGE",
+  "RUNNING_INTERNAL_HEURISTICS",
   "NORMALIZING_FINDINGS",
   "VALIDATING_EVIDENCE",
+  "PERSISTING_RESULTS",
   "BASELINE_VERIFICATION",
   "AWAITING_SCOPE",
   "PATCHING",
@@ -20,6 +28,7 @@ export const DEEP_SCAN_STAGES = [
   "DELIVERY_READY",
   "READY",
   "COMPLETED",
+  "WORKER_STALLED",
   "FAILED",
   "FAILED_RETRYABLE",
   "FAILED_TERMINAL",
@@ -51,6 +60,11 @@ export interface DeepScanProgress {
   percent: number;
   detail?: string;
   updatedAt: string;
+  stageStartedAt?: string;
+  lastActivityAt?: string;
+  completedUnits?: number;
+  totalUnits?: number;
+  message?: string;
 }
 
 export interface DeepScanJob {
@@ -83,10 +97,23 @@ export interface DeepScanJob {
   claimToken?: string;
   /** Opaque non-secret handle returned to claim job for correlation only (not authorizing). */
   claimHandle?: string;
+  /**
+   * SHA-256 of progress-only token minted at claim.
+   * Analyze may use the raw progressToken (not Worker API key / callback secret).
+   */
+  progressTokenHash?: string;
   claimedAt?: string;
   heartbeatAt?: string;
   leaseExpiresAt?: string;
   workerHost?: string;
+  /** Authenticated worker identity last seen on a progress callback. */
+  workerIdentity?: string;
+  stageStartedAt?: string;
+  lastActivityAt?: string;
+  progressMessage?: string;
+  completedUnits?: number;
+  totalUnits?: number;
+  timingBreakdown?: import("@/lib/deep-scan/timing-breakdown").TimingBreakdown;
   /** GitHub Actions on-demand worker fields */
   workerMode?: "github_actions_on_demand" | "always_on" | "unset";
   dispatchNonce?: string;
@@ -118,12 +145,20 @@ export function stagePercent(stage: DeepScanStage): number {
     "DISPATCHED",
     "WAITING_FOR_RUNNER",
     "CLAIMED",
+    "PREPARING_ARCHIVE",
+    "DOWNLOADING_ARCHIVE",
+    "ARCHIVE_READY",
     "INVENTORY",
     "RESOLVING_PROJECTS",
     "BUILDING_GRAPH",
+    "RUNNING_JSCpd",
+    "RUNNING_KNIP",
+    "RUNNING_MADGE",
+    "RUNNING_INTERNAL_HEURISTICS",
     "RUNNING_ANALYZERS",
     "NORMALIZING_FINDINGS",
     "VALIDATING_EVIDENCE",
+    "PERSISTING_RESULTS",
     "BASELINE_VERIFICATION",
     "AWAITING_SCOPE",
   ];
@@ -131,7 +166,8 @@ export function stagePercent(stage: DeepScanStage): number {
     stage === "FAILED" ||
     stage === "FAILED_RETRYABLE" ||
     stage === "FAILED_TERMINAL" ||
-    stage === "CANCELLED"
+    stage === "CANCELLED" ||
+    stage === "WORKER_STALLED"
   ) {
     return 100;
   }

@@ -22,14 +22,14 @@ import {
   savePersistedSession,
   type PersistedSession,
 } from "@/lib/session/persist-session";
-import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
 import {
   isFindingsBoundToActiveScan,
   isRepositoryConnected,
   type ScanLifecyclePhase,
 } from "@/lib/workflow/step-states";
 
-function defaultSelectedFindingIds(payload: FindingsPayload): string[] {
+function defaultSafeSelectedIds(payload: FindingsPayload): string[] {
   return [
     ...payload.duplicates,
     ...payload.unused.files,
@@ -38,12 +38,8 @@ function defaultSelectedFindingIds(payload: FindingsPayload): string[] {
     ...payload.orphans,
     ...payload.slopSignals,
   ]
-    .filter(isActionableFinding)
+    .filter(isCleanupEligible)
     .map((f) => f.id);
-}
-
-function defaultSafeSelectedIds(payload: FindingsPayload): string[] {
-  return defaultSelectedFindingIds(payload);
 }
 
 export interface ScanSession {

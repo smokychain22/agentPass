@@ -1,9 +1,7 @@
 import type { FindingsPayload } from "@/lib/findings/types";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
-import {
-  countEligibleFindings,
-  isActionableFinding,
-} from "@/lib/findings/actionability-signals";
+import { countEligibleFindings } from "@/lib/findings/actionability-signals";
+import { isCleanupEligible as isCleanupEligibleFinding } from "@/lib/findings/cleanup-eligibility";
 import { flattenFindings } from "@/lib/findings/client";
 import type { RepositoryConnectionStatus } from "./github-repository-status";
 import { resolveFixPrUnlock } from "./unlock-reasons";
@@ -134,17 +132,16 @@ export function computeWorkflowGates(input: {
   const flat = findings ? flattenFindings(findings) : [];
   const eligibleFindingsCount =
     findings?.summary.eligibleFindings ?? countEligibleFindings(flat);
-  const safeCandidateCount = flat.filter(
-    (f) => f.action === "safe_candidate" && isActionableFinding(f)
-  ).length;
+  const safeCandidateCount = flat.filter((f) => f.action === "safe_candidate").length;
+  const cleanupEligibleCount = countEligibleFindings(flat);
   const reviewFirstCount = flat.filter((f) => f.action === "review_first").length;
   const transformedFindingsCount = findings?.summary.transformedFindings ?? 0;
-  const supportedFixCount = flat.filter(isActionableFinding).length;
+  const supportedFixCount = cleanupEligibleCount;
   const findingsReady = Boolean(findings);
   const findingsUnlocked = input.scanComplete && projectRootConfirmed;
 
   const selectedSafeCount = flat.filter(
-    (f) => selectedFindingIds.includes(f.id) && isActionableFinding(f)
+    (f) => selectedFindingIds.includes(f.id) && isCleanupEligibleFinding(f)
   ).length;
 
   const githubConnected = Boolean(input.githubStatus?.connected);
@@ -208,7 +205,7 @@ export function computeWorkflowGates(input: {
     transformerCompatibleCount: eligibleFindingsCount,
     dryRunPassedCount: transformedFindingsCount,
     supportedFixCount,
-    quickCleanupAvailable: findingsReady && safeCandidateCount > 0,
+    quickCleanupAvailable: findingsReady && cleanupEligibleCount > 0,
     quickCleanupState,
     patchKitReady,
     generatedChanges,

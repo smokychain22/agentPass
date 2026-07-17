@@ -243,6 +243,12 @@ export async function POST(request: Request) {
     alreadyClaimed: claim.alreadyClaimed,
     // Opaque non-secret correlation id — does NOT authorize ingest.
     claimHandle: updated.claimHandle,
+    /**
+     * Progress-only credential for secretless analyze stage callbacks.
+     * NOT Worker API key, NOT callback secret, NOT claimToken.
+     * Returned once at claim; hash is stored server-side.
+     */
+    progressToken: claim.progressToken,
     workerId,
     job: sanitizeJob(updated),
     archive,

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   getPersistentRecord,
   setPersistentRecord,
@@ -75,6 +75,29 @@ export function createClaimHandle(): string {
   return `ch_${randomBytes(16).toString("hex")}`;
 }
 
+/** Progress-only token for secretless analyze callbacks (not Worker API key / callback secret). */
+export function createProgressToken(): string {
+  return `pt_${randomBytes(24).toString("hex")}`;
+}
+
+export function hashProgressToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function verifyProgressToken(
+  token: string | null | undefined,
+  expectedHash: string | null | undefined
+): boolean {
+  if (!token?.trim() || !expectedHash?.trim()) return false;
+  const provided = hashProgressToken(token.trim());
+  if (provided.length !== expectedHash.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(expectedHash));
+  } catch {
+    return false;
+  }
+}
+
 export async function consumeCompletionNonce(
   nonce: string,
   jobId: string
@@ -128,7 +151,8 @@ export class ActionsCallbackAuthError extends Error {
       | "CALLBACK_TIMESTAMP_STALE"
       | "COMPLETION_NONCE_REPLAY"
       | "WORKFLOW_IDENTITY_MISMATCH"
-      | "CLAIM_LEASE_INVALID",
+      | "CLAIM_LEASE_INVALID"
+      | "PROGRESS_TOKEN_INVALID",
     message: string
   ) {
     super(message);

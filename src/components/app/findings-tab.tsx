@@ -39,7 +39,9 @@ import { ProjectRootPanel } from "./findings/project-root-panel";
 import { AnalysisLineageBanner } from "@/components/app/analysis-lineage-banner";
 import { computeWorkflowGates } from "@/lib/workflow/gates";
 import { findingsAnalyzerWarning } from "@/lib/findings/analyzer-status";
-import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
+import { FindingsAccordion } from "./findings/findings-accordion";
+import { countCleanupEligible } from "@/lib/findings/cleanup-eligibility";
 
 const LOADING: FindingsPhase[] = [
   "queued",
@@ -47,14 +49,59 @@ const LOADING: FindingsPhase[] = [
   "dispatched",
   "waiting_runner",
   "claimed",
+  "preparing_archive",
+  "downloading_archive",
+  "archive_ready",
   "inventory",
   "resolving",
   "graph",
+  "running_jscpd",
+  "running_knip",
+  "running_madge",
+  "running_heuristics",
   "analyzers",
   "normalizing",
   "validating",
+  "persisting",
   "baseline",
 ];
+
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  return `${min}m ${rem}s`;
+}
+
+function stageDisplayLabel(stage: string | undefined, phase: FindingsPhase): string {
+  const labels: Record<string, string> = {
+    QUEUED: "Queued",
+    DISPATCHING: "Starting secure analysis worker",
+    DISPATCHED: "GitHub worker requested",
+    WAITING_FOR_RUNNER: "Waiting for GitHub Actions runner",
+    CLAIMED: "Claimed by GitHub runner",
+    PREPARING_ARCHIVE: "Preparing repository archive",
+    DOWNLOADING_ARCHIVE: "Downloading commit-pinned source",
+    ARCHIVE_READY: "Repository archive ready",
+    INVENTORY: "Inventorying files",
+    RESOLVING_PROJECTS: "Resolving project roots",
+    BUILDING_GRAPH: "Building repository graph",
+    RUNNING_JSCpd: "Running duplicate detection (jscpd)",
+    RUNNING_KNIP: "Running unused-code analysis (Knip)",
+    RUNNING_MADGE: "Running dependency graph analysis (Madge)",
+    RUNNING_INTERNAL_HEURISTICS: "Running internal heuristics",
+    RUNNING_ANALYZERS: "Running analyzers",
+    NORMALIZING_FINDINGS: "Normalizing findings",
+    VALIDATING_EVIDENCE: "Validating finding evidence",
+    PERSISTING_RESULTS: "Saving repository graph and findings",
+    WORKER_STALLED: "Worker stalled — retry available",
+    READY: "Ready",
+  };
+  if (stage && labels[stage]) return labels[stage];
+  return `Stage: ${stage ?? phase}`;
+}
 
 function phaseIndex(phase: FindingsPhase): number {
   if (phase === "idle" || phase === "failed") return -1;
@@ -209,7 +256,27 @@ export function FindingsTab() {
   }
 
   const allFindings = findings ? flattenFindings(findings) : [];
-  const supportedCount = allFindings.filter(isActionableFinding).length;
+  const supportedCount =
+    findings?.summary.eligibleFindings ?? countCleanupEligible(allFindings);
+  const selectedEligibleCount = allFindings.filter(
+    (f) => selectedFindingIds.includes(f.id) && isCleanupEligible(f)
+  ).length;
+
+  const now = Date.now();
+  const totalElapsedMs = progress?.createdAt
+    ? now - Date.parse(progress.createdAt)
+    : accepted
+      ? 0
+      : 0;
+  const stageStartedAt = progress?.stageStartedAt ?? progress?.updatedAt;
+  const stageElapsedMs = stageStartedAt ? now - Date.parse(stageStartedAt) : 0;
+  const lastActivityAt = progress?.lastActivityAt ?? progress?.heartbeatAt ?? progress?.updatedAt;
+  const lastActivityAgeMs = lastActivityAt ? now - Date.parse(lastActivityAt) : null;
+  const showStillActive =
+    isLoading &&
+    stageElapsedMs >= 45_000 &&
+    lastActivityAgeMs != null &&
+    lastActivityAgeMs < 120_000;
 
   return (
     <div className="space-y-6">
@@ -241,9 +308,14 @@ export function FindingsTab() {
                 "Run Findings"
               )}
             </Button>
-            {findings && gates.quickCleanupAvailable && (
+            {findings && gates.quickCleanupAvailable && selectedEligibleCount > 0 && (
               <Button asChild>
                 <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
+              </Button>
+            )}
+            {findings && (!gates.quickCleanupAvailable || selectedEligibleCount === 0) && (
+              <Button variant="secondary" disabled>
+                Continue to Quick Cleanup
               </Button>
             )}
             <details className="relative">
@@ -287,55 +359,85 @@ export function FindingsTab() {
         <Panel variant="elevated" padding="md" className="space-y-3 border-border/60">
           <p className="ds-label">Durable analysis progress</p>
           <p className="text-sm font-medium text-foreground">
-            {phase === "waiting_runner" || progress?.stage === "WAITING_FOR_RUNNER"
-              ? "Waiting for GitHub Actions runner"
-              : phase === "dispatched" || progress?.stage === "DISPATCHED"
-                ? "GitHub worker requested"
-                : phase === "dispatching" || progress?.stage === "DISPATCHING"
-                  ? "Starting secure analysis worker"
-                  : `Stage: ${progress?.stage ?? accepted?.stage ?? phase}`}
+            {stageDisplayLabel(progress?.stage ?? accepted?.stage, phase)}
           </p>
+          {progress?.progressMessage || progress?.progress?.message || progress?.progress?.detail ? (
+            <p className="text-sm text-muted-foreground">
+              {progress.progressMessage ||
+                progress.progress?.message ||
+                progress.progress?.detail}
+            </p>
+          ) : null}
+          {showStillActive && (
+            <FeedbackBanner
+              variant="info"
+              message="Analysis is still active. Large repositories can take longer to prepare and inspect."
+              dismissible={false}
+            />
+          )}
           <dl className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Current stage</dt>
+              <dd className="font-mono text-xs">{progress?.stage ?? accepted?.stage ?? phase}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Elapsed total</dt>
+              <dd className="font-mono text-xs">{formatElapsed(totalElapsedMs)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Elapsed current stage</dt>
+              <dd className="font-mono text-xs">{formatElapsed(stageElapsedMs)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Last worker activity</dt>
+              <dd className="font-mono text-xs">
+                {lastActivityAt
+                  ? `${formatElapsed(lastActivityAgeMs ?? 0)} ago`
+                  : "—"}
+              </dd>
+            </div>
             <div>
               <dt className="text-muted-foreground">Job ID</dt>
               <dd className="font-mono text-xs">{accepted?.jobId ?? progress?.jobId ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Source commit</dt>
+              <dt className="text-muted-foreground">Repository</dt>
+              <dd className="font-mono text-xs">{session.repoUrl || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Pinned commit</dt>
               <dd className="font-mono text-xs">
                 {(
                   progress?.sourceCommit ??
                   session.scanResult?.repo.commitSha ??
                   "—"
-                ).toString().slice(0, 12)}
+                )
+                  .toString()
+                  .slice(0, 12)}
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Worker mode</dt>
+              <dt className="text-muted-foreground">Files processed</dt>
               <dd className="font-mono text-xs">
-                {accepted?.workerMode ?? progress?.workerMode ?? "github_actions_on_demand"}
+                {progress?.completedUnits != null
+                  ? progress.totalUnits != null
+                    ? `${progress.completedUnits} / ${progress.totalUnits}`
+                    : String(progress.completedUnits)
+                  : "—"}
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">dispatcherReady</dt>
+              <dt className="text-muted-foreground">Analyzer</dt>
               <dd className="font-mono text-xs">
-                {accepted ? String(Boolean(accepted.dispatcherReady ?? accepted.workerReady)) : "—"}
+                {String(progress?.stage ?? "").startsWith("RUNNING_")
+                  ? String(progress?.stage).replace("RUNNING_", "")
+                  : "—"}
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Retryable</dt>
+              <dt className="text-muted-foreground">Worker identity</dt>
               <dd className="font-mono text-xs">
-                {error ? String(error.retryable) : "true (durable job)"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Elapsed</dt>
-              <dd className="font-mono text-xs">
-                {progress?.createdAt
-                  ? `${Math.max(0, Math.floor((Date.now() - Date.parse(progress.createdAt)) / 1000))}s`
-                  : accepted
-                    ? "polling…"
-                    : "—"}
+                {progress?.workerIdentity ?? progress?.claimedBy ?? progress?.workerHost ?? "—"}
               </dd>
             </div>
             {(progress?.workflowRunId || accepted?.workflowRunId) && (
@@ -358,15 +460,9 @@ export function FindingsTab() {
               </div>
             )}
             <div className="sm:col-span-2">
-              <dt className="text-muted-foreground">Status URL</dt>
+              <dt className="text-muted-foreground">Durable status URL</dt>
               <dd className="break-all font-mono text-xs">{accepted?.statusUrl ?? "—"}</dd>
             </div>
-            {accepted?.requestId ? (
-              <div className="sm:col-span-2">
-                <dt className="text-muted-foreground">Request ID</dt>
-                <dd className="font-mono text-xs">{accepted.requestId}</dd>
-              </div>
-            ) : null}
           </dl>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -433,7 +529,20 @@ export function FindingsTab() {
 
       {findings && (
         <>
-          <AnalysisLineageBanner scan={session.scanResult} findings={findings} />
+          <Panel variant="elevated" padding="md" className="border-border/60">
+            <p className="ds-label mb-1">Repository</p>
+            <p className="font-mono text-sm">
+              {findings.repo.owner}/{findings.repo.name}
+              {findings.repo.commitSha
+                ? ` @ ${findings.repo.commitSha.slice(0, 12)}`
+                : ""}
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {findings.summary.totalFindings} findings ·{" "}
+              {findings.summary.safeCandidates} safe · {findings.summary.reviewRequired} review ·{" "}
+              {findings.summary.doNotTouch} protected · {supportedCount} cleanup-eligible
+            </p>
+          </Panel>
 
           {(() => {
             const warning = findingsAnalyzerWarning(findings.rawToolReports);
@@ -448,42 +557,6 @@ export function FindingsTab() {
               message={findings.scanCoverageWarning}
               dismissible={false}
             />
-          )}
-
-          {findings.summary.confidenceTiers && (
-            <Panel variant="elevated" padding="sm" className="border-border/60">
-              <p className="ds-label mb-2">Evidence confidence tiers</p>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Findings are ranked by priority (confidence × reachability × exposure × blast radius ×
-                maintenance × recurrence × fix safety), not severity alone.
-              </p>
-              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div>
-                  <dt className="text-muted-foreground">Verified</dt>
-                  <dd className="font-mono text-lg text-signal">
-                    {findings.summary.confidenceTiers.verified}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">High confidence</dt>
-                  <dd className="font-mono text-lg">
-                    {findings.summary.confidenceTiers.highConfidence}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Needs review</dt>
-                  <dd className="font-mono text-lg text-amber-400">
-                    {findings.summary.confidenceTiers.needsReview}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Suppressed</dt>
-                  <dd className="font-mono text-lg text-muted-foreground">
-                    {findings.summary.confidenceTiers.suppressed}
-                  </dd>
-                </div>
-              </dl>
-            </Panel>
           )}
 
           {findings.mode === "demo" && (
@@ -502,10 +575,60 @@ export function FindingsTab() {
           />
 
           <SummaryCards payload={findings} />
-          <AnalyzerSourcesPanel payload={findings} />
-          <ProjectRootPanel payload={findings} />
-          <RiskSummaryPanel summary={findings.summary} />
-          <RepositoryMap findings={allFindings} />
+
+          <FindingsAccordion title="View analysis details" summary="Lineage, sources, project roots">
+            <div className="space-y-3">
+              <AnalysisLineageBanner scan={session.scanResult} findings={findings} />
+              <FindingsAccordion title="View analyzer evidence" defaultOpen={false}>
+                <AnalyzerSourcesPanel payload={findings} />
+              </FindingsAccordion>
+              <FindingsAccordion title="Project roots" defaultOpen={false}>
+                <ProjectRootPanel payload={findings} />
+              </FindingsAccordion>
+            </div>
+          </FindingsAccordion>
+
+          <FindingsAccordion title="View analyzer evidence" summary="Confidence tiers and risk">
+            <div className="space-y-3">
+              {findings.summary.confidenceTiers && (
+                <Panel variant="elevated" padding="sm" className="border-border/60">
+                  <p className="ds-label mb-2">Evidence confidence tiers</p>
+                  <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div>
+                      <dt className="text-muted-foreground">Verified</dt>
+                      <dd className="font-mono text-lg text-signal">
+                        {findings.summary.confidenceTiers.verified}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">High confidence</dt>
+                      <dd className="font-mono text-lg">
+                        {findings.summary.confidenceTiers.highConfidence}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Needs review</dt>
+                      <dd className="font-mono text-lg text-amber-400">
+                        {findings.summary.confidenceTiers.needsReview}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Suppressed</dt>
+                      <dd className="font-mono text-lg text-muted-foreground">
+                        {findings.summary.confidenceTiers.suppressed}
+                      </dd>
+                    </div>
+                  </dl>
+                </Panel>
+              )}
+              <RiskSummaryPanel summary={findings.summary} />
+            </div>
+          </FindingsAccordion>
+
+          <FindingsAccordion title="View repository map" defaultOpen={false}>
+            <RepositoryMap findings={allFindings} />
+          </FindingsAccordion>
+
           <FindingsWorkspace
             findings={allFindings}
             rawToolReports={findings.rawToolReports}
@@ -514,8 +637,13 @@ export function FindingsTab() {
             onClearSelection={clearFindingSelection}
             onSelectFindingIds={setSelectedFindingIds}
           />
-          <JsonExportCard payload={findings} />
-          <DeveloperToolsA2Mcp />
+
+          <FindingsAccordion title="Developer diagnostics" defaultOpen={false}>
+            <div className="space-y-3">
+              <JsonExportCard payload={findings} />
+              <DeveloperToolsA2Mcp />
+            </div>
+          </FindingsAccordion>
 
           <PanelCTA findings={allFindings} supportedCount={supportedCount} />
         </>

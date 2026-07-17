@@ -4,7 +4,10 @@ import {
   isPhase1StructuralCandidate,
   resolvePhase1Plugin,
 } from "@/lib/execution/fix-plugins/phase1-plugins";
-import { isAnalyzerAvailableForFindingType } from "./analyzer-availability";
+import {
+  countCleanupEligible,
+  isCleanupEligible,
+} from "./cleanup-eligibility";
 
 export function findingPreflightClassification(finding: Finding): string | undefined {
   const signal = finding.evidence.signals.find((s) => s.startsWith("classification="));
@@ -17,10 +20,11 @@ export function isPluginRegistered(finding: Finding): boolean {
 }
 
 /**
- * Strict eligibility: native analyzer evidence + dry-run produced a real content change.
+ * Strict cleanup eligibility — delegates to canonical isCleanupEligible.
+ * Requires SAFE risk bucket + transformer preflight that produced a real change.
  */
 export function isEligibleFinding(finding: Finding): boolean {
-  return isActionableFinding(finding);
+  return isCleanupEligible(finding);
 }
 
 /** @deprecated Use isEligibleFinding — strict mode requires preflight proof, not plugin registration. */
@@ -39,7 +43,8 @@ export function isDryRunPassed(finding: Finding): boolean {
 }
 
 /**
- * Eligible for Quick Cleanup execution — requires native analyzer, dry-run proof, and structural evidence.
+ * Structural + preflight actionable (may still be review_first).
+ * Prefer isCleanupEligible / isEligibleFinding for cleanup UI counts.
  */
 export function isActionableFinding(finding: Finding): boolean {
   if (!isTransformedFinding(finding)) return false;
@@ -55,7 +60,7 @@ export function countActionableFindings(findings: Finding[]): number {
 }
 
 export function countEligibleFindings(findings: Finding[]): number {
-  return findings.filter(isEligibleFinding).length;
+  return countCleanupEligible(findings);
 }
 
 /** @deprecated Use countEligibleFindings */

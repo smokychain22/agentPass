@@ -320,6 +320,10 @@ export async function POST(
     }
   }
 
+  const timingBreakdown =
+    (body.resultSummary?.timingBreakdown as Record<string, number> | undefined) ??
+    job.timingBreakdown;
+
   const ready = await updateDeepScanStage(jobId, "READY", "GitHub Actions analysis complete", {
     findingsId: body.findings.scanId,
     graphId: body.graph?.id || job.graphId,
@@ -332,11 +336,14 @@ export async function POST(
     lastCompletionNonce: completionNonce,
     // Invalidate claim token after successful complete.
     claimToken: undefined,
+    progressTokenHash: undefined,
     leaseExpiresAt: undefined,
+    timingBreakdown,
     resultSummary: body.resultSummary ?? {
       findings: body.findings.summary,
       workerMode: "github_actions_on_demand",
       resultDigest: digest,
+      timingBreakdown,
     },
   });
 

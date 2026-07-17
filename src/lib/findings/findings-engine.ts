@@ -12,7 +12,7 @@ import { enrichExactDuplicateFindings } from "./enrich-exact-duplicates";
 import { enrichFileHygieneFindings } from "./enrich-file-hygiene";
 import { enrichFindingsWithPreflight } from "./enrich-preflight";
 import { enrichFindingsWithEvidence } from "./enrich-evidence";
-import { countActionableFindings } from "./actionability-signals";
+import { countActionableFindings, countTransformedFindings } from "./actionability-signals";
 import { enrichPayloadLifecycle } from "./enrich-lifecycle";
 import { applyStrictFindingsMode, isKnipAvailable } from "./strict-findings";
 import {
@@ -31,6 +31,7 @@ import {
   refreshRepositoryIdentityFromUrl,
   applyRepositoryIdentity,
 } from "@/lib/github/refresh-repo-identity";
+import { countCleanupEligible, assertCleanupEligibleInvariant } from "./cleanup-eligibility";
 
 export type FindingsStageCallback = (stage: FindingsJobStage) => void;
 
@@ -190,12 +191,22 @@ export async function runFindingsEngine(
     payload = enrichPayloadLifecycle(payload);
 
     const verifiedFlat = flattenPayloadFindings(payload);
+    const eligibleFindings = countCleanupEligible(verifiedFlat);
     payload.summary = {
       ...buildSummaryFromFindings(verifiedFlat),
       verifiedFindings: verifiedFlat.length,
       actionableFixes: countActionableFindings(verifiedFlat),
+      eligibleFindings,
+      transformerCompatible: eligibleFindings,
+      transformedFindings: countTransformedFindings(verifiedFlat),
+      dryRunPassed: countTransformedFindings(verifiedFlat),
+      supportedFixes: eligibleFindings,
       detectedFindings: verifiedFlat.length,
+      reviewRequiredFindings: verifiedFlat.filter((f) => f.action === "review_first").length,
+      protectedFindings: verifiedFlat.filter((f) => f.action === "do_not_touch" || f.protected)
+        .length,
     };
+    assertCleanupEligibleInvariant(eligibleFindings, verifiedFlat);
 
     payload.repositoryModel = {
       projects: classifyProjectRoots(repositoryModel).map((p) => ({
