@@ -2,11 +2,12 @@
 # Triggered by repository_dispatch (event_type: repodiet_analysis) from Vercel.
 #
 # Security model:
-#   claim   (trusted)  — Worker API secrets; claim + archive artifact
+#   claim   (trusted)  — Worker API key; claim + archive artifact; claimToken stays SERVER-SIDE
 #   analyze (untrusted)— NO RepoDiet/OKX/Redis/signing/dispatch secrets; static analysis only
-#   complete(trusted)  — Worker API secrets; ingest results; mark READY
+#   complete(trusted)  — Callback secret + HMAC; server resolves claimToken internally
 #
 # The Vercel-only dispatch PAT must NEVER appear in this workflow (not as a secret, env, or artifact).
+# Raw claimToken must NEVER appear in outputs, artifacts, env files, logs, or caches.
 # Does NOT push branches or create pull requests.
 
 name: RepoDiet analysis worker
@@ -35,7 +36,7 @@ jobs:
       already_claimed: ${{ steps.exchange.outputs.already_claimed }}
       source_commit: ${{ steps.exchange.outputs.source_commit }}
       archive_url: ${{ steps.exchange.outputs.archive_url }}
-      has_claim_secret: ${{ steps.exchange.outputs.has_claim_secret }}
+      claim_handle: ${{ steps.exchange.outputs.claim_handle }}
       validated_job_id: ${{ steps.validate.outputs.job_id }}
       validated_api_base: ${{ steps.validate.outputs.api_base }}
     steps:
@@ -115,16 +116,6 @@ jobs:
           path: /tmp/repodiet-actions/job-manifest.json
           retention-days: 1
 
-      # Trusted complete-only secret — never downloaded by the untrusted analyze job.
-      - name: Upload claim secret for complete job
-        if: steps.exchange.outputs.already_claimed != 'true' && steps.exchange.outputs.has_claim_secret == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: claim-secret-${{ steps.validate.outputs.job_id }}
-          path: /tmp/repodiet-actions/claim-secret.json
-          retention-days: 1
-          if-no-files-found: error
-
   analyze:
     name: analyze
     needs: claim
@@ -199,21 +190,18 @@ jobs:
           name: analysis-result-${{ needs.claim.outputs.validated_job_id }}
           path: /tmp/repodiet-actions
 
-      - name: Download claim secret (trusted complete only)
-        continue-on-error: true
-        if: needs.claim.outputs.has_claim_secret == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: claim-secret-${{ needs.claim.outputs.validated_job_id }}
-          path: /tmp/repodiet-actions
-
       - name: Ingest result or structured failure
         env:
-          REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
           REPODIET_WORKER_CALLBACK_SECRET: ${{ secrets.REPODIET_WORKER_CALLBACK_SECRET }}
           INPUT_JOB_ID: ${{ needs.claim.outputs.validated_job_id }}
           INPUT_REQUEST_ID: ${{ github.event.client_payload.requestId }}
           INPUT_API_BASE_URL: ${{ needs.claim.outputs.validated_api_base }}
           INPUT_ALREADY_CLAIMED: ${{ needs.claim.outputs.already_claimed }}
           INPUT_ANALYZE_RESULT: ${{ needs.analyze.result }}
+          INPUT_CLAIM_HANDLE: ${{ needs.claim.outputs.claim_handle }}
+          INPUT_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          INPUT_WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          INPUT_WORKFLOW_NAME: ${{ github.workflow }}
+          INPUT_WORKFLOW_REPOSITORY: ${{ github.repository }}
+          INPUT_WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: npx tsx scripts/actions-worker/complete.ts

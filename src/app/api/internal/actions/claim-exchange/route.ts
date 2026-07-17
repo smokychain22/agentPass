@@ -16,16 +16,14 @@ import {
   ArchivePreparationError,
   buildArchiveDescriptor,
 } from "@/lib/github-actions/archive-descriptor";
-import { requiredRepositoryTargetFields } from "@/lib/repository/repository-target";
 import { touchMarketplaceHealth } from "@/lib/okx/marketplace-telemetry";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 /**
- * Trusted Actions claim job exchanges dispatchNonce for claimToken + public archive URL.
- * Never logs secrets or private installation tokens.
- * Rejects incomplete repository identity before CLAIMED.
+ * Trusted Actions claim job exchanges dispatchNonce for claimHandle + public archive URL.
+ * Raw claimToken stays server-side only — never returned in this response.
  */
 export async function POST(request: Request) {
   try {
@@ -78,30 +76,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const identityMissing = requiredRepositoryTargetFields(
-    preClaim.repositoryTarget ?? {
-      repositoryOwner: preClaim.repositoryOwner,
-      repositoryName: preClaim.repositoryName,
-      repositoryFullName:
-        preClaim.repositoryFullName ||
-        (preClaim.repositoryOwner && preClaim.repositoryName
-          ? `${preClaim.repositoryOwner}/${preClaim.repositoryName}`
-          : undefined),
-      repositoryUrl: preClaim.repositoryUrl || preClaim.request.repoUrl,
-      branch: preClaim.branch || preClaim.request.branch,
-      sourceCommit: preClaim.sourceCommit || preClaim.request.sourceCommit,
-      projectRoot: preClaim.projectRoot || preClaim.request.projectRoot || ".",
-      visibility: "public",
-      archiveStrategy: "PUBLIC_ARCHIVE",
-      provider: "github",
-      githubInstallationId: null,
-      createdAt: preClaim.createdAt,
-    }
-  );
-  // Soft fields that may be synthesized from flat columns for legacy jobs.
-  const criticalMissing = identityMissing.filter((f) =>
-    ["repositoryOwner", "repositoryName", "sourceCommit", "branch", "projectRoot"].includes(f)
-  );
   if (
     !preClaim.repositoryOwner?.trim() ||
     !preClaim.repositoryName?.trim() ||
@@ -110,7 +84,7 @@ export async function POST(request: Request) {
     await failDeepScanArchivePreparation(
       jobId,
       "REPOSITORY_IDENTITY_INCOMPLETE",
-      `Repository identity incomplete before claim: ${criticalMissing.join(", ") || "owner/name/commit"}`,
+      "Repository identity incomplete before claim: owner/name/commit",
       {
         terminal: true,
         workflowRunId: body.workflowRunId?.trim(),
@@ -122,7 +96,6 @@ export async function POST(request: Request) {
         ok: false,
         code: "REPOSITORY_IDENTITY_INCOMPLETE",
         retryable: false,
-        missingFields: criticalMissing,
         error: "Repository identity incomplete — refusing to claim.",
         jobId,
       },
@@ -135,7 +108,7 @@ export async function POST(request: Request) {
     const existing = await getDeepScanJob(jobId);
     if (
       existing?.claimedBy === workerId &&
-      existing.claimToken &&
+      existing.claimHandle &&
       existing.leaseExpiresAt &&
       Date.parse(existing.leaseExpiresAt) > Date.now()
     ) {
@@ -145,7 +118,7 @@ export async function POST(request: Request) {
           ok: true,
           alreadyClaimed: true,
           code: "ALREADY_CLAIMED",
-          claimToken: existing.claimToken,
+          claimHandle: existing.claimHandle,
           workerId,
           job: sanitizeJob(existing),
           archive,
@@ -221,6 +194,9 @@ export async function POST(request: Request) {
 
   const patch: Record<string, unknown> = {
     workflowRunId: body.workflowRunId?.trim() || claim.job.workflowRunId,
+    workflowRunAttempt: body.workflowRunAttempt?.trim(),
+    workflowName: body.workflowName?.trim(),
+    workflowRepository: body.workflowRepository?.trim(),
     workflowRunUrl: body.workflowRunUrl?.trim() || claim.job.workflowRunUrl,
     workerMode: "github_actions_on_demand",
     workerHost: "github-actions/ubuntu-latest",
@@ -265,7 +241,8 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     alreadyClaimed: claim.alreadyClaimed,
-    claimToken: updated.claimToken,
+    // Opaque non-secret correlation id — does NOT authorize ingest.
+    claimHandle: updated.claimHandle,
     workerId,
     job: sanitizeJob(updated),
     archive,
@@ -291,6 +268,7 @@ function sanitizeJob(job: Awaited<ReturnType<typeof getDeepScanJob>>) {
     readOnly: job.request.readOnly !== false,
     workflowRunId: job.workflowRunId,
     workflowRunUrl: job.workflowRunUrl,
+    claimHandle: job.claimHandle,
     analysisConfigDigest: job.analysisConfigDigest,
     repositoryTarget: job.repositoryTarget
       ? {

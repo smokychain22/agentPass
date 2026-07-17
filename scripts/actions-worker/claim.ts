@@ -1,6 +1,7 @@
 /**
  * Trusted Actions claim job.
- * Secrets: REPODIET_WORKER_API_KEY (+ optional callback secret).
+ * Secrets: REPODIET_WORKER_API_KEY (+ optional callback secret for incident reporting).
+ * Raw claimToken never leaves the server — only opaque claimHandle is returned.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -28,27 +29,23 @@ async function setOutput(name: string, value: string): Promise<void> {
 
 async function reportIncident(
   apiBase: string,
-  apiKey: string,
   jobId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
+  const callbackSecret = process.env.REPODIET_WORKER_CALLBACK_SECRET?.trim();
+  const apiKey = process.env.REPODIET_WORKER_API_KEY?.trim();
   try {
     await fetch(`${apiBase}/api/internal/actions/deep-scans/${jobId}/incident`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-        ...(process.env.REPODIET_WORKER_CALLBACK_SECRET
-          ? { "x-worker-callback-secret": process.env.REPODIET_WORKER_CALLBACK_SECRET }
-          : {}),
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        ...(callbackSecret ? { "x-worker-callback-secret": callbackSecret } : {}),
       },
       body: JSON.stringify(payload),
     });
   } catch (err) {
-    console.error(
-      "incident callback failed:",
-      err instanceof Error ? err.message : err
-    );
+    console.error("incident callback failed:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -89,9 +86,9 @@ async function main(): Promise<void> {
     ok?: boolean;
     alreadyClaimed?: boolean;
     code?: string;
+    claimHandle?: string;
     claimToken?: string;
     error?: string;
-    missingFields?: string[];
     job?: {
       sourceCommit?: string;
       repoUrl?: string;
@@ -102,6 +99,7 @@ async function main(): Promise<void> {
       repositoryOwner?: string;
       repositoryName?: string;
       repositoryFullName?: string;
+      claimHandle?: string;
     };
     archive?: {
       strategy?: string;
@@ -112,17 +110,22 @@ async function main(): Promise<void> {
     };
   };
 
+  // Hard fail if the server ever leaks a claimToken into this response.
+  if (json.claimToken) {
+    throw new Error("SECURITY: claim-exchange must not return claimToken to the runner.");
+  }
+
   if (!res.ok || !json.ok) {
     if (json.code === "ALREADY_CLAIMED" || json.alreadyClaimed) {
       await setOutput("already_claimed", "true");
       await setOutput("source_commit", "");
       await setOutput("archive_url", "");
-      await setOutput("has_claim_secret", "false");
+      await setOutput("claim_handle", "");
       console.log("ALREADY_CLAIMED — exiting successfully (losing workflow).");
       return;
     }
 
-    await reportIncident(apiBase, apiKey, jobId, {
+    await reportIncident(apiBase, jobId, {
       code: json.code || "CLAIM_EXCHANGE_FAILED",
       message: json.error || `claim-exchange failed (${res.status})`,
       terminal: json.code === "REPOSITORY_IDENTITY_INCOMPLETE",
@@ -136,21 +139,12 @@ async function main(): Promise<void> {
 
   const sourceCommit = json.job?.sourceCommit || json.archive?.sourceCommit || "";
   const archiveUrl = json.archive?.url || "";
+  const claimHandle = json.claimHandle || json.job?.claimHandle || "";
 
-  // GitHub Actions strips job outputs that were registered via ::add-mask::.
-  // Pass the claim token to the trusted complete job via a private artifact instead.
   await setOutput("already_claimed", json.alreadyClaimed ? "true" : "false");
   await setOutput("source_commit", String(sourceCommit));
   await setOutput("archive_url", archiveUrl);
-  await setOutput("has_claim_secret", json.claimToken ? "true" : "false");
-
-  if (json.claimToken) {
-    await fs.writeFile(
-      path.join(WORK, "claim-secret.json"),
-      JSON.stringify({ claimToken: json.claimToken, jobId, workerId: WORKER_ID }),
-      { mode: 0o600 }
-    );
-  }
+  await setOutput("claim_handle", claimHandle);
 
   if (json.alreadyClaimed) {
     console.log("ALREADY_CLAIMED by this worker identity — skip analyze.");
@@ -158,19 +152,16 @@ async function main(): Promise<void> {
   }
 
   if (!archiveUrl) {
-    await reportIncident(apiBase, apiKey, jobId, {
+    await reportIncident(apiBase, jobId, {
       code: "ARCHIVE_PREPARATION_FAILED",
-      message:
-        "No public archive URL returned (repository identity incomplete or private archive not ready).",
+      message: "No public archive URL returned.",
       terminal: false,
       workflowRunId,
       workflowRunUrl,
       requestId,
       stage: "archive",
     });
-    throw new Error(
-      "ARCHIVE_PREPARATION_FAILED: no public archive URL (identity incomplete or private archive required)."
-    );
+    throw new Error("ARCHIVE_PREPARATION_FAILED: no public archive URL.");
   }
 
   const zipPath = path.join(WORK, "archive.zip");
@@ -179,7 +170,7 @@ async function main(): Promise<void> {
     redirect: "follow",
   });
   if (!archiveRes.ok || !archiveRes.body) {
-    await reportIncident(apiBase, apiKey, jobId, {
+    await reportIncident(apiBase, jobId, {
       code: "ARCHIVE_DOWNLOAD_FAILED",
       message: `Archive download failed (${archiveRes.status})`,
       terminal: false,
@@ -194,7 +185,7 @@ async function main(): Promise<void> {
   const maxBytes = json.archive?.maxBytes ?? 100 * 1024 * 1024;
   const len = Number(archiveRes.headers.get("content-length") || "0");
   if (len > maxBytes) {
-    await reportIncident(apiBase, apiKey, jobId, {
+    await reportIncident(apiBase, jobId, {
       code: "REPOSITORY_TOO_LARGE",
       message: `Archive Content-Length ${len} exceeds ${maxBytes}`,
       terminal: true,
@@ -216,9 +207,11 @@ async function main(): Promise<void> {
   });
   await pipeline(nodeStream, createWriteStream(zipPath));
 
+  // Sanitized manifest only — never claimToken / API keys / callback secrets.
   const manifest = {
     jobId,
     workerId: WORKER_ID,
+    claimHandle,
     sourceCommit,
     repoUrl: json.job?.repoUrl,
     branch: json.job?.branch,
@@ -239,10 +232,12 @@ async function main(): Promise<void> {
       event: "actions_claim_ok",
       jobId,
       workerId: WORKER_ID,
+      claimHandle,
       sourceCommit: manifest.sourceCommit,
       repositoryFullName: manifest.repositoryFullName,
       archiveStrategy: manifest.archiveStrategy,
       bytes: downloaded,
+      claimTokenTransport: "SERVER_SIDE_ONLY",
     })
   );
 }
