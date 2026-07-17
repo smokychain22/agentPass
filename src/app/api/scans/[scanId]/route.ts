@@ -26,7 +26,8 @@ export async function GET(
     "tenantId" in record.payload &&
     typeof (record.payload as { tenantId?: string }).tenantId === "string"
       ? (record.payload as { tenantId: string }).tenantId
-      : record.ownerKey);
+      : undefined);
+  // Do not treat IP-based ownerKey as a tenant id — that caused false 404s after session binding.
 
   const denial = denyUnlessTenantOwns({
     resourceTenantId,

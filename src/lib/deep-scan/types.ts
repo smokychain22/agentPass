@@ -39,6 +39,8 @@ export interface DeepScanJobRequest {
   buyerWallet?: string;
   okxBuyerId?: string;
   githubInstallationId?: string;
+  /** Structure scan this findings job continues from. */
+  structureScanId?: string;
 }
 
 export interface DeepScanProgress {

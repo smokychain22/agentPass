@@ -35,7 +35,7 @@ test("secret firewall strips GitHub App and signing keys", () => {
     WORKER_API_KEY: "SECRET",
     npm_config_cache: "/tmp/npm",
     CI: "true",
-  } as NodeJS.ProcessEnv);
+  } as unknown as NodeJS.ProcessEnv);
   assert.equal(env.GITHUB_APP_PRIVATE_KEY, undefined);
   assert.equal(env.RECEIPT_SIGNING_PRIVATE_KEY, undefined);
   assert.equal(env.OKX_API_KEY, undefined);
@@ -59,7 +59,7 @@ test("tenant denial does not leak resource existence", () => {
   assert.match(response.body.message, /not found/i);
 });
 
-test("resolveTenantIdentity prefers explicit buyer headers", () => {
+test("resolveTenantIdentity prefers buyer headers when no session cookie", () => {
   const request = new Request("https://example.com/api/deep-scans/x", {
     headers: {
       "x-okx-buyer-id": "buyer_42",
@@ -68,7 +68,18 @@ test("resolveTenantIdentity prefers explicit buyer headers", () => {
   });
   const identity = resolveTenantIdentity(request);
   assert.equal(identity.tenantId, "okx_buyer_42");
-  assert.equal(identity.source, "header");
+  assert.equal(identity.source, "buyer");
+});
+
+test("resolveTenantIdentity ignores free-form tenant header spoofing", () => {
+  const request = new Request("https://example.com/api/deep-scans/x", {
+    headers: {
+      "x-repodiet-tenant-id": "okx_attacker",
+    },
+  });
+  const identity = resolveTenantIdentity(request);
+  assert.equal(identity.tenantId, "anonymous_public_readonly");
+  assert.equal(identity.source, "anonymous");
 });
 
 test("capacity response is QUEUED + CAPACITY_LIMIT not 504", () => {

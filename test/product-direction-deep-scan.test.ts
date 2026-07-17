@@ -39,11 +39,12 @@ async function main() {
     }, { idempotencyKey: `test-claim-${Date.now()}` });
     const loaded = await getDeepScanJob(job.id);
     assert.ok(loaded);
-    assert.ok(["QUEUED", "INVENTORY", "READY"].includes(loaded!.stage));
+    assert.ok(["QUEUED", "CLAIMED", "INVENTORY", "READY"].includes(loaded!.stage));
     // Claim loop may pick an older queued job first; assert our job remains retrievable.
     const claimed = await claimNextDeepScanJob("test-worker");
     assert.ok(claimed);
     assert.ok(claimed!.claimedBy === "test-worker");
+    assert.ok(claimed!.claimToken);
     const stillThere = await getDeepScanJob(job.id);
     assert.ok(stillThere);
   });

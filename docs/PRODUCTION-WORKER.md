@@ -39,12 +39,27 @@ Do **not** put GitHub App private keys, receipt/attestation signers, or OKX API 
 
 `workerReady` is true only when a fresh signed heartbeat exists (not from env alone). Controlled test: stop worker → `workerReady` false within 90s → restart → true → queued jobs resume.
 
-## Staging access
+## Required environment variable names (values are secrets — do not commit)
 
-For automated acceptance against Preview/staging without making private routes public:
+| Name | Required | Notes |
+| --- | --- | --- |
+| `REPODIET_API_BASE_URL` | yes | Preview or production API origin |
+| `WORKER_API_KEY` | yes | Must match Vercel `WORKER_API_KEY` |
+| `WORKER_CALLBACK_SECRET` | recommended | Matches Vercel callback secret |
+| `WORKER_ID` | yes | Stable id e.g. `staging-render-1` |
+| `WORKER_VERSION` | yes | Semver reported in heartbeats |
+| `WORKER_HOST` / `HOSTNAME` | yes | Host label stored on claims |
+| `WORKER_POLL_MS` | optional | Default 5000 |
+| `WORKER_HEARTBEAT_MS` | optional | Default 10000 |
+| `UPSTASH_REDIS_REST_URL` | yes* | Same durable store as API |
+| `UPSTASH_REDIS_REST_TOKEN` | yes* | Same durable store as API |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | alt* | Alternate durable store |
+| `REPODIET_UNTRUSTED_SANDBOX` | yes for package scripts | Set `docker` when Docker isolation is available |
 
-1. Enable Vercel Deployment Protection Bypass for Automation
-2. Send header `x-vercel-protection-bypass: <secret>` (secret from Vercel project settings)
-3. Never put the bypass secret in URLs, logs, or customer responses
+\* One durable-store pair is required.
 
-Public health remains redacted; internal worker routes still require `WORKER_API_KEY`.
+## Sandbox classification
+
+Secret filtering alone is **SANDBOX INCOMPLETE**.
+
+Customer `npm`/`pnpm`/`yarn`/`bun` package scripts run only when Docker isolation is active (`REPODIET_UNTRUSTED_SANDBOX=docker` and `docker` available on the worker host). Read-only deep scans must not execute package scripts until then.

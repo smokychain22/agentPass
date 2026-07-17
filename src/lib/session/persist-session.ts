@@ -66,14 +66,22 @@ export async function fetchPersistedScan(scanId: string) {
   return json.scan;
 }
 export async function fetchPersistedFindings(scanId: string) {
-  const res = await fetch(`/api/findings/${scanId}`);
-  const json = (await res.json()) as {
-    success: boolean;
+  const res = await fetch(`/api/findings/${scanId}`, { credentials: "same-origin" });
+  let json: {
+    success?: boolean;
     findings?: import("@/lib/findings/types").FindingsPayload;
     error?: string;
+    code?: string;
+    message?: string;
+    requestId?: string;
   };
+  try {
+    json = (await res.json()) as typeof json;
+  } catch {
+    throw new Error("Failed to restore findings (invalid JSON response).");
+  }
   if (!json.success || !json.findings) {
-    throw new Error(json.error ?? "Failed to restore findings.");
+    throw new Error(json.message ?? json.error ?? "Failed to restore findings.");
   }
   return json.findings;
 }

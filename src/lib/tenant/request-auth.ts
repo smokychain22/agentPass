@@ -4,19 +4,39 @@ import {
   type TenantAccessDenial,
 } from "@/lib/tenant/types";
 import { customerError } from "@/lib/product/customer-errors";
+import { BROWSER_SESSION_COOKIE } from "@/lib/github-app/browser-session";
 
 export interface TenantRequestIdentity {
   tenantId: string;
   okxBuyerId?: string;
   buyerWallet?: string;
-  source: "header" | "query" | "anonymous";
+  source: "session" | "buyer" | "anonymous";
+}
+
+function readCookie(request: Request, name: string): string | undefined {
+  const raw = request.headers.get("cookie");
+  if (!raw) return undefined;
+  for (const part of raw.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(rest.join("=").trim() || "");
+  }
+  return undefined;
 }
 
 /**
- * Resolve tenant identity from request headers.
- * Authorization is explicit — resource ownership must still be checked.
+ * Resolve tenant identity for marketplace/web requests.
+ * Free-form x-repodiet-tenant-id is NOT accepted as ownership proof.
+ * Prefer authenticated browser session, then verified buyer headers.
  */
 export function resolveTenantIdentity(request: Request): TenantRequestIdentity {
+  const sessionId = readCookie(request, BROWSER_SESSION_COOKIE)?.trim();
+  if (sessionId) {
+    return {
+      tenantId: `browser:${sessionId}`,
+      source: "session",
+    };
+  }
+
   const okxBuyerId =
     request.headers.get("x-repodiet-okx-buyer-id")?.trim() ||
     request.headers.get("x-okx-buyer-id")?.trim() ||
@@ -25,16 +45,13 @@ export function resolveTenantIdentity(request: Request): TenantRequestIdentity {
     request.headers.get("x-repodiet-buyer-wallet")?.trim() ||
     request.headers.get("x-buyer-wallet")?.trim() ||
     undefined;
-  const explicitTenant = request.headers.get("x-repodiet-tenant-id")?.trim();
 
-  if (explicitTenant || okxBuyerId || buyerWallet) {
+  if (okxBuyerId || buyerWallet) {
     return {
-      tenantId:
-        explicitTenant ||
-        tenantIdFromBuyer({ okxBuyerId, buyerWallet }),
+      tenantId: tenantIdFromBuyer({ okxBuyerId, buyerWallet }),
       okxBuyerId,
       buyerWallet,
-      source: "header",
+      source: "buyer",
     };
   }
 
@@ -47,11 +64,9 @@ export function resolveTenantIdentity(request: Request): TenantRequestIdentity {
 export function denyUnlessTenantOwns(input: {
   resourceTenantId?: string;
   requestTenantId: string;
-  /** When true, anonymous may read resources tagged anonymous_public_readonly. */
   allowAnonymousPublic?: boolean;
 }): TenantAccessDenial | null {
   if (!input.resourceTenantId) {
-    // Legacy records without tenant binding — deny in production once migrated.
     if (process.env.REPODIET_REQUIRE_TENANT_BINDING === "1") {
       return {
         code: "TENANT_REQUIRED",
@@ -75,8 +90,12 @@ export function denyUnlessTenantOwns(input: {
 }
 
 export function tenantDenialResponse(denial: TenantAccessDenial, status = 404) {
-  // Use 404 by default to avoid leaking existence across tenants.
-  const code = denial.code === "TENANT_MISMATCH" ? "TENANT_FORBIDDEN" : denial.code === "TENANT_REQUIRED" ? "TENANT_FORBIDDEN" : "TASK_NOT_FOUND";
+  const code =
+    denial.code === "TENANT_MISMATCH"
+      ? "TENANT_FORBIDDEN"
+      : denial.code === "TENANT_REQUIRED"
+        ? "TENANT_FORBIDDEN"
+        : "TASK_NOT_FOUND";
   return {
     status: denial.code === "TENANT_REQUIRED" ? 401 : status,
     body: customerError({

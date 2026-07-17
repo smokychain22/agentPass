@@ -1,0 +1,32 @@
+# RepoDiet staging/production always-on worker (Render Background Worker)
+services:
+  - type: worker
+    name: repodiet-staging-worker
+    runtime: docker
+    dockerfilePath: worker/Dockerfile
+    dockerContext: .
+    plan: starter
+    autoDeploy: false
+    envVars:
+      - key: REPODIET_API_BASE_URL
+        sync: false
+      - key: WORKER_API_KEY
+        sync: false
+      - key: WORKER_CALLBACK_SECRET
+        sync: false
+      - key: WORKER_ID
+        value: staging-render-1
+      - key: WORKER_VERSION
+        value: 2.1.0-claim-token
+      - key: WORKER_HOST
+        value: render-staging-worker
+      - key: WORKER_POLL_MS
+        value: "5000"
+      - key: WORKER_HEARTBEAT_MS
+        value: "10000"
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: REPODIET_UNTRUSTED_SANDBOX
+        value: docker

@@ -28,7 +28,10 @@ export async function POST(request: Request) {
     // execute:true remains available only for controlled diagnostics outside production.
     if (body.execute === true && process.env.VERCEL_ENV !== "production") {
       const { executeDeepScanJob } = await import("@/lib/deep-scan/execute");
-      const completed = await executeDeepScanJob(claimed.id, workerId);
+      const completed = await executeDeepScanJob(claimed.id, workerId, {
+        alreadyClaimed: true,
+        claimToken: claimed.claimToken,
+      });
       await setWorkerStatus(workerId, "online");
       return NextResponse.json({ ok: true, job: completed ?? claimed });
     }

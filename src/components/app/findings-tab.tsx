@@ -18,10 +18,15 @@ import { JsonExportCard } from "./findings/json-export";
 import {
   FINDINGS_STEPS,
   buildCleanupPrompt,
+  clearPersistedAnalysisJob,
   flattenFindings,
+  loadPersistedAnalysisJob,
   runFindingsAnalysis,
+  type FindingsJobAccepted,
+  type FindingsJobProgress,
   type FindingsPhase,
 } from "@/lib/findings/client";
+import type { AnalysisErrorContract } from "@/lib/findings/analysis-errors";
 import { LoadingProgress } from "@/components/app/ui/loading-progress";
 import { ErrorState } from "@/components/app/ui/error-state";
 import { EmptyState } from "@/components/app/ui/empty-state";
@@ -37,17 +42,24 @@ import { findingsAnalyzerWarning } from "@/lib/findings/analyzer-status";
 import { isActionableFinding } from "@/lib/findings/actionability-signals";
 
 const LOADING: FindingsPhase[] = [
-  "preparing",
-  "duplicates",
-  "unused",
+  "queued",
+  "claimed",
+  "inventory",
+  "resolving",
   "graph",
-  "slop",
+  "analyzers",
   "normalizing",
+  "validating",
+  "baseline",
 ];
 
 function phaseIndex(phase: FindingsPhase): number {
   if (phase === "idle" || phase === "failed") return -1;
   return FINDINGS_STEPS.findIndex((s) => s.phase === phase);
+}
+
+function isAnalysisError(err: unknown): err is AnalysisErrorContract {
+  return Boolean(err && typeof err === "object" && "code" in err && "requestId" in err);
 }
 
 export function FindingsTab() {
@@ -64,35 +76,76 @@ export function FindingsTab() {
   } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   const [phase, setPhase] = useState<FindingsPhase>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AnalysisErrorContract | null>(null);
+  const [accepted, setAccepted] = useState<FindingsJobAccepted | null>(null);
+  const [progress, setProgress] = useState<FindingsJobProgress | null>(null);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [inFlight, setInFlight] = useState(false);
   const demoAutoStarted = useRef(false);
+  const resumeStarted = useRef(false);
   const isDemoMode = searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
 
-  const isLoading = LOADING.includes(phase);
+  const isLoading = LOADING.includes(phase) || inFlight;
   const currentStep = phaseIndex(phase);
+  const structureScanId = session.scanRecordId ?? session.scanResult?.id;
 
   const runFindings = useCallback(async () => {
-    if (!session.scanComplete || !session.repoUrl) return;
+    if (!session.scanComplete || !session.repoUrl || !structureScanId) return;
+    if (inFlight) return;
+    setInFlight(true);
     setError(null);
-    show("info", "Findings analysis started");
+    show("info", "Findings analysis queued");
 
     try {
       const result = await runFindingsAnalysis(
         session.repoUrl,
         session.branch || undefined,
         setPhase,
-        session.scanRecordId ?? session.scanResult?.id,
-        session.selectedProjectRoot
+        structureScanId,
+        session.selectedProjectRoot,
+        {
+          sourceCommit: session.scanResult?.repo.commitSha,
+          onAccepted: (job) => {
+            setAccepted(job);
+            if (!job.workerReady) {
+              show(
+                "info",
+                "Queued — waiting for an analysis worker. You can refresh and return later."
+              );
+            }
+          },
+          onProgress: setProgress,
+        }
       );
       setFindings(result);
       show("success", "Findings ready — review classification");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Findings analysis failed.";
-      setError(msg);
-      show("error", "Findings analysis failed");
+      const contract = isAnalysisError(err)
+        ? err
+        : ({
+            code: "INTERNAL_ERROR",
+            message: err instanceof Error ? err.message : "Findings analysis failed.",
+            retryable: true,
+            paymentState: "not_required" as const,
+            requestId: "unknown",
+            requiredAction: "RETRY",
+            structureScanId,
+          } satisfies AnalysisErrorContract);
+      setPhase("failed");
+      setError(contract);
+      show("error", `${contract.code}: analysis needs attention`);
+    } finally {
+      setInFlight(false);
     }
-  }, [session, setFindings, show]);
+  }, [session, setFindings, show, structureScanId, inFlight]);
+
+  useEffect(() => {
+    if (resumeStarted.current || findings || !structureScanId) return;
+    const persisted = loadPersistedAnalysisJob(structureScanId);
+    if (!persisted) return;
+    resumeStarted.current = true;
+    void runFindings();
+  }, [structureScanId, findings, runFindings]);
 
   useEffect(() => {
     if (
@@ -164,14 +217,16 @@ export function FindingsTab() {
       <WorkspaceSection
         label="Analysis workspace"
         title="Findings Engine"
-        description="Analyzers detect issues; RepoDiet verifies them through a 3-stage evidence gate before you see them. Findings are ranked by actionable priority, not severity alone."
+        description="Run Findings enqueues a durable analysis job. Analyzers run on the RepoDiet worker — not inside one browser request."
         actions={
           <>
             <Button onClick={runFindings} disabled={isLoading}>
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
-                  Analyzing…
+                  {accepted && !accepted.workerReady && phase === "queued"
+                    ? "Queued…"
+                    : "Analyzing…"}
                 </>
               ) : findings ? (
                 "Re-run Findings"
@@ -205,12 +260,47 @@ export function FindingsTab() {
       <p className="font-mono text-xs text-muted-foreground">
         {session.repoUrl}
         {session.branch ? ` · branch: ${session.branch}` : ""}
+        {structureScanId ? ` · scan: ${structureScanId}` : ""}
       </p>
+
+      {accepted && !accepted.workerReady && isLoading && phase === "queued" && (
+        <FeedbackBanner
+          variant="info"
+          message="Queued — waiting for an analysis worker. Structure scan preserved. Refresh anytime to resume."
+          dismissible={false}
+        />
+      )}
+
+      {(isLoading || accepted) && !findings && (
+        <Panel variant="elevated" padding="md" className="space-y-3 border-border/60">
+          <p className="ds-label">Durable analysis progress</p>
+          <dl className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Job ID</dt>
+              <dd className="font-mono text-xs">{accepted?.jobId ?? progress?.jobId ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Stage</dt>
+              <dd className="font-mono text-xs">{progress?.stage ?? accepted?.stage ?? phase}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-muted-foreground">Status URL</dt>
+              <dd className="break-all font-mono text-xs">{accepted?.statusUrl ?? "—"}</dd>
+            </div>
+            {accepted?.requestId ? (
+              <div className="sm:col-span-2">
+                <dt className="text-muted-foreground">Request ID</dt>
+                <dd className="font-mono text-xs">{accepted.requestId}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </Panel>
+      )}
 
       {isLoading && (
         <LoadingProgress
           title="Analysis pipeline"
-          steps={FINDINGS_STEPS.filter((s) => s.phase !== "complete").map((s) => ({
+          steps={FINDINGS_STEPS.filter((s) => s.phase !== "ready").map((s) => ({
             id: s.phase,
             label: s.label,
           }))}
@@ -220,10 +310,28 @@ export function FindingsTab() {
 
       {error && (
         <ErrorState
-          title="Findings analysis failed"
-          message="Review the repository and retry. The scan structure may be incomplete."
-          technicalDetail={error}
-          actions={[{ label: "Retry", onClick: runFindings }]}
+          title={
+            error.code === "WORKER_UNAVAILABLE"
+              ? "Analysis worker unavailable"
+              : "Findings analysis needs attention"
+          }
+          message={error.message}
+          technicalDetail={`code=${error.code}; requestId=${error.requestId}${
+            error.jobId ? `; jobId=${error.jobId}` : ""
+          }${error.statusUrl ? `; statusUrl=${error.statusUrl}` : ""}${
+            error.requiredAction ? `; requiredAction=${error.requiredAction}` : ""
+          }`}
+          actions={[
+            {
+              label: error.retryable ? "Resume / Retry" : "Back to Scan",
+              onClick: error.retryable
+                ? runFindings
+                : () => {
+                    clearPersistedAnalysisJob();
+                    window.location.href = "/app?tab=scan";
+                  },
+            },
+          ]}
         />
       )}
 

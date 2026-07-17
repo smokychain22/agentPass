@@ -11,12 +11,14 @@ import { toEvidenceStandardFindings } from "@/lib/findings/evidence-standard";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { detectFramework } from "@/lib/scanner/detect-framework";
 import {
+  assertDeepScanClaim,
   failDeepScanJob,
   getDeepScanJob,
   heartbeatDeepScanJob,
   updateDeepScanStage,
 } from "./job-store";
 import type { DeepScanJob } from "./types";
+import { packageScriptsAllowed, SandboxIncompleteError } from "@/lib/sandbox/untrusted-runner";
 
 /** No repository receives privileged marketplace treatment by name. */
 function repositoryClassLabel(_owner: string, _name: string): string {
@@ -103,13 +105,31 @@ async function detectBaselineCommands(rootDir: string): Promise<{
 
 export async function executeDeepScanJob(
   jobId: string,
-  workerId: string
+  workerId: string,
+  options?: { alreadyClaimed?: boolean; claimToken?: string }
 ): Promise<DeepScanJob | undefined> {
   let job = await getDeepScanJob(jobId);
   if (!job) return undefined;
 
+  // Single atomic claim happens only in claim-next / claimNextDeepScanJob.
+  if (options?.alreadyClaimed !== true) {
+    throw new Error(
+      "executeDeepScanJob requires alreadyClaimed=true — claiming is exclusive to claim-next"
+    );
+  }
+  assertDeepScanClaim(job, workerId, options.claimToken ?? job.claimToken);
+  const claimToken = options.claimToken ?? job.claimToken;
+
+  // Read-only deep scans must not run customer package scripts until Docker isolation is COMPLETE.
+  const readOnly = job.request.readOnly !== false;
+  if (!readOnly && !packageScriptsAllowed()) {
+    return failDeepScanJob(jobId, "SANDBOX_INCOMPLETE", new SandboxIncompleteError().message, {
+      terminal: true,
+    });
+  }
+
   try {
-    await heartbeatDeepScanJob(jobId, workerId, "Starting inventory");
+    await heartbeatDeepScanJob(jobId, workerId, "Starting inventory", claimToken);
     job =
       (await updateDeepScanStage(jobId, "INVENTORY", "Downloading repository and inventorying files")) ??
       job;
@@ -130,7 +150,7 @@ export async function executeDeepScanJob(
         coverage: scan.scanCoverage?.contract as unknown as Record<string, unknown>,
       })) ?? job;
 
-    await heartbeatDeepScanJob(jobId, workerId, "Building repository graph");
+    await heartbeatDeepScanJob(jobId, workerId, "Building repository graph", claimToken);
     job =
       (await updateDeepScanStage(jobId, "BUILDING_GRAPH", "Building persistent repository graph")) ??
       job;
@@ -158,8 +178,11 @@ export async function executeDeepScanJob(
           graphId: graph.id,
         })) ?? job;
 
-      await heartbeatDeepScanJob(jobId, workerId, "Running findings engine");
-      const findings = await runFindingsEngine(job.request.repoUrl, job.request.branch);
+      await heartbeatDeepScanJob(jobId, workerId, "Running findings engine", claimToken);
+      const findings = await runFindingsEngine(job.request.repoUrl, job.request.branch, undefined, {
+        scanId: job.request.structureScanId || job.scanId,
+        projectRoot: job.request.projectRoot || job.projectRoot,
+      });
 
       job =
         (await updateDeepScanStage(jobId, "NORMALIZING_FINDINGS", "Normalizing findings")) ?? job;

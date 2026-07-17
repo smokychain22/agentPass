@@ -1,13 +1,22 @@
 import path from "node:path";
+import { buildUntrustedSandboxEnv } from "@/lib/sandbox/secret-firewall";
 
-/** Shared env for analyzer CLI child processes on Vercel/serverless. */
+/** Shared env for analyzer CLI child processes — secrets stripped. */
 export function analyzerChildEnv(): NodeJS.ProcessEnv {
   const appNodeModules = path.join(process.cwd(), "node_modules");
   const existing = process.env.NODE_PATH ?? "";
   const nodePath = existing
     ? `${appNodeModules}${path.delimiter}${existing}`
     : appNodeModules;
-  return { ...process.env, FORCE_COLOR: "0", NODE_PATH: nodePath };
+  const sandboxed = buildUntrustedSandboxEnv(process.env);
+  return {
+    ...sandboxed,
+    FORCE_COLOR: "0",
+    NODE_PATH: nodePath,
+    PATH: process.env.PATH,
+    HOME: process.env.HOME ?? "/tmp",
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  } as NodeJS.ProcessEnv;
 }
 
 /**
