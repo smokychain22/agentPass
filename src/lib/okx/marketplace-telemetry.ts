@@ -29,9 +29,15 @@ export interface MarketplaceHealthSnapshot {
   workerReadySource: "authenticated_heartbeat" | "heartbeat" | "unset" | "github_actions_dispatcher";
   deepScanQueueReady: boolean;
   githubAppReady: boolean;
+  githubAppReadyReason?: string;
+  githubAppReadyMessage?: string;
   paymentVerifierReady: boolean;
   receiptSignerReady: boolean;
+  receiptSignerReadyReason?: string;
+  receiptSignerReadyMessage?: string;
   attestationSignerReady: boolean;
+  attestationSignerReadyReason?: string;
+  attestationSignerReadyMessage?: string;
   queueDepth: number | null;
   activeWorkers: number;
   workerHeartbeatAgeMs: number | null;
@@ -160,14 +166,14 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
   const probe = await probeActionsDispatcherHealth();
   const dispatcherReady = probe.dispatcherReady;
 
-  const githubAppReady = Boolean(
-    process.env.GITHUB_APP_ID?.trim() && process.env.GITHUB_APP_PRIVATE_KEY?.trim()
+  const { getProductionDeliveryReadiness } = await import(
+    "@/lib/delivery/production-readiness"
   );
+  const delivery = await getProductionDeliveryReadiness();
+  const githubAppReady = delivery.githubAppReady;
   const paymentVerifierReady = process.env.REQUIRE_REAL_X402 === "1";
-  const receiptSignerReady = Boolean(
-    process.env.RECEIPT_SIGNING_PRIVATE_KEY?.trim() || process.env.GREEN_PR_SIGNING_PRIVATE_KEY?.trim()
-  );
-  const attestationSignerReady = Boolean(process.env.GREEN_PR_SIGNING_PRIVATE_KEY?.trim());
+  const receiptSignerReady = delivery.receiptSignerReady;
+  const attestationSignerReady = delivery.attestationSignerReady;
 
   // Prefer ephemeral Actions dispatcher readiness when configured; daemon heartbeat is optional.
   const workerMode: MarketplaceHealthSnapshot["workerMode"] = dispatcherReady
@@ -199,9 +205,15 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     a2aRuntimeReady: a2aIntakeReady,
     deepScanQueueReady: existing.deepScanQueueReady !== false,
     githubAppReady,
+    githubAppReadyReason: delivery.githubAppReadyReason,
+    githubAppReadyMessage: delivery.githubAppReadyMessage,
     paymentVerifierReady,
     receiptSignerReady,
+    receiptSignerReadyReason: delivery.receiptSignerReadyReason,
+    receiptSignerReadyMessage: delivery.receiptSignerReadyMessage,
     attestationSignerReady,
+    attestationSignerReadyReason: delivery.attestationSignerReadyReason,
+    attestationSignerReadyMessage: delivery.attestationSignerReadyMessage,
     queueDepth: capacity.queueDepth,
     activeWorkers,
     activeWorkflowRuns,

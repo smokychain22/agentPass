@@ -29,7 +29,11 @@ export function isGitHubAppConfigured(): boolean {
     readEnv("GITHUB_APP_ID") &&
       readEnv("GITHUB_APP_CLIENT_ID") &&
       readEnv("GITHUB_APP_CLIENT_SECRET") &&
-      readEnvAny(["GITHUB_APP_PRIVATE_KEY_BASE64", "REPODIET_OPERATOR_PRIVATE_KEY"]) &&
+      readEnvAny([
+        "GITHUB_APP_PRIVATE_KEY_BASE64",
+        "GITHUB_APP_PRIVATE_KEY",
+        "REPODIET_OPERATOR_PRIVATE_KEY",
+      ]) &&
       readEnv("GITHUB_APP_SLUG")
   );
 }

@@ -120,6 +120,14 @@ Until facilitator URL is configured, test mode works with `REPODIET_X402_TEST_SE
 | `GITHUB_APP_SLUG` | Install URL slug |
 | `GITHUB_APP_PRIVATE_KEY_BASE64` | PEM as base64 **or** `GITHUB_APP_PRIVATE_KEY` with `\n` escapes |
 | `GITHUB_APP_WEBHOOK_SECRET` or `GITHUB_WEBHOOK_SECRET` | Webhook HMAC |
+| `REPODIET_RECEIPT_PRIVATE_KEY` | Green PR receipt signer (Ed25519). Required for `receiptSignerReady` |
+| `REPODIET_RECEIPT_PUBLIC_KEY` | Matching public key (optional if derivable; preferred for verify) |
+| `REPODIET_RECEIPT_KEY_ID` | Stable key id published via `GET /api/keys` |
+| `REPODIET_GREEN_PR_PRIVATE_KEY` | Green PR attestation signer — **must differ** from receipt key |
+| `REPODIET_GREEN_PR_PUBLIC_KEY` | Matching attestation public key |
+| `REPODIET_GREEN_PR_KEY_ID` | Stable attestation key id |
+| `REPODIET_OPERATOR_PRIVATE_KEY` | A2MCP/operator RSA receipt + binding attestation signer |
+| `REPODIET_OPERATOR_PUBLIC_KEY` | Operator trust-root public key (Production pin) |
 | `SUPABASE_URL` | If using Supabase persistence |
 | `SUPABASE_PUBLISHABLE_KEY` | Browser-safe |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server only (RepoDiet name; not `SUPABASE_SECRET_KEY`) |
