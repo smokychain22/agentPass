@@ -19,7 +19,10 @@ import {
   typeLabel,
 } from "../findings/findings-utils";
 import { cn } from "@/lib/utils";
-import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
+import {
+  isCleanupEligible,
+  isFindingCheckboxEnabled,
+} from "@/lib/findings/cleanup-eligibility";
 import { FindingSelectionCheckbox } from "./finding-selection-checkbox";
 
 type CategoryKey =
@@ -229,9 +232,23 @@ export function FindingsWorkspace({
     filtered.find((f) => f.id === selectedId) ??
     null;
 
-  const safeFindings = findings.filter((f) => f.action === "safe_candidate");
-  const reviewFindings = findings.filter((f) => f.action === "review_first");
-  const protectedFindings = findings.filter((f) => f.action === "do_not_touch");
+  const safeFindings = useMemo(
+    () => findings.filter((f) => f.action === "safe_candidate"),
+    [findings]
+  );
+  /** Cleanup-eligible rows inside the SAFE bucket — canonical preflight, keyed by finding.id. */
+  const safeCleanupEligible = useMemo(
+    () => safeFindings.filter(isCleanupEligible),
+    [safeFindings]
+  );
+  const reviewFindings = useMemo(
+    () => findings.filter((f) => f.action === "review_first"),
+    [findings]
+  );
+  const protectedFindings = useMemo(
+    () => findings.filter((f) => f.action === "do_not_touch"),
+    [findings]
+  );
 
   const selectFinding = (id: string) => {
     setSelectedId(id);
@@ -254,10 +271,17 @@ export function FindingsWorkspace({
 
   const renderFindingRow = (finding: Finding, options?: { compact?: boolean }) => {
     const expanded = expandedIds.includes(finding.id);
-    const eligible = isCleanupEligible(finding);
+    // Canonical eligibility only — never derive from filter/index/risk label alone.
+    const eligible = isFindingCheckboxEnabled(finding);
     const compact = options?.compact === true;
     return (
-      <li key={finding.id} data-finding-card={finding.id} data-finding-id={finding.id}>
+      <li
+        key={finding.id}
+        data-finding-card={finding.id}
+        data-finding-id={finding.id}
+        data-cleanup-eligible={eligible ? "true" : "false"}
+        data-risk-action={finding.action}
+      >
         <div
           className={cn(
             "flex w-full border-b border-border/40 transition-colors",
@@ -327,6 +351,23 @@ export function FindingsWorkspace({
     );
   };
 
+  /** Flat list — used for Safe candidates so checkboxes are visible without nested collapse. */
+  const renderFlatFindingList = (items: Finding[], listId: string) => {
+    if (items.length === 0) {
+      return <p className="text-sm text-muted-foreground">No findings in this bucket.</p>;
+    }
+    return (
+      <ul
+        className="max-h-[28rem] overflow-y-auto rounded-md border border-border/40 scrollbar-thin"
+        role="list"
+        data-finding-list={listId}
+        data-finding-list-count={items.length}
+      >
+        {items.map((f) => renderFindingRow(f, { compact: true }))}
+      </ul>
+    );
+  };
+
   const renderTypeGroups = (items: Finding[], open: boolean) => {
     if (!open) return null;
     const byType = new Map<string, Finding[]>();
@@ -342,7 +383,7 @@ export function FindingsWorkspace({
           <FindingsAccordion
             key={label}
             title={`${label} — ${group.length}`}
-            defaultOpen={false}
+            defaultOpen={group.length <= 12}
           >
             <ul className="max-h-80 overflow-y-auto scrollbar-thin" role="list">
               {group.slice(0, 25).map((f) => renderFindingRow(f, { compact: true }))}
@@ -363,21 +404,41 @@ export function FindingsWorkspace({
       <div className="space-y-2">
         <FindingsAccordion
           title={`Safe candidates — ${safeFindings.length}`}
-          summary="Expanded summary · cards collapsed by default"
+          summary={
+            safeGroupOpen
+              ? `${safeCleanupEligible.length} cleanup-eligible with enabled checkboxes`
+              : "Open to select cleanup-eligible findings"
+          }
           open={safeGroupOpen}
           onOpenChange={setSafeGroupOpen}
         >
           <p className="mb-2 text-sm text-muted-foreground">
-            Risk bucket SAFE. Cleanup requires transformer preflight (
-            {findings.filter(isCleanupEligible).length} cleanup-eligible). Use the checkbox on a
-            single row to select exactly one cleanup candidate.
+            Risk bucket SAFE · {safeCleanupEligible.length} cleanup-eligible after preflight. Use a
+            row checkbox to select exactly one candidate (selection is keyed by finding ID).
           </p>
           {selectedCount > 0 ? (
             <p className="mb-2 font-mono text-xs text-signal" data-selected-count={selectedCount}>
               {selectedCount} selected for cleanup
             </p>
+          ) : (
+            <p className="mb-2 font-mono text-[10px] text-muted-foreground" data-selected-count={0}>
+              0 selected for cleanup
+            </p>
+          )}
+          {safeGroupOpen
+            ? renderFlatFindingList(safeCleanupEligible, "safe-cleanup-eligible")
+            : null}
+          {safeGroupOpen &&
+          safeFindings.length > safeCleanupEligible.length ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {safeFindings.length - safeCleanupEligible.length} additional SAFE-risk finding
+              {safeFindings.length - safeCleanupEligible.length === 1 ? "" : "s"} without
+              transformer preflight {safeFindings.length - safeCleanupEligible.length === 1
+                ? "is"
+                : "are"}{" "}
+              not selectable.
+            </p>
           ) : null}
-          {renderTypeGroups(safeFindings, safeGroupOpen)}
         </FindingsAccordion>
         <FindingsAccordion
           title={`Review first — ${reviewFindings.length}`}

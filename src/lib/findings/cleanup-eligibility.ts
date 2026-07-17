@@ -104,6 +104,29 @@ export function countCleanupEligible(findings: Finding[]): number {
   return findings.filter(isCleanupEligible).length;
 }
 
+/**
+ * Checkbox enablement for a finding row — keyed only by stable finding identity
+ * and canonical preflight eligibility. Never by list index, active filter, or risk label alone.
+ */
+export function isFindingCheckboxEnabled(finding: Finding): boolean {
+  return isCleanupEligible(finding);
+}
+
+/** Safe-candidate bucket rows for selection UI (stable ID → enabled). */
+export function safeCandidateSelectionRows(findings: Finding[]): Array<{
+  findingId: string;
+  enabled: boolean;
+  action: Finding["action"];
+}> {
+  return findings
+    .filter((f) => f.action === "safe_candidate")
+    .map((f) => ({
+      findingId: f.id,
+      enabled: isFindingCheckboxEnabled(f),
+      action: f.action,
+    }));
+}
+
 export function assertCleanupEligibleInvariant(
   summaryCleanupEligibleCount: number,
   findings: Finding[]

@@ -172,6 +172,74 @@ test("operational scripts are not auto-safe from Knip unused alone", () => {
   assert.equal(action, "review_first");
 });
 
+test("safe-candidate selection rows key enablement by finding id + preflight", () => {
+  const { safeCandidateSelectionRows, isFindingCheckboxEnabled } = require(
+    "../src/lib/findings/cleanup-eligibility"
+  ) as typeof import("../src/lib/findings/cleanup-eligibility");
+  const findings: Finding[] = [
+    finding({
+      id: "safe-eligible-a",
+      type: "unused_file",
+      action: "safe_candidate",
+      source: "knip",
+      sourceMode: "native",
+      files: ["src/archive/OldDashboard.backup.tsx"],
+      evidence: {
+        summary: "backup",
+        signals: ["classification=actionable_candidate", "unused", "inboundRefs=0"],
+      },
+    }),
+    finding({
+      id: "safe-eligible-b",
+      type: "unused_import",
+      action: "safe_candidate",
+      source: "repodiet_import",
+      sourceMode: "native",
+      files: ["src/components/Dashboard.tsx"],
+      evidence: {
+        summary: "import",
+        signals: [
+          "classification=actionable_candidate",
+          "symbol=Clock",
+          "importLine=import { Clock } from 'lucide-react'",
+        ],
+      },
+    }),
+    finding({
+      id: "safe-no-preflight",
+      type: "unused_file",
+      action: "safe_candidate",
+      source: "knip",
+      sourceMode: "native",
+      files: ["src/lib/unused-helper.ts"],
+      evidence: { summary: "t", signals: ["unused", "inboundRefs=0"] },
+    }),
+    finding({
+      id: "review-1",
+      type: "unused_file",
+      action: "review_first",
+      source: "knip",
+      sourceMode: "native",
+      files: ["src/lib/orphan-a.ts"],
+      evidence: { summary: "t", signals: ["unused"] },
+    }),
+  ];
+  const rows = safeCandidateSelectionRows(findings);
+  assert.equal(rows.length, 3);
+  assert.deepEqual(
+    rows.filter((r) => r.enabled).map((r) => r.findingId).sort(),
+    ["safe-eligible-a", "safe-eligible-b"]
+  );
+  assert.equal(isFindingCheckboxEnabled(findings[0]!), true);
+  assert.equal(isFindingCheckboxEnabled(findings[2]!), false);
+  assert.equal(isFindingCheckboxEnabled(findings[3]!), false);
+  // Not derived from list index — reorder must not change enablement for an id.
+  const reordered = [findings[2]!, findings[0]!, findings[1]!];
+  const again = safeCandidateSelectionRows(reordered);
+  assert.equal(again.find((r) => r.findingId === "safe-eligible-a")?.enabled, true);
+  assert.equal(again.find((r) => r.findingId === "safe-no-preflight")?.enabled, false);
+});
+
 test("select-all eligibility excludes SAFE without preflight", () => {
   const findings: Finding[] = [
     finding({
