@@ -29,8 +29,27 @@ function isActiveJob(job: DeepScanJob): boolean {
 export async function getDeepScanCapacitySnapshot(
   tenantId?: string
 ): Promise<DeepScanCapacitySnapshot> {
-  const queueDepth = await deepScanQueueDepth();
-  const activeIndex = (await getPersistentRecord<string[]>(COLLECTION, ACTIVE_INDEX)) ?? [];
+  // Release falsely held capacity from stale/orphaned jobs before reporting.
+  // Does not redispatch and does not change delivery readiness probes.
+  let queueDepth = await deepScanQueueDepth();
+  let activeIndex = (await getPersistentRecord<string[]>(COLLECTION, ACTIVE_INDEX)) ?? [];
+  if (queueDepth > 0 || activeIndex.length > 0) {
+    try {
+      const { reconcileStaleDeepScanQueue } = await import("./reconcile-stale");
+      await reconcileStaleDeepScanQueue({ apply: true });
+      queueDepth = await deepScanQueueDepth();
+      activeIndex = (await getPersistentRecord<string[]>(COLLECTION, ACTIVE_INDEX)) ?? [];
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          component: "deep-scan-capacity",
+          event: "stale_queue_reconcile_failed",
+          detail: err instanceof Error ? err.message : "unknown",
+        })
+      );
+    }
+  }
+
   const ids = Array.from(new Set(activeIndex));
   const activeByTenant: Record<string, number> = {};
   let activeJobs = 0;

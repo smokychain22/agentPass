@@ -1,0 +1,74 @@
+# Operator-only: reconcile stale deep-scan queue capacity on production.
+# Does not analyze repositories, create PRs, or touch Meridian.
+# Does not use REPODIET_ACTIONS_DISPATCH_TOKEN.
+
+name: Reconcile stale deep-scan queue
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Inspect only (no transitions)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Reconcile stale queue via production API
+        env:
+          REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          API_BASE: https://skillswap-virid-kappa.vercel.app
+        run: |
+          set -euo pipefail
+          if [ -z "${REPODIET_WORKER_API_KEY:-}" ]; then
+            echo "REPODIET_WORKER_API_KEY missing"
+            exit 1
+          fi
+          BODY='{"dryRun":false}'
+          if [ "$DRY_RUN" = "true" ]; then BODY='{"dryRun":true}'; fi
+          RESP=$(curl -sS -X POST "$API_BASE/api/internal/actions/deep-scans/reconcile-stale" \
+            -H "authorization: Bearer ${REPODIET_WORKER_API_KEY}" \
+            -H "content-type: application/json" \
+            -d "$BODY")
+          echo "$RESP" | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)
+          assert d.get("ok") is True, d
+          print(json.dumps({
+            "queueDepthBefore": d.get("queueDepthBefore"),
+            "queueDepthAfter": d.get("queueDepthAfter"),
+            "activeJobsBefore": d.get("activeJobsBefore"),
+            "activeJobsAfter": d.get("activeJobsAfter"),
+            "staleJobsReconciled": d.get("staleJobsReconciled"),
+            "completedEvidencePreserved": d.get("completedEvidencePreserved"),
+            "inspectionCount": len(d.get("inspections") or []),
+            "inspections": [{
+              "jobId": i.get("jobId"),
+              "repository": i.get("repository"),
+              "tenantOrOwner": i.get("tenantOrOwner"),
+              "currentStage": i.get("currentStage"),
+              "workflowRunId": i.get("workflowRunId"),
+              "workflowRunExists": i.get("workflowRunExists"),
+              "leaseStatus": i.get("leaseStatus"),
+              "legacyIncidentJob": i.get("legacyIncidentJob"),
+              "belongsToCompletedScan": i.get("belongsToCompletedScan"),
+              "safeRecommendedTransition": i.get("safeRecommendedTransition"),
+              "transitionApplied": i.get("transitionApplied"),
+              "reason": i.get("reason"),
+              "createdAt": i.get("createdAt"),
+              "updatedAt": i.get("updatedAt"),
+              "lastActivityAt": i.get("lastActivityAt"),
+            } for i in (d.get("inspections") or [])]
+          }, indent=2))
+          '

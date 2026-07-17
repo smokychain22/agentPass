@@ -1,0 +1,68 @@
+{
+  "status": "prepared_not_executed",
+  "targetRepository": "velz-cmd/repodiet-e2e-test",
+  "repositoryWritePerformed": false,
+  "meridianExcluded": true,
+  "pinnedBaseCommit": "c0838e4cda326098a363b44e0e3ebe98e81e9463",
+  "pinnedBaseBranch": "main",
+  "selectedCleanupCandidate": {
+    "path": "src/archive/OldDashboard.backup.tsx",
+    "action": "delete",
+    "whyCleanupEligible": "Obvious unreferenced backup under src/archive/; listed in repodiet-ground-truth.json as automatic delete; not in mustKeep; reversible by restoring the single deleted file from main history.",
+    "expectedFileChanges": [
+      {
+        "path": "src/archive/OldDashboard.backup.tsx",
+        "changeType": "delete"
+      }
+    ]
+  },
+  "alternativesRejectedForThisRun": [
+    {
+      "path": "src/components/Dashboard.tsx",
+      "reason": "Unused Clock import already removed on current main — not eligible."
+    },
+    {
+      "path": "src/unused/empty-module.ts",
+      "reason": "Valid but deferred; keep this controlled run to one archive delete."
+    }
+  ],
+  "expectedBranchName": "repodiet/cleanup-YYYYMMDD-<nanoid6>",
+  "expectedBranchNamePattern": "^repodiet/cleanup-[0-9]{8}-[A-Za-z0-9_-]{6}$",
+  "expectedPrTitle": "RepoDiet: repair 0 files, remove 1 safe file",
+  "expectedPrTitlePattern": "^RepoDiet: repair",
+  "githubAppInstallationTokenUse": {
+    "app": "RepoDiet Operator",
+    "slug": "repodiet-operator",
+    "source": "installation access token minted in-memory via App JWT",
+    "neverUse": [
+      "REPODIET_ACTIONS_DISPATCH_TOKEN",
+      "customer PAT",
+      "GITHUB_TOKEN from Actions analysis worker"
+    ],
+    "tokenHandling": "Held only in process memory for the delivery request; not logged; not persisted to durable store or artifacts."
+  },
+  "buyerApprovalBoundary": "A2A task remains unpaid/unreleased until buyer explicitly approves the delivered PR evidence. No escrow release on PR-open alone.",
+  "escrowReleaseBoundary": "Funds release only after buyer acceptance of the verified cleanup PR (A2A accept → release). Opening or updating the PR does not release escrow.",
+  "receiptGeneration": {
+    "commerceReceipt": "SignedReceiptV1 via REPODIET_OPERATOR_PRIVATE_KEY after successful paid delivery path",
+    "greenPrReceipt": "Green PR receipt via REPODIET_RECEIPT_PRIVATE_KEY when contracted Green PR monitoring finalizes"
+  },
+  "attestationGeneration": {
+    "signer": "REPODIET_GREEN_PR_PRIVATE_KEY",
+    "constraint": "Must be a separate signing identity from the receipt signer"
+  },
+  "duplicateExecutionProtection": [
+    "assertCleanupDeliveryContext rejects stale base SHA / changed files",
+    "idempotency on quote/task binding prevents double charge",
+    "single cleanup branch prefix + open-PR warnings",
+    "installation token scoped to the target installation only"
+  ],
+  "idempotencyBehavior": "Re-running delivery against the same approved task/quote must not create a second escrow capture; PR creation is gated on live base SHA matching the scan commit and validated edit hashes.",
+  "rollbackProcedure": [
+    "Close the RepoDiet cleanup PR without merging",
+    "Delete the remote repodiet/cleanup-* branch",
+    "Confirm main remains at pinnedBaseCommit (or later unrelated commits) with OldDashboard.backup.tsx still present if PR was never merged",
+    "If mistakenly merged: revert the merge commit on main"
+  ],
+  "executionGate": "Do not execute until operator explicitly starts the controlled delivery run after queue reconciliation and GitHub App probe PASS."
+}

@@ -80,3 +80,35 @@ export async function deepScanQueueDepth(): Promise<number> {
   const queue = (await getPersistentRecord<string[]>(COLLECTION, LEGACY_QUEUE_KEY)) ?? [];
   return queue.length;
 }
+
+/** Snapshot queued job IDs without mutating the queue. */
+export async function listDeepScanQueueIds(): Promise<string[]> {
+  const client = redis();
+  if (client) {
+    const ids = (await client.lrange<string>(DEEP_SCAN_QUEUE_KEY, 0, -1)) ?? [];
+    return ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+  }
+  const queue = (await getPersistentRecord<string[]>(COLLECTION, LEGACY_QUEUE_KEY)) ?? [];
+  return [...queue];
+}
+
+/**
+ * Rewrite the queue keeping only the provided IDs (order preserved).
+ * Used to drop terminal / superseded job IDs without deleting evidence records.
+ */
+export async function replaceDeepScanQueueIds(keepIds: string[]): Promise<void> {
+  const unique = Array.from(new Set(keepIds.filter(Boolean)));
+  const client = redis();
+  if (client) {
+    // Atomic-ish replace: delete then re-push. Capacity may briefly read 0.
+    await client.del(DEEP_SCAN_QUEUE_KEY);
+    if (unique.length > 0) {
+      // LPUSH preserves reverse order of args; push oldest-first so RPOP order stays FIFO.
+      await client.lpush(DEEP_SCAN_QUEUE_KEY, ...[...unique].reverse());
+    }
+    return;
+  }
+  await withLocalQueueLock(async () => {
+    await setPersistentRecord(COLLECTION, LEGACY_QUEUE_KEY, unique);
+  });
+}
