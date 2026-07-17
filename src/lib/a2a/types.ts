@@ -130,6 +130,9 @@ export interface A2ATaskInput {
 export interface A2ATaskResult {
   /** Concrete repository outcome derived from delivered patch operations, never a score. */
   maintenanceOutcome?: MaintenanceOutcome;
+  /** Durable deep-scan job for full repository analysis (not Quick Triage). */
+  deepScanJobId?: string;
+  deepScanProgressUrl?: string;
   findings?: Record<string, unknown>;
   changes?: {
     changedFiles: string[];

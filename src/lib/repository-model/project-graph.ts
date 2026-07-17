@@ -56,7 +56,8 @@ async function indexFiles(
   fileIndex: RepositoryModel["fileIndex"],
   depth = 0
 ): Promise<void> {
-  if (depth > 8) return;
+  // Whole-repository indexing — do not silently stop at shallow depth.
+  if (depth > 64) return;
   let entries: string[] = [];
   try {
     entries = await fs.readdir(dir);
@@ -65,7 +66,17 @@ async function indexFiles(
   }
 
   for (const entry of entries) {
-    if (entry === "node_modules" || entry === ".git" || entry === ".next" || entry === "dist") continue;
+    if (
+      entry === "node_modules" ||
+      entry === ".git" ||
+      entry === ".next" ||
+      entry === "dist" ||
+      entry === "build" ||
+      entry === "coverage" ||
+      entry === ".cache"
+    ) {
+      continue;
+    }
     const full = path.join(dir, entry);
     let stat;
     try {
@@ -77,7 +88,7 @@ async function indexFiles(
       await indexFiles(rootDir, full, projects, fileIndex, depth + 1);
       continue;
     }
-    if (!/\.(tsx?|jsx?|mjs|cjs|json)$/.test(entry)) continue;
+    if (!/\.(tsx?|jsx?|mjs|cjs|mts|cts|json)$/.test(entry)) continue;
     const rel = path.relative(rootDir, full).replace(/\\/g, "/");
     fileIndex[rel] = resolveFileContext(rel, projects);
   }

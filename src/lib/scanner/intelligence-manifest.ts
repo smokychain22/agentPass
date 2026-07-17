@@ -7,7 +7,13 @@ import type { ClassifiedProjectRoot } from "@/lib/repository-model/primary-root"
 import type { FrameworkDetection, PackageManager } from "@/lib/scanner/types";
 import type { FileTreeScan } from "@/lib/scanner/file-tree";
 import { IGNORED_DIRS } from "@/lib/scanner/types";
+import {
+  buildCoverageContract,
+  type CoverageStatusContract,
+  type RepositoryCoverageContract,
+} from "@/lib/scanner/inventory";
 
+/** Legacy status values kept for existing UI consumers. */
 export type ScanCoverageStatus =
   | "complete"
   | "complete_with_exclusions"
@@ -16,6 +22,8 @@ export type ScanCoverageStatus =
 
 export interface ScanCoverageReport {
   status: ScanCoverageStatus;
+  /** Truthful product coverage contract (preferred). */
+  coverageStatus: CoverageStatusContract;
   filesDiscovered: number;
   filesClassified: number;
   filesAnalyzable: number;
@@ -25,6 +33,8 @@ export interface ScanCoverageReport {
   warnings: string[];
   /** False when coverage is partial/failed — Findings must not claim a clean bill of health. */
   readinessForFindings: boolean;
+  /** Full inventory contract for production honesty. */
+  contract: RepositoryCoverageContract;
 }
 
 export interface RepositoryIntelligenceManifest {
@@ -64,6 +74,14 @@ export interface RepositoryIntelligenceManifest {
     protectedFileCount: number;
     intentionallyIgnoredDirs: string[];
     topExtensions: Record<string, number>;
+    supportedSourceFiles: number;
+    analyzedSourceFiles: number;
+    configurationFilesIndexed: number;
+    testFilesIndexed: number;
+    generatedFilesExcluded: number;
+    binaryFilesExcluded: number;
+    vendorFilesExcluded: number;
+    unsupportedFiles: number;
   };
   entryPoints: Array<{
     path: string;
@@ -141,6 +159,12 @@ async function readTsconfigPaths(
   return undefined;
 }
 
+function mapLegacyStatus(contractStatus: CoverageStatusContract): ScanCoverageStatus {
+  if (contractStatus === "FAILED") return "failed";
+  if (contractStatus === "PARTIAL") return "partial";
+  return "complete_with_exclusions";
+}
+
 export function computeScanCoverage(input: {
   tree: FileTreeScan;
   repositoryModel: RepositoryModel;
@@ -148,54 +172,91 @@ export function computeScanCoverage(input: {
   protectedFileCount: number;
   commitSha?: string;
   warnings: string[];
+  analyzedSourceFiles?: number;
+  analysisComplete?: boolean;
 }): ScanCoverageReport {
-  const filesDiscovered = input.tree.summary.totalFiles;
-  const filesClassified = Object.keys(input.repositoryModel.fileIndex).length;
-  const analyzablePaths = input.tree.allRelativePaths.filter((p) => ANALYZABLE_EXT.test(p));
-  const filesAnalyzable = input.analyzableSourceFiles;
-  const filesProtected = input.protectedFileCount;
-
-  const classifiedAnalyzable = analyzablePaths.filter((p) => input.repositoryModel.fileIndex[p]).length;
-  const filesExcluded = Math.max(0, filesDiscovered - filesClassified);
-
+  const inventory = input.tree.inventory;
   const entryPointsDetected = Object.values(input.repositoryModel.fileIndex).filter((ctx) =>
     ENTRYPOINT_ROLES.has(ctx.entrypointRole)
   ).length;
+
+  const supportedSourceFiles =
+    inventory?.files.filter((f) => f.kind === "supported_source").length ??
+    input.tree.allRelativePaths.filter((p) => ANALYZABLE_EXT.test(p)).length;
+
+  const analyzedSourceFiles =
+    input.analyzedSourceFiles ??
+    Math.min(
+      input.analyzableSourceFiles,
+      Object.keys(input.repositoryModel.fileIndex).filter((p) => ANALYZABLE_EXT.test(p)).length
+    );
+
+  const contract = inventory
+    ? buildCoverageContract({
+        inventory,
+        analyzedSourceFiles,
+        entryPointsDetected,
+        commitSha: input.commitSha,
+        analysisComplete: input.analysisComplete ?? Boolean(input.commitSha && analyzedSourceFiles > 0),
+      })
+    : ({
+        totalFiles: input.tree.summary.totalFiles,
+        supportedSourceFiles,
+        analyzedSourceFiles,
+        configurationFilesIndexed: 0,
+        testFilesIndexed: 0,
+        entryPointsDetected,
+        generatedFilesExcluded: 0,
+        binaryFilesExcluded: 0,
+        vendorFilesExcluded: 0,
+        unsupportedFiles: Math.max(0, input.tree.summary.totalFiles - supportedSourceFiles),
+        protectedFiles: input.protectedFileCount,
+        exclusions: [],
+        coverageStatus:
+          input.tree.summary.totalFiles === 0 || supportedSourceFiles === 0
+            ? "FAILED"
+            : !input.commitSha || analyzedSourceFiles < supportedSourceFiles
+              ? "PARTIAL"
+              : "COMPLETE_FOR_SUPPORTED_SCOPE",
+        supportedLanguages: ["javascript", "typescript"],
+        claimsSemanticAnalysisOfAllFiles: false,
+      } satisfies RepositoryCoverageContract);
 
   const coverageWarnings = [...input.warnings];
   if (!input.commitSha) {
     coverageWarnings.push("Commit SHA could not be resolved — findings may not pin to an exact tree.");
   }
-  if (filesDiscovered === 0) {
+  if (contract.totalFiles === 0) {
     coverageWarnings.push("No files discovered in repository archive.");
   }
-  if (filesAnalyzable > 0 && classifiedAnalyzable < filesAnalyzable * 0.85) {
+  if (contract.analyzedSourceFiles < contract.supportedSourceFiles) {
     coverageWarnings.push(
-      `Only ${classifiedAnalyzable} of ${filesAnalyzable} analyzable source files were classified (${Math.round((classifiedAnalyzable / filesAnalyzable) * 100)}%).`
+      `Analyzed ${contract.analyzedSourceFiles} of ${contract.supportedSourceFiles} supported JS/TS source files.`
     );
   }
+  coverageWarnings.push(
+    "RepoDiet supports JavaScript/TypeScript semantic analysis only. Binaries, generated output, and unsupported languages are inventoried and excluded — not claimed as analyzed."
+  );
 
-  let status: ScanCoverageStatus = "complete";
-  if (filesDiscovered === 0 || filesAnalyzable === 0) {
-    status = "failed";
-  } else if (!input.commitSha || classifiedAnalyzable < filesAnalyzable * 0.85) {
-    status = "partial";
-  } else if (filesExcluded > 0 || filesProtected > 0) {
-    status = "complete_with_exclusions";
-  }
-
-  const readinessForFindings = status === "complete" || status === "complete_with_exclusions";
+  const status = mapLegacyStatus(contract.coverageStatus);
+  const readinessForFindings = contract.coverageStatus === "COMPLETE_FOR_SUPPORTED_SCOPE";
 
   return {
     status,
-    filesDiscovered,
-    filesClassified,
-    filesAnalyzable,
-    filesProtected,
-    filesExcluded,
-    entryPointsDetected,
+    coverageStatus: contract.coverageStatus,
+    filesDiscovered: contract.totalFiles,
+    filesClassified: Object.keys(input.repositoryModel.fileIndex).length,
+    filesAnalyzable: contract.supportedSourceFiles,
+    filesProtected: contract.protectedFiles,
+    filesExcluded:
+      contract.generatedFilesExcluded +
+      contract.binaryFilesExcluded +
+      contract.vendorFilesExcluded +
+      contract.unsupportedFiles,
+    entryPointsDetected: contract.entryPointsDetected,
     warnings: coverageWarnings,
     readinessForFindings,
+    contract,
   };
 }
 
@@ -220,8 +281,16 @@ export async function buildRepositoryIntelligenceManifest(input: {
   primaryProjectRoot: string;
   rootDir: string;
 }): Promise<RepositoryIntelligenceManifest> {
-  const analyzableSourceFiles = input.tree.allRelativePaths.filter((p) => ANALYZABLE_EXT.test(p)).length;
-  const protectedFileCount = input.tree.allRelativePaths.filter((p) => isDoNotTouchPath(p)).length;
+  const analyzableSourceFiles =
+    input.tree.inventory?.files.filter((f) => f.kind === "supported_source").length ??
+    input.tree.allRelativePaths.filter((p) => ANALYZABLE_EXT.test(p)).length;
+  const protectedFileCount =
+    input.tree.inventory?.files.filter((f) => f.protected).length ??
+    input.tree.allRelativePaths.filter((p) => isDoNotTouchPath(p)).length;
+
+  const analyzedSourceFiles = Object.keys(input.repositoryModel.fileIndex).filter((p) =>
+    ANALYZABLE_EXT.test(p)
+  ).length;
 
   const entryPoints = Object.entries(input.repositoryModel.fileIndex)
     .filter(([, ctx]) => ENTRYPOINT_ROLES.has(ctx.entrypointRole))
@@ -244,6 +313,8 @@ export async function buildRepositoryIntelligenceManifest(input: {
     protectedFileCount,
     commitSha: input.repo.commitSha,
     warnings: input.warnings,
+    analyzedSourceFiles,
+    analysisComplete: true,
   });
 
   return {
@@ -283,6 +354,14 @@ export async function buildRepositoryIntelligenceManifest(input: {
       protectedFileCount,
       intentionallyIgnoredDirs: [...IGNORED_DIRS],
       topExtensions: input.tree.summary.topExtensions,
+      supportedSourceFiles: coverage.contract.supportedSourceFiles,
+      analyzedSourceFiles: coverage.contract.analyzedSourceFiles,
+      configurationFilesIndexed: coverage.contract.configurationFilesIndexed,
+      testFilesIndexed: coverage.contract.testFilesIndexed,
+      generatedFilesExcluded: coverage.contract.generatedFilesExcluded,
+      binaryFilesExcluded: coverage.contract.binaryFilesExcluded,
+      vendorFilesExcluded: coverage.contract.vendorFilesExcluded,
+      unsupportedFiles: coverage.contract.unsupportedFiles,
     },
     entryPoints,
     coverage,

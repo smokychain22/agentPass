@@ -41,7 +41,12 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
     a2mcpServiceId: String(identity.a2mcpServiceId),
     service: "RepoDiet — Verified Repository Cleanup",
     message:
-      "RepoDiet is available for verified repository cleanup. To prepare a scoped quote, provide the repository details below. Long-running cleanup runs asynchronously after scope is locked — this response is immediate and does not start a deep scan.",
+      "RepoDiet is available for verified repository cleanup on real GitHub repositories. Provide repository scope below. This response is immediate (<10s) and does not wait for full deep analysis. Deep scans run as durable jobs; cleanup pull requests are opened by RepoDiet Operator — not Cursor/Codex/Claude.",
+    primaryProofRepositories: {
+      complex: "https://github.com/velz-cmd/Meridian",
+      dogfood: "https://github.com/smokychain22/agentPass",
+      regressionFixtureOnly: "https://github.com/velz-cmd/repodiet-e2e-test",
+    },
     scopeQuestions: [
       "GitHub repository URL (https://github.com/owner/repository)",
       "Target branch (default: main)",
@@ -51,14 +56,16 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
       "Deadline or urgency",
     ],
     deliveryPlan: [
-      "Inspect repository access and pin the source commit",
-      "Propose evidence-backed findings and lock approved scope",
-      "Execute on an isolated branch with verification",
-      "Deliver a GitHub pull request and signed proof",
+      "Immediate acknowledgement and scope collection",
+      "Durable deep scan: inventory → graph → analyzers → evidence",
+      "Owner approves exact findings / maintenance contract",
+      "RepoDiet worker applies supported transforms on an isolated branch",
+      "Twin-build verification, GitHub pull request, signed attestation/receipt",
     ],
     nextAction: "PROVIDE_REPOSITORY_SCOPE",
     contractState: "SCOPE_PENDING",
     quickTriageEndpoint: `${baseUrl}/api/a2mcp/quick-triage`,
+    deepScanEndpoint: `${baseUrl}/api/deep-scans`,
     a2aOrderEndpoint: `${baseUrl}/api/okx/a2a/orders`,
     taskStatusEndpoint: `${baseUrl}/api/a2a/tasks/{taskId}`,
     requestId,
@@ -75,6 +82,8 @@ export function buildAsyncTaskAcknowledgement(input: {
   estimatedDelivery?: string;
   statusUrl: string;
   workerUnavailable?: boolean;
+  deepScanJobId?: string;
+  deepScanProgressUrl?: string;
 }) {
   return {
     status: input.workerUnavailable ? "DELIVERY_DELAYED" : "ACCEPTED",
@@ -83,10 +92,12 @@ export function buildAsyncTaskAcknowledgement(input: {
     nextAction: input.nextAction ?? "POLL_TASK_STATUS",
     estimatedDelivery: input.estimatedDelivery ?? "typically 5–30 minutes depending on repository size",
     statusUrl: input.statusUrl,
+    deepScanJobId: input.deepScanJobId,
+    deepScanProgressUrl: input.deepScanProgressUrl,
     code: input.workerUnavailable ? "WORKER_UNAVAILABLE" : "TASK_ACCEPTED",
     message: input.workerUnavailable
-      ? "Task accepted; worker capacity is delayed. Negotiation state preserved — no funds accepted until delivery can run."
-      : "Task accepted. Long-running cleanup is executing asynchronously.",
+      ? "Task accepted; worker capacity is delayed. Negotiation state preserved — no funds accepted until delivery can run. Deep scan job is persisted when repository scope is known."
+      : "Task accepted. Full repository analysis runs as a durable deep-scan job; this acknowledgement does not wait for scan completion.",
     retryable: true,
     paymentRequired: false,
     paymentAlreadySettled: false,
