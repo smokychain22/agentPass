@@ -95,6 +95,7 @@ export async function createDeepScanJob(
     stage: "QUEUED",
     progress: { stage: "QUEUED", percent: 0, detail: "Deep scan queued", updatedAt: t },
     request,
+    tenantId: request.tenantId,
     projectRoot: request.projectRoot || ".",
     branch: request.branch,
     sourceCommit: request.sourceCommit,
