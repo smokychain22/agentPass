@@ -328,7 +328,7 @@ export function ScanTab() {
                   <p className="mt-1 font-mono text-xs text-muted-foreground">
                     {displayResult.summary.totalFiles.toLocaleString()} files inventoried
                     {typeof displayResult.summary.totalFolders === "number"
-                      ? ` · ${displayResult.summary.totalFolders.toLocaleString()} folders`
+                      ? ` · ${displayResult.summary.totalFolders.toLocaleString()} top-level folders`
                       : ""}
                   </p>
                 )}
@@ -378,8 +378,10 @@ export function ScanTab() {
               accent="neutral"
             />
             <MetricCard
-              label="Analyzable source"
+              label="Supported JS/TS source"
               value={(
+                displayResult.scanCoverage?.contract?.supportedSourceFiles ??
+                displayResult.scanCoverage?.filesAnalyzable ??
                 displayResult.repositoryModel?.analyzableSourceFiles ??
                 displayResult.summary.totalFiles
               ).toLocaleString()}
@@ -450,7 +452,7 @@ export function ScanTab() {
           <div className="grid gap-4 lg:grid-cols-2">
             <ScanDetailPanel title="Repository summary">
               <dl className="space-y-2 text-sm">
-                <DetailRow label="Total folders" value={displayResult.summary.totalFolders.toLocaleString()} />
+                <DetailRow label="Top-level folders" value={displayResult.summary.totalFolders.toLocaleString()} />
                 <DetailRow label="Total size" value={`${displayResult.summary.totalSizeKb.toLocaleString()} KB`} />
                 <DetailRow label="Config files" value={String(displayResult.configFiles.length)} />
                 <DetailRow

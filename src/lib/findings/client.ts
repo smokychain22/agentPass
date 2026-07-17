@@ -1,45 +1,64 @@
 import type { FindingsPayload } from "./types";
-import { pollJob, startJobOrResult } from "@/lib/jobs/client";
+import type { DeepScanStage } from "@/lib/deep-scan/types";
+import {
+  analysisError,
+  createRequestId,
+  normalizeFindingsClientError,
+  type AnalysisErrorContract,
+} from "./analysis-errors";
+import { fetchPersistedFindings } from "@/lib/session/persist-session";
 
 export type FindingsPhase =
   | "idle"
-  | "preparing"
-  | "duplicates"
-  | "unused"
+  | "queued"
+  | "claimed"
+  | "inventory"
+  | "resolving"
   | "graph"
-  | "slop"
+  | "analyzers"
   | "normalizing"
-  | "complete"
+  | "validating"
+  | "baseline"
+  | "ready"
   | "failed";
 
 export const FINDINGS_STEPS: { phase: FindingsPhase; label: string }[] = [
-  { phase: "preparing", label: "Preparing workspace" },
-  { phase: "duplicates", label: "Running duplicate detector" },
-  { phase: "unused", label: "Running unused code detector" },
-  { phase: "graph", label: "Building dependency graph" },
-  { phase: "slop", label: "Applying AI-slop heuristics" },
+  { phase: "queued", label: "Queued" },
+  { phase: "claimed", label: "Claimed by worker" },
+  { phase: "inventory", label: "Inventory" },
+  { phase: "resolving", label: "Resolving projects" },
+  { phase: "graph", label: "Building graph" },
+  { phase: "analyzers", label: "Running analyzers" },
   { phase: "normalizing", label: "Normalizing findings" },
-  { phase: "complete", label: "Complete" },
+  { phase: "validating", label: "Validating evidence" },
+  { phase: "baseline", label: "Baseline verification" },
+  { phase: "ready", label: "Ready" },
 ];
 
 const STAGE_TO_PHASE: Record<string, FindingsPhase> = {
-  queued: "preparing",
-  fetching_repo: "preparing",
-  extracting: "preparing",
-  framework_detection: "preparing",
-  jscpd: "duplicates",
-  knip: "unused",
-  madge: "graph",
-  heuristics: "slop",
-  normalizing: "normalizing",
-  complete: "complete",
+  QUEUED: "queued",
+  CLAIMED: "claimed",
+  INVENTORY: "inventory",
+  RESOLVING_PROJECTS: "resolving",
+  BUILDING_GRAPH: "graph",
+  RUNNING_ANALYZERS: "analyzers",
+  NORMALIZING_FINDINGS: "normalizing",
+  VALIDATING_EVIDENCE: "validating",
+  BASELINE_VERIFICATION: "baseline",
+  READY: "ready",
+  COMPLETED: "ready",
+  FAILED: "failed",
+  FAILED_RETRYABLE: "failed",
+  FAILED_TERMINAL: "failed",
 };
 
-function mapStageToPhase(stage: string): FindingsPhase {
-  return STAGE_TO_PHASE[stage] ?? "preparing";
+export function mapDeepScanStageToPhase(stage: string): FindingsPhase {
+  return STAGE_TO_PHASE[stage] ?? "queued";
 }
 
-export function analyzerStageLabel(report: FindingsPayload["rawToolReports"][keyof FindingsPayload["rawToolReports"]]): string {
+export function analyzerStageLabel(
+  report: FindingsPayload["rawToolReports"][keyof FindingsPayload["rawToolReports"]]
+): string {
   if (report.status === "ok") {
     return report.source === "knip" ? "Knip" : report.source === "jscpd" ? "jscpd" : "Madge";
   }
@@ -52,38 +71,324 @@ export function analyzerStageLabel(report: FindingsPayload["rawToolReports"][key
   return "Analyzer failed";
 }
 
+export interface FindingsJobAccepted {
+  accepted: true;
+  jobId: string;
+  taskId: string;
+  status: string;
+  stage: string;
+  statusUrl: string;
+  workerReady: boolean;
+  requestId: string;
+  structureScanId: string;
+  message?: string;
+  requiredAction?: string;
+}
+
+export interface FindingsJobProgress {
+  jobId: string;
+  status: string;
+  stage: DeepScanStage | string;
+  workerReady?: boolean;
+  claimedBy?: string;
+  workerHost?: string;
+  findingsId?: string;
+  graphId?: string;
+  failureCode?: string;
+  failureMessage?: string;
+  statusHistory?: Array<{ stage: string; at: string; detail?: string }>;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+  sourceCommit?: string;
+}
+
+const ANALYSIS_JOB_STORAGE_KEY = "repodiet.analysisJob.v1";
+
+export function persistAnalysisJob(input: {
+  structureScanId: string;
+  jobId: string;
+  statusUrl: string;
+  requestId: string;
+}): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(ANALYSIS_JOB_STORAGE_KEY, JSON.stringify(input));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadPersistedAnalysisJob(structureScanId?: string): {
+  structureScanId: string;
+  jobId: string;
+  statusUrl: string;
+  requestId: string;
+} | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(ANALYSIS_JOB_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      structureScanId: string;
+      jobId: string;
+      statusUrl: string;
+      requestId: string;
+    };
+    if (structureScanId && parsed.structureScanId !== structureScanId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPersistedAnalysisJob(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(ANALYSIS_JOB_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function startDurableFindingsAnalysis(input: {
+  structureScanId: string;
+  repoUrl: string;
+  branch?: string;
+  sourceCommit?: string;
+  projectRoot?: string;
+}): Promise<FindingsJobAccepted> {
+  const requestId = createRequestId();
+  let res: Response;
+  try {
+    res = await fetch("/api/findings/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        structureScanId: input.structureScanId,
+        repoUrl: input.repoUrl,
+        branch: input.branch,
+        sourceCommit: input.sourceCommit,
+        projectRoot: input.projectRoot,
+      }),
+    });
+  } catch (err) {
+    throw normalizeFindingsClientError(err, {
+      structureScanId: input.structureScanId,
+      requestId,
+    });
+  }
+
+  let json: Record<string, unknown>;
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch (err) {
+    throw normalizeFindingsClientError(err, {
+      structureScanId: input.structureScanId,
+      requestId,
+    });
+  }
+
+  if (!res.ok && res.status !== 202) {
+    throw analysisError({
+      code: (typeof json.code === "string" ? json.code : "INTERNAL_ERROR") as AnalysisErrorContract["code"],
+      message:
+        typeof json.message === "string"
+          ? json.message
+          : typeof json.error === "string"
+            ? json.error
+            : `Findings enqueue failed (${res.status}).`,
+      retryable: Boolean(json.retryable ?? (res.status >= 500 || res.status === 503)),
+      requestId: typeof json.requestId === "string" ? json.requestId : requestId,
+      structureScanId: input.structureScanId,
+      jobId: typeof json.jobId === "string" ? json.jobId : undefined,
+      statusUrl: typeof json.statusUrl === "string" ? json.statusUrl : undefined,
+      requiredAction:
+        typeof json.requiredAction === "string" ? json.requiredAction : "RETRY",
+    });
+  }
+
+  const jobId = String(json.jobId ?? "");
+  const statusUrl = String(json.statusUrl ?? `/api/deep-scans/${jobId}`);
+  const accepted: FindingsJobAccepted = {
+    accepted: true,
+    jobId,
+    taskId: String(json.taskId ?? jobId),
+    status: String(json.status ?? "QUEUED"),
+    stage: String(json.stage ?? "QUEUED"),
+    statusUrl,
+    workerReady: Boolean(json.workerReady),
+    requestId: typeof json.requestId === "string" ? json.requestId : requestId,
+    structureScanId: input.structureScanId,
+    message: typeof json.message === "string" ? json.message : undefined,
+    requiredAction:
+      typeof json.requiredAction === "string" ? json.requiredAction : undefined,
+  };
+
+  persistAnalysisJob({
+    structureScanId: input.structureScanId,
+    jobId: accepted.jobId,
+    statusUrl: accepted.statusUrl,
+    requestId: accepted.requestId,
+  });
+
+  return accepted;
+}
+
+export async function pollDurableFindingsJob(
+  statusUrl: string,
+  onProgress: (progress: FindingsJobProgress) => void,
+  options?: { intervalMs?: number; timeoutMs?: number }
+): Promise<FindingsJobProgress> {
+  const intervalMs = options?.intervalMs ?? 2_000;
+  const timeoutMs = options?.timeoutMs ?? 30 * 60_000;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    let res: Response;
+    try {
+      res = await fetch(statusUrl, { credentials: "same-origin" });
+    } catch (err) {
+      throw normalizeFindingsClientError(err, { statusUrl });
+    }
+
+    const json = (await res.json()) as {
+      ok?: boolean;
+      job?: FindingsJobProgress & { id?: string };
+      code?: string;
+      message?: string;
+      requestId?: string;
+    };
+
+    if (!res.ok || !json.ok || !json.job) {
+      throw analysisError({
+        code: (json.code as AnalysisErrorContract["code"]) || "INTERNAL_ERROR",
+        message: json.message || `Status poll failed (${res.status}).`,
+        retryable: res.status >= 500,
+        requestId: json.requestId || createRequestId(),
+        statusUrl,
+        requiredAction: "RETRY",
+      });
+    }
+
+    const progress: FindingsJobProgress = {
+      jobId: json.job.id || json.job.jobId || "",
+      status: json.job.status,
+      stage: json.job.stage,
+      claimedBy: json.job.claimedBy,
+      workerHost: json.job.workerHost,
+      findingsId: json.job.findingsId,
+      graphId: json.job.graphId,
+      failureCode: json.job.failureCode,
+      failureMessage: json.job.failureMessage,
+      statusHistory: json.job.statusHistory,
+      createdAt: json.job.createdAt,
+      updatedAt: json.job.updatedAt,
+      completedAt: json.job.completedAt,
+      sourceCommit: json.job.sourceCommit,
+    };
+    onProgress(progress);
+
+    if (progress.stage === "READY" || progress.stage === "COMPLETED" || progress.status === "complete") {
+      return progress;
+    }
+    if (
+      progress.stage === "FAILED" ||
+      progress.stage === "FAILED_TERMINAL" ||
+      progress.status === "failed"
+    ) {
+      throw analysisError({
+        code: (progress.failureCode as AnalysisErrorContract["code"]) || "ANALYZER_FAILED",
+        message: progress.failureMessage || "Findings analysis failed.",
+        retryable: progress.stage === "FAILED_RETRYABLE",
+        requestId: createRequestId(),
+        jobId: progress.jobId,
+        statusUrl,
+        requiredAction: "RETRY",
+      });
+    }
+
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+
+  throw analysisError({
+    code: "WORKER_LOST",
+    message: "Timed out waiting for findings analysis. The durable job may still complete — refresh to resume.",
+    retryable: true,
+    requestId: createRequestId(),
+    statusUrl,
+    requiredAction: "REFRESH_OR_RETRY",
+  });
+}
+
+/**
+ * Durable Run Findings: enqueue (202) → poll deep-scan → load persisted findings.
+ * Never waits for analyzers inside a single browser request.
+ */
 export async function runFindingsAnalysis(
   repoUrl: string,
   branch: string | undefined,
   onPhase: (phase: FindingsPhase) => void,
   scanId?: string,
-  projectRoot?: string
-): Promise<FindingsPayload> {
-  onPhase("preparing");
-
-  try {
-    const started = await startJobOrResult<FindingsPayload>("/api/jobs/findings", {
-      repoUrl: repoUrl.trim(),
-      branch: branch?.trim() || undefined,
-      scanId: scanId?.trim() || undefined,
-      projectRoot: projectRoot?.trim() || undefined,
-    });
-
-    if (started.result) {
-      onPhase("complete");
-      return started.result;
-    }
-
-    const findings = await pollJob<FindingsPayload>("/api/jobs/findings", started.jobId, (stage) => {
-      onPhase(mapStageToPhase(stage));
-    });
-
-    onPhase("complete");
-    return findings;
-  } catch (err) {
-    onPhase("failed");
-    throw err;
+  projectRoot?: string,
+  options?: {
+    sourceCommit?: string;
+    onAccepted?: (accepted: FindingsJobAccepted) => void;
+    onProgress?: (progress: FindingsJobProgress) => void;
   }
+): Promise<FindingsPayload> {
+  if (!scanId?.trim()) {
+    throw analysisError({
+      code: "SCAN_NOT_FOUND",
+      message: "Structure scan ID is required before Run Findings.",
+      retryable: false,
+      requestId: createRequestId(),
+      requiredAction: "RUN_STRUCTURE_SCAN",
+    });
+  }
+
+  onPhase("queued");
+
+  const existing = loadPersistedAnalysisJob(scanId.trim());
+  let accepted: FindingsJobAccepted;
+
+  if (existing) {
+    accepted = {
+      accepted: true,
+      jobId: existing.jobId,
+      taskId: existing.jobId,
+      status: "QUEUED",
+      stage: "QUEUED",
+      statusUrl: existing.statusUrl,
+      workerReady: false,
+      requestId: existing.requestId,
+      structureScanId: existing.structureScanId,
+      message: "Resuming durable findings job from this browser session.",
+    };
+  } else {
+    accepted = await startDurableFindingsAnalysis({
+      structureScanId: scanId.trim(),
+      repoUrl,
+      branch,
+      sourceCommit: options?.sourceCommit,
+      projectRoot,
+    });
+  }
+
+  options?.onAccepted?.(accepted);
+  onPhase(mapDeepScanStageToPhase(accepted.stage));
+
+  const completed = await pollDurableFindingsJob(accepted.statusUrl, (progress) => {
+    onPhase(mapDeepScanStageToPhase(String(progress.stage)));
+    options?.onProgress?.(progress);
+  });
+
+  const findingsId = completed.findingsId || scanId.trim();
+  const findings = await fetchPersistedFindings(findingsId);
+  onPhase("ready");
+  clearPersistedAnalysisJob();
+  return findings;
 }
 
 export function flattenFindings(payload: FindingsPayload) {

@@ -81,8 +81,16 @@ export function ScanCoveragePanel({
           <dd className="font-mono text-lg">{coverage.filesClassified.toLocaleString()}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Analyzable source</dt>
-          <dd className="font-mono text-lg">{coverage.filesAnalyzable.toLocaleString()}</dd>
+          <dt className="text-muted-foreground">Supported JS/TS source</dt>
+          <dd className="font-mono text-lg">
+            {(coverage.contract?.supportedSourceFiles ?? coverage.filesAnalyzable).toLocaleString()}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Analyzed source (structure index)</dt>
+          <dd className="font-mono text-lg">
+            {(coverage.contract?.analyzedSourceFiles ?? coverage.filesClassified).toLocaleString()}
+          </dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Entry points detected</dt>

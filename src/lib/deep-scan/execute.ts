@@ -179,7 +179,10 @@ export async function executeDeepScanJob(
         })) ?? job;
 
       await heartbeatDeepScanJob(jobId, workerId, "Running findings engine", claimToken);
-      const findings = await runFindingsEngine(job.request.repoUrl, job.request.branch);
+      const findings = await runFindingsEngine(job.request.repoUrl, job.request.branch, undefined, {
+        scanId: job.request.structureScanId || job.scanId,
+        projectRoot: job.request.projectRoot || job.projectRoot,
+      });
 
       job =
         (await updateDeepScanStage(jobId, "NORMALIZING_FINDINGS", "Normalizing findings")) ?? job;
