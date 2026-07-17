@@ -51,6 +51,10 @@ async function main(): Promise<void> {
       workerId: WORKER_ID,
       workflowRunId,
       workflowRunUrl,
+      workflowRunAttempt: process.env.INPUT_WORKFLOW_RUN_ATTEMPT?.trim(),
+      workflowName: process.env.INPUT_WORKFLOW_NAME?.trim(),
+      workflowRepository: process.env.INPUT_WORKFLOW_REPOSITORY?.trim(),
+      workflowServerUrl: process.env.INPUT_WORKFLOW_SERVER_URL?.trim(),
     }),
   });
 

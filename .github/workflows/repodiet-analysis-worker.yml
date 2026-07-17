@@ -1,42 +1,23 @@
 # Ephemeral free GitHub Actions analysis worker for RepoDiet.
-# Public repo → standard ubuntu-latest runners at $0 idle / $0 hosting.
+# Triggered by repository_dispatch (event_type: repodiet_analysis) from Vercel.
 #
 # Security model:
 #   claim   (trusted)  — Worker API secrets; claim + archive artifact
-#   analyze (untrusted)— NO RepoDiet/OKX/Redis/signing secrets; static analysis only
+#   analyze (untrusted)— NO RepoDiet/OKX/Redis/signing/dispatch secrets; static analysis only
 #   complete(trusted)  — Worker API secrets; ingest results; mark READY
 #
-# Does NOT push branches or create PRs.
+# The Vercel-only dispatch PAT must NEVER appear in this workflow (not as a secret, env, or artifact).
+# Does NOT push branches or create pull requests.
 
 name: RepoDiet analysis worker
 
 on:
-  workflow_dispatch:
-    inputs:
-      jobId:
-        description: Durable deep-scan job id
-        required: true
-        type: string
-      requestId:
-        description: Client request id
-        required: true
-        type: string
-      dispatchNonce:
-        description: One-use dispatch nonce (not a secret credential)
-        required: true
-        type: string
-      environment:
-        description: production | preview | development
-        required: true
-        type: string
-        default: production
-      apiBaseUrl:
-        description: Public RepoDiet API origin
-        required: true
-        type: string
+  repository_dispatch:
+    types:
+      - repodiet_analysis
 
 concurrency:
-  group: repodiet-analysis-${{ inputs.jobId }}
+  group: repodiet-analysis-${{ github.event.client_payload.jobId }}
   cancel-in-progress: false
 
 permissions:
@@ -55,7 +36,39 @@ jobs:
       claim_token: ${{ steps.exchange.outputs.claim_token }}
       source_commit: ${{ steps.exchange.outputs.source_commit }}
       archive_url: ${{ steps.exchange.outputs.archive_url }}
+      validated_job_id: ${{ steps.validate.outputs.job_id }}
+      validated_api_base: ${{ steps.validate.outputs.api_base }}
     steps:
+      - name: Validate client_payload
+        id: validate
+        env:
+          RAW_JOB_ID: ${{ github.event.client_payload.jobId }}
+          RAW_REQUEST_ID: ${{ github.event.client_payload.requestId }}
+          RAW_DISPATCH_NONCE: ${{ github.event.client_payload.dispatchNonce }}
+          RAW_ENVIRONMENT: ${{ github.event.client_payload.environment }}
+          RAW_API_BASE: ${{ github.event.client_payload.apiBaseUrl }}
+        run: |
+          set -euo pipefail
+          JOB_ID="$RAW_JOB_ID"
+          REQUEST_ID="$RAW_REQUEST_ID"
+          NONCE="$RAW_DISPATCH_NONCE"
+          ENV_NAME="$RAW_ENVIRONMENT"
+          API_BASE="${RAW_API_BASE:-https://skillswap-virid-kappa.vercel.app}"
+
+          echo "$JOB_ID" | grep -Eq '^[A-Za-z0-9_-]{1,128}$' || { echo "invalid jobId"; exit 1; }
+          echo "$REQUEST_ID" | grep -Eq '^[A-Za-z0-9_-]{1,128}$' || { echo "invalid requestId"; exit 1; }
+          echo "$NONCE" | grep -Eq '^[A-Za-z0-9_-]{20,256}$' || { echo "invalid dispatchNonce"; exit 1; }
+          echo "$ENV_NAME" | grep -Eq '^(production|preview)$' || { echo "invalid environment"; exit 1; }
+          echo "$API_BASE" | grep -Eq '^https://[A-Za-z0-9._/-]+$' || { echo "invalid apiBaseUrl"; exit 1; }
+
+          {
+            echo "job_id=$JOB_ID"
+            echo "request_id=$REQUEST_ID"
+            echo "dispatch_nonce=$NONCE"
+            echo "environment=$ENV_NAME"
+            echo "api_base=$API_BASE"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout RepoDiet tooling
         uses: actions/checkout@v4
 
@@ -73,11 +86,15 @@ jobs:
         env:
           REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
           REPODIET_WORKER_CALLBACK_SECRET: ${{ secrets.REPODIET_WORKER_CALLBACK_SECRET }}
-          INPUT_JOB_ID: ${{ inputs.jobId }}
-          INPUT_REQUEST_ID: ${{ inputs.requestId }}
-          INPUT_DISPATCH_NONCE: ${{ inputs.dispatchNonce }}
-          INPUT_API_BASE_URL: ${{ inputs.apiBaseUrl }}
+          INPUT_JOB_ID: ${{ steps.validate.outputs.job_id }}
+          INPUT_REQUEST_ID: ${{ steps.validate.outputs.request_id }}
+          INPUT_DISPATCH_NONCE: ${{ steps.validate.outputs.dispatch_nonce }}
+          INPUT_API_BASE_URL: ${{ steps.validate.outputs.api_base }}
           INPUT_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          INPUT_WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          INPUT_WORKFLOW_NAME: ${{ github.workflow }}
+          INPUT_WORKFLOW_REPOSITORY: ${{ github.repository }}
+          INPUT_WORKFLOW_SERVER_URL: ${{ github.server_url }}
           INPUT_WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: npx tsx scripts/actions-worker/claim.ts
 
@@ -85,7 +102,7 @@ jobs:
         if: steps.exchange.outputs.already_claimed != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: repo-archive-${{ inputs.jobId }}
+          name: repo-archive-${{ steps.validate.outputs.job_id }}
           path: /tmp/repodiet-actions/archive.zip
           retention-days: 1
           if-no-files-found: error
@@ -94,7 +111,7 @@ jobs:
         if: steps.exchange.outputs.already_claimed != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: job-manifest-${{ inputs.jobId }}
+          name: job-manifest-${{ steps.validate.outputs.job_id }}
           path: /tmp/repodiet-actions/job-manifest.json
           retention-days: 1
 
@@ -116,34 +133,32 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - name: Install RepoDiet deps (no customer secrets in env)
+      - name: Install RepoDiet deps (no customer or dispatch secrets in env)
         run: npm ci --no-audit --no-fund
-        # Intentionally do NOT pass REPODIET_WORKER_*, Redis, OKX, signing, or App keys.
 
       - name: Download repository archive
         uses: actions/download-artifact@v4
         with:
-          name: repo-archive-${{ inputs.jobId }}
+          name: repo-archive-${{ needs.claim.outputs.validated_job_id }}
           path: /tmp/repodiet-actions
 
       - name: Download job manifest
         uses: actions/download-artifact@v4
         with:
-          name: job-manifest-${{ inputs.jobId }}
+          name: job-manifest-${{ needs.claim.outputs.validated_job_id }}
           path: /tmp/repodiet-actions
 
       - name: Run read-only static analysis
         env:
-          INPUT_JOB_ID: ${{ inputs.jobId }}
+          INPUT_JOB_ID: ${{ needs.claim.outputs.validated_job_id }}
           INPUT_SOURCE_COMMIT: ${{ needs.claim.outputs.source_commit }}
-          # Fail closed: never enable customer package scripts in this job.
           REPODIET_UNTRUSTED_SANDBOX: "off"
         run: npx tsx scripts/actions-worker/analyze.ts
 
       - name: Upload result bundle
         uses: actions/upload-artifact@v4
         with:
-          name: analysis-result-${{ inputs.jobId }}
+          name: analysis-result-${{ needs.claim.outputs.validated_job_id }}
           path: /tmp/repodiet-actions/result-bundle.json
           retention-days: 1
           if-no-files-found: error
@@ -171,16 +186,16 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: analysis-result-${{ inputs.jobId }}
+          name: analysis-result-${{ needs.claim.outputs.validated_job_id }}
           path: /tmp/repodiet-actions
 
       - name: Ingest result or structured failure
         env:
           REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
           REPODIET_WORKER_CALLBACK_SECRET: ${{ secrets.REPODIET_WORKER_CALLBACK_SECRET }}
-          INPUT_JOB_ID: ${{ inputs.jobId }}
-          INPUT_REQUEST_ID: ${{ inputs.requestId }}
-          INPUT_API_BASE_URL: ${{ inputs.apiBaseUrl }}
+          INPUT_JOB_ID: ${{ needs.claim.outputs.validated_job_id }}
+          INPUT_REQUEST_ID: ${{ github.event.client_payload.requestId }}
+          INPUT_API_BASE_URL: ${{ needs.claim.outputs.validated_api_base }}
           INPUT_CLAIM_TOKEN: ${{ needs.claim.outputs.claim_token }}
           INPUT_ALREADY_CLAIMED: ${{ needs.claim.outputs.already_claimed }}
           INPUT_ANALYZE_RESULT: ${{ needs.analyze.result }}

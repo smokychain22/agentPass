@@ -9,25 +9,26 @@ RepoDiet runs read-only findings on **standard GitHub-hosted `ubuntu-latest` run
 ## Flow
 
 1. Browser `POST /api/findings/analyze` → durable deep-scan job (HTTP 202)
-2. Vercel creates a one-use `dispatchNonce` and calls GitHub `workflow_dispatch`
-3. Workflow `.github/workflows/repodiet-analysis-worker.yml` runs three jobs:
-   - **claim** (trusted) — Worker API key; claim + archive artifact
-   - **analyze** (untrusted) — no Worker/OKX/Redis/signing secrets; static analysis only
+2. Vercel creates a one-use `dispatchNonce` and calls GitHub **`repository_dispatch`**
+3. Endpoint: `POST /repos/smokychain22/agentPass/dispatches` with `event_type: repodiet_analysis`
+4. Response: **HTTP 204** (no workflow run id yet)
+5. Workflow `.github/workflows/repodiet-analysis-worker.yml` runs three jobs:
+   - **claim** (trusted) — Worker API key; claim + archive artifact; persists real `github.run_id`
+   - **analyze** (untrusted) — no Worker/OKX/Redis/signing/dispatch secrets; read-only static analysis
    - **complete** (trusted) — ingest findings; mark READY
-4. Runner terminates automatically
+6. Runner terminates automatically
 
 ## Required secrets
 
-### Vercel Production
+### Vercel Production only
 
 | Name | Purpose |
 | --- | --- |
-| `REPODIET_ACTIONS_DISPATCH_TOKEN` | Fine-grained PAT or GitHub App installation token with Actions: write on `smokychain22/agentPass` only |
+| `REPODIET_ACTIONS_DISPATCH_TOKEN` | Fine-grained PAT with **Contents: Read and write** on `smokychain22/agentPass` only |
 | `WORKER_API_KEY` | Must match Actions `REPODIET_WORKER_API_KEY` |
 | `WORKER_CALLBACK_SECRET` | Must match Actions callback secret |
-| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Server-side only — never in the analyze job |
 
-Optional: `REPODIET_ACTIONS_REPO` (default `smokychain22/agentPass`), `REPODIET_ACTIONS_WORKFLOW_REF`, `REPODIET_PUBLIC_API_BASE_URL`.
+`REPODIET_ACTIONS_DISPATCH_TOKEN` must **never** be added to GitHub Actions secrets or workflow env.
 
 ### GitHub Actions repository secrets
 
@@ -36,9 +37,9 @@ Optional: `REPODIET_ACTIONS_REPO` (default `smokychain22/agentPass`), `REPODIET_
 | `REPODIET_WORKER_API_KEY` | Same value as Vercel `WORKER_API_KEY` |
 | `REPODIET_WORKER_CALLBACK_SECRET` | Same value as Vercel `WORKER_CALLBACK_SECRET` |
 
-Do **not** put Redis, OKX, GitHub App private keys, or signing keys into the untrusted analyze job.
-
 ## Health
+
+`dispatcherReady` is probed (token + repo access + workflow file on main with `repository_dispatch` / `repodiet_analysis`), not just env presence.
 
 ```json
 {
@@ -49,8 +50,6 @@ Do **not** put Redis, OKX, GitHub App private keys, or signing keys into the unt
   "activeWorkflowRuns": 0
 }
 ```
-
-Idle `workerReady` means the dispatcher can start a run — not a permanent daemon heartbeat.
 
 ## Limits
 

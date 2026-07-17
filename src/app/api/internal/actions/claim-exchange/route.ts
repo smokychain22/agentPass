@@ -35,6 +35,10 @@ export async function POST(request: Request) {
     workerId?: string;
     workflowRunId?: string;
     workflowRunUrl?: string;
+    workflowRunAttempt?: string;
+    workflowName?: string;
+    workflowRepository?: string;
+    workflowServerUrl?: string;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -104,20 +108,34 @@ export async function POST(request: Request) {
     workflowRunId: body.workflowRunId?.trim() || claim.job.workflowRunId,
     workflowRunUrl: body.workflowRunUrl?.trim() || claim.job.workflowRunUrl,
     workerMode: "github_actions_on_demand",
+    workerHost: "github-actions/ubuntu-latest",
+    resultSummary: {
+      ...(claim.job.resultSummary ?? {}),
+      github: {
+        runId: body.workflowRunId?.trim(),
+        runAttempt: body.workflowRunAttempt?.trim(),
+        workflow: body.workflowName?.trim(),
+        repository: body.workflowRepository?.trim(),
+        serverUrl: body.workflowServerUrl?.trim(),
+        runUrl: body.workflowRunUrl?.trim(),
+      },
+    },
   };
   const updated =
     (await updateDeepScanStage(
       jobId,
       "CLAIMED",
-      `GitHub Actions runner claimed (${workerId})`,
+      `GitHub Actions runner claimed (${workerId}) run=${body.workflowRunId ?? "unknown"}`,
       patch
     )) ?? claim.job;
 
   await touchMarketplaceHealth({
     activeWorkers: 1,
+    activeWorkflowRuns: 1,
     workerReady: true,
-    workerReadySource: "authenticated_heartbeat",
+    workerReadySource: "github_actions_dispatcher",
     workerVersion: "github-actions-on-demand",
+    workerMode: "github_actions_on_demand",
   });
 
   return NextResponse.json({
