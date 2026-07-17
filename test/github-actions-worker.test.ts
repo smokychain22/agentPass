@@ -150,37 +150,64 @@ async function run() {
       sourceCommit: "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
       request: { repoUrl: "https://github.com/octocat/Hello-World", branch: "master" },
     });
+    assert.equal(withFields.strategy, "PUBLIC_ARCHIVE");
     assert.equal(
       withFields.url,
       "https://github.com/octocat/Hello-World/archive/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d.zip"
     );
 
-    const fromUrlOnly = buildArchiveDescriptor({
-      request: {
-        repoUrl: "https://github.com/octocat/Hello-World",
-        branch: "master",
-        sourceCommit: "abc123",
-      },
-    });
-    assert.equal(
-      fromUrlOnly.url,
-      "https://github.com/octocat/Hello-World/archive/abc123.zip"
+    assert.throws(
+      () =>
+        buildArchiveDescriptor({
+          request: { repoUrl: "https://github.com/octocat/Hello-World", branch: "master" },
+        }),
+      /REPOSITORY_IDENTITY_INCOMPLETE|Missing repositoryOwner/
     );
+  });
 
-    const branchOnly = buildArchiveDescriptor({
-      request: { repoUrl: "https://github.com/octocat/Hello-World", branch: "master" },
+  await test("canonical repository target rejects incomplete identity", async () => {
+    const {
+      repositoryTargetFromKnown,
+      RepositoryIdentityIncompleteError,
+      requiredRepositoryTargetFields,
+    } = await import("../src/lib/repository/repository-target");
+    const target = repositoryTargetFromKnown({
+      owner: "octocat",
+      name: "Hello-World",
+      branch: "master",
+      sourceCommit: "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
     });
-    assert.equal(
-      branchOnly.url,
-      "https://github.com/octocat/Hello-World/archive/refs/heads/master.zip"
+    assert.equal(target.repositoryFullName, "octocat/Hello-World");
+    assert.equal(target.archiveStrategy, "PUBLIC_ARCHIVE");
+    assert.equal(requiredRepositoryTargetFields(target).length, 0);
+    assert.throws(
+      () =>
+        repositoryTargetFromKnown({
+          owner: "octocat",
+          name: "Hello-World",
+          branch: "master",
+          sourceCommit: "",
+        }),
+      (err: unknown) => err instanceof RepositoryIdentityIncompleteError
     );
   });
 
   await test("claim script emits claim outputs before archive download", () => {
     const claim = fs.readFileSync("scripts/actions-worker/claim.ts", "utf8");
-    const tokenOut = claim.indexOf('setOutput("claim_token"');
-    const archiveThrow = claim.indexOf("No archive URL returned");
-    assert.ok(tokenOut > 0 && archiveThrow > tokenOut, "claim_token must be written before archive failure");
+    const secretWrite = claim.indexOf("claim-secret.json");
+    const archiveThrow = claim.indexOf("ARCHIVE_PREPARATION_FAILED");
+    assert.ok(secretWrite > 0 && archiveThrow > secretWrite, "claim secret must be written before archive failure");
+    assert.match(claim, /\/incident/);
+    assert.equal(
+      /console\.log\(`::add-mask::/.test(claim) || /::add-mask::\$\{/.test(claim),
+      false,
+      "must not mask claim token (Actions strips masked job outputs)"
+    );
+    const wf = fs.readFileSync(".github/workflows/repodiet-analysis-worker.yml", "utf8");
+    assert.match(wf, /claim-secret-/);
+    assert.equal(/INPUT_CLAIM_TOKEN:\s*\$\{\{\s*needs\.claim\.outputs\.claim_token/.test(wf), false);
+    const analyzeBlock = wf.split("analyze:")[1]?.split("complete:")[0] ?? "";
+    assert.equal(analyzeBlock.includes("claim-secret"), false, "analyze must not download claim secret");
   });
 
   await test("claim/analyze/complete scripts enforce secret separation", () => {

@@ -6,10 +6,13 @@ import {
 } from "@/lib/store/persistent-store";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { trackDeepScanActive } from "./capacity";
-import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { dequeueDeepScanAtomic, enqueueDeepScanAtomic } from "./atomic-queue";
 import type { DeepScanJob, DeepScanJobRequest, DeepScanStage } from "./types";
 import { DEEP_SCAN_LEASE_MS, DEEP_SCAN_MAX_ATTEMPTS, stagePercent } from "./types";
+import {
+  RepositoryIdentityIncompleteError,
+  type RepositoryTarget,
+} from "@/lib/repository/repository-target";
 
 const COLLECTION = "deep_scan_jobs" as const;
 
@@ -91,7 +94,13 @@ export function assertDeepScanClaim(
 
 export async function createDeepScanJob(
   request: DeepScanJobRequest,
-  options?: { requireWorker?: boolean; idempotencyKey?: string }
+  options?: {
+    requireWorker?: boolean;
+    idempotencyKey?: string;
+    /** Canonical repository identity — required for Actions claim path. */
+    repositoryTarget?: RepositoryTarget;
+    allowIncompleteIdentity?: boolean;
+  }
 ): Promise<DeepScanJob> {
   if (options?.idempotencyKey) {
     const existingId = await getPersistentRecord<string>(
@@ -108,21 +117,57 @@ export async function createDeepScanJob(
     throw new DeepScanWorkerUnavailableError();
   }
 
+  const target = options?.repositoryTarget;
+  if (!options?.allowIncompleteIdentity) {
+    if (!target) {
+      throw new RepositoryIdentityIncompleteError(
+        [
+          "repositoryTarget",
+          "repositoryOwner",
+          "repositoryName",
+          "repositoryFullName",
+          "repositoryUrl",
+          "branch",
+          "sourceCommit",
+          "projectRoot",
+        ],
+        { taskId: request.a2aTaskId, message: "repositoryTarget is required to create a deep-scan job." }
+      );
+    }
+    if (!request.tenantId?.trim()) {
+      throw new RepositoryIdentityIncompleteError(["tenantId"], {
+        taskId: request.a2aTaskId,
+        message: "tenantId is required to create a deep-scan job.",
+      });
+    }
+  }
+
   const t = nowIso();
-  const parsedRepo = parseGitHubUrl(request.repoUrl);
   const job: DeepScanJob = {
     id: createDeepScanJobId(),
     status: "queued",
     stage: "QUEUED",
     progress: { stage: "QUEUED", percent: 0, detail: "Deep scan queued", updatedAt: t },
-    request,
+    request: {
+      ...request,
+      repoUrl: target?.repositoryUrl || request.repoUrl,
+      branch: target?.branch || request.branch,
+      sourceCommit: target?.sourceCommit || request.sourceCommit,
+      projectRoot: target?.projectRoot || request.projectRoot || ".",
+      githubInstallationId: target?.githubInstallationId || request.githubInstallationId,
+    },
     tenantId: request.tenantId,
-    // Required at claim-time for public archive URL construction (before execute.ts runs).
-    repositoryOwner: parsedRepo?.owner,
-    repositoryName: parsedRepo?.repo,
-    projectRoot: request.projectRoot || ".",
-    branch: request.branch,
-    sourceCommit: request.sourceCommit,
+    repositoryTarget: target,
+    repositoryTargetId: target
+      ? `${target.repositoryFullName.toLowerCase()}@${target.sourceCommit}`
+      : undefined,
+    repositoryOwner: target?.repositoryOwner,
+    repositoryName: target?.repositoryName,
+    repositoryFullName: target?.repositoryFullName,
+    repositoryUrl: target?.repositoryUrl,
+    projectRoot: target?.projectRoot || request.projectRoot || ".",
+    branch: target?.branch || request.branch,
+    sourceCommit: target?.sourceCommit || request.sourceCommit,
     attemptCount: 0,
     statusHistory: [{ stage: "QUEUED", at: t, detail: "enqueued" }],
     createdAt: t,
@@ -136,6 +181,45 @@ export async function createDeepScanJob(
     await setPersistentRecord(COLLECTION, `idem:${options.idempotencyKey}`, job.id);
   }
   return job;
+}
+
+/**
+ * Claim succeeded but archive preparation failed — never leave CLAIMED_STUCK.
+ * Releases lease, invalidates claim token, preserves workflow run ID.
+ */
+export async function failDeepScanArchivePreparation(
+  id: string,
+  code: string,
+  message: string,
+  options?: {
+    terminal?: boolean;
+    workflowRunId?: string;
+    workflowRunUrl?: string;
+    requestId?: string;
+  }
+): Promise<DeepScanJob | undefined> {
+  const job = await getDeepScanJob(id);
+  if (!job) return undefined;
+  const stage = options?.terminal ? "FAILED_TERMINAL" : "FAILED_RETRYABLE";
+  return updateDeepScanStage(id, stage, message, {
+    failureCode: code,
+    failureMessage: message,
+    claimedBy: undefined,
+    claimToken: undefined,
+    leaseExpiresAt: undefined,
+    heartbeatAt: undefined,
+    workflowRunId: options?.workflowRunId || job.workflowRunId,
+    workflowRunUrl: options?.workflowRunUrl || job.workflowRunUrl,
+    resultSummary: {
+      ...(job.resultSummary ?? {}),
+      archiveFailure: {
+        code,
+        message,
+        requestId: options?.requestId,
+        at: nowIso(),
+      },
+    },
+  });
 }
 
 export async function updateDeepScanStage(

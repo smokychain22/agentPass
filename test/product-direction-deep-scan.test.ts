@@ -9,6 +9,7 @@ import {
   isRegressionFixtureOnly,
   MERIDIAN_PROOF,
 } from "../src/lib/product/proof-repositories";
+import { repositoryTargetFromKnown } from "../src/lib/repository/repository-target";
 
 function test(name: string, fn: () => void | Promise<void>) {
   return (async () => {
@@ -31,12 +32,27 @@ async function main() {
   });
 
   await test("durable deep scan job persists and claims", async () => {
-    const job = await createDeepScanJob({
-      repoUrl: MERIDIAN_PROOF.url,
+    process.env.REPODIET_TEST_OFFLINE = "1";
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    const repositoryTarget = repositoryTargetFromKnown({
+      owner: "velz-cmd",
+      name: "Meridian",
       branch: "main",
-      readOnly: true,
-      requestedBy: "test",
-    }, { idempotencyKey: `test-claim-${Date.now()}` });
+      sourceCommit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      projectRoot: ".",
+    });
+    const job = await createDeepScanJob(
+      {
+        repoUrl: MERIDIAN_PROOF.url,
+        branch: "main",
+        sourceCommit: repositoryTarget.sourceCommit,
+        readOnly: true,
+        requestedBy: "test",
+        tenantId: `test_${Date.now()}`,
+      },
+      { idempotencyKey: `test-claim-${Date.now()}`, repositoryTarget }
+    );
     const loaded = await getDeepScanJob(job.id);
     assert.ok(loaded);
     assert.ok(["QUEUED", "CLAIMED", "INVENTORY", "READY"].includes(loaded!.stage));

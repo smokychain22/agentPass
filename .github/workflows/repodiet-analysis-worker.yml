@@ -33,9 +33,9 @@ jobs:
     timeout-minutes: 20
     outputs:
       already_claimed: ${{ steps.exchange.outputs.already_claimed }}
-      claim_token: ${{ steps.exchange.outputs.claim_token }}
       source_commit: ${{ steps.exchange.outputs.source_commit }}
       archive_url: ${{ steps.exchange.outputs.archive_url }}
+      has_claim_secret: ${{ steps.exchange.outputs.has_claim_secret }}
       validated_job_id: ${{ steps.validate.outputs.job_id }}
       validated_api_base: ${{ steps.validate.outputs.api_base }}
     steps:
@@ -115,6 +115,16 @@ jobs:
           path: /tmp/repodiet-actions/job-manifest.json
           retention-days: 1
 
+      # Trusted complete-only secret — never downloaded by the untrusted analyze job.
+      - name: Upload claim secret for complete job
+        if: steps.exchange.outputs.already_claimed != 'true' && steps.exchange.outputs.has_claim_secret == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claim-secret-${{ steps.validate.outputs.job_id }}
+          path: /tmp/repodiet-actions/claim-secret.json
+          retention-days: 1
+          if-no-files-found: error
+
   analyze:
     name: analyze
     needs: claim
@@ -189,6 +199,14 @@ jobs:
           name: analysis-result-${{ needs.claim.outputs.validated_job_id }}
           path: /tmp/repodiet-actions
 
+      - name: Download claim secret (trusted complete only)
+        continue-on-error: true
+        if: needs.claim.outputs.has_claim_secret == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: claim-secret-${{ needs.claim.outputs.validated_job_id }}
+          path: /tmp/repodiet-actions
+
       - name: Ingest result or structured failure
         env:
           REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
@@ -196,7 +214,6 @@ jobs:
           INPUT_JOB_ID: ${{ needs.claim.outputs.validated_job_id }}
           INPUT_REQUEST_ID: ${{ github.event.client_payload.requestId }}
           INPUT_API_BASE_URL: ${{ needs.claim.outputs.validated_api_base }}
-          INPUT_CLAIM_TOKEN: ${{ needs.claim.outputs.claim_token }}
           INPUT_ALREADY_CLAIMED: ${{ needs.claim.outputs.already_claimed }}
           INPUT_ANALYZE_RESULT: ${{ needs.analyze.result }}
         run: npx tsx scripts/actions-worker/complete.ts

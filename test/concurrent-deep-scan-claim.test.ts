@@ -5,6 +5,7 @@ import {
   getDeepScanJob,
 } from "../src/lib/deep-scan/job-store";
 import { enqueueDeepScanAtomic } from "../src/lib/deep-scan/atomic-queue";
+import { repositoryTargetFromKnown } from "../src/lib/repository/repository-target";
 
 function test(name: string, fn: () => Promise<void>) {
   return (async () => {
@@ -18,17 +19,27 @@ async function run() {
 
   await test("two concurrent claimNext calls: only one wins the same job id", async () => {
     process.env.REPODIET_TEST_OFFLINE = "1";
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
     const unique = `race_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+    const repositoryTarget = repositoryTargetFromKnown({
+      owner: "acme",
+      name: "widgets",
+      branch: "main",
+      sourceCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      projectRoot: ".",
+    });
     const job = await createDeepScanJob(
       {
-        repoUrl: "https://github.com/acme/widgets",
+        repoUrl: repositoryTarget.repositoryUrl,
         branch: "main",
         projectRoot: ".",
+        sourceCommit: repositoryTarget.sourceCommit,
         readOnly: true,
         tenantId: `okx_${unique}`,
         requestedBy: `tenant:okx_${unique}`,
       },
-      { idempotencyKey: `claim-race-${unique}` }
+      { idempotencyKey: `claim-race-${unique}`, repositoryTarget }
     );
 
     // Ensure this job id is the next dequeued item.

@@ -765,16 +765,26 @@ export async function submitA2ATask(
     try {
       const { createDeepScanJob } = await import("@/lib/deep-scan/job-store");
       const { getServerBaseUrl } = await import("@/lib/docs/base-url");
+      const { normalizeRepositoryTarget } = await import("@/lib/repository/repository-target");
+      const repositoryTarget = await normalizeRepositoryTarget({
+        repoUrl: input.repoUrl.trim(),
+        branch: input.branch,
+        sourceCommit: input.commitSha,
+        projectRoot: ".",
+        resolveRemote: true,
+      });
       const deepScan = await createDeepScanJob(
         {
-          repoUrl: input.repoUrl.trim(),
-          branch: input.branch,
-          sourceCommit: input.commitSha,
+          repoUrl: repositoryTarget.repositoryUrl,
+          branch: repositoryTarget.branch,
+          sourceCommit: repositoryTarget.sourceCommit,
+          projectRoot: repositoryTarget.projectRoot,
           a2aTaskId: task.id,
           readOnly: type === "repository.analysis",
           requestedBy: "a2a/submit",
+          tenantId: `a2a:${task.id}`,
         },
-        { idempotencyKey: `a2a:${task.id}:deep-scan` }
+        { idempotencyKey: `a2a:${task.id}:deep-scan`, repositoryTarget }
       );
       const baseUrl = getServerBaseUrl();
       task = {

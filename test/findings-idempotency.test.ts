@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createDeepScanJob, getDeepScanJob } from "../src/lib/deep-scan/job-store";
+import { repositoryTargetFromKnown } from "../src/lib/repository/repository-target";
 
 function test(name: string, fn: () => Promise<void>) {
   return (async () => {
@@ -23,10 +24,17 @@ async function run() {
     const sourceCommit = "a35631c6748d6619b9301a02b34f2ff99eecd5b7";
     const projectRoot = ".";
     const idempotencyKey = `findings:${tenantId}:${structureScanId}:${sourceCommit}:${projectRoot}`;
+    const repositoryTarget = repositoryTargetFromKnown({
+      owner: "velz-cmd",
+      name: "Meridian",
+      branch: "main",
+      sourceCommit,
+      projectRoot,
+    });
 
     const first = await createDeepScanJob(
       {
-        repoUrl: "https://github.com/velz-cmd/Meridian",
+        repoUrl: repositoryTarget.repositoryUrl,
         branch: "main",
         projectRoot,
         sourceCommit,
@@ -35,11 +43,11 @@ async function run() {
         structureScanId,
         requestedBy: `tenant:${tenantId}`,
       },
-      { idempotencyKey }
+      { idempotencyKey, repositoryTarget }
     );
     const second = await createDeepScanJob(
       {
-        repoUrl: "https://github.com/velz-cmd/Meridian",
+        repoUrl: repositoryTarget.repositoryUrl,
         branch: "main",
         projectRoot,
         sourceCommit,
@@ -48,7 +56,7 @@ async function run() {
         structureScanId,
         requestedBy: `tenant:${tenantId}`,
       },
-      { idempotencyKey }
+      { idempotencyKey, repositoryTarget }
     );
 
     assert.equal(first.id, second.id);
@@ -56,7 +64,7 @@ async function run() {
     // Third create with different key must produce a distinct job.
     const third = await createDeepScanJob(
       {
-        repoUrl: "https://github.com/velz-cmd/Meridian",
+        repoUrl: repositoryTarget.repositoryUrl,
         branch: "main",
         projectRoot,
         sourceCommit,
@@ -65,7 +73,7 @@ async function run() {
         structureScanId,
         requestedBy: `tenant:${tenantId}`,
       },
-      { idempotencyKey: `${idempotencyKey}:other` }
+      { idempotencyKey: `${idempotencyKey}:other`, repositoryTarget }
     );
     assert.notEqual(third.id, first.id);
 

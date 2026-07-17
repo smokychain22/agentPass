@@ -107,12 +107,21 @@ export async function POST(request: Request) {
       );
     }
 
+    const { repositoryTargetFromKnown } = await import("@/lib/repository/repository-target");
+    const repositoryTarget = repositoryTargetFromKnown({
+      owner: intake.owner,
+      name: intake.name,
+      branch: intake.branch,
+      sourceCommit: intake.sourceCommit,
+      projectRoot: intake.projectRoot,
+      visibility: "public",
+    });
     const job = await createDeepScanJob(
       {
-        repoUrl: intake.canonicalUrl,
-        branch: intake.branch,
-        projectRoot: intake.projectRoot,
-        sourceCommit: intake.sourceCommit,
+        repoUrl: repositoryTarget.repositoryUrl,
+        branch: repositoryTarget.branch,
+        projectRoot: repositoryTarget.projectRoot,
+        sourceCommit: repositoryTarget.sourceCommit,
         readOnly: true,
         requestedBy: `tenant:${tenant.tenantId}`,
         tenantId: tenant.tenantId,
@@ -120,6 +129,7 @@ export async function POST(request: Request) {
         okxBuyerId: tenant.okxBuyerId,
       },
       {
+        repositoryTarget,
         idempotencyKey: `intake:${tenant.tenantId}:${intake.repository}:${intake.sourceCommit}:${intake.projectRoot}`,
       }
     );
