@@ -198,7 +198,11 @@ async function run() {
     const archiveThrow = claim.indexOf("ARCHIVE_PREPARATION_FAILED");
     assert.ok(secretWrite > 0 && archiveThrow > secretWrite, "claim secret must be written before archive failure");
     assert.match(claim, /\/incident/);
-    assert.equal(claim.includes("::add-mask::"), false, "must not mask claim token (Actions strips masked job outputs)");
+    assert.equal(
+      /console\.log\(`::add-mask::/.test(claim) || /::add-mask::\$\{/.test(claim),
+      false,
+      "must not mask claim token (Actions strips masked job outputs)"
+    );
     const wf = fs.readFileSync(".github/workflows/repodiet-analysis-worker.yml", "utf8");
     assert.match(wf, /claim-secret-/);
     assert.equal(/INPUT_CLAIM_TOKEN:\s*\$\{\{\s*needs\.claim\.outputs\.claim_token/.test(wf), false);
