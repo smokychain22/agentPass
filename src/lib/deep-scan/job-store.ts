@@ -6,6 +6,7 @@ import {
 } from "@/lib/store/persistent-store";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { trackDeepScanActive } from "./capacity";
+import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { dequeueDeepScanAtomic, enqueueDeepScanAtomic } from "./atomic-queue";
 import type { DeepScanJob, DeepScanJobRequest, DeepScanStage } from "./types";
 import { DEEP_SCAN_LEASE_MS, DEEP_SCAN_MAX_ATTEMPTS, stagePercent } from "./types";
@@ -108,6 +109,7 @@ export async function createDeepScanJob(
   }
 
   const t = nowIso();
+  const parsedRepo = parseGitHubUrl(request.repoUrl);
   const job: DeepScanJob = {
     id: createDeepScanJobId(),
     status: "queued",
@@ -115,6 +117,9 @@ export async function createDeepScanJob(
     progress: { stage: "QUEUED", percent: 0, detail: "Deep scan queued", updatedAt: t },
     request,
     tenantId: request.tenantId,
+    // Required at claim-time for public archive URL construction (before execute.ts runs).
+    repositoryOwner: parsedRepo?.owner,
+    repositoryName: parsedRepo?.repo,
     projectRoot: request.projectRoot || ".",
     branch: request.branch,
     sourceCommit: request.sourceCommit,

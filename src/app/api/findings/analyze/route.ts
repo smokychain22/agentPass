@@ -211,6 +211,19 @@ export async function POST(request: Request) {
     { idempotencyKey }
   );
 
+  // Ensure claim-time archive fields are populated even for idempotent re-enqueues
+  // created before repositoryOwner/Name were written at job creation.
+  if (!job.repositoryOwner || !job.repositoryName) {
+    job =
+      (await updateDeepScanStage(job.id, job.stage, job.progress?.detail, {
+        repositoryOwner: scan.repo.owner,
+        repositoryName: scan.repo.name,
+        branch,
+        sourceCommit,
+        projectRoot,
+      })) ?? job;
+  }
+
   // Idempotent: already dispatched / running / ready — do not create another workflow.
   const alreadyActive =
     Boolean(job.workflowRunId) ||

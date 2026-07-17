@@ -141,6 +141,48 @@ async function run() {
     else process.env.REPODIET_ACTIONS_DISPATCH_TOKEN = prev;
   });
 
+  await test("public archive descriptor prefers commit pin and parses repoUrl", () => {
+    const { buildArchiveDescriptor } = require("../src/lib/github-actions/archive-descriptor") as typeof import("../src/lib/github-actions/archive-descriptor");
+    const withFields = buildArchiveDescriptor({
+      repositoryOwner: "octocat",
+      repositoryName: "Hello-World",
+      branch: "master",
+      sourceCommit: "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+      request: { repoUrl: "https://github.com/octocat/Hello-World", branch: "master" },
+    });
+    assert.equal(
+      withFields.url,
+      "https://github.com/octocat/Hello-World/archive/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d.zip"
+    );
+
+    const fromUrlOnly = buildArchiveDescriptor({
+      request: {
+        repoUrl: "https://github.com/octocat/Hello-World",
+        branch: "master",
+        sourceCommit: "abc123",
+      },
+    });
+    assert.equal(
+      fromUrlOnly.url,
+      "https://github.com/octocat/Hello-World/archive/abc123.zip"
+    );
+
+    const branchOnly = buildArchiveDescriptor({
+      request: { repoUrl: "https://github.com/octocat/Hello-World", branch: "master" },
+    });
+    assert.equal(
+      branchOnly.url,
+      "https://github.com/octocat/Hello-World/archive/refs/heads/master.zip"
+    );
+  });
+
+  await test("claim script emits claim outputs before archive download", () => {
+    const claim = fs.readFileSync("scripts/actions-worker/claim.ts", "utf8");
+    const tokenOut = claim.indexOf('setOutput("claim_token"');
+    const archiveThrow = claim.indexOf("No archive URL returned");
+    assert.ok(tokenOut > 0 && archiveThrow > tokenOut, "claim_token must be written before archive failure");
+  });
+
   await test("claim/analyze/complete scripts enforce secret separation", () => {
     const analyze = fs.readFileSync("scripts/actions-worker/analyze.ts", "utf8");
     assert.match(analyze, /assertNoTrustedSecrets/);

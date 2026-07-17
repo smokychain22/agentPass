@@ -57,7 +57,33 @@ async function main(): Promise<void> {
   }
 
   if (!claimToken) {
-    throw new Error("Missing claim token from claim job outputs.");
+    // Claim job failed before emitting a token (or outputs were lost). Do not leave the
+    // durable job stuck in DISPATCHED/CLAIMED forever — report a retryable failure via supersede.
+    const failRes = await fetch(`${apiBase}/api/internal/actions/deep-scans/${jobId}/supersede`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        ...(process.env.REPODIET_WORKER_CALLBACK_SECRET
+          ? { "x-worker-callback-secret": process.env.REPODIET_WORKER_CALLBACK_SECRET }
+          : {}),
+      },
+      body: JSON.stringify({
+        reason: "CLAIM_OUTPUT_MISSING",
+        detail: `analyzeResult=${analyzeResult}; claim token missing from claim job outputs`,
+      }),
+    });
+    if (!failRes.ok) {
+      throw new Error(`Missing claim token and supersede failed (${failRes.status})`);
+    }
+    console.log(
+      JSON.stringify({
+        event: "complete_claim_missing_superseded",
+        jobId,
+        analyzeResult,
+      })
+    );
+    return;
   }
 
   if (analyzeResult !== "success" || !bundle) {

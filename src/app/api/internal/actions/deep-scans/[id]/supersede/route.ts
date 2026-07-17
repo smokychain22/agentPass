@@ -30,6 +30,13 @@ export async function POST(
   }
 
   const { id: jobId } = await context.params;
+  let body: { reason?: string; detail?: string } = {};
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    body = {};
+  }
+
   const job = await getDeepScanJob(jobId);
   if (!job) {
     return NextResponse.json(
@@ -60,17 +67,20 @@ export async function POST(
     });
   }
 
-  const updated = await updateDeepScanStage(
-    jobId,
-    "CANCELLED",
-    "Superseded: legacy always-on worker job — not dispatched to GitHub Actions",
-    {
-      failureCode: "SUPERSEDED_LEGACY_WORKER",
-      failureMessage:
-        "Superseded under GitHub Actions on-demand worker migration. Incident history preserved.",
-      workerMode: job.workerMode ?? "unset",
-    }
-  );
+  const failureCode = body.reason?.trim() || "SUPERSEDED_LEGACY_WORKER";
+  const detail =
+    body.detail?.trim() ||
+    "Superseded: legacy always-on worker job — not dispatched to GitHub Actions";
+  const failureMessage =
+    failureCode === "SUPERSEDED_LEGACY_WORKER"
+      ? "Superseded under GitHub Actions on-demand worker migration. Incident history preserved."
+      : detail;
+
+  const updated = await updateDeepScanStage(jobId, "CANCELLED", detail, {
+    failureCode,
+    failureMessage,
+    workerMode: job.workerMode ?? "unset",
+  });
 
   return NextResponse.json({
     ok: true,
@@ -78,5 +88,6 @@ export async function POST(
     jobId,
     stage: updated?.stage ?? "CANCELLED",
     status: updated?.status,
+    failureCode,
   });
 }

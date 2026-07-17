@@ -17,13 +17,13 @@ function requireEnv(name: string): string {
   return v;
 }
 
-function setOutput(name: string, value: string): void {
+async function setOutput(name: string, value: string): Promise<void> {
   const out = process.env.GITHUB_OUTPUT;
   if (!out) {
     console.log(`output ${name}=${value}`);
     return;
   }
-  void fs.appendFile(out, `${name}=${value}\n`);
+  await fs.appendFile(out, `${name}=${value}\n`);
 }
 
 async function main(): Promise<void> {
@@ -71,34 +71,46 @@ async function main(): Promise<void> {
       projectRoot?: string;
       structureScanId?: string;
       id?: string;
+      repositoryOwner?: string;
+      repositoryName?: string;
     };
     archive?: { url?: string | null; sourceCommit?: string; maxBytes?: number };
   };
 
   if (!res.ok || !json.ok) {
     if (json.code === "ALREADY_CLAIMED" || json.alreadyClaimed) {
-      setOutput("already_claimed", "true");
-      setOutput("claim_token", "");
-      setOutput("source_commit", "");
-      setOutput("archive_url", "");
+      await setOutput("already_claimed", "true");
+      await setOutput("claim_token", "");
+      await setOutput("source_commit", "");
+      await setOutput("archive_url", "");
       console.log("ALREADY_CLAIMED — exiting successfully (losing workflow).");
       return;
     }
     throw new Error(json.error || `claim-exchange failed (${res.status})`);
   }
 
+  const sourceCommit = json.job?.sourceCommit || json.archive?.sourceCommit || "";
+  const archiveUrl = json.archive?.url || "";
+
+  // Persist claim outputs BEFORE archive download so complete can still ingest
+  // structured failures if the public zip fetch fails after a successful claim.
+  if (json.claimToken) {
+    console.log(`::add-mask::${json.claimToken}`);
+  }
+  await setOutput("already_claimed", json.alreadyClaimed ? "true" : "false");
+  await setOutput("claim_token", json.claimToken || "");
+  await setOutput("source_commit", String(sourceCommit));
+  await setOutput("archive_url", archiveUrl);
+
   if (json.alreadyClaimed) {
-    setOutput("already_claimed", "true");
-    setOutput("claim_token", json.claimToken || "");
-    setOutput("source_commit", json.job?.sourceCommit || json.archive?.sourceCommit || "");
-    setOutput("archive_url", json.archive?.url || "");
     console.log("ALREADY_CLAIMED by this worker identity — skip analyze.");
     return;
   }
 
-  const archiveUrl = json.archive?.url;
   if (!archiveUrl) {
-    throw new Error("No archive URL returned (private archive exchange not configured).");
+    throw new Error(
+      "No archive URL returned (missing repository owner/name on job and repoUrl parse failed)."
+    );
   }
 
   const zipPath = path.join(WORK, "archive.zip");
@@ -131,25 +143,18 @@ async function main(): Promise<void> {
     jobId,
     workerId: WORKER_ID,
     // claimToken must NEVER appear in artifacts consumed by the untrusted analyze job.
-    sourceCommit: json.job?.sourceCommit || json.archive?.sourceCommit,
+    sourceCommit,
     repoUrl: json.job?.repoUrl,
     branch: json.job?.branch,
     projectRoot: json.job?.projectRoot || ".",
     structureScanId: json.job?.structureScanId,
+    repositoryOwner: json.job?.repositoryOwner,
+    repositoryName: json.job?.repositoryName,
     workflowRunId,
     workflowRunUrl,
     requestId: process.env.INPUT_REQUEST_ID,
   };
   await fs.writeFile(path.join(WORK, "job-manifest.json"), JSON.stringify(manifest, null, 2));
-
-  if (json.claimToken) {
-    console.log(`::add-mask::${json.claimToken}`);
-  }
-
-  setOutput("already_claimed", "false");
-  setOutput("claim_token", json.claimToken || "");
-  setOutput("source_commit", String(manifest.sourceCommit || ""));
-  setOutput("archive_url", archiveUrl);
 
   console.log(
     JSON.stringify({
