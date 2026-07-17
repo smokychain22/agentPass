@@ -6,11 +6,11 @@ import {
 } from "@/lib/store/persistent-store";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { trackDeepScanActive } from "./capacity";
+import { dequeueDeepScanAtomic, enqueueDeepScanAtomic } from "./atomic-queue";
 import type { DeepScanJob, DeepScanJobRequest, DeepScanStage } from "./types";
 import { DEEP_SCAN_LEASE_MS, DEEP_SCAN_MAX_ATTEMPTS, stagePercent } from "./types";
 
 const COLLECTION = "deep_scan_jobs" as const;
-const QUEUE_KEY = "queue:list";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -56,18 +56,36 @@ export async function getDeepScanJobByA2ATask(
 }
 
 async function enqueueDeepScan(jobId: string): Promise<void> {
-  const queue = (await getPersistentRecord<string[]>(COLLECTION, QUEUE_KEY)) ?? [];
-  if (!queue.includes(jobId)) {
-    queue.unshift(jobId);
-    await setPersistentRecord(COLLECTION, QUEUE_KEY, queue);
-  }
+  await enqueueDeepScanAtomic(jobId);
 }
 
 async function dequeueDeepScan(): Promise<string | null> {
-  const queue = (await getPersistentRecord<string[]>(COLLECTION, QUEUE_KEY)) ?? [];
-  const id = queue.pop() ?? null;
-  await setPersistentRecord(COLLECTION, QUEUE_KEY, queue);
-  return id;
+  return dequeueDeepScanAtomic();
+}
+
+export class DeepScanClaimError extends Error {
+  constructor(
+    public readonly code: "CLAIM_MISMATCH" | "LEASE_EXPIRED" | "NOT_CLAIMED",
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+export function assertDeepScanClaim(
+  job: DeepScanJob,
+  workerId: string,
+  claimToken?: string
+): void {
+  if (!job.claimedBy || job.claimedBy !== workerId) {
+    throw new DeepScanClaimError("CLAIM_MISMATCH", "Worker does not own this claim.");
+  }
+  if (!job.claimToken || !claimToken || job.claimToken !== claimToken) {
+    throw new DeepScanClaimError("CLAIM_MISMATCH", "Claim token mismatch.");
+  }
+  if (job.leaseExpiresAt && Date.parse(job.leaseExpiresAt) <= Date.now()) {
+    throw new DeepScanClaimError("LEASE_EXPIRED", "Deep-scan lease expired.");
+  }
 }
 
 export async function createDeepScanJob(
@@ -163,7 +181,52 @@ export async function updateDeepScanStage(
   return next;
 }
 
+export async function reclaimStaleDeepScanJobs(): Promise<number> {
+  const activeIndex =
+    (await getPersistentRecord<string[]>(COLLECTION, "active:index")) ?? [];
+  let reclaimed = 0;
+  for (const id of activeIndex) {
+    const job = await getDeepScanJob(id);
+    if (!job) continue;
+    if (job.status === "complete" || job.status === "failed") {
+      await trackDeepScanActive(id, false);
+      continue;
+    }
+    if (job.stage === "READY" || job.stage === "COMPLETED") continue;
+    const leaseExpired =
+      !job.leaseExpiresAt || Date.parse(job.leaseExpiresAt) <= Date.now();
+    if (job.claimedBy && leaseExpired) {
+      const t = nowIso();
+      const recovered: DeepScanJob = {
+        ...job,
+        status: "queued",
+        stage: "QUEUED",
+        claimedBy: undefined,
+        claimToken: undefined,
+        leaseExpiresAt: undefined,
+        heartbeatAt: undefined,
+        progress: {
+          stage: "QUEUED",
+          percent: 0,
+          detail: "Requeued after stale lease",
+          updatedAt: t,
+        },
+        statusHistory: [
+          ...job.statusHistory,
+          { stage: "QUEUED", at: t, detail: "stale lease recovery" },
+        ],
+        updatedAt: t,
+      };
+      await saveDeepScanJob(recovered);
+      await enqueueDeepScan(id);
+      reclaimed += 1;
+    }
+  }
+  return reclaimed;
+}
+
 export async function claimNextDeepScanJob(workerId: string): Promise<DeepScanJob | undefined> {
+  await reclaimStaleDeepScanJobs();
   for (let i = 0; i < 25; i += 1) {
     const id = await dequeueDeepScan();
     if (!id) return undefined;
@@ -175,7 +238,7 @@ export async function claimNextDeepScanJob(workerId: string): Promise<DeepScanJo
       continue;
     }
     if ((job.attemptCount ?? 0) >= DEEP_SCAN_MAX_ATTEMPTS) {
-      await updateDeepScanStage(id, "FAILED", "Max attempts exceeded", {
+      await updateDeepScanStage(id, "FAILED_TERMINAL", "Max attempts exceeded", {
         failureCode: "MAX_ATTEMPTS",
         failureMessage: "Deep scan exceeded retry budget.",
       });
@@ -221,10 +284,12 @@ export async function claimNextDeepScanJob(workerId: string): Promise<DeepScanJo
 export async function heartbeatDeepScanJob(
   id: string,
   workerId: string,
-  detail?: string
+  detail?: string,
+  claimToken?: string
 ): Promise<DeepScanJob | undefined> {
   const job = await getDeepScanJob(id);
-  if (!job || job.claimedBy !== workerId) return undefined;
+  if (!job) return undefined;
+  assertDeepScanClaim(job, workerId, claimToken ?? job.claimToken);
   const t = nowIso();
   const next: DeepScanJob = {
     ...job,
@@ -235,6 +300,10 @@ export async function heartbeatDeepScanJob(
       detail: detail ?? job.progress.detail,
       updatedAt: t,
     },
+    statusHistory: [
+      ...job.statusHistory,
+      { stage: job.stage, at: t, detail: detail ? `lease-extend: ${detail}` : "lease-extend" },
+    ],
     updatedAt: t,
   };
   await saveDeepScanJob(next);
@@ -293,9 +362,8 @@ export async function failDeepScanJob(
 
 export async function abandonStaleDeepScanClaims(): Promise<number> {
   // Lightweight recovery: stale claimed jobs are re-queued by claim loop when lease expires.
-  // Explicit cleanup hook for operators/tests.
-  const marker = await getPersistentRecord<string[]>(COLLECTION, QUEUE_KEY);
-  return marker?.length ?? 0;
+  const { deepScanQueueDepth } = await import("./atomic-queue");
+  return deepScanQueueDepth();
 }
 
 export async function deleteDeepScanJob(id: string): Promise<void> {

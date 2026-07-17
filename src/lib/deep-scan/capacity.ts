@@ -1,9 +1,9 @@
-import { getPersistentRecord } from "@/lib/store/persistent-store";
+import { getPersistentRecord, setPersistentRecord } from "@/lib/store/persistent-store";
 import { PUBLIC_CAPACITY_LIMITS } from "@/lib/product/capacity-limits";
+import { deepScanQueueDepth } from "./atomic-queue";
 import type { DeepScanJob } from "./types";
 
 const COLLECTION = "deep_scan_jobs" as const;
-const QUEUE_KEY = "queue:list";
 const ACTIVE_INDEX = "active:index";
 
 export interface DeepScanCapacitySnapshot {
@@ -26,16 +26,12 @@ function isActiveJob(job: DeepScanJob): boolean {
   return job.status === "queued" || job.status === "running";
 }
 
-export async function listQueuedDeepScanIds(): Promise<string[]> {
-  return (await getPersistentRecord<string[]>(COLLECTION, QUEUE_KEY)) ?? [];
-}
-
 export async function getDeepScanCapacitySnapshot(
   tenantId?: string
 ): Promise<DeepScanCapacitySnapshot> {
-  const queue = await listQueuedDeepScanIds();
+  const queueDepth = await deepScanQueueDepth();
   const activeIndex = (await getPersistentRecord<string[]>(COLLECTION, ACTIVE_INDEX)) ?? [];
-  const ids = Array.from(new Set([...queue, ...activeIndex]));
+  const ids = Array.from(new Set(activeIndex));
   const activeByTenant: Record<string, number> = {};
   let activeJobs = 0;
   let oldestQueuedMs: number | null = null;
@@ -57,7 +53,7 @@ export async function getDeepScanCapacitySnapshot(
 
   const tenantActive = tenantId ? activeByTenant[tenantId] ?? 0 : 0;
   return {
-    queueDepth: queue.length,
+    queueDepth,
     activeJobs,
     activeByTenant,
     globalLimit: PUBLIC_CAPACITY_LIMITS.maxConcurrentDeepScansGlobal,
@@ -74,7 +70,6 @@ export async function trackDeepScanActive(jobId: string, active: boolean): Promi
   const next = active
     ? Array.from(new Set([...index, jobId]))
     : index.filter((id) => id !== jobId);
-  const { setPersistentRecord } = await import("@/lib/store/persistent-store");
   await setPersistentRecord(COLLECTION, ACTIVE_INDEX, next);
 }
 

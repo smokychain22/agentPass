@@ -26,7 +26,7 @@ export interface MarketplaceHealthSnapshot {
   a2aRuntimeReady: boolean;
   a2aInitialResponseReady: boolean;
   workerReady: boolean;
-  workerReadySource: "heartbeat" | "unset";
+  workerReadySource: "authenticated_heartbeat" | "heartbeat" | "unset";
   deepScanQueueReady: boolean;
   githubAppReady: boolean;
   paymentVerifierReady: boolean;
@@ -155,7 +155,7 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     a2mcpMaximumExecutionMs: existing.a2mcpMaximumExecutionMs || QUICK_TRIAGE_TIMEOUT_MS,
     a2aInitialResponseReady: a2aIntakeReady,
     workerReady: workerHeartbeatReady,
-    workerReadySource: workerHeartbeatReady ? "heartbeat" : "unset",
+    workerReadySource: workerHeartbeatReady ? "authenticated_heartbeat" : "unset",
     a2aRuntimeReady: a2aIntakeReady,
     deepScanQueueReady: existing.deepScanQueueReady !== false,
     githubAppReady,

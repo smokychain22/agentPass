@@ -125,7 +125,10 @@ export async function POST(request: Request) {
         void (async () => {
           const claimed = await claimNextDeepScanJob("inline-deep-scan");
           if (claimed && claimed.id === job.id) {
-            await executeDeepScanJob(claimed.id, "inline-deep-scan");
+            await executeDeepScanJob(claimed.id, "inline-deep-scan", {
+              alreadyClaimed: true,
+              claimToken: claimed.claimToken,
+            });
           }
         })().catch((err) => {
           console.error("[deep-scan] inline executor failed", err);
