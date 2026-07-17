@@ -759,10 +759,57 @@ export async function submitA2ATask(
   const sm = new A2ATaskStateMachine(task.transitions);
   await saveA2ATask(task);
 
+  // Persist a durable deep-scan job immediately when a repository is in scope.
+  // This is independent of Next.js after() — progress survives request termination.
+  if (input.repoUrl?.trim()) {
+    try {
+      const { createDeepScanJob } = await import("@/lib/deep-scan/job-store");
+      const { getServerBaseUrl } = await import("@/lib/docs/base-url");
+      const deepScan = await createDeepScanJob(
+        {
+          repoUrl: input.repoUrl.trim(),
+          branch: input.branch,
+          sourceCommit: input.commitSha,
+          a2aTaskId: task.id,
+          readOnly: type === "repository.analysis",
+          requestedBy: "a2a/submit",
+        },
+        { idempotencyKey: `a2a:${task.id}:deep-scan` }
+      );
+      const baseUrl = getServerBaseUrl();
+      task = {
+        ...task,
+        result: {
+          ...task.result,
+          deepScanJobId: deepScan.id,
+          deepScanProgressUrl: `${baseUrl}/api/deep-scans/${deepScan.id}`,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      await saveA2ATask(task);
+      logMarketplaceTelemetry("deep_scan_queued", {
+        taskId: task.id,
+        deepScanJobId: deepScan.id,
+        repoUrl: input.repoUrl,
+      });
+    } catch (err) {
+      console.error("[repodiet-a2a] failed to enqueue deep scan", task.id, err);
+      task = {
+        ...task,
+        limitations: [
+          ...task.limitations,
+          "Deep scan enqueue failed — task remains accepted; retry via /api/deep-scans.",
+        ],
+      };
+      await saveA2ATask(task);
+    }
+  }
+
   if (options?.asyncDelivery) {
     sm.emit("queued", "orchestrator", "Async delivery queued");
     task = await syncTask(task, sm);
     logMarketplaceTelemetry("a2a_task_queued", { taskId: task.id, type });
+    // after() is a best-effort continuation only — durable deep-scan + worker claim are the source of truth.
     after(() => {
       void continueA2ATaskExecution(task.id).catch((err) => {
         console.error("[repodiet-a2a-async] execution failed", task.id, err);
@@ -784,12 +831,17 @@ export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskR
 
 export function formatAsyncA2ATaskAcknowledgement(task: A2ATaskRecord) {
   const baseUrl = getServerBaseUrl();
-  const workerUnavailable = process.env.REPODIET_WORKER_UNAVAILABLE === "1";
   return buildAsyncTaskAcknowledgement({
     taskId: task.id,
     contractState: task.input.contractDigest ? "SCOPE_LOCKED" : "SCOPE_PENDING",
     statusUrl: `${baseUrl}/api/a2a/tasks/${task.id}`,
-    workerUnavailable,
+    workerUnavailable: process.env.REPODIET_WORKER_UNAVAILABLE === "1",
+    deepScanJobId: task.result.deepScanJobId,
+    deepScanProgressUrl:
+      task.result.deepScanProgressUrl ??
+      (task.result.deepScanJobId
+        ? `${baseUrl}/api/deep-scans/${task.result.deepScanJobId}`
+        : undefined),
   });
 }
 
