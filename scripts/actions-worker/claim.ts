@@ -115,9 +115,9 @@ async function main(): Promise<void> {
   if (!res.ok || !json.ok) {
     if (json.code === "ALREADY_CLAIMED" || json.alreadyClaimed) {
       await setOutput("already_claimed", "true");
-      await setOutput("claim_token", "");
       await setOutput("source_commit", "");
       await setOutput("archive_url", "");
+      await setOutput("has_claim_secret", "false");
       console.log("ALREADY_CLAIMED — exiting successfully (losing workflow).");
       return;
     }
