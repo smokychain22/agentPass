@@ -17,7 +17,8 @@ export type AnalysisErrorCode =
   | "SCAN_REPOSITORY_MISMATCH"
   | "QUEUE_WAIT_EXCEEDED"
   | "CANCELLED"
-  | "REPOSITORY_IDENTITY_INCOMPLETE";
+  | "REPOSITORY_IDENTITY_INCOMPLETE"
+  | "WORKER_STALLED";
 
 export interface AnalysisErrorContract extends Omit<CustomerErrorResponse, "code"> {
   code: AnalysisErrorCode;

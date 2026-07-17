@@ -231,13 +231,23 @@ export async function updateDeepScanStage(
   const job = await getDeepScanJob(id);
   if (!job) return undefined;
   const t = nowIso();
+  const stageChanged = job.stage !== stage;
   const terminal =
     stage === "READY" ||
     stage === "COMPLETED" ||
     stage === "FAILED" ||
     stage === "FAILED_RETRYABLE" ||
     stage === "FAILED_TERMINAL" ||
-    stage === "CANCELLED";
+    stage === "CANCELLED" ||
+    stage === "WORKER_STALLED";
+  const stageStartedAt = stageChanged ? t : job.stageStartedAt ?? t;
+  const completedUnits =
+    typeof patch?.completedUnits === "number" ? patch.completedUnits : job.completedUnits;
+  const totalUnits = typeof patch?.totalUnits === "number" ? patch.totalUnits : job.totalUnits;
+  const progressMessage =
+    (typeof patch?.progressMessage === "string" ? patch.progressMessage : undefined) ??
+    detail ??
+    job.progressMessage;
   const next: DeepScanJob = {
     ...job,
     ...patch,
@@ -248,18 +258,29 @@ export async function updateDeepScanStage(
         : stage === "FAILED" ||
             stage === "FAILED_RETRYABLE" ||
             stage === "FAILED_TERMINAL" ||
-            stage === "CANCELLED"
+            stage === "CANCELLED" ||
+            stage === "WORKER_STALLED"
           ? "failed"
           : stage === "QUEUED"
             ? "queued"
             : "running",
+    stageStartedAt,
+    lastActivityAt: t,
+    progressMessage,
+    completedUnits,
+    totalUnits,
     progress: {
       stage,
       percent: stagePercent(stage),
-      detail,
+      detail: progressMessage ?? detail,
+      message: progressMessage ?? detail,
       updatedAt: t,
+      stageStartedAt,
+      lastActivityAt: t,
+      completedUnits,
+      totalUnits,
     },
-    statusHistory: [...job.statusHistory, { stage, at: t, detail }],
+    statusHistory: [...job.statusHistory, { stage, at: t, detail: progressMessage ?? detail }],
     updatedAt: t,
     completedAt: terminal ? t : job.completedAt,
   };
@@ -268,6 +289,77 @@ export async function updateDeepScanStage(
     await trackDeepScanActive(id, false);
   }
   return next;
+}
+
+/**
+ * Persist authenticated progress + extend lease without requiring claimToken on the wire.
+ * Used by Actions progress callbacks (signed or progress-token authenticated).
+ */
+export async function recordDeepScanProgress(
+  id: string,
+  input: {
+    stage?: DeepScanStage;
+    detail?: string;
+    progressMessage?: string;
+    completedUnits?: number;
+    totalUnits?: number;
+    workerIdentity?: string;
+    workflowRunId?: string;
+    workflowRunAttempt?: string;
+    timingPatch?: import("@/lib/deep-scan/timing-breakdown").TimingBreakdown;
+    heartbeatOnly?: boolean;
+  }
+): Promise<DeepScanJob | undefined> {
+  const job = await getDeepScanJob(id);
+  if (!job) return undefined;
+  const t = nowIso();
+  const { mergeTimingBreakdown } = await import("@/lib/deep-scan/timing-breakdown");
+
+  if (input.heartbeatOnly && !input.stage) {
+    const next: DeepScanJob = {
+      ...job,
+      heartbeatAt: t,
+      lastActivityAt: t,
+      leaseExpiresAt: leaseExpiresAt(),
+      workerIdentity: input.workerIdentity ?? job.workerIdentity,
+      progressMessage: input.progressMessage ?? input.detail ?? job.progressMessage,
+      progress: {
+        ...job.progress,
+        detail: input.progressMessage ?? input.detail ?? job.progress.detail,
+        message: input.progressMessage ?? input.detail ?? job.progress.message,
+        updatedAt: t,
+        lastActivityAt: t,
+      },
+      statusHistory: [
+        ...job.statusHistory,
+        {
+          stage: job.stage,
+          at: t,
+          detail: input.detail
+            ? `heartbeat: ${input.detail}`
+            : "heartbeat: worker activity",
+        },
+      ],
+      updatedAt: t,
+    };
+    await saveDeepScanJob(next);
+    return next;
+  }
+
+  const stage = input.stage ?? job.stage;
+  const updated = await updateDeepScanStage(id, stage, input.detail ?? input.progressMessage, {
+    heartbeatAt: t,
+    lastActivityAt: t,
+    leaseExpiresAt: leaseExpiresAt(),
+    workerIdentity: input.workerIdentity ?? job.workerIdentity,
+    progressMessage: input.progressMessage ?? input.detail,
+    completedUnits: input.completedUnits,
+    totalUnits: input.totalUnits,
+    workflowRunId: input.workflowRunId ?? job.workflowRunId,
+    workflowRunAttempt: input.workflowRunAttempt ?? job.workflowRunAttempt,
+    timingBreakdown: mergeTimingBreakdown(job.timingBreakdown, input.timingPatch ?? {}),
+  });
+  return updated;
 }
 
 export async function reclaimStaleDeepScanJobs(): Promise<number> {
@@ -286,12 +378,49 @@ export async function reclaimStaleDeepScanJobs(): Promise<number> {
       !job.leaseExpiresAt || Date.parse(job.leaseExpiresAt) <= Date.now();
     if (job.claimedBy && leaseExpired) {
       const t = nowIso();
+      if (job.workerMode === "github_actions_on_demand" || job.claimedBy.includes("github-actions")) {
+        // Structured stall — do not leave UI permanently on CLAIMED.
+        const stalled: DeepScanJob = {
+          ...job,
+          status: "failed",
+          stage: "WORKER_STALLED",
+          failureCode: "WORKER_STALLED",
+          failureMessage:
+            "Authenticated worker activity became stale beyond the lease. Analysis can be retried.",
+          claimedBy: undefined,
+          claimToken: undefined,
+          progressTokenHash: undefined,
+          leaseExpiresAt: undefined,
+          heartbeatAt: undefined,
+          lastActivityAt: t,
+          progress: {
+            stage: "WORKER_STALLED",
+            percent: 100,
+            detail: "Worker stalled — lease expired without fresh activity",
+            message: "Worker stalled — lease expired without fresh activity",
+            updatedAt: t,
+            lastActivityAt: t,
+            stageStartedAt: t,
+          },
+          statusHistory: [
+            ...job.statusHistory,
+            { stage: "WORKER_STALLED", at: t, detail: "stale lease — WORKER_STALLED" },
+          ],
+          updatedAt: t,
+          completedAt: t,
+        };
+        await saveDeepScanJob(stalled);
+        await trackDeepScanActive(id, false);
+        reclaimed += 1;
+        continue;
+      }
       const recovered: DeepScanJob = {
         ...job,
         status: "queued",
         stage: "QUEUED",
         claimedBy: undefined,
         claimToken: undefined,
+        progressTokenHash: undefined,
         leaseExpiresAt: undefined,
         heartbeatAt: undefined,
         progress: {
@@ -333,7 +462,7 @@ export async function claimNextDeepScanJob(workerId: string): Promise<DeepScanJo
       });
       continue;
     }
-    return finalizeDeepScanClaim(job, workerId);
+    return (await finalizeDeepScanClaim(job, workerId)).job;
   }
   return undefined;
 }
@@ -346,7 +475,7 @@ export async function claimDeepScanJobById(
   jobId: string,
   workerId: string
 ): Promise<
-  | { ok: true; job: DeepScanJob; alreadyClaimed: boolean }
+  | { ok: true; job: DeepScanJob; alreadyClaimed: boolean; progressToken?: string }
   | { ok: false; code: "NOT_FOUND" | "TERMINAL" | "CLAIMED_BY_OTHER" | "MAX_ATTEMPTS"; message: string }
 > {
   await reclaimStaleDeepScanJobs();
@@ -356,7 +485,8 @@ export async function claimDeepScanJobById(
     job.stage === "READY" ||
     job.stage === "COMPLETED" ||
     job.stage === "CANCELLED" ||
-    job.stage === "FAILED_TERMINAL"
+    job.stage === "FAILED_TERMINAL" ||
+    job.stage === "WORKER_STALLED"
   ) {
     return { ok: false, code: "TERMINAL", message: `Job is terminal (${job.stage}).` };
   }
@@ -373,15 +503,23 @@ export async function claimDeepScanJobById(
   if ((job.attemptCount ?? 0) >= DEEP_SCAN_MAX_ATTEMPTS) {
     return { ok: false, code: "MAX_ATTEMPTS", message: "Deep scan exceeded retry budget." };
   }
-  const claimed = await finalizeDeepScanClaim(job, workerId);
-  return { ok: true, job: claimed, alreadyClaimed: false };
+  const { job: claimed, progressToken } = await finalizeDeepScanClaim(job, workerId);
+  return { ok: true, job: claimed, alreadyClaimed: false, progressToken };
 }
 
-async function finalizeDeepScanClaim(job: DeepScanJob, workerId: string): Promise<DeepScanJob> {
+async function finalizeDeepScanClaim(
+  job: DeepScanJob,
+  workerId: string
+): Promise<{ job: DeepScanJob; progressToken: string }> {
   const t = nowIso();
   const claimToken = `claim_${nanoid(16)}`;
-  const { createClaimHandle } = await import("@/lib/github-actions/callback-auth");
+  const {
+    createClaimHandle,
+    createProgressToken,
+    hashProgressToken,
+  } = await import("@/lib/github-actions/callback-auth");
   const claimHandle = createClaimHandle();
+  const progressToken = createProgressToken();
   const claimed: DeepScanJob = {
     ...job,
     status: "running",
@@ -389,9 +527,13 @@ async function finalizeDeepScanClaim(job: DeepScanJob, workerId: string): Promis
     claimedBy: workerId,
     claimToken,
     claimHandle,
+    progressTokenHash: hashProgressToken(progressToken),
     claimedAt: t,
     heartbeatAt: t,
+    lastActivityAt: t,
+    stageStartedAt: t,
     leaseExpiresAt: leaseExpiresAt(),
+    workerIdentity: workerId,
     workerHost: workerId.includes("github-actions")
       ? "github-actions/ubuntu-latest"
       : process.env.WORKER_HOST?.trim() || process.env.HOSTNAME?.trim(),
@@ -402,7 +544,10 @@ async function finalizeDeepScanClaim(job: DeepScanJob, workerId: string): Promis
       stage: "CLAIMED",
       percent: stagePercent("CLAIMED"),
       detail: `Claimed by ${workerId}`,
+      message: `Claimed by ${workerId}`,
       updatedAt: t,
+      stageStartedAt: t,
+      lastActivityAt: t,
     },
     statusHistory: [
       ...job.statusHistory,
@@ -415,7 +560,7 @@ async function finalizeDeepScanClaim(job: DeepScanJob, workerId: string): Promis
   };
   await saveDeepScanJob(claimed);
   await trackDeepScanActive(claimed.id, true);
-  return claimed;
+  return { job: claimed, progressToken };
 }
 
 export async function heartbeatDeepScanJob(

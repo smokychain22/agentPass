@@ -83,7 +83,9 @@ function fromKnip(report: KnipRawReport | null, rootDir: string, source: Finding
       if (!rel || seenFiles.has(rel) || isDoNotTouchPath(rel)) continue;
       seenFiles.add(rel);
       const routeLike = isRouteLikePath(rel);
-      const action = routeLike ? "do_not_touch" : classifyAction([rel], { type: "unused_file" });
+      const action = routeLike
+        ? "do_not_touch"
+        : classifyAction([rel], { type: "unused_file", source });
       const inboundImports = 0;
       const confidence = routeLike ? 0.45 : inboundImports === 0 ? 0.76 : 0.55;
       files.push(

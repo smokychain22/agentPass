@@ -187,8 +187,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Progress stages (optional honesty for UI).
-  for (const stage of (bundle.stages as string[]) || []) {
+  // Analyze already posted live progress; complete records persistence + READY.
+  const persistStarted = Date.now();
+  {
+    const stage = "PERSISTING_RESULTS";
     const stageNonce = `cn_${randomBytes(12).toString("hex")}`;
     const stageTs = new Date().toISOString();
     const signFields = {
@@ -216,11 +218,18 @@ async function main(): Promise<void> {
         completionNonce: stageNonce,
         timestamp: stageTs,
         stage,
-        detail: `GitHub Actions: ${stage}`,
+        detail: "Saving repository graph and findings",
       },
       signFields
     );
   }
+
+  const timingBreakdown = {
+    ...((bundle.timingBreakdown as Record<string, number>) || {}),
+    ...(((bundle.resultSummary as { timingBreakdown?: Record<string, number> } | undefined)
+      ?.timingBreakdown) || {}),
+    completionCallbackMs: Math.max(0, Date.now() - persistStarted),
+  };
 
   const resultDigest = String(bundle.resultDigest || "");
   const readyNonce = completionNonce;
@@ -235,6 +244,11 @@ async function main(): Promise<void> {
     timestamp: readyTs,
     resultDigest,
     stage: "READY",
+  };
+
+  const resultSummary = {
+    ...((bundle.resultSummary as Record<string, unknown>) || {}),
+    timingBreakdown,
   };
 
   const ready = await postSigned(
@@ -258,7 +272,7 @@ async function main(): Promise<void> {
       graph: bundle.graph,
       coverage: bundle.coverage,
       baseline: bundle.baseline,
-      resultSummary: bundle.resultSummary,
+      resultSummary,
     },
     signFields
   );

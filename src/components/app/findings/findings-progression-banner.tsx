@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { flattenFindings } from "@/lib/findings/client";
-import { isActionableFinding } from "@/lib/findings/actionability-signals";
+import {
+  countCleanupEligible,
+  isCleanupEligible,
+} from "@/lib/findings/cleanup-eligibility";
 
 interface FindingsProgressionBannerProps {
   findings: FindingsPayload;
@@ -24,10 +27,12 @@ export function FindingsProgressionBanner({
   const flat = flattenFindings(findings);
   const total = flat.length;
   const safeCandidates = flat.filter((f) => f.action === "safe_candidate").length;
-  const ready = flat.filter((f) => f.action === "safe_candidate" && isActionableFinding(f)).length;
+  const cleanupEligible =
+    findings.summary.eligibleFindings ?? countCleanupEligible(flat);
   const reviewFirst = flat.filter((f) => f.action === "review_first").length;
   const doNotTouch = flat.filter((f) => f.action === "do_not_touch").length;
   const bucketSum = safeCandidates + reviewFirst + doNotTouch;
+  const canContinue = selectedCount > 0 && cleanupEligible > 0;
 
   return (
     <Panel variant="elevated" padding="md" className="border-border/60">
@@ -39,11 +44,15 @@ export function FindingsProgressionBanner({
             <ArrowRight className="h-3.5 w-3.5 opacity-50" aria-hidden />
             <span className="font-mono">{total} findings</span>
             <ArrowRight className="h-3.5 w-3.5 opacity-50" aria-hidden />
-            <span className={ready > 0 ? "font-mono text-signal" : "font-mono text-amber-300"}>
-              {ready} ready for cleanup
+            <span
+              className={
+                cleanupEligible > 0 ? "font-mono text-signal" : "font-mono text-amber-300"
+              }
+            >
+              {cleanupEligible} cleanup-eligible after preflight
             </span>
             <ArrowRight className="h-3.5 w-3.5 opacity-50" aria-hidden />
-            <span>{ready > 0 ? "select scope to continue" : "action required"}</span>
+            <span>{cleanupEligible > 0 ? "select scope to continue" : "action required"}</span>
           </div>
           <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div>
@@ -52,7 +61,15 @@ export function FindingsProgressionBanner({
             </div>
             <div>
               <dt className="text-muted-foreground">Ready for automatic cleanup</dt>
-              <dd className="font-mono text-lg text-signal">{ready}</dd>
+              <dd
+                className={
+                  cleanupEligible > 0
+                    ? "font-mono text-lg text-signal"
+                    : "font-mono text-lg text-amber-300"
+                }
+              >
+                {cleanupEligible}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Review first</dt>
@@ -64,38 +81,50 @@ export function FindingsProgressionBanner({
             </div>
           </dl>
           <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-            Safe candidates {safeCandidates} · selected {selectedCount}
+            {safeCandidates} safe candidates · {cleanupEligible} cleanup-eligible after preflight ·
+            selected {selectedCount}
             {bucketSum === total
               ? " · category buckets sum to total"
               : ` · WARNING: bucket sum ${bucketSum} ≠ total ${total}`}
           </p>
+          {cleanupEligible === 0 && (
+            <p className="mt-2 text-sm text-amber-200">
+              No findings passed transformer preflight. Safe-candidate risk buckets alone are not
+              enough for automatic cleanup.
+            </p>
+          )}
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-          {ready > 0 ? (
-            <>
-              {onClearSelection && (
-                <Button
-                  variant="secondary"
-                  onClick={onClearSelection}
-                  disabled={selectedCount === 0}
-                >
-                  Clear selection
-                </Button>
-              )}
-              {onSelectAllSafe && (
-                <Button variant="secondary" onClick={onSelectAllSafe}>
-                  Select all safe findings
-                </Button>
-              )}
-              <Button asChild>
-                <Link href="/app?tab=patch">
-                  {selectedCount > 0
-                    ? `Continue with ${selectedCount} cleanup${selectedCount === 1 ? "" : "s"}`
-                    : "Review cleanup scope"}
-                </Link>
-              </Button>
-            </>
+          {onClearSelection && (
+            <Button
+              variant="secondary"
+              onClick={onClearSelection}
+              disabled={selectedCount === 0}
+            >
+              Clear selection
+            </Button>
+          )}
+          {onSelectAllSafe && (
+            <Button
+              variant="secondary"
+              onClick={onSelectAllSafe}
+              disabled={cleanupEligible === 0}
+            >
+              Select all cleanup-eligible findings
+            </Button>
+          )}
+          {canContinue ? (
+            <Button asChild>
+              <Link href="/app?tab=patch">
+                Continue with {selectedCount} cleanup{selectedCount === 1 ? "" : "s"}
+              </Link>
+            </Button>
           ) : (
+            <Button variant="secondary" disabled>
+              Continue to Quick Cleanup
+            </Button>
+          )}
+          {cleanupEligible === 0 && (
             <Button variant="secondary" asChild>
               <Link href="/app?tab=findings#workspace">Review eligibility</Link>
             </Button>

@@ -63,6 +63,36 @@ async function run() {
     }
   });
 
+  await test("intermediate progress stages are on the ladder", () => {
+    for (const stage of [
+      "PREPARING_ARCHIVE",
+      "DOWNLOADING_ARCHIVE",
+      "ARCHIVE_READY",
+      "RUNNING_JSCpd",
+      "RUNNING_KNIP",
+      "RUNNING_MADGE",
+      "RUNNING_INTERNAL_HEURISTICS",
+      "PERSISTING_RESULTS",
+      "WORKER_STALLED",
+    ] as const) {
+      assert.ok(DEEP_SCAN_STAGES.includes(stage), stage);
+    }
+  });
+
+  await test("analyze stays secretless and progress route exists", () => {
+    const analyze = fs.readFileSync(path.join(process.cwd(), "scripts/actions-worker/analyze.ts"), "utf8");
+    assert.match(analyze, /assertNoTrustedSecrets/);
+    assert.match(analyze, /progressToken/);
+    assert.equal(/process\.env\.REPODIET_WORKER_CALLBACK_SECRET/.test(analyze), false);
+    assert.equal(/process\.env\.REPODIET_WORKER_API_KEY/.test(analyze), false);
+    assert.equal(/process\.env\.WORKER_API_KEY/.test(analyze), false);
+    const progressRoute = path.join(
+      process.cwd(),
+      "src/app/api/internal/actions/deep-scans/[id]/progress/route.ts"
+    );
+    assert.equal(fs.existsSync(progressRoute), true);
+  });
+
   await test("payload validation rejects malformed identifiers", () => {
     assert.equal(JOB_ID_RE.test("deep_scan_abc"), true);
     assert.equal(REQUEST_ID_RE.test("req_abc-1"), true);

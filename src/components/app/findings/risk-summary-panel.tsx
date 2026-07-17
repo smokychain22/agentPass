@@ -14,9 +14,9 @@ export function RiskSummaryPanel({ summary }: { summary: FindingsSummary }) {
     },
     {
       label: "Eligible for cleanup",
-      value: summary.eligibleFindings ?? summary.transformerCompatible ?? 0,
+      value: summary.eligibleFindings ?? 0,
       level: "neutral" as const,
-      hint: "Preflight confirmed: transformer produced a real content change",
+      hint: "Canonical preflight: SAFE + transformer produced a real content change",
     },
     {
       label: "Transformed",

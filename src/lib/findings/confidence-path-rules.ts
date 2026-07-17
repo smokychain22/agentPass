@@ -1,4 +1,5 @@
 import type { FindingAction } from "./types";
+import { shouldForceReviewOperationalUnusedFile } from "./operational-file-protection";
 
 const DO_NOT_TOUCH_PATTERNS: RegExp[] = [
   /(^|\/)\.env(\.|$)/,
@@ -57,11 +58,23 @@ export function isSafeCandidatePath(filePath: string): boolean {
 
 export function classifyAction(
   filePaths: string[],
-  opts?: { type?: string; forceReview?: boolean }
+  opts?: { type?: string; forceReview?: boolean; source?: string }
 ): FindingAction {
   if (filePaths.some(isDoNotTouchPath)) return "do_not_touch";
   if (opts?.forceReview || filePaths.some(isRouteLikePath)) return "review_first";
-  if (filePaths.every(isSafeCandidatePath) && filePaths.length > 0) {
+
+  const allSafePaths = filePaths.every(isSafeCandidatePath) && filePaths.length > 0;
+  if (
+    shouldForceReviewOperationalUnusedFile(filePaths, {
+      type: opts?.type,
+      source: opts?.source,
+      alreadySafePath: allSafePaths,
+    })
+  ) {
+    return "review_first";
+  }
+
+  if (allSafePaths) {
     return "safe_candidate";
   }
   if (opts?.type === "duplicate_code") return "review_first";
