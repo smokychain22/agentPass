@@ -201,6 +201,23 @@ export async function POST(request: Request) {
       note: "A2MCP Quick Triage remains bounded; this endpoint is for full durable analysis. No repository allowlist.",
     });
   } catch (err) {
+    if (err instanceof RepositoryIdentityIncompleteError) {
+      return NextResponse.json(
+        {
+          ...customerError({
+            code: "INVALID_INPUT",
+            message: err.message,
+            retryable: false,
+            requiredAction: "PROVIDE_CANONICAL_GITHUB_URL",
+            paymentState: "not_required",
+            taskId: err.taskId,
+          }),
+          code: "REPOSITORY_IDENTITY_INCOMPLETE",
+          missingFields: err.missingFields,
+        },
+        { status: 422 }
+      );
+    }
     if (err instanceof DeepScanWorkerUnavailableError) {
       return NextResponse.json(
         customerError({
