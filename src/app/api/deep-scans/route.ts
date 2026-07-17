@@ -7,6 +7,10 @@ import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { runPublicRepositoryIntake } from "@/lib/product/public-intake";
 import { buildTenantBinding } from "@/lib/tenant/types";
 import { customerError } from "@/lib/product/customer-errors";
+import {
+  capacityQueuedResponse,
+  getDeepScanCapacitySnapshot,
+} from "@/lib/deep-scan/capacity";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -88,6 +92,7 @@ export async function POST(request: Request) {
   });
 
   try {
+    const capacityBefore = await getDeepScanCapacitySnapshot(tenant.tenantId);
     const job = await createDeepScanJob(
       {
         repoUrl: intake.canonicalUrl,
@@ -128,6 +133,32 @@ export async function POST(request: Request) {
       });
     }
 
+    const capacityAfter = await getDeepScanCapacitySnapshot(tenant.tenantId);
+    const overCapacity =
+      capacityBefore.atGlobalCapacity ||
+      capacityBefore.tenantAtCapacity ||
+      capacityAfter.activeJobs > capacityAfter.globalLimit;
+
+    if (overCapacity) {
+      // Still persisted — never drop. Honest QUEUED + CAPACITY_LIMIT (not 504).
+      return NextResponse.json({
+        ok: true,
+        ...capacityQueuedResponse({
+          taskId: job.id,
+          statusUrl: `/api/deep-scans/${job.id}`,
+          queuePosition: Math.max(0, capacityAfter.queueDepth - 1),
+          reason: capacityBefore.tenantAtCapacity ? "TENANT" : "GLOBAL",
+        }),
+        jobId: job.id,
+        tenantId: tenant.tenantId,
+        repository: intake.repository,
+        sourceCommit: tenant.sourceCommit,
+        stage: job.stage,
+        progressUrl: `/api/deep-scans/${job.id}`,
+        workerReady,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       jobId: job.id,
@@ -138,6 +169,7 @@ export async function POST(request: Request) {
       stage: job.stage,
       progressUrl: `/api/deep-scans/${job.id}`,
       workerReady,
+      queueDepth: capacityAfter.queueDepth,
       message: workerReady
         ? "Deep scan queued for RepoDiet worker."
         : "Deep scan persisted. Waiting for RepoDiet worker heartbeat to claim — not executed solely via after().",

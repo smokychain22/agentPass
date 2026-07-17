@@ -1,9 +1,16 @@
 import { execa } from "execa";
-import { claimNextJob, postCallback, registerWorker } from "./callback";
+import {
+  claimNextDeepScanJob,
+  claimNextJob,
+  postCallback,
+  registerWorker,
+} from "./callback";
+import { runDeepScanJob } from "./deep-scan-runner";
 import { runRepositoryJob } from "./job-runner";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS ?? 5_000);
 const HEARTBEAT_MS = Number(process.env.WORKER_HEARTBEAT_MS ?? 10_000);
+const WORKER_VERSION = process.env.WORKER_VERSION?.trim() || "2.0.0-deep-scan";
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -27,25 +34,27 @@ async function validateEnvironment(): Promise<void> {
   requireEnv("WORKER_API_KEY");
   requireEnv("WORKER_CALLBACK_SECRET");
   requireEnv("REPODIET_API_BASE_URL");
-  const hasSupabase = Boolean(process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+  const hasSupabase = Boolean(
+    process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+  );
   const hasRedis = Boolean(
     process.env.UPSTASH_REDIS_REST_URL?.trim() && process.env.UPSTASH_REDIS_REST_TOKEN?.trim()
   );
   if (!hasSupabase && !hasRedis) {
-    console.error("FATAL: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN required.");
+    console.error(
+      "FATAL: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN required."
+    );
     process.exit(1);
   }
 }
 
 let shuttingDown = false;
+let currentJobId: string | undefined;
 
 async function startup(): Promise<{
   apiBase: string;
   apiKey: string;
   workerId: string;
-  gitVersion: string;
-  nodeVersion: string;
-  npmVersion: string;
 }> {
   console.log("RepoDiet worker starting");
   await validateEnvironment();
@@ -58,29 +67,36 @@ async function startup(): Promise<{
   const nodeVersion = process.version;
   const npmVersion = await readVersion("npm", ["--version"]);
 
+  console.log(`Worker version: ${WORKER_VERSION}`);
   console.log(`Git version: ${gitVersion}`);
   console.log(`Node version: ${nodeVersion}`);
   console.log(`npm version: ${npmVersion}`);
   console.log(`Worker ID: ${workerId}`);
   console.log(`API base URL: ${apiBase}`);
   console.log("Queue connection: passed");
+  console.log("Job types: repository_cleanup + deep_scan");
 
   await registerWorker(apiBase, apiKey, {
     workerId,
     gitVersion,
     nodeVersion,
     npmVersion,
-    hostname: process.env.HOSTNAME ?? "render-worker",
+    hostname: process.env.HOSTNAME ?? "production-worker",
   });
 
   console.log("Worker polling active");
-  return { apiBase, apiKey, workerId, gitVersion, nodeVersion, npmVersion };
+  return { apiBase, apiKey, workerId };
 }
 
 async function heartbeatLoop(apiBase: string, apiKey: string, workerId: string): Promise<void> {
   while (!shuttingDown) {
     try {
-      await postCallback(apiBase, apiKey, "heartbeat", "heartbeat", { workerId });
+      await postCallback(apiBase, apiKey, "heartbeat", "heartbeat", {
+        workerId,
+        status: currentJobId ? "busy" : "online",
+        currentJobId,
+        version: WORKER_VERSION,
+      });
     } catch (err) {
       console.error(err instanceof Error ? err.message : err);
     }
@@ -91,12 +107,26 @@ async function heartbeatLoop(apiBase: string, apiKey: string, workerId: string):
 async function pollLoop(apiBase: string, apiKey: string, workerId: string): Promise<void> {
   while (!shuttingDown) {
     try {
-      const job = await claimNextJob(apiBase, apiKey, workerId);
-      if (job) {
-        console.log(`Claimed job ${job.id} for ${job.repositoryOwner}/${job.repositoryName}`);
-        await runRepositoryJob(job, apiBase, apiKey, workerId);
+      // Prefer deep-scan queue (read-only analysis) then cleanup repository jobs.
+      const deepScan = await claimNextDeepScanJob(apiBase, apiKey, workerId);
+      if (deepScan) {
+        currentJobId = deepScan.id;
+        console.log(
+          `Claimed deep-scan ${deepScan.id} for ${deepScan.request.repoUrl} (tenant=${deepScan.tenantId ?? "n/a"})`
+        );
+        await runDeepScanJob(deepScan, apiBase, apiKey, workerId);
+        currentJobId = undefined;
+      } else {
+        const job = await claimNextJob(apiBase, apiKey, workerId);
+        if (job) {
+          currentJobId = job.id;
+          console.log(`Claimed cleanup job ${job.id} for ${job.repositoryOwner}/${job.repositoryName}`);
+          await runRepositoryJob(job, apiBase, apiKey, workerId);
+          currentJobId = undefined;
+        }
       }
     } catch (err) {
+      currentJobId = undefined;
       console.error(err instanceof Error ? err.message : err);
     }
     if (!shuttingDown) {

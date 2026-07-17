@@ -35,6 +35,9 @@ export interface MarketplaceHealthSnapshot {
   queueDepth: number | null;
   activeWorkers: number;
   workerHeartbeatAgeMs: number | null;
+  workerVersion?: string | null;
+  activeJobs?: number;
+  oldestQueuedTaskAgeSeconds?: number | null;
   updatedAt: string;
 }
 
@@ -130,11 +133,11 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
   const { getLatestWorkerHeartbeat, isWorkerRecentlyOnline } = await import(
     "@/lib/worker/worker-instance-store"
   );
-  const { getPersistentRecord } = await import("@/lib/store/persistent-store");
+  const { getDeepScanCapacitySnapshot } = await import("@/lib/deep-scan/capacity");
   const latest = await getLatestWorkerHeartbeat();
   const workerHeartbeatReady = isWorkerRecentlyOnline(latest);
   const heartbeatAgeMs = latest ? Date.now() - Date.parse(latest.heartbeatAt) : null;
-  const queue = (await getPersistentRecord<string[]>("deep_scan_jobs", "queue:list")) ?? [];
+  const capacity = await getDeepScanCapacitySnapshot();
   const a2aIntakeReady = existing.a2aInitialResponseReady !== false;
 
   const githubAppReady = Boolean(
@@ -159,9 +162,12 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     paymentVerifierReady,
     receiptSignerReady,
     attestationSignerReady,
-    queueDepth: queue.length,
+    queueDepth: capacity.queueDepth,
     activeWorkers: workerHeartbeatReady ? 1 : 0,
     workerHeartbeatAgeMs: heartbeatAgeMs,
+    workerVersion: latest?.version ?? existing.workerVersion ?? null,
+    activeJobs: capacity.activeJobs,
+    oldestQueuedTaskAgeSeconds: capacity.oldestQueuedTaskAgeSeconds,
     updatedAt: durableNow(),
   };
 }

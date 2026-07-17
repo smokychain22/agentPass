@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { assertWorkerAuthorized, WorkerAuthError } from "@/lib/worker/worker-auth";
 import { claimNextDeepScanJob } from "@/lib/deep-scan/job-store";
-import { executeDeepScanJob } from "@/lib/deep-scan/execute";
 import { setWorkerStatus } from "@/lib/worker/worker-instance-store";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 30;
 
+/**
+ * Atomically claim the next deep-scan job for an always-on worker.
+ * Default execute=false — the worker process must run analysis outside Vercel.
+ */
 export async function POST(request: Request) {
   try {
     assertWorkerAuthorized(request);
@@ -21,7 +24,10 @@ export async function POST(request: Request) {
     }
     await setWorkerStatus(workerId, "busy", claimed.id);
 
-    if (body.execute !== false) {
+    // Never run full deep-scan inside this route by default.
+    // execute:true remains available only for controlled diagnostics outside production.
+    if (body.execute === true && process.env.VERCEL_ENV !== "production") {
+      const { executeDeepScanJob } = await import("@/lib/deep-scan/execute");
       const completed = await executeDeepScanJob(claimed.id, workerId);
       await setWorkerStatus(workerId, "online");
       return NextResponse.json({ ok: true, job: completed ?? claimed });

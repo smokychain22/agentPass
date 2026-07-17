@@ -17,6 +17,7 @@ import {
   runDependencyPreflight,
   usesNextBuild,
 } from "@/lib/execution/dependency-preflight";
+import { buildUntrustedSandboxEnv } from "@/lib/sandbox/secret-firewall";
 import type {
   RepositoryVerificationOutcome,
   VerificationFailureCode,
@@ -62,12 +63,14 @@ function localBinPath(rootDir: string): string {
 function verificationEnv(rootDir: string, scriptName?: string): NodeJS.ProcessEnv {
   const localBin = localBinPath(rootDir);
   const pathEnv = process.env.PATH ?? "";
+  // Strip platform secrets before customer install/build/test scripts.
+  const sandboxed = buildUntrustedSandboxEnv(process.env);
   return {
-    ...process.env,
+    ...sandboxed,
     CI: "true",
     FORCE_COLOR: "0",
     NODE_ENV: scriptName === "build" ? "production" : "test",
-    PATH: `${localBin}${path.delimiter}${pathEnv}`,
+    PATH: `${localBin}${path.delimiter}${sandboxed.PATH ?? pathEnv}`,
   };
 }
 

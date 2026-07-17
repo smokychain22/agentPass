@@ -11,15 +11,28 @@ export async function POST(request: Request) {
       workerId?: string;
       status?: "online" | "busy" | "degraded";
       currentJobId?: string;
+      version?: string;
     };
     const workerId = body.workerId?.trim();
     if (!workerId) {
       return NextResponse.json({ ok: false, error: "workerId is required." }, { status: 400 });
     }
-    const instance = await heartbeatWorkerInstance(workerId, {
+    let instance = await heartbeatWorkerInstance(workerId, {
       status: body.status ?? "online",
       currentJobId: body.currentJobId,
     });
+    if (!instance && body.version) {
+      const { registerWorkerInstance } = await import("@/lib/worker/worker-instance-store");
+      instance = await registerWorkerInstance({
+        id: workerId,
+        version: body.version,
+        hostname: process.env.HOSTNAME,
+      });
+      instance = (await heartbeatWorkerInstance(workerId, {
+        status: body.status ?? "online",
+        currentJobId: body.currentJobId,
+      })) ?? instance;
+    }
     if (!instance) {
       return NextResponse.json({ ok: false, error: "Worker not registered." }, { status: 404 });
     }
