@@ -6,6 +6,7 @@ import { executeDeepScanJob } from "@/lib/deep-scan/execute";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { runPublicRepositoryIntake } from "@/lib/product/public-intake";
 import { buildTenantBinding } from "@/lib/tenant/types";
+import { resolveTenantIdentity } from "@/lib/tenant/request-auth";
 import { customerError } from "@/lib/product/customer-errors";
 import {
   capacityQueuedResponse,
@@ -80,9 +81,10 @@ export async function POST(request: Request) {
     );
   }
 
+  const identity = resolveTenantIdentity(request);
   const tenant = buildTenantBinding({
-    okxBuyerId: body.okxBuyerId,
-    buyerWallet: body.buyerWallet,
+    okxBuyerId: body.okxBuyerId?.trim() || identity.okxBuyerId,
+    buyerWallet: body.buyerWallet?.trim() || identity.buyerWallet,
     repositoryOwner: intake.owner,
     repositoryName: intake.name,
     branch: intake.branch,
@@ -90,6 +92,15 @@ export async function POST(request: Request) {
     projectRoot: intake.projectRoot,
     taskId: body.a2aTaskId,
   });
+  // Prefer explicit body/header tenant over anonymous when buyer identity is present.
+  if (
+    tenant.tenantId === "anonymous_public_readonly" &&
+    identity.tenantId !== "anonymous_public_readonly"
+  ) {
+    tenant.tenantId = identity.tenantId;
+    tenant.okxBuyerId = identity.okxBuyerId;
+    tenant.buyerWallet = identity.buyerWallet;
+  }
 
   try {
     const capacityBefore = await getDeepScanCapacitySnapshot(tenant.tenantId);
