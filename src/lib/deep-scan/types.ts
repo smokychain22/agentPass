@@ -22,6 +22,11 @@ export interface DeepScanJobRequest {
   requestedBy?: string;
   /** When true, skip baseline install/typecheck/build (read-only audit). */
   readOnly?: boolean;
+  /** Multi-tenant binding — required for marketplace isolation. */
+  tenantId?: string;
+  buyerWallet?: string;
+  okxBuyerId?: string;
+  githubInstallationId?: string;
 }
 
 export interface DeepScanProgress {
@@ -37,6 +42,7 @@ export interface DeepScanJob {
   stage: DeepScanStage;
   progress: DeepScanProgress;
   request: DeepScanJobRequest;
+  tenantId?: string;
   repositoryOwner?: string;
   repositoryName?: string;
   branch?: string;

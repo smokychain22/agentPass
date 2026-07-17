@@ -120,6 +120,10 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
 }
 
 function shouldUseBundledE2eFixture(repoUrl: string): boolean {
+  // Production marketplace must never substitute fixture content for a customer URL.
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production") {
+    return false;
+  }
   const fixturePath = process.env.REPODIET_E2E_FIXTURE_PATH?.trim();
   const useFixture =
     process.env.REPODIET_USE_E2E_FIXTURE === "1" || Boolean(fixturePath);

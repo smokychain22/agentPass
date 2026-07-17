@@ -62,11 +62,8 @@ export function checkEntitlement(context: EntitlementContext): EntitlementResult
     if (demo && mode !== "live_x402") {
       return { allowed: true, mode: "test_payment", amountMicro: demo };
     }
-    const sig =
-      request.headers.get("payment-signature") || request.headers.get("x-payment-signature");
-    if (sig) {
-      return { allowed: true, mode: "live_x402" };
-    }
+    // live_x402: bare payment-signature is NOT an entitlement.
+    // Paid marketplace verification happens in the A2MCP/A2A payment pipelines.
   }
 
   if (mode === "test_payment") {
