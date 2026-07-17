@@ -274,14 +274,51 @@ export function FindingsTab() {
       {(isLoading || accepted) && !findings && (
         <Panel variant="elevated" padding="md" className="space-y-3 border-border/60">
           <p className="ds-label">Durable analysis progress</p>
+          <p className="text-sm font-medium text-foreground">
+            {accepted && !accepted.workerReady && (progress?.stage === "QUEUED" || phase === "queued")
+              ? "QUEUED — waiting for analysis worker"
+              : `Stage: ${progress?.stage ?? accepted?.stage ?? phase}`}
+          </p>
           <dl className="grid gap-2 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-muted-foreground">Job ID</dt>
               <dd className="font-mono text-xs">{accepted?.jobId ?? progress?.jobId ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Stage</dt>
-              <dd className="font-mono text-xs">{progress?.stage ?? accepted?.stage ?? phase}</dd>
+              <dt className="text-muted-foreground">Source commit</dt>
+              <dd className="font-mono text-xs">
+                {(
+                  progress?.sourceCommit ??
+                  session.scanResult?.repo.commitSha ??
+                  "—"
+                ).toString().slice(0, 12)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">workerReady</dt>
+              <dd className="font-mono text-xs">
+                {accepted ? String(accepted.workerReady) : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Retryable</dt>
+              <dd className="font-mono text-xs">
+                {accepted && !accepted.workerReady && (progress?.stage === "QUEUED" || phase === "queued")
+                  ? "true (queued — resume or cancel)"
+                  : error
+                    ? String(error.retryable)
+                    : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Elapsed queued</dt>
+              <dd className="font-mono text-xs">
+                {progress?.createdAt
+                  ? `${Math.max(0, Math.floor((Date.now() - Date.parse(progress.createdAt)) / 1000))}s`
+                  : accepted
+                    ? "polling…"
+                    : "—"}
+              </dd>
             </div>
             <div className="sm:col-span-2">
               <dt className="text-muted-foreground">Status URL</dt>
@@ -294,6 +331,28 @@ export function FindingsTab() {
               </div>
             ) : null}
           </dl>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                clearPersistedAnalysisJob();
+                setAccepted(null);
+                setProgress(null);
+                setPhase("idle");
+                setInFlight(false);
+                if (accepted?.jobId) {
+                  void fetch(`/api/deep-scans/${accepted.jobId}/cancel`, {
+                    method: "POST",
+                    credentials: "same-origin",
+                  }).catch(() => undefined);
+                }
+                show("info", "Analysis cancelled locally — durable job marked cancelled when owned");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
         </Panel>
       )}
 

@@ -21,7 +21,7 @@
     "test:green-pr": "tsx test/green-pr-protocol.test.ts && tsx test/okx-identity-consistency.test.ts",
     "test:e2e-fixture": "tsx scripts/e2e-fixture-integration-test.ts",
     "test:maintenance-outcome": "tsx test/maintenance-outcome.test.ts",
-    "test:worker-claim": "tsx test/double-claim-and-sandbox.test.ts && tsx test/production-worker-tenant-sandbox.test.ts && tsx test/findings-incident-regression.test.ts && tsx test/meridian-findings-incident.test.ts",
+    "test:worker-claim": "tsx test/double-claim-and-sandbox.test.ts && tsx test/production-worker-tenant-sandbox.test.ts && tsx test/findings-incident-regression.test.ts && tsx test/meridian-findings-incident.test.ts && tsx test/legacy-findings-route-no-sync.test.ts && tsx test/findings-idempotency.test.ts && tsx test/findings-tenant-binding.test.ts && tsx test/findings-offline-and-coverage.test.ts",
     "build:worker": "mkdir -p worker/dist && npx --yes esbuild@0.25.0 worker/src/index.ts --bundle --platform=node --target=node20 --outfile=worker/dist/index.js --format=esm --packages=external",
     "test:meridian-knip": "tsx scripts/meridian-knip-smoke.ts",
     "test:meridian-cleanup": "tsx scripts/meridian-cleanup-smoke.ts",

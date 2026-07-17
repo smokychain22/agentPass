@@ -382,8 +382,7 @@ export function ScanTab() {
               value={(
                 displayResult.scanCoverage?.contract?.supportedSourceFiles ??
                 displayResult.scanCoverage?.filesAnalyzable ??
-                displayResult.repositoryModel?.analyzableSourceFiles ??
-                displayResult.summary.totalFiles
+                0
               ).toLocaleString()}
               accent="neutral"
             />

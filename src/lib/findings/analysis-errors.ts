@@ -14,7 +14,9 @@ export type AnalysisErrorCode =
   | "PERSISTENCE_FAILED"
   | "LEASE_EXPIRED"
   | "INTERNAL_ERROR"
-  | "SCAN_REPOSITORY_MISMATCH";
+  | "SCAN_REPOSITORY_MISMATCH"
+  | "QUEUE_WAIT_EXCEEDED"
+  | "CANCELLED";
 
 export interface AnalysisErrorContract extends Omit<CustomerErrorResponse, "code"> {
   code: AnalysisErrorCode;
