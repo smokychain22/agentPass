@@ -1,5 +1,8 @@
 export const DEEP_SCAN_STAGES = [
   "QUEUED",
+  "DISPATCHING",
+  "DISPATCHED",
+  "WAITING_FOR_RUNNER",
   "CLAIMED",
   "INVENTORY",
   "RESOLVING_PROJECTS",
@@ -76,6 +79,14 @@ export interface DeepScanJob {
   heartbeatAt?: string;
   leaseExpiresAt?: string;
   workerHost?: string;
+  /** GitHub Actions on-demand worker fields */
+  workerMode?: "github_actions_on_demand" | "always_on" | "unset";
+  dispatchNonce?: string;
+  dispatchNonceUsedAt?: string;
+  workflowRunId?: string;
+  workflowRunUrl?: string;
+  dispatchedAt?: string;
+  analysisConfigDigest?: string;
   attemptCount: number;
   statusHistory: Array<{ stage: DeepScanStage; at: string; detail?: string }>;
   createdAt: string;
@@ -90,6 +101,9 @@ export function stagePercent(stage: DeepScanStage): number {
   if (stage === "READY" || stage === "COMPLETED" || stage === "DELIVERY_READY") return 100;
   const order: DeepScanStage[] = [
     "QUEUED",
+    "DISPATCHING",
+    "DISPATCHED",
+    "WAITING_FOR_RUNNER",
     "CLAIMED",
     "INVENTORY",
     "RESOLVING_PROJECTS",

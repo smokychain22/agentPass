@@ -1,11 +1,22 @@
 import { NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { getAppScan, storeAppScan } from "@/lib/scan/app-scan-store";
-import { createDeepScanJob } from "@/lib/deep-scan/job-store";
+import { createDeepScanJob, updateDeepScanStage } from "@/lib/deep-scan/job-store";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { resolveTenantIdentity } from "@/lib/tenant/request-auth";
 import { analysisError, createRequestId } from "@/lib/findings/analysis-errors";
 import { ensureBrowserSessionId } from "@/lib/github-app/browser-session";
+import {
+  dispatchAnalysisWorkflow,
+  isActionsDispatcherConfigured,
+} from "@/lib/github-actions/dispatch-analysis";
+import {
+  analysisConfigDigest,
+  createDispatchNonce,
+  dispatchNonceTtlMs,
+  storeDispatchNonce,
+} from "@/lib/github-actions/dispatch-nonce-store";
+import { touchMarketplaceHealth } from "@/lib/okx/marketplace-telemetry";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -174,10 +185,19 @@ export async function POST(request: Request) {
     });
   }
 
-  const workerReady = await isWorkerAvailable();
+  const dispatcherConfigured = isActionsDispatcherConfigured();
+  const daemonReady = await isWorkerAvailable();
   const idempotencyKey = `findings:${tenantId}:${structureScanId}:${sourceCommit}:${projectRoot}`;
+  const digest = analysisConfigDigest({
+    tenantId,
+    structureScanId,
+    repository: expectedRepo,
+    branch,
+    sourceCommit,
+    projectRoot,
+  });
 
-  const job = await createDeepScanJob(
+  let job = await createDeepScanJob(
     {
       repoUrl: scan.repo.url,
       branch,
@@ -191,8 +211,107 @@ export async function POST(request: Request) {
     { idempotencyKey }
   );
 
+  // Idempotent: already dispatched / running / ready — do not create another workflow.
+  const alreadyActive =
+    Boolean(job.workflowRunId) ||
+    ["DISPATCHING", "DISPATCHED", "WAITING_FOR_RUNNER", "CLAIMED", "INVENTORY", "RESOLVING_PROJECTS", "BUILDING_GRAPH", "RUNNING_ANALYZERS", "NORMALIZING_FINDINGS", "VALIDATING_EVIDENCE", "READY", "COMPLETED"].includes(
+      job.stage
+    );
+
+  let dispatchError: string | undefined;
+  if (!alreadyActive && dispatcherConfigured) {
+    await updateDeepScanStage(job.id, "DISPATCHING", "Requesting GitHub Actions analysis worker");
+    const nonce = createDispatchNonce();
+    const expiresAt = new Date(Date.now() + dispatchNonceTtlMs()).toISOString();
+    await storeDispatchNonce({
+      nonce,
+      jobId: job.id,
+      tenantId,
+      requestId,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+    });
+
+    const apiBaseUrl = (
+      process.env.REPODIET_PUBLIC_API_BASE_URL?.trim() ||
+      process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+      "https://skillswap-virid-kappa.vercel.app"
+    ).replace(/\/$/, "");
+
+    const environment =
+      process.env.VERCEL_ENV === "production"
+        ? "production"
+        : process.env.VERCEL_ENV === "preview"
+          ? "preview"
+          : "development";
+
+    const dispatched = await dispatchAnalysisWorkflow({
+      jobId: job.id,
+      requestId,
+      dispatchNonce: nonce,
+      environment,
+      apiBaseUrl,
+    });
+
+    if (dispatched.ok) {
+      job =
+        (await updateDeepScanStage(job.id, "DISPATCHED", "GitHub Actions workflow requested", {
+          dispatchNonce: nonce,
+          workflowRunId: dispatched.workflowRunId,
+          workflowRunUrl: dispatched.workflowRunUrl,
+          dispatchedAt: dispatched.dispatchedAt,
+          workerMode: "github_actions_on_demand",
+          analysisConfigDigest: digest,
+        })) ?? job;
+      if (dispatched.workflowRunId) {
+        job =
+          (await updateDeepScanStage(
+            job.id,
+            "WAITING_FOR_RUNNER",
+            "Waiting for GitHub Actions runner",
+            {
+              workflowRunId: dispatched.workflowRunId,
+              workflowRunUrl: dispatched.workflowRunUrl,
+            }
+          )) ?? job;
+      }
+      await touchMarketplaceHealth({
+        dispatcherReady: true,
+        workerMode: "github_actions_on_demand",
+        activeWorkflowRuns: 1,
+        workerReady: true,
+        workerReadySource: "github_actions_dispatcher",
+      });
+    } else {
+      dispatchError = dispatched.message;
+      job =
+        (await updateDeepScanStage(job.id, "QUEUED", `Dispatch deferred: ${dispatched.code}`, {
+          failureCode: dispatched.code,
+          failureMessage: dispatched.message,
+          dispatchNonce: nonce,
+          workerMode: "github_actions_on_demand",
+          analysisConfigDigest: digest,
+        })) ?? job;
+      await touchMarketplaceHealth({
+        dispatcherReady: false,
+        recentWorkerFailureRate: 1,
+      });
+    }
+  } else if (!alreadyActive && !dispatcherConfigured && !daemonReady) {
+    job =
+      (await updateDeepScanStage(
+        job.id,
+        "QUEUED",
+        "Queued — configure REPODIET_ACTIONS_DISPATCH_TOKEN to start free GitHub Actions workers",
+        { workerMode: "github_actions_on_demand", analysisConfigDigest: digest }
+      )) ?? job;
+  }
+
   const statusUrl = `/api/deep-scans/${job.id}`;
   const correlation = nanoid(8);
+  const dispatcherReady = dispatcherConfigured;
+  const stage = job.stage;
 
   return NextResponse.json(
     {
@@ -200,11 +319,15 @@ export async function POST(request: Request) {
       ok: true,
       jobId: job.id,
       taskId: job.id,
-      status: "QUEUED",
-      stage: job.stage === "QUEUED" || job.status === "queued" ? "QUEUED" : job.stage,
+      status: stage === "QUEUED" ? "QUEUED" : stage,
+      stage,
       statusUrl,
       progressUrl: statusUrl,
-      workerReady,
+      workerReady: dispatcherReady || daemonReady,
+      dispatcherReady,
+      workerMode: "github_actions_on_demand",
+      workflowRunId: job.workflowRunId,
+      workflowRunUrl: job.workflowRunUrl,
       requestId,
       structureScanId,
       repository: expectedRepo,
@@ -213,12 +336,15 @@ export async function POST(request: Request) {
       projectRoot,
       tenantId,
       correlationId: correlation,
-      message: workerReady
-        ? "Findings analysis queued for the RepoDiet worker."
-        : "Findings analysis is queued and waiting for an analysis worker. The structure scan is preserved.",
-      requiredAction: workerReady
-        ? "POLL_STATUS"
-        : "The task is safely queued and will continue when a worker becomes available.",
+      analysisConfigDigest: digest,
+      message: dispatcherReady
+        ? stage === "WAITING_FOR_RUNNER" || stage === "DISPATCHED"
+          ? "Starting secure analysis worker on GitHub Actions."
+          : "Findings analysis accepted for ephemeral GitHub Actions worker."
+        : dispatchError
+          ? `Job queued but Actions dispatch failed: ${dispatchError}`
+          : "Findings analysis queued. Configure REPODIET_ACTIONS_DISPATCH_TOKEN to enable free GitHub Actions workers.",
+      requiredAction: "POLL_STATUS",
     },
     { status: 202 }
   );

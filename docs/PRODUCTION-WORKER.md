@@ -1,12 +1,20 @@
-# Production worker (always-on)
+# Production analysis workers
 
-RepoDiet requires an always-on Linux worker that claims durable deep-scan and cleanup jobs.
+**Preferred (free):** ephemeral GitHub Actions workers — see [`docs/GITHUB-ACTIONS-WORKER.md`](./GITHUB-ACTIONS-WORKER.md).
+
+The always-on Render Background Worker path below is **optional** and not required for Meridian findings acceptance.
+
+---
+
+## Legacy optional: Render Background Worker
+
+RepoDiet can also use an always-on Linux worker. Prefer GitHub Actions for public `agentPass`.
 
 The worker must **not** run inside Cursor, Codex, Claude, a developer laptop, a temporary cloud-agent session, a Vercel request, or Next.js `after()` as the complete executor.
 
-## Deploy target
+## Deploy target (optional)
 
-Recommended: **Render Background Worker** (not a Web Service, not a Cron Job) using `render.yaml` + `worker/Dockerfile`.
+**Render Background Worker** (not a Web Service, not a Cron Job) using `render.yaml` + `worker/Dockerfile`.
 
 ### Exact Render Dashboard steps
 
