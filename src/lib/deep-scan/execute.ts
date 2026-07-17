@@ -192,26 +192,41 @@ export async function executeDeepScanJob(
         (await updateDeepScanStage(jobId, "VALIDATING_EVIDENCE", "Validating finding evidence")) ??
         job;
 
-      let baseline: Record<string, unknown> = {
-        status: job.request.readOnly ? "SKIPPED_READ_ONLY" : "DETECTED",
-      };
+      // Read package.json scripts for reporting only — never execute install/build/test/lint here.
+      const detectedCommands = await detectBaselineCommands(workspace.rootDir);
+      let baseline: Record<string, unknown>;
       if (!job.request.readOnly) {
-        job =
-          (await updateDeepScanStage(
-            jobId,
-            "BASELINE_VERIFICATION",
-            "Detecting baseline commands (execution deferred to twin-build worker)"
-          )) ?? job;
-        baseline = {
-          status: "COMMANDS_DETECTED",
-          ...(await detectBaselineCommands(workspace.rootDir)),
-          note:
-            "Full baseline install/typecheck/build runs in the isolated twin-build worker before PR delivery. This stage records detected commands only.",
-        };
+        if (!packageScriptsAllowed()) {
+          baseline = {
+            status: "SANDBOX_REQUIRED",
+            verification: "NOT_RUN",
+            ...detectedCommands,
+            note:
+              "Baseline install/typecheck/build/test were NOT executed. Untrusted sandbox is incomplete — no false build verification.",
+          };
+        } else {
+          job =
+            (await updateDeepScanStage(
+              jobId,
+              "BASELINE_VERIFICATION",
+              "Detecting baseline commands (execution deferred to twin-build worker)"
+            )) ?? job;
+          baseline = {
+            status: "COMMANDS_DETECTED",
+            verification: "NOT_RUN",
+            ...detectedCommands,
+            note:
+              "Full baseline install/typecheck/build runs in the isolated twin-build worker before PR delivery. This stage records detected commands only.",
+          };
+        }
       } else {
         baseline = {
-          status: "SKIPPED_READ_ONLY",
-          ...(await detectBaselineCommands(workspace.rootDir)),
+          status: "NOT_RUN",
+          verification: "SANDBOX_REQUIRED",
+          reason: "READ_ONLY_FINDINGS",
+          ...detectedCommands,
+          note:
+            "Read-only findings mode: archive, inventory, graph, and static analyzers only. npm install, lifecycle scripts, build, test, lint, and arbitrary package.json commands are prohibited.",
         };
       }
 

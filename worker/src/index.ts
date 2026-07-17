@@ -46,6 +46,25 @@ async function validateEnvironment(): Promise<void> {
     );
     process.exit(1);
   }
+
+  // First Meridian proof: fail closed for customer package scripts unless Docker isolation is COMPLETE.
+  const sandboxMode = process.env.REPODIET_UNTRUSTED_SANDBOX?.trim() || "off";
+  if (sandboxMode === "docker") {
+    const { refreshSandboxClassification } = await import("../../src/lib/sandbox/untrusted-runner");
+    const classification = await refreshSandboxClassification();
+    if (classification !== "COMPLETE") {
+      console.warn(
+        "REPODIET_UNTRUSTED_SANDBOX=docker but Docker isolation is incomplete — forcing fail-closed (off)."
+      );
+      process.env.REPODIET_UNTRUSTED_SANDBOX = "off";
+      delete process.env.REPODIET_DOCKER_SANDBOX;
+    }
+  } else {
+    process.env.REPODIET_UNTRUSTED_SANDBOX = sandboxMode === "off" ? "off" : sandboxMode;
+  }
+  console.log(
+    `Untrusted sandbox: ${process.env.REPODIET_UNTRUSTED_SANDBOX} (package scripts blocked unless COMPLETE)`
+  );
 }
 
 let shuttingDown = false;
@@ -62,6 +81,8 @@ async function startup(): Promise<{
   const apiBase = requireEnv("REPODIET_API_BASE_URL");
   const apiKey = requireEnv("WORKER_API_KEY");
   const workerId = process.env.WORKER_ID?.trim() || `worker_${process.pid}`;
+  const workerHost =
+    process.env.WORKER_HOST?.trim() || process.env.HOSTNAME?.trim() || "production-worker";
 
   const gitVersion = await readVersion("git", ["--version"]);
   const nodeVersion = process.version;
@@ -72,16 +93,20 @@ async function startup(): Promise<{
   console.log(`Node version: ${nodeVersion}`);
   console.log(`npm version: ${npmVersion}`);
   console.log(`Worker ID: ${workerId}`);
+  console.log(`Worker host: ${workerHost}`);
   console.log(`API base URL: ${apiBase}`);
   console.log("Queue connection: passed");
-  console.log("Job types: repository_cleanup + deep_scan");
+  console.log("Job types: deep_scan (read-only findings) + repository_cleanup");
+  console.log(
+    "Safety: read-only findings allow archive/inventory/graph/analyzers; npm install/build/test/lint/package scripts are blocked until Docker sandbox is COMPLETE."
+  );
 
   await registerWorker(apiBase, apiKey, {
     workerId,
     gitVersion,
     nodeVersion,
     npmVersion,
-    hostname: process.env.HOSTNAME ?? "production-worker",
+    hostname: workerHost,
   });
 
   console.log("Worker polling active");

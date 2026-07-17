@@ -1,7 +1,7 @@
-# RepoDiet staging/production always-on worker (Render Background Worker)
+# RepoDiet production always-on worker (Render Background Worker — not a web service)
 services:
   - type: worker
-    name: repodiet-staging-worker
+    name: repodiet-production-worker
     runtime: docker
     dockerfilePath: worker/Dockerfile
     dockerContext: .
@@ -15,11 +15,11 @@ services:
       - key: WORKER_CALLBACK_SECRET
         sync: false
       - key: WORKER_ID
-        value: staging-render-1
+        value: render-prod-1
       - key: WORKER_VERSION
-        value: 2.1.0-claim-token
+        value: 2.1.0-readonly-findings
       - key: WORKER_HOST
-        value: render-staging-worker
+        value: render-production-worker
       - key: WORKER_POLL_MS
         value: "5000"
       - key: WORKER_HEARTBEAT_MS
@@ -28,5 +28,7 @@ services:
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
+      # Fail closed: package scripts / install / build / test blocked until Docker isolation is COMPLETE.
+      # Set to "docker" only after Docker isolation is verified on this host.
       - key: REPODIET_UNTRUSTED_SANDBOX
-        value: docker
+        value: "off"
