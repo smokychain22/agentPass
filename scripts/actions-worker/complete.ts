@@ -36,6 +36,30 @@ async function postIngest(apiBase: string, apiKey: string, jobId: string, body: 
   return json;
 }
 
+async function postIncident(
+  apiBase: string,
+  apiKey: string,
+  jobId: string,
+  body: Record<string, unknown>
+) {
+  const res = await fetch(`${apiBase}/api/internal/actions/deep-scans/${jobId}/incident`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+      ...(process.env.REPODIET_WORKER_CALLBACK_SECRET
+        ? { "x-worker-callback-secret": process.env.REPODIET_WORKER_CALLBACK_SECRET }
+        : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`incident callback failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
 async function main(): Promise<void> {
   if (process.env.INPUT_ALREADY_CLAIMED === "true") {
     console.log("ALREADY_CLAIMED — complete job no-op.");
@@ -47,6 +71,7 @@ async function main(): Promise<void> {
   const jobId = requireEnv("INPUT_JOB_ID");
   const claimToken = process.env.INPUT_CLAIM_TOKEN?.trim();
   const analyzeResult = process.env.INPUT_ANALYZE_RESULT?.trim() || "success";
+  const requestId = process.env.INPUT_REQUEST_ID?.trim();
 
   const bundlePath = path.join(WORK, "result-bundle.json");
   let bundle: Record<string, unknown> | null = null;
@@ -57,28 +82,17 @@ async function main(): Promise<void> {
   }
 
   if (!claimToken) {
-    // Claim job failed before emitting a token (or outputs were lost). Do not leave the
-    // durable job stuck in DISPATCHED/CLAIMED forever — report a retryable failure via supersede.
-    const failRes = await fetch(`${apiBase}/api/internal/actions/deep-scans/${jobId}/supersede`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-        ...(process.env.REPODIET_WORKER_CALLBACK_SECRET
-          ? { "x-worker-callback-secret": process.env.REPODIET_WORKER_CALLBACK_SECRET }
-          : {}),
-      },
-      body: JSON.stringify({
-        reason: "CLAIM_OUTPUT_MISSING",
-        detail: `analyzeResult=${analyzeResult}; claim token missing from claim job outputs`,
-      }),
+    // Claim itself failed — persist structured failure without requiring a claim token.
+    await postIncident(apiBase, apiKey, jobId, {
+      code: "CLAIM_OUTPUT_MISSING",
+      message: `Claim token missing from claim job outputs (analyzeResult=${analyzeResult}).`,
+      terminal: false,
+      requestId,
+      stage: "complete",
     });
-    if (!failRes.ok) {
-      throw new Error(`Missing claim token and supersede failed (${failRes.status})`);
-    }
     console.log(
       JSON.stringify({
-        event: "complete_claim_missing_superseded",
+        event: "complete_claim_missing_incident",
         jobId,
         analyzeResult,
       })
@@ -102,7 +116,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Progress through stages before READY for UI honesty.
   for (const stage of (bundle.stages as string[]) || []) {
     await postIngest(apiBase, apiKey, jobId, {
       workerId: WORKER_ID,
@@ -125,7 +138,13 @@ async function main(): Promise<void> {
     resultSummary: bundle.resultSummary,
   });
 
-  console.log(JSON.stringify({ event: "complete_ready", jobId, findingsId: (bundle.findings as { scanId?: string })?.scanId }));
+  console.log(
+    JSON.stringify({
+      event: "complete_ready",
+      jobId,
+      findingsId: (bundle.findings as { scanId?: string })?.scanId,
+    })
+  );
 }
 
 main().catch((err) => {

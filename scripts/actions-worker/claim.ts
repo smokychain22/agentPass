@@ -26,6 +26,32 @@ async function setOutput(name: string, value: string): Promise<void> {
   await fs.appendFile(out, `${name}=${value}\n`);
 }
 
+async function reportIncident(
+  apiBase: string,
+  apiKey: string,
+  jobId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  try {
+    await fetch(`${apiBase}/api/internal/actions/deep-scans/${jobId}/incident`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        ...(process.env.REPODIET_WORKER_CALLBACK_SECRET
+          ? { "x-worker-callback-secret": process.env.REPODIET_WORKER_CALLBACK_SECRET }
+          : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error(
+      "incident callback failed:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const apiKey = requireEnv("REPODIET_WORKER_API_KEY");
   const apiBase = requireEnv("INPUT_API_BASE_URL").replace(/\/$/, "");
@@ -33,6 +59,7 @@ async function main(): Promise<void> {
   const dispatchNonce = requireEnv("INPUT_DISPATCH_NONCE");
   const workflowRunId = process.env.INPUT_WORKFLOW_RUN_ID?.trim();
   const workflowRunUrl = process.env.INPUT_WORKFLOW_RUN_URL?.trim();
+  const requestId = process.env.INPUT_REQUEST_ID?.trim();
 
   await fs.mkdir(WORK, { recursive: true });
 
@@ -64,6 +91,7 @@ async function main(): Promise<void> {
     code?: string;
     claimToken?: string;
     error?: string;
+    missingFields?: string[];
     job?: {
       sourceCommit?: string;
       repoUrl?: string;
@@ -73,8 +101,15 @@ async function main(): Promise<void> {
       id?: string;
       repositoryOwner?: string;
       repositoryName?: string;
+      repositoryFullName?: string;
     };
-    archive?: { url?: string | null; sourceCommit?: string; maxBytes?: number };
+    archive?: {
+      strategy?: string;
+      url?: string | null;
+      sourceCommit?: string;
+      maxBytes?: number;
+      repositoryFullName?: string;
+    };
   };
 
   if (!res.ok || !json.ok) {
@@ -86,14 +121,22 @@ async function main(): Promise<void> {
       console.log("ALREADY_CLAIMED — exiting successfully (losing workflow).");
       return;
     }
+
+    await reportIncident(apiBase, apiKey, jobId, {
+      code: json.code || "CLAIM_EXCHANGE_FAILED",
+      message: json.error || `claim-exchange failed (${res.status})`,
+      terminal: json.code === "REPOSITORY_IDENTITY_INCOMPLETE",
+      workflowRunId,
+      workflowRunUrl,
+      requestId,
+      stage: "claim",
+    });
     throw new Error(json.error || `claim-exchange failed (${res.status})`);
   }
 
   const sourceCommit = json.job?.sourceCommit || json.archive?.sourceCommit || "";
   const archiveUrl = json.archive?.url || "";
 
-  // Persist claim outputs BEFORE archive download so complete can still ingest
-  // structured failures if the public zip fetch fails after a successful claim.
   if (json.claimToken) {
     console.log(`::add-mask::${json.claimToken}`);
   }
@@ -108,8 +151,18 @@ async function main(): Promise<void> {
   }
 
   if (!archiveUrl) {
+    await reportIncident(apiBase, apiKey, jobId, {
+      code: "ARCHIVE_PREPARATION_FAILED",
+      message:
+        "No public archive URL returned (repository identity incomplete or private archive not ready).",
+      terminal: false,
+      workflowRunId,
+      workflowRunUrl,
+      requestId,
+      stage: "archive",
+    });
     throw new Error(
-      "No archive URL returned (missing repository owner/name on job and repoUrl parse failed)."
+      "ARCHIVE_PREPARATION_FAILED: no public archive URL (identity incomplete or private archive required)."
     );
   }
 
@@ -119,13 +172,30 @@ async function main(): Promise<void> {
     redirect: "follow",
   });
   if (!archiveRes.ok || !archiveRes.body) {
+    await reportIncident(apiBase, apiKey, jobId, {
+      code: "ARCHIVE_DOWNLOAD_FAILED",
+      message: `Archive download failed (${archiveRes.status})`,
+      terminal: false,
+      workflowRunId,
+      workflowRunUrl,
+      requestId,
+      stage: "archive",
+    });
     throw new Error(`Archive download failed (${archiveRes.status})`);
   }
 
   const maxBytes = json.archive?.maxBytes ?? 100 * 1024 * 1024;
-  // Content-Length when present; otherwise stream with a hard cap via counter in pipeline consumer.
   const len = Number(archiveRes.headers.get("content-length") || "0");
   if (len > maxBytes) {
+    await reportIncident(apiBase, apiKey, jobId, {
+      code: "REPOSITORY_TOO_LARGE",
+      message: `Archive Content-Length ${len} exceeds ${maxBytes}`,
+      terminal: true,
+      workflowRunId,
+      workflowRunUrl,
+      requestId,
+      stage: "archive",
+    });
     throw new Error(`REPOSITORY_TOO_LARGE: archive Content-Length ${len} exceeds ${maxBytes}`);
   }
 
@@ -142,7 +212,6 @@ async function main(): Promise<void> {
   const manifest = {
     jobId,
     workerId: WORKER_ID,
-    // claimToken must NEVER appear in artifacts consumed by the untrusted analyze job.
     sourceCommit,
     repoUrl: json.job?.repoUrl,
     branch: json.job?.branch,
@@ -150,9 +219,11 @@ async function main(): Promise<void> {
     structureScanId: json.job?.structureScanId,
     repositoryOwner: json.job?.repositoryOwner,
     repositoryName: json.job?.repositoryName,
+    repositoryFullName: json.job?.repositoryFullName || json.archive?.repositoryFullName,
+    archiveStrategy: json.archive?.strategy || "PUBLIC_ARCHIVE",
     workflowRunId,
     workflowRunUrl,
-    requestId: process.env.INPUT_REQUEST_ID,
+    requestId,
   };
   await fs.writeFile(path.join(WORK, "job-manifest.json"), JSON.stringify(manifest, null, 2));
 
@@ -162,6 +233,8 @@ async function main(): Promise<void> {
       jobId,
       workerId: WORKER_ID,
       sourceCommit: manifest.sourceCommit,
+      repositoryFullName: manifest.repositoryFullName,
+      archiveStrategy: manifest.archiveStrategy,
       bytes: downloaded,
     })
   );

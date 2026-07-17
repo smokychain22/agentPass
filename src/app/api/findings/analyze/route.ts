@@ -17,6 +17,8 @@ import {
   storeDispatchNonce,
 } from "@/lib/github-actions/dispatch-nonce-store";
 import { touchMarketplaceHealth } from "@/lib/okx/marketplace-telemetry";
+import { repositoryTargetFromKnown } from "@/lib/repository/repository-target";
+import { RepositoryIdentityIncompleteError } from "@/lib/repository/repository-target";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -197,30 +199,61 @@ export async function POST(request: Request) {
     projectRoot,
   });
 
+  let repositoryTarget;
+  try {
+    repositoryTarget = repositoryTargetFromKnown({
+      owner: scan.repo.owner,
+      name: scan.repo.name,
+      branch,
+      sourceCommit,
+      projectRoot,
+      visibility: "public",
+      repositoryId: undefined,
+    });
+  } catch (err) {
+    if (err instanceof RepositoryIdentityIncompleteError) {
+      return NextResponse.json(
+        analysisError({
+          code: "REPOSITORY_IDENTITY_INCOMPLETE",
+          message: err.message,
+          retryable: false,
+          requestId,
+          structureScanId,
+          requiredAction: "RUN_STRUCTURE_SCAN",
+        }),
+        { status: 422 }
+      );
+    }
+    throw err;
+  }
+
   let job = await createDeepScanJob(
     {
-      repoUrl: scan.repo.url,
-      branch,
-      projectRoot,
-      sourceCommit,
+      repoUrl: repositoryTarget.repositoryUrl,
+      branch: repositoryTarget.branch,
+      projectRoot: repositoryTarget.projectRoot,
+      sourceCommit: repositoryTarget.sourceCommit,
       readOnly: true,
       requestedBy: `tenant:${tenantId}`,
       tenantId,
       structureScanId,
     },
-    { idempotencyKey }
+    { idempotencyKey, repositoryTarget }
   );
 
-  // Ensure claim-time archive fields are populated even for idempotent re-enqueues
-  // created before repositoryOwner/Name were written at job creation.
-  if (!job.repositoryOwner || !job.repositoryName) {
+  // Backfill identity on legacy idempotent jobs created before repositoryTarget existed.
+  if (!job.repositoryTarget || !job.repositoryOwner || !job.repositoryName) {
     job =
       (await updateDeepScanStage(job.id, job.stage, job.progress?.detail, {
-        repositoryOwner: scan.repo.owner,
-        repositoryName: scan.repo.name,
-        branch,
-        sourceCommit,
-        projectRoot,
+        repositoryTarget,
+        repositoryTargetId: `${repositoryTarget.repositoryFullName.toLowerCase()}@${repositoryTarget.sourceCommit}`,
+        repositoryOwner: repositoryTarget.repositoryOwner,
+        repositoryName: repositoryTarget.repositoryName,
+        repositoryFullName: repositoryTarget.repositoryFullName,
+        repositoryUrl: repositoryTarget.repositoryUrl,
+        branch: repositoryTarget.branch,
+        sourceCommit: repositoryTarget.sourceCommit,
+        projectRoot: repositoryTarget.projectRoot,
       })) ?? job;
   }
 

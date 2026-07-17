@@ -60,8 +60,13 @@ export interface DeepScanJob {
   progress: DeepScanProgress;
   request: DeepScanJobRequest;
   tenantId?: string;
+  /** Canonical server-owned repository identity — required before claim. */
+  repositoryTarget?: import("@/lib/repository/repository-target").RepositoryTarget;
+  repositoryTargetId?: string;
   repositoryOwner?: string;
   repositoryName?: string;
+  repositoryFullName?: string;
+  repositoryUrl?: string;
   branch?: string;
   sourceCommit?: string;
   projectRoot?: string;

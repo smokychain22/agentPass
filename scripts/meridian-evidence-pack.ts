@@ -189,8 +189,24 @@ async function main() {
       projectRoot: ".",
       readOnly: true,
       requestedBy: "meridian-evidence-pack",
+      tenantId: "script:meridian-evidence-pack",
     },
-    { idempotencyKey: `meridian-evidence:${sourceCommit}:${createdAt.slice(0, 16)}` }
+    {
+      idempotencyKey: `meridian-evidence:${sourceCommit}:${createdAt.slice(0, 16)}`,
+      allowIncompleteIdentity: sourceCommit === "UNKNOWN",
+      repositoryTarget:
+        sourceCommit !== "UNKNOWN"
+          ? (
+              await import("../src/lib/repository/repository-target")
+            ).repositoryTargetFromKnown({
+              owner: OWNER,
+              name: REPO,
+              branch: BRANCH,
+              sourceCommit,
+              projectRoot: ".",
+            })
+          : undefined,
+    }
   );
   const taskId = `dev_task_${deepJob.id}`;
   await setPersistentRecord("tasks", taskId, {

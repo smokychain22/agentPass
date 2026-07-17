@@ -62,8 +62,13 @@ async function main() {
       branch: "main",
       readOnly: true,
       requestedBy: "meridian-readonly-audit",
+      tenantId: "script:meridian-readonly-audit",
+      sourceCommit: "0000000000000000000000000000000000000001",
     },
-    { idempotencyKey: `meridian-audit:${new Date().toISOString().slice(0, 13)}` }
+    {
+      idempotencyKey: `meridian-audit:${new Date().toISOString().slice(0, 13)}`,
+      allowIncompleteIdentity: true,
+    }
   );
   console.log(`Deep scan job: ${deepJob.id}`);
 

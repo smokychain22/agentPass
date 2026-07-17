@@ -12,6 +12,8 @@ import {
   capacityQueuedResponse,
   getDeepScanCapacitySnapshot,
 } from "@/lib/deep-scan/capacity";
+import { repositoryTargetFromKnown } from "@/lib/repository/repository-target";
+import { RepositoryIdentityIncompleteError } from "@/lib/repository/repository-target";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -104,12 +106,20 @@ export async function POST(request: Request) {
 
   try {
     const capacityBefore = await getDeepScanCapacitySnapshot(tenant.tenantId);
+    const repositoryTarget = repositoryTargetFromKnown({
+      owner: intake.owner,
+      name: intake.name,
+      branch: intake.branch,
+      sourceCommit: tenant.sourceCommit || intake.sourceCommit,
+      projectRoot: intake.projectRoot,
+      visibility: intake.repositoryIsPublic ? "public" : "private",
+    });
     const job = await createDeepScanJob(
       {
-        repoUrl: intake.canonicalUrl,
-        branch: intake.branch,
-        projectRoot: intake.projectRoot,
-        sourceCommit: tenant.sourceCommit,
+        repoUrl: repositoryTarget.repositoryUrl,
+        branch: repositoryTarget.branch,
+        projectRoot: repositoryTarget.projectRoot,
+        sourceCommit: repositoryTarget.sourceCommit,
         a2aTaskId: body.a2aTaskId?.trim(),
         readOnly: body.readOnly !== false,
         requestedBy: `tenant:${tenant.tenantId}`,
@@ -118,9 +128,10 @@ export async function POST(request: Request) {
         okxBuyerId: tenant.okxBuyerId,
       },
       {
+        repositoryTarget,
         idempotencyKey:
           body.idempotencyKey?.trim() ||
-          `deep:${tenant.tenantId}:${intake.repository}:${tenant.sourceCommit}:${intake.projectRoot}`,
+          `deep:${tenant.tenantId}:${intake.repository}:${repositoryTarget.sourceCommit}:${intake.projectRoot}`,
       }
     );
 
