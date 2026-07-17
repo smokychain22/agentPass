@@ -1,0 +1,187 @@
+# Ephemeral free GitHub Actions analysis worker for RepoDiet.
+# Public repo → standard ubuntu-latest runners at $0 idle / $0 hosting.
+#
+# Security model:
+#   claim   (trusted)  — Worker API secrets; claim + archive artifact
+#   analyze (untrusted)— NO RepoDiet/OKX/Redis/signing secrets; static analysis only
+#   complete(trusted)  — Worker API secrets; ingest results; mark READY
+#
+# Does NOT push branches or create PRs.
+
+name: RepoDiet analysis worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: Durable deep-scan job id
+        required: true
+        type: string
+      requestId:
+        description: Client request id
+        required: true
+        type: string
+      dispatchNonce:
+        description: One-use dispatch nonce (not a secret credential)
+        required: true
+        type: string
+      environment:
+        description: production | preview | development
+        required: true
+        type: string
+        default: production
+      apiBaseUrl:
+        description: Public RepoDiet API origin
+        required: true
+        type: string
+
+concurrency:
+  group: repodiet-analysis-${{ inputs.jobId }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  claim:
+    name: claim
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      already_claimed: ${{ steps.exchange.outputs.already_claimed }}
+      claim_token: ${{ steps.exchange.outputs.claim_token }}
+      source_commit: ${{ steps.exchange.outputs.source_commit }}
+      archive_url: ${{ steps.exchange.outputs.archive_url }}
+    steps:
+      - name: Checkout RepoDiet tooling
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install RepoDiet deps (trusted tooling only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Claim job + download public archive
+        id: exchange
+        env:
+          REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
+          REPODIET_WORKER_CALLBACK_SECRET: ${{ secrets.REPODIET_WORKER_CALLBACK_SECRET }}
+          INPUT_JOB_ID: ${{ inputs.jobId }}
+          INPUT_REQUEST_ID: ${{ inputs.requestId }}
+          INPUT_DISPATCH_NONCE: ${{ inputs.dispatchNonce }}
+          INPUT_API_BASE_URL: ${{ inputs.apiBaseUrl }}
+          INPUT_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          INPUT_WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: npx tsx scripts/actions-worker/claim.ts
+
+      - name: Upload repository archive artifact
+        if: steps.exchange.outputs.already_claimed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-archive-${{ inputs.jobId }}
+          path: /tmp/repodiet-actions/archive.zip
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload sanitized job manifest
+        if: steps.exchange.outputs.already_claimed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-manifest-${{ inputs.jobId }}
+          path: /tmp/repodiet-actions/job-manifest.json
+          retention-days: 1
+
+  analyze:
+    name: analyze
+    needs: claim
+    if: needs.claim.outputs.already_claimed != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout RepoDiet tooling
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install RepoDiet deps (no customer secrets in env)
+        run: npm ci --no-audit --no-fund
+        # Intentionally do NOT pass REPODIET_WORKER_*, Redis, OKX, signing, or App keys.
+
+      - name: Download repository archive
+        uses: actions/download-artifact@v4
+        with:
+          name: repo-archive-${{ inputs.jobId }}
+          path: /tmp/repodiet-actions
+
+      - name: Download job manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: job-manifest-${{ inputs.jobId }}
+          path: /tmp/repodiet-actions
+
+      - name: Run read-only static analysis
+        env:
+          INPUT_JOB_ID: ${{ inputs.jobId }}
+          INPUT_SOURCE_COMMIT: ${{ needs.claim.outputs.source_commit }}
+          # Fail closed: never enable customer package scripts in this job.
+          REPODIET_UNTRUSTED_SANDBOX: "off"
+        run: npx tsx scripts/actions-worker/analyze.ts
+
+      - name: Upload result bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-result-${{ inputs.jobId }}
+          path: /tmp/repodiet-actions/result-bundle.json
+          retention-days: 1
+          if-no-files-found: error
+
+  complete:
+    name: complete
+    needs: [claim, analyze]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout RepoDiet tooling
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install RepoDiet deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Download result bundle (may be missing on analyze failure)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: analysis-result-${{ inputs.jobId }}
+          path: /tmp/repodiet-actions
+
+      - name: Ingest result or structured failure
+        env:
+          REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
+          REPODIET_WORKER_CALLBACK_SECRET: ${{ secrets.REPODIET_WORKER_CALLBACK_SECRET }}
+          INPUT_JOB_ID: ${{ inputs.jobId }}
+          INPUT_REQUEST_ID: ${{ inputs.requestId }}
+          INPUT_API_BASE_URL: ${{ inputs.apiBaseUrl }}
+          INPUT_CLAIM_TOKEN: ${{ needs.claim.outputs.claim_token }}
+          INPUT_ALREADY_CLAIMED: ${{ needs.claim.outputs.already_claimed }}
+          INPUT_ANALYZE_RESULT: ${{ needs.analyze.result }}
+        run: npx tsx scripts/actions-worker/complete.ts

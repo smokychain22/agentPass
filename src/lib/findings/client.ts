@@ -11,6 +11,9 @@ import { fetchPersistedFindings } from "@/lib/session/persist-session";
 export type FindingsPhase =
   | "idle"
   | "queued"
+  | "dispatching"
+  | "dispatched"
+  | "waiting_runner"
   | "claimed"
   | "inventory"
   | "resolving"
@@ -24,7 +27,10 @@ export type FindingsPhase =
 
 export const FINDINGS_STEPS: { phase: FindingsPhase; label: string }[] = [
   { phase: "queued", label: "Queued" },
-  { phase: "claimed", label: "Claimed by worker" },
+  { phase: "dispatching", label: "Starting secure analysis worker" },
+  { phase: "dispatched", label: "GitHub worker requested" },
+  { phase: "waiting_runner", label: "Waiting for GitHub Actions runner" },
+  { phase: "claimed", label: "Claimed by GitHub runner" },
   { phase: "inventory", label: "Inventory" },
   { phase: "resolving", label: "Resolving projects" },
   { phase: "graph", label: "Building graph" },
@@ -37,6 +43,9 @@ export const FINDINGS_STEPS: { phase: FindingsPhase; label: string }[] = [
 
 const STAGE_TO_PHASE: Record<string, FindingsPhase> = {
   QUEUED: "queued",
+  DISPATCHING: "dispatching",
+  DISPATCHED: "dispatched",
+  WAITING_FOR_RUNNER: "waiting_runner",
   CLAIMED: "claimed",
   INVENTORY: "inventory",
   RESOLVING_PROJECTS: "resolving",
@@ -50,6 +59,7 @@ const STAGE_TO_PHASE: Record<string, FindingsPhase> = {
   FAILED: "failed",
   FAILED_RETRYABLE: "failed",
   FAILED_TERMINAL: "failed",
+  CANCELLED: "failed",
 };
 
 export function mapDeepScanStageToPhase(stage: string): FindingsPhase {
@@ -79,6 +89,10 @@ export interface FindingsJobAccepted {
   stage: string;
   statusUrl: string;
   workerReady: boolean;
+  dispatcherReady?: boolean;
+  workerMode?: string;
+  workflowRunId?: string;
+  workflowRunUrl?: string;
   requestId: string;
   structureScanId: string;
   message?: string;
@@ -90,6 +104,10 @@ export interface FindingsJobProgress {
   status: string;
   stage: DeepScanStage | string;
   workerReady?: boolean;
+  dispatcherReady?: boolean;
+  workerMode?: string;
+  workflowRunId?: string;
+  workflowRunUrl?: string;
   claimedBy?: string;
   workerHost?: string;
   findingsId?: string;
@@ -101,6 +119,7 @@ export interface FindingsJobProgress {
   updatedAt?: string;
   completedAt?: string;
   sourceCommit?: string;
+  heartbeatAt?: string;
 }
 
 const ANALYSIS_JOB_STORAGE_KEY = "repodiet.analysisJob.v1";
@@ -219,6 +238,10 @@ export async function startDurableFindingsAnalysis(input: {
     stage: String(json.stage ?? "QUEUED"),
     statusUrl,
     workerReady: Boolean(json.workerReady),
+    dispatcherReady: Boolean(json.dispatcherReady),
+    workerMode: typeof json.workerMode === "string" ? json.workerMode : undefined,
+    workflowRunId: typeof json.workflowRunId === "string" ? json.workflowRunId : undefined,
+    workflowRunUrl: typeof json.workflowRunUrl === "string" ? json.workflowRunUrl : undefined,
     requestId: typeof json.requestId === "string" ? json.requestId : requestId,
     structureScanId: input.structureScanId,
     message: typeof json.message === "string" ? json.message : undefined,
@@ -292,17 +315,27 @@ export async function pollDurableFindingsJob(
       updatedAt: json.job.updatedAt,
       completedAt: json.job.completedAt,
       sourceCommit: json.job.sourceCommit,
+      workflowRunId: (json.job as { workflowRunId?: string }).workflowRunId,
+      workflowRunUrl: (json.job as { workflowRunUrl?: string }).workflowRunUrl,
+      workerMode: (json.job as { workerMode?: string }).workerMode,
+      heartbeatAt: (json.job as { heartbeatAt?: string }).heartbeatAt,
     };
     onProgress(progress);
 
     const stage = String(progress.stage);
-    if (stage === "QUEUED" || progress.status === "queued") {
+    if (
+      stage === "QUEUED" ||
+      stage === "DISPATCHING" ||
+      stage === "DISPATCHED" ||
+      stage === "WAITING_FOR_RUNNER" ||
+      progress.status === "queued"
+    ) {
       if (firstSeenQueuedAt == null) firstSeenQueuedAt = Date.now();
       if (Date.now() - firstSeenQueuedAt >= maxQueueWaitMs) {
         throw analysisError({
           code: "QUEUE_WAIT_EXCEEDED",
           message:
-            "No analysis worker claimed this job within the queue-wait budget. The durable job remains queued — resume later or cancel.",
+            "No GitHub Actions runner claimed this job within the queue-wait budget. The durable job remains queued — resume later or cancel.",
           retryable: true,
           requestId: createRequestId(),
           jobId: progress.jobId,

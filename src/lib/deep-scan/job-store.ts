@@ -244,41 +244,86 @@ export async function claimNextDeepScanJob(workerId: string): Promise<DeepScanJo
       });
       continue;
     }
-    const t = nowIso();
-    const claimToken = `claim_${nanoid(16)}`;
-    const nextStage: DeepScanStage = job.stage === "QUEUED" ? "CLAIMED" : job.stage;
-    const claimed: DeepScanJob = {
-      ...job,
-      status: "running",
-      stage: nextStage,
-      claimedBy: workerId,
-      claimToken,
-      claimedAt: t,
-      heartbeatAt: t,
-      leaseExpiresAt: leaseExpiresAt(),
-      workerHost: process.env.HOSTNAME?.trim() || process.env.WORKER_HOST?.trim(),
-      attemptCount: (job.attemptCount ?? 0) + 1,
-      updatedAt: t,
-      progress: {
-        stage: nextStage,
-        percent: stagePercent(nextStage),
-        detail: `Claimed by ${workerId}`,
-        updatedAt: t,
-      },
-      statusHistory: [
-        ...job.statusHistory,
-        {
-          stage: nextStage,
-          at: t,
-          detail: `claimed by ${workerId} token=${claimToken}`,
-        },
-      ],
-    };
-    await saveDeepScanJob(claimed);
-    await trackDeepScanActive(claimed.id, true);
-    return claimed;
+    return finalizeDeepScanClaim(job, workerId);
   }
   return undefined;
+}
+
+/**
+ * Claim a specific deep-scan job (GitHub Actions on-demand path).
+ * Losing concurrent workflows exit as alreadyClaimed when another runner won.
+ */
+export async function claimDeepScanJobById(
+  jobId: string,
+  workerId: string
+): Promise<
+  | { ok: true; job: DeepScanJob; alreadyClaimed: boolean }
+  | { ok: false; code: "NOT_FOUND" | "TERMINAL" | "CLAIMED_BY_OTHER" | "MAX_ATTEMPTS"; message: string }
+> {
+  await reclaimStaleDeepScanJobs();
+  const job = await getDeepScanJob(jobId);
+  if (!job) return { ok: false, code: "NOT_FOUND", message: "Deep-scan job not found." };
+  if (
+    job.stage === "READY" ||
+    job.stage === "COMPLETED" ||
+    job.stage === "CANCELLED" ||
+    job.stage === "FAILED_TERMINAL"
+  ) {
+    return { ok: false, code: "TERMINAL", message: `Job is terminal (${job.stage}).` };
+  }
+  if (job.claimedBy && job.leaseExpiresAt && Date.parse(job.leaseExpiresAt) > Date.now()) {
+    if (job.claimedBy === workerId) {
+      return { ok: true, job, alreadyClaimed: true };
+    }
+    return {
+      ok: false,
+      code: "CLAIMED_BY_OTHER",
+      message: "Job already claimed by another worker.",
+    };
+  }
+  if ((job.attemptCount ?? 0) >= DEEP_SCAN_MAX_ATTEMPTS) {
+    return { ok: false, code: "MAX_ATTEMPTS", message: "Deep scan exceeded retry budget." };
+  }
+  const claimed = await finalizeDeepScanClaim(job, workerId);
+  return { ok: true, job: claimed, alreadyClaimed: false };
+}
+
+async function finalizeDeepScanClaim(job: DeepScanJob, workerId: string): Promise<DeepScanJob> {
+  const t = nowIso();
+  const claimToken = `claim_${nanoid(16)}`;
+  const claimed: DeepScanJob = {
+    ...job,
+    status: "running",
+    stage: "CLAIMED",
+    claimedBy: workerId,
+    claimToken,
+    claimedAt: t,
+    heartbeatAt: t,
+    leaseExpiresAt: leaseExpiresAt(),
+    workerHost: workerId.includes("github-actions")
+      ? "github-actions/ubuntu-latest"
+      : process.env.WORKER_HOST?.trim() || process.env.HOSTNAME?.trim(),
+    workerMode: workerId.includes("github-actions") ? "github_actions_on_demand" : job.workerMode,
+    attemptCount: (job.attemptCount ?? 0) + 1,
+    updatedAt: t,
+    progress: {
+      stage: "CLAIMED",
+      percent: stagePercent("CLAIMED"),
+      detail: `Claimed by ${workerId}`,
+      updatedAt: t,
+    },
+    statusHistory: [
+      ...job.statusHistory,
+      {
+        stage: "CLAIMED",
+        at: t,
+        detail: `claimed by ${workerId}`,
+      },
+    ],
+  };
+  await saveDeepScanJob(claimed);
+  await trackDeepScanActive(claimed.id, true);
+  return claimed;
 }
 
 export async function heartbeatDeepScanJob(

@@ -43,6 +43,9 @@ import { isActionableFinding } from "@/lib/findings/actionability-signals";
 
 const LOADING: FindingsPhase[] = [
   "queued",
+  "dispatching",
+  "dispatched",
+  "waiting_runner",
   "claimed",
   "inventory",
   "resolving",
@@ -107,10 +110,12 @@ export function FindingsTab() {
           sourceCommit: session.scanResult?.repo.commitSha,
           onAccepted: (job) => {
             setAccepted(job);
-            if (!job.workerReady) {
+            if (job.dispatcherReady || job.workerMode === "github_actions_on_demand") {
+              show("info", "Starting secure analysis worker on GitHub Actions.");
+            } else if (!job.workerReady) {
               show(
                 "info",
-                "Queued — waiting for an analysis worker. You can refresh and return later."
+                "Queued — configure Actions dispatch to start a free GitHub analysis worker."
               );
             }
           },
@@ -224,9 +229,11 @@ export function FindingsTab() {
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
-                  {accepted && !accepted.workerReady && phase === "queued"
-                    ? "Queued…"
-                    : "Analyzing…"}
+                  {phase === "waiting_runner" || phase === "dispatched" || phase === "dispatching"
+                    ? "Starting worker…"
+                    : accepted && phase === "queued"
+                      ? "Queued…"
+                      : "Analyzing…"}
                 </>
               ) : findings ? (
                 "Re-run Findings"
@@ -263,10 +270,15 @@ export function FindingsTab() {
         {structureScanId ? ` · scan: ${structureScanId}` : ""}
       </p>
 
-      {accepted && !accepted.workerReady && isLoading && phase === "queued" && (
+      {accepted &&
+        isLoading &&
+        (phase === "dispatching" ||
+          phase === "dispatched" ||
+          phase === "waiting_runner" ||
+          (phase === "queued" && accepted.dispatcherReady)) && (
         <FeedbackBanner
           variant="info"
-          message="Queued — waiting for an analysis worker. Structure scan preserved. Refresh anytime to resume."
+          message="Starting secure analysis worker — waiting for GitHub Actions runner. Refresh anytime to resume."
           dismissible={false}
         />
       )}
@@ -275,9 +287,13 @@ export function FindingsTab() {
         <Panel variant="elevated" padding="md" className="space-y-3 border-border/60">
           <p className="ds-label">Durable analysis progress</p>
           <p className="text-sm font-medium text-foreground">
-            {accepted && !accepted.workerReady && (progress?.stage === "QUEUED" || phase === "queued")
-              ? "QUEUED — waiting for analysis worker"
-              : `Stage: ${progress?.stage ?? accepted?.stage ?? phase}`}
+            {phase === "waiting_runner" || progress?.stage === "WAITING_FOR_RUNNER"
+              ? "Waiting for GitHub Actions runner"
+              : phase === "dispatched" || progress?.stage === "DISPATCHED"
+                ? "GitHub worker requested"
+                : phase === "dispatching" || progress?.stage === "DISPATCHING"
+                  ? "Starting secure analysis worker"
+                  : `Stage: ${progress?.stage ?? accepted?.stage ?? phase}`}
           </p>
           <dl className="grid gap-2 text-sm sm:grid-cols-2">
             <div>
@@ -295,23 +311,25 @@ export function FindingsTab() {
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">workerReady</dt>
+              <dt className="text-muted-foreground">Worker mode</dt>
               <dd className="font-mono text-xs">
-                {accepted ? String(accepted.workerReady) : "—"}
+                {accepted?.workerMode ?? progress?.workerMode ?? "github_actions_on_demand"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">dispatcherReady</dt>
+              <dd className="font-mono text-xs">
+                {accepted ? String(Boolean(accepted.dispatcherReady ?? accepted.workerReady)) : "—"}
               </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Retryable</dt>
               <dd className="font-mono text-xs">
-                {accepted && !accepted.workerReady && (progress?.stage === "QUEUED" || phase === "queued")
-                  ? "true (queued — resume or cancel)"
-                  : error
-                    ? String(error.retryable)
-                    : "—"}
+                {error ? String(error.retryable) : "true (durable job)"}
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Elapsed queued</dt>
+              <dt className="text-muted-foreground">Elapsed</dt>
               <dd className="font-mono text-xs">
                 {progress?.createdAt
                   ? `${Math.max(0, Math.floor((Date.now() - Date.parse(progress.createdAt)) / 1000))}s`
@@ -320,6 +338,25 @@ export function FindingsTab() {
                     : "—"}
               </dd>
             </div>
+            {(progress?.workflowRunId || accepted?.workflowRunId) && (
+              <div className="sm:col-span-2">
+                <dt className="text-muted-foreground">Workflow run</dt>
+                <dd className="break-all font-mono text-xs">
+                  {progress?.workflowRunUrl || accepted?.workflowRunUrl ? (
+                    <a
+                      href={progress?.workflowRunUrl || accepted?.workflowRunUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      {progress?.workflowRunId || accepted?.workflowRunId}
+                    </a>
+                  ) : (
+                    progress?.workflowRunId || accepted?.workflowRunId
+                  )}
+                </dd>
+              </div>
+            )}
             <div className="sm:col-span-2">
               <dt className="text-muted-foreground">Status URL</dt>
               <dd className="break-all font-mono text-xs">{accepted?.statusUrl ?? "—"}</dd>

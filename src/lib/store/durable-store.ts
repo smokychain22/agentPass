@@ -101,6 +101,7 @@ export async function withDurableDb<T>(
       green_pr_receipts: {},
       repository_graphs: {},
       deep_scan_jobs: {},
+      actions_dispatch: {},
     };
     return fn(db);
   });
