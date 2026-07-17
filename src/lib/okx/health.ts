@@ -1,4 +1,5 @@
 import { resolveEntitlementMode } from "@/lib/entitlement/service";
+import { getLastStaleQueueReconciliationReport } from "@/lib/deep-scan/reconcile-stale";
 import { isOkxPaidMode } from "./entitlement";
 import { buildOperatorProfile } from "./operator-identity";
 import { listOkxServices } from "./services";
@@ -6,6 +7,7 @@ import { getMarketplaceHealthSnapshot } from "./marketplace-telemetry";
 
 export async function buildOkxHealthResponse() {
   const marketplace = await getMarketplaceHealthSnapshot();
+  const staleQueueReport = await getLastStaleQueueReconciliationReport();
   const heartbeatAgeSeconds =
     marketplace.workerHeartbeatAgeMs == null
       ? null
@@ -58,6 +60,35 @@ export async function buildOkxHealthResponse() {
       attestationSigner: marketplace.attestationSignerReadyReasons ?? [],
       checkedAt: marketplace.updatedAt,
     },
+    staleQueueReconciliation: staleQueueReport
+      ? {
+          checkedAt: staleQueueReport.checkedAt,
+          queueDepthBefore: staleQueueReport.queueDepthBefore,
+          queueDepthAfter: staleQueueReport.queueDepthAfter,
+          activeJobsBefore: staleQueueReport.activeJobsBefore,
+          activeJobsAfter: staleQueueReport.activeJobsAfter,
+          staleJobsReconciled: staleQueueReport.staleJobsReconciled,
+          completedEvidencePreserved: staleQueueReport.completedEvidencePreserved,
+          inspections: staleQueueReport.inspections.map((row) => ({
+            jobId: row.jobId,
+            repository: row.repository,
+            tenantOrOwner: row.tenantOrOwner,
+            taskType: row.taskType,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+            lastActivityAt: row.lastActivityAt,
+            currentStage: row.currentStage,
+            workflowRunId: row.workflowRunId,
+            workflowRunExists: row.workflowRunExists,
+            leaseStatus: row.leaseStatus,
+            belongsToCompletedScan: row.belongsToCompletedScan,
+            legacyIncidentJob: row.legacyIncidentJob,
+            safeRecommendedTransition: row.safeRecommendedTransition,
+            transitionApplied: row.transitionApplied,
+            reason: row.reason,
+          })),
+        }
+      : null,
     timestamp: new Date().toISOString(),
   };
 }
