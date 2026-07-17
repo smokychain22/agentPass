@@ -1,5 +1,11 @@
 import { durableNow, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
 import { QUICK_TRIAGE_TIMEOUT_MS } from "@/lib/a2mcp/quick-triage-budget";
+import type {
+  AttestationSignerReadinessReason,
+  GitHubAppReadinessReason,
+  ReceiptSignerReadinessReason,
+} from "@/lib/delivery/readiness";
+import { probeDeliveryReadiness } from "@/lib/delivery/readiness";
 
 export type MarketplaceTelemetryEvent =
   | "a2mcp_request_received"
@@ -29,9 +35,12 @@ export interface MarketplaceHealthSnapshot {
   workerReadySource: "authenticated_heartbeat" | "heartbeat" | "unset" | "github_actions_dispatcher";
   deepScanQueueReady: boolean;
   githubAppReady: boolean;
+  githubAppReadyReasons?: GitHubAppReadinessReason[];
   paymentVerifierReady: boolean;
   receiptSignerReady: boolean;
+  receiptSignerReadyReasons?: ReceiptSignerReadinessReason[];
   attestationSignerReady: boolean;
+  attestationSignerReadyReasons?: AttestationSignerReadinessReason[];
   queueDepth: number | null;
   activeWorkers: number;
   workerHeartbeatAgeMs: number | null;
@@ -159,15 +168,9 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
   const a2aIntakeReady = existing.a2aInitialResponseReady !== false;
   const probe = await probeActionsDispatcherHealth();
   const dispatcherReady = probe.dispatcherReady;
+  const deliveryReadiness = await probeDeliveryReadiness();
 
-  const githubAppReady = Boolean(
-    process.env.GITHUB_APP_ID?.trim() && process.env.GITHUB_APP_PRIVATE_KEY?.trim()
-  );
   const paymentVerifierReady = process.env.REQUIRE_REAL_X402 === "1";
-  const receiptSignerReady = Boolean(
-    process.env.RECEIPT_SIGNING_PRIVATE_KEY?.trim() || process.env.GREEN_PR_SIGNING_PRIVATE_KEY?.trim()
-  );
-  const attestationSignerReady = Boolean(process.env.GREEN_PR_SIGNING_PRIVATE_KEY?.trim());
 
   // Prefer ephemeral Actions dispatcher readiness when configured; daemon heartbeat is optional.
   const workerMode: MarketplaceHealthSnapshot["workerMode"] = dispatcherReady
@@ -198,10 +201,13 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
         : "unset",
     a2aRuntimeReady: a2aIntakeReady,
     deepScanQueueReady: existing.deepScanQueueReady !== false,
-    githubAppReady,
+    githubAppReady: deliveryReadiness.githubAppReady,
+    githubAppReadyReasons: deliveryReadiness.githubApp.reasons,
     paymentVerifierReady,
-    receiptSignerReady,
-    attestationSignerReady,
+    receiptSignerReady: deliveryReadiness.receiptSignerReady,
+    receiptSignerReadyReasons: deliveryReadiness.receiptSigner.reasons,
+    attestationSignerReady: deliveryReadiness.attestationSignerReady,
+    attestationSignerReadyReasons: deliveryReadiness.attestationSigner.reasons,
     queueDepth: capacity.queueDepth,
     activeWorkers,
     activeWorkflowRuns,

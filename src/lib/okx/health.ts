@@ -52,6 +52,12 @@ export async function buildOkxHealthResponse() {
     lastSuccessfulWorkerRun: marketplace.lastSuccessfulWorkerRun ?? null,
     recentDispatchSuccessRate: marketplace.recentDispatchSuccessRate ?? null,
     recentWorkerFailureRate: marketplace.recentWorkerFailureRate ?? null,
+    deliveryReadiness: {
+      githubApp: marketplace.githubAppReadyReasons ?? [],
+      receiptSigner: marketplace.receiptSignerReadyReasons ?? [],
+      attestationSigner: marketplace.attestationSignerReadyReasons ?? [],
+      checkedAt: marketplace.updatedAt,
+    },
     timestamp: new Date().toISOString(),
   };
 }

@@ -29,7 +29,7 @@ export function isGitHubAppConfigured(): boolean {
     readEnv("GITHUB_APP_ID") &&
       readEnv("GITHUB_APP_CLIENT_ID") &&
       readEnv("GITHUB_APP_CLIENT_SECRET") &&
-      readEnvAny(["GITHUB_APP_PRIVATE_KEY_BASE64", "REPODIET_OPERATOR_PRIVATE_KEY"]) &&
+      readEnvAny(["GITHUB_APP_PRIVATE_KEY_BASE64", "GITHUB_APP_PRIVATE_KEY"]) &&
       readEnv("GITHUB_APP_SLUG")
   );
 }
@@ -38,11 +38,7 @@ export function getGitHubAppConfig() {
   const appId = readEnv("GITHUB_APP_ID");
   const clientId = readEnv("GITHUB_APP_CLIENT_ID");
   const clientSecret = readEnv("GITHUB_APP_CLIENT_SECRET");
-  const privateKeyRaw = readEnvAny([
-    "GITHUB_APP_PRIVATE_KEY_BASE64",
-    "REPODIET_OPERATOR_PRIVATE_KEY",
-    "GITHUB_APP_PRIVATE_KEY",
-  ]);
+  const privateKeyRaw = readEnvAny(["GITHUB_APP_PRIVATE_KEY_BASE64", "GITHUB_APP_PRIVATE_KEY"]);
   const slug = readEnv("GITHUB_APP_SLUG");
 
   if (!appId || !clientId || !clientSecret || !privateKeyRaw || !slug) {
