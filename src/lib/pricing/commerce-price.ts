@@ -17,7 +17,13 @@ function formatUsdtLabel(amountMicro: string): string {
 
 export function resolveCommercePrice(
   operation: CommerceOperation,
-  options?: { sourceFileCount?: number }
+  options?: {
+    sourceFileCount?: number;
+    /** Dynamic amount from TransformationPlan quote engine (atomic micro units). */
+    dynamicAmountMicro?: string;
+    pathCount?: number;
+    proposedAction?: string;
+  }
 ): CommercePrice {
   switch (operation) {
     case "scan_repository":
@@ -49,13 +55,29 @@ export function resolveCommercePrice(
           amountUsdt: test.amountUsdt,
         };
       }
-      // Payable charge is exact. Negotiation hint is separate marketing metadata.
-      void options?.sourceFileCount;
+      // Prefer plan-bound dynamic quote when provided.
+      if (options?.dynamicAmountMicro && /^\d+$/.test(options.dynamicAmountMicro)) {
+        return {
+          amountMicro: options.dynamicAmountMicro,
+          priceLabel: formatUsdtLabel(options.dynamicAmountMicro),
+          amountUsdt: Number(options.dynamicAmountMicro) / 1_000_000,
+        };
+      }
+      // Fallback heuristic when no plan quote exists yet (never a universal fixed 1.00).
+      const paths = Math.max(1, options?.pathCount ?? options?.sourceFileCount ? 1 : 1);
+      const action = (options?.proposedAction ?? "DELETE").toUpperCase();
+      let micro =
+        250_000 + // base
+        150_000 * paths + // per path
+        200_000; // validation
+      if (action.includes("CONSOLIDATE") || action.includes("DUPLICATE")) micro += 750_000;
+      else if (action.includes("EDIT") || action.includes("CUSTOM")) micro += 300_000;
+      else micro += 100_000; // delete
+      const amountMicro = String(micro);
       return {
-        amountMicro: "1000000",
-        priceLabel: formatUsdtLabel("1000000"),
-        amountUsdt: 1,
-        negotiationHint: "negotiated reference default 1.00 USDT",
+        amountMicro,
+        priceLabel: formatUsdtLabel(amountMicro),
+        amountUsdt: micro / 1_000_000,
       };
     }
     case "repo_guard":

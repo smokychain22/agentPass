@@ -1,23 +1,26 @@
 /**
- * First controlled delivery preferences and hard rejects.
- * Prefer single-file unused deletes under src/unused/ only.
+ * Fail-closed cleanup authorization for unsafe scopes.
+ * Hard-rejects runtime/config/generated/route paths.
+ * Does not advertise internal test-only preferred paths to customers.
  */
 
-export const CONTROLLED_DELIVERY_PREFERRED_PATHS = [
-  "src/unused/empty-module.ts",
-  "src/unused/confirmed-unused.ts",
-] as const;
-
 const REJECT_PATH_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
-  { pattern: /(^|\/)config\//i, reason: "runtime/config hook" },
-  { pattern: /runtime-hook/i, reason: "runtime/config hook" },
+  { pattern: /(^|\/)config\//i, reason: "runtime/config path" },
+  { pattern: /runtime-hook/i, reason: "runtime/config path" },
   { pattern: /(^|\/)generated\//i, reason: "generated file" },
   { pattern: /\.generated\./i, reason: "generated file" },
   { pattern: /(^|\/)(app|pages)\//i, reason: "route/layout/page" },
+  { pattern: /src\/(app|pages)\//i, reason: "route/layout/page" },
   { pattern: /(route|layout|page)\.(t|j)sx?$/i, reason: "route/layout/page" },
   { pattern: /plugin|registry/i, reason: "plugin registry" },
   { pattern: /side[-_]?effect/i, reason: "side-effect registration" },
 ];
+
+/** @deprecated Internal test helper only — never show in Production customer UI. */
+export const CONTROLLED_DELIVERY_PREFERRED_PATHS = [
+  "src/unused/empty-module.ts",
+  "src/unused/confirmed-unused.ts",
+] as const;
 
 export function normalizeCleanupPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\.\//, "");
@@ -54,19 +57,16 @@ export function evaluateControlledDeliverySelection(paths: string[]): {
       allowed: false,
       preferred: false,
       rejected,
-      message: `Controlled delivery rejects ${rejected
+      message: `This cleanup scope is blocked for automatic Fix & PR: ${rejected
         .map((r) => `${r.path} (${r.reason})`)
-        .join("; ")}. Prefer ${CONTROLLED_DELIVERY_PREFERRED_PATHS.join(" or ")}.`,
+        .join("; ")}. Additional verification or a generator/config-aware plan is required.`,
     };
   }
 
-  const preferred = paths.every((path) => isControlledDeliveryPreferredPath(path));
   return {
     allowed: true,
-    preferred,
+    preferred: paths.every((path) => isControlledDeliveryPreferredPath(path)),
     rejected: [],
-    message: preferred
-      ? null
-      : `Selection is not the preferred first controlled path. Prefer ${CONTROLLED_DELIVERY_PREFERRED_PATHS.join(" or ")}.`,
+    message: null,
   };
 }
