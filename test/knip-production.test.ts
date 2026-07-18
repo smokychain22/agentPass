@@ -41,12 +41,16 @@ async function run() {
     assert.ok(result.report);
   });
 
-  await test("runKnip fails closed without package.json", async () => {
+  await test("runKnip uses import-graph fallback without package.json", async () => {
     const tmp = await fs.mkdtemp(path.join(process.cwd(), ".knip-test-"));
     try {
       const result = await runKnip(tmp);
-      assert.equal(result.status, "failed");
-      assert.equal(result.report, null);
+      // Phase 1: missing package.json skips native Knip and uses import-graph fallback.
+      // Fail-closed only when the fallback itself fails.
+      assert.equal(result.status, "fallback");
+      assert.equal(result.sourceMode, "fallback");
+      assert.ok(result.report);
+      assert.match(result.error ?? "", /import-graph fallback/i);
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }
