@@ -12,6 +12,7 @@ import { AnalyzerSourcesPanel } from "./findings/analyzer-sources-panel";
 import { RiskSummaryPanel } from "./findings/risk-summary-panel";
 import { FindingsWorkspace } from "./findings/findings-workspace";
 import { FindingsProgressionBanner } from "./findings/findings-progression-banner";
+import { RepositoryCoveragePanel } from "./findings/repository-coverage-panel";
 import { DeveloperToolsA2Mcp } from "@/components/app/developer-tools-a2mcp";
 import { RepositoryMap } from "./findings/repository-map";
 import { JsonExportCard } from "./findings/json-export";
@@ -573,6 +574,8 @@ export function FindingsTab() {
             onSelectAllSafe={selectAllSafeFindings}
             onClearSelection={clearFindingSelection}
           />
+
+          <RepositoryCoveragePanel coverage={findings.universalCoverage} />
 
           <SummaryCards payload={findings} />
 
