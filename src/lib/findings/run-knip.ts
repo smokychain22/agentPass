@@ -56,17 +56,43 @@ function parseKnipStdout(stdout: string): KnipRawReport | null {
 async function runKnipInternal(rootDir: string): Promise<AnalyzerRunResult<KnipRawReport>> {
   const started = Date.now();
   const pkgPath = path.join(rootDir, "package.json");
+  let hasPackageJson = true;
   try {
     await fs.access(pkgPath);
   } catch {
+    hasPackageJson = false;
     logAnalyzer("knip", "skip_no_package_json", { rootDir });
-    return finalizeAnalyzerResult<KnipRawReport>(
-      "knip",
-      "failed",
-      null,
-      "No package.json — Knip cannot run natively.",
-      Date.now() - started
-    );
+  }
+
+  // Missing package.json: skip native Knip and invoke import-graph fallback (audit defect C).
+  if (!hasPackageJson) {
+    try {
+      const fallbackReport = await runKnipFallback(rootDir);
+      logAnalyzer("knip", "fallback_invoked", {
+        rootDir,
+        reason: "no_package_json",
+        unusedFiles: fallbackReport.issues?.reduce((n, i) => n + (i.files?.length ?? 0), 0) ?? 0,
+        unusedDeps:
+          fallbackReport.issues?.reduce((n, i) => n + (i.dependencies?.length ?? 0), 0) ?? 0,
+      });
+      return finalizeAnalyzerResult(
+        "knip",
+        "fallback",
+        fallbackReport,
+        "No package.json — Knip native skipped; used import-graph fallback.",
+        Date.now() - started
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logAnalyzer("knip", "fallback_failed", { rootDir, error: message, reason: "no_package_json" });
+      return finalizeAnalyzerResult<KnipRawReport>(
+        "knip",
+        "failed",
+        null,
+        `No package.json — Knip cannot run natively. Fallback also failed: ${message}`,
+        Date.now() - started
+      );
+    }
   }
 
   const cli = knipCliPath();
