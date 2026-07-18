@@ -344,11 +344,15 @@ export function normalizeFindings(input: NormalizeInput): FindingsPayload {
   const duplicates =
     input.jscpd && input.jscpdResult.status === "ok"
       ? fromJscpd(input.jscpd, input.rootDir, "jscpd")
-      : [];
+      : input.jscpd && input.jscpdResult.status === "fallback"
+        ? fromJscpd(input.jscpd, input.rootDir, "jscpd_fallback")
+        : [];
   const orphans =
     input.madge && input.madgeResult.status === "ok"
       ? fromMadge(input.madge, input.rootDir, "madge")
-      : [];
+      : input.madge && input.madgeResult.status === "fallback"
+        ? fromMadge(input.madge, input.rootDir, "madge_fallback")
+        : [];
   const slopSignals = fromSlop(input.slop);
 
   const summary = buildSummary(

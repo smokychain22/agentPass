@@ -287,6 +287,8 @@ export interface FindingsPayload {
     scanId?: string;
   };
   scanIntelligence?: import("@/lib/scanner/intelligence-manifest").RepositoryIntelligenceManifest;
+  /** Phase 1 universal accounting — additive; absent on legacy scans. */
+  universalCoverage?: import("@/lib/coverage/types").UniversalCoverageReport;
   scanCoverageWarning?: string;
   repositoryModel?: {
     projects: Array<Record<string, unknown>>;

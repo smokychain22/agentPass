@@ -244,6 +244,48 @@ export async function runFindingsEngine(
       payload.repo = { ...payload.repo, commitSha: workspace.repo.commitSha };
     }
 
+    // Phase 1 universal accounting — pinned Git tree is authoritative; ZIP is materialization only.
+    const pinnedSha = payload.repo.commitSha;
+    if (pinnedSha) {
+      try {
+        const { runUniversalCoverage } = await import("@/lib/coverage/run-universal-coverage");
+        const jsTsSemanticSucceeded =
+          knipResult.status === "ok" ||
+          knipResult.status === "fallback" ||
+          jscpdResult.status === "ok" ||
+          jscpdResult.status === "fallback" ||
+          madgeResult.status === "ok" ||
+          madgeResult.status === "fallback";
+        payload.universalCoverage = await runUniversalCoverage({
+          owner: payload.repo.owner,
+          repository: payload.repo.name,
+          pinnedCommitSha: pinnedSha,
+          worktreeRoot: workspace.rootDir,
+          githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN,
+          repositoryId:
+            payload.repo.githubRepositoryId != null
+              ? String(payload.repo.githubRepositoryId)
+              : undefined,
+          jsTsSemanticSucceeded,
+        });
+        if (
+          payload.universalCoverage.accountingCoveragePercent < 100 &&
+          payload.universalCoverage.coverageVersion === "phase1"
+        ) {
+          payload.scanCoverageWarning =
+            payload.scanCoverageWarning ??
+            "Repository accounting is incomplete — inspect Repository Coverage for unreadable or mismatched paths.";
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const { legacyCoverageReport } = await import("@/lib/coverage/run-universal-coverage");
+        payload.universalCoverage = legacyCoverageReport();
+        payload.scanCoverageWarning =
+          payload.scanCoverageWarning ??
+          `Pinned-commit inventory unavailable (${message.slice(0, 160)}). Findings remain; accounting not claimed complete.`;
+      }
+    }
+
     onStage?.("complete");
     return payload;
   } finally {

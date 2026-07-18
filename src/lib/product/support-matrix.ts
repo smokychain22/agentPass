@@ -43,6 +43,7 @@ export interface RepositorySupportMatrix {
     universalLanguageSupport: false;
     semanticAnalysisOfBinaries: false;
     semanticAnalysisOfGeneratedBundles: false;
+    trackedPathAccountingPhase1: true;
   };
 }
 
@@ -85,6 +86,8 @@ export const REPOSITORY_SUPPORT_MATRIX: RepositorySupportMatrix = {
     universalLanguageSupport: false,
     semanticAnalysisOfBinaries: false,
     semanticAnalysisOfGeneratedBundles: false,
+    /** Phase 1: accounting coverage ≠ semantic support. */
+    trackedPathAccountingPhase1: true,
   },
 };
 
