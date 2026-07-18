@@ -104,7 +104,10 @@ test("fix PR lock copy distinguishes missing app config from repo authorization"
     selectedFindingIds: ["f1"],
     safeCandidateCount: 1,
   });
-  assert.match(missingConfig.title, /not configured/i);
+  // configured:false uses the delivery-unavailable copy (not a "connect GitHub" CTA).
+  assert.match(missingConfig.title, /temporarily unavailable/i);
+  assert.match(missingConfig.body ?? "", /cannot verify repository access/i);
+  assert.equal(missingConfig.primaryAction, undefined);
 
   const needsRepo = resolveFixPrUnlock({
     scanComplete: true,

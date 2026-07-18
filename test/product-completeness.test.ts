@@ -31,13 +31,16 @@ test("buyer explicitly approves proposed changes before PR creation", () => {
 });
 
 test("workspace step names describe user outcomes", () => {
+  // Labels live in the workflow step-state model; the rail renders step.title.
+  const steps = read("src/lib/workflow/step-states.ts");
   const rail = read("src/components/app/shell/workflow-rail.tsx");
+  assert.match(rail, /step\.title/);
   for (const label of [
     "Connect Repository",
     "Review Findings",
     "Create Cleanup PR",
     "Review & Accept",
   ]) {
-    assert.match(rail, new RegExp(label));
+    assert.match(steps, new RegExp(label));
   }
 });
