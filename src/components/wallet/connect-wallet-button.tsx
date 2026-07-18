@@ -19,26 +19,36 @@ export function ConnectWalletButton({
   const wallet = useOptionalWallet();
   if (!wallet) return null;
 
-  const { state, session, connect, disconnect, switchNetwork, networkLabel } = wallet;
+  const { state, session, connect, disconnect, switchNetwork, networkLabel, error } = wallet;
 
   if (state === "connecting" || state === "switching_network") {
     return (
-      <Button size={size} variant={variant} className={className} disabled>
-        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-        {state === "switching_network" ? "Switching…" : "Connecting…"}
-      </Button>
+      <div className={`space-y-1 ${className ?? ""}`}>
+        <Button size={size} variant={variant} disabled>
+          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+          {state === "switching_network" ? "Switching network…" : "Connecting wallet…"}
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          Approve or reject the request in your wallet. This stops automatically if it times out.
+        </p>
+      </div>
     );
   }
 
   if (state === "wrong_network") {
     return (
-      <Button size={size} variant="default" className={className} onClick={() => void switchNetwork()}>
-        Switch to {networkLabel}
-      </Button>
+      <div className={`space-y-1 ${className ?? ""}`}>
+        <Button size={size} variant="default" onClick={() => void switchNetwork()}>
+          Switch to {networkLabel}
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          RepoDiet payments use X Layer (chain 196).
+        </p>
+      </div>
     );
   }
 
-  if (session && (state === "connected" || state === "payment_pending" || state === "payment_verified")) {
+  if (session && (state === "connected" || state === "payment_pending" || state === "payment_verified" || state === "signature_requested" || state === "execution_started")) {
     return (
       <div className={`flex items-center gap-2 ${className ?? ""}`}>
         <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
@@ -52,9 +62,14 @@ export function ConnectWalletButton({
   }
 
   return (
-    <Button size={size} variant={variant} className={className} onClick={() => void connect()}>
-      <Wallet className="mr-2 h-3.5 w-3.5" />
-      Connect wallet
-    </Button>
+    <div className={`space-y-1 ${className ?? ""}`}>
+      <Button size={size} variant={variant} onClick={() => void connect()}>
+        <Wallet className="mr-2 h-3.5 w-3.5" />
+        Connect wallet
+      </Button>
+      {state === "failed" && error ? (
+        <p className="text-[11px] text-destructive">{error}</p>
+      ) : null}
+    </div>
   );
 }

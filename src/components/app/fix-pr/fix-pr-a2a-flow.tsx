@@ -50,6 +50,20 @@ import {
 import { isKnownBaselineInvalidCommit } from "@/lib/workflow/known-invalid-commits";
 import { exactChargeLabelFromMicro } from "@/lib/pricing/exact-amount";
 import { evaluateControlledDeliverySelection } from "@/lib/cleanup/controlled-delivery-scope";
+import { GITHUB_STATUS_TIMEOUT_MS, withTimeout } from "@/lib/wallet/with-timeout";
+import {
+  deliveryFailureRecovery,
+  deliveryProgressSteps,
+  deliveryUiPhase,
+} from "@/lib/workflow/delivery-progress";
+import {
+  findingFileName,
+  plainLanguageTitle,
+} from "@/lib/findings/plain-language";
+import {
+  loadPersistedSession,
+  savePersistedSession,
+} from "@/lib/session/persist-session";
 
 interface FixPrA2AFlowProps {
   repoUrl: string;
@@ -82,7 +96,14 @@ export function FixPrA2AFlow({
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baselineInvalid, setBaselineInvalid] = useState<BaselineInvalidUi | null>(null);
-  const { setPaymentState, customerMode, setCustomerMode } = useWallet();
+  const {
+    setPaymentState,
+    customerMode,
+    setCustomerMode,
+    session: walletSession,
+    isOnXLayer,
+    state: walletState,
+  } = useWallet();
   const cleanedReturnUrl = useRef(false);
   const githubBootstrapped = useRef<string | null>(null);
 
@@ -178,29 +199,41 @@ export function FixPrA2AFlow({
         const shouldSync = opts?.sync ?? pendingGrant;
 
         if (shouldSync) {
-          await syncGitHubRepositoryAccess({
-            repositoryFullName: repository,
-            branch,
-            scanId: findings.scanId,
-            commitSha,
-            installationId: opts?.installationId,
-            setupAction: opts?.setupAction,
-            trustPendingPropagation: opts?.trustPending ?? shouldSync,
-          });
+          await withTimeout(
+            syncGitHubRepositoryAccess({
+              repositoryFullName: repository,
+              branch,
+              scanId: findings.scanId,
+              commitSha,
+              installationId: opts?.installationId,
+              setupAction: opts?.setupAction,
+              trustPendingPropagation: opts?.trustPending ?? shouldSync,
+            }),
+            GITHUB_STATUS_TIMEOUT_MS,
+            "GitHub access sync timed out. Click Recheck GitHub access to try again."
+          );
         }
 
-        const authoritative = await fetchAuthoritativeRepositoryAccess({
-          owner: findings.repo.owner,
-          repo: findings.repo.name,
-          installationId: opts?.installationId,
-        });
+        const authoritative = await withTimeout(
+          fetchAuthoritativeRepositoryAccess({
+            owner: findings.repo.owner,
+            repo: findings.repo.name,
+            installationId: opts?.installationId,
+          }),
+          GITHUB_STATUS_TIMEOUT_MS,
+          "GitHub verification timed out. Click Recheck GitHub access to try again."
+        );
 
-        const status = await fetchRepositoryStatus({
-          repository,
-          branch,
-          commitSha,
-          installationId: opts?.installationId,
-        });
+        const status = await withTimeout(
+          fetchRepositoryStatus({
+            repository,
+            branch,
+            commitSha,
+            installationId: opts?.installationId,
+          }),
+          GITHUB_STATUS_TIMEOUT_MS,
+          "GitHub status check timed out. Click Recheck GitHub access to try again."
+        );
 
         setGithub({
           ...status,
@@ -212,6 +245,7 @@ export function FixPrA2AFlow({
           installationIdLast4: authoritative.installationIdLast4,
           checkedAt: authoritative.checkedAt,
         });
+        setGithubGrantError(null);
 
         if (
           authoritative.authoritativeState === "repository_verified" &&
@@ -221,6 +255,26 @@ export function FixPrA2AFlow({
         }
 
         return authoritative;
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Could not verify GitHub access.";
+        setGithubGrantError(message);
+        setGithub((prev) => ({
+          connected: false,
+          configured: prev?.configured ?? true,
+          repository,
+          owner: findings.repo.owner,
+          canRead: false,
+          canCreateBranch: false,
+          canCreatePullRequest: false,
+          commitSha,
+          messages: {
+            title: "GitHub check failed",
+            body: message,
+            primaryAction: "Recheck GitHub access",
+          },
+        }));
+        return null;
       } finally {
         if (!opts?.silent) {
           setGithubVerifying(false);
@@ -301,6 +355,10 @@ export function FixPrA2AFlow({
       });
       onTaskUpdate(task);
       setQuote(q);
+      const stored = loadPersistedSession();
+      if (stored && q) {
+        savePersistedSession({ ...stored, quoteId: q.quoteId, a2aTaskId: task.taskId });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to prepare quote.";
       setError(message);
@@ -404,6 +462,8 @@ export function FixPrA2AFlow({
   }, [commitSha, findings.repo.name, findings.repo.owner]);
 
   const showBaselineBlock = baselineInvalid ?? taskBaselineInvalid ?? pinnedBaselineInvalid;
+  const quoteExpired =
+    Boolean(quote?.expiresAt) && new Date(quote!.expiresAt!).getTime() <= Date.now();
   const hideRetryCleanup = Boolean(showBaselineBlock?.hideRetry);
   const hideQuoteButton = Boolean(showBaselineBlock?.hideQuoteButton);
 
@@ -452,6 +512,14 @@ export function FixPrA2AFlow({
 
   return (
     <div className="space-y-4">
+      <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <li>1. Connect repository</li>
+        <li>2. Review suggested cleanup</li>
+        <li>3. Select files</li>
+        <li>4. Review price</li>
+        <li>5. Pay and create PR</li>
+        <li>6. Review and merge on GitHub</li>
+      </ol>
       {!a2aTask && (
         <CustomerPathSelector mode={customerMode} onModeChange={setCustomerMode} />
       )}
@@ -556,20 +624,26 @@ export function FixPrA2AFlow({
             <dt className="text-muted-foreground">Source commit</dt>
             <dd className="font-mono">{commitSha ? `${commitSha.slice(0, 12)}…` : "—"}</dd>
           </div>
-          <div>
-            <dt className="text-muted-foreground">Selected scope</dt>
+          <div className="sm:col-span-2">
+            <dt className="text-muted-foreground">Selected cleanup</dt>
             <dd>
-              {selectedSafe.length} safe cleanup{selectedSafe.length === 1 ? "" : "s"}
-              {selectedSafe[0] ? (
-                <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                  {selectedSafe[0].id} · {selectedSafe[0].files[0]}
+              {selectedSafe.length === 0 ? (
+                <span className="text-destructive">
+                  No safe cleanup selected. Go back to Findings and select a file.
                 </span>
-              ) : null}
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {selectedSafe.map((f) => (
+                    <li key={f.id} className="text-sm">
+                      <span className="font-medium text-foreground">{plainLanguageTitle(f)}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {findingFileName(f)} · {f.files[0]}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">Provider</dt>
-            <dd>RepoDiet Cleanup Operator · A2A 32947 (direct-site channel)</dd>
           </div>
         </dl>
 
@@ -594,35 +668,42 @@ export function FixPrA2AFlow({
         {quote && (
           <dl className="mt-4 grid gap-2 rounded-md border border-electric/20 bg-electric/5 p-3 text-sm">
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Exact payable amount</dt>
-              <dd className="font-mono font-medium">
+              <dt className="text-muted-foreground">Price</dt>
+              <dd className="font-medium">
                 {exactChargeLabelFromMicro(quote.amountMicro, quote.currency || "USDT")}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Atomic amount</dt>
-              <dd className="font-mono text-xs">{quote.amountMicro} micro-USDT</dd>
+              <dt className="text-muted-foreground">Network</dt>
+              <dd>X Layer · USDT</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Network / asset</dt>
-              <dd className="font-mono">
-                {quote.network} · {quote.currency}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Payment model</dt>
-              <dd className="font-mono">direct (not OKX escrow)</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Recipient</dt>
-              <dd className="truncate font-mono text-xs">{quote.recipient}</dd>
+              <dt className="text-muted-foreground">Payment type</dt>
+              <dd>Direct payment (not escrow)</dd>
             </div>
             {quote.expiresAt && (
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Quote expires</dt>
-                <dd className="font-mono text-xs">{new Date(quote.expiresAt).toLocaleString()}</dd>
+                <dd className="text-xs">{new Date(quote.expiresAt).toLocaleString()}</dd>
               </div>
             )}
+            <details className="mt-1 text-xs text-muted-foreground">
+              <summary className="cursor-pointer text-electric">Advanced payment details</summary>
+              <dl className="mt-2 grid gap-1 font-mono">
+                <div className="flex justify-between gap-2">
+                  <dt>Atomic amount</dt>
+                  <dd>{quote.amountMicro}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>Recipient</dt>
+                  <dd className="truncate">{quote.recipient}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>Quote ID</dt>
+                  <dd className="truncate">{quote.quoteId}</dd>
+                </div>
+              </dl>
+            </details>
           </dl>
         )}
 
@@ -632,14 +713,74 @@ export function FixPrA2AFlow({
               <p className="font-medium text-foreground">
                 {workflowTaskStatusLabel(a2aTask.status)}
               </p>
-              <p className="font-mono text-xs text-muted-foreground">{a2aTask.taskId}</p>
+              <p className="text-xs text-muted-foreground">
+                {deliveryUiPhase({
+                  githubConnected: githubVerified,
+                  walletConnected: Boolean(walletSession?.address),
+                  walletOnCorrectNetwork: isOnXLayer,
+                  hasQuote: Boolean(quote),
+                  task: a2aTask,
+                }).replaceAll("_", " ")}
+              </p>
             </div>
+
+            {(executing ||
+              ["funded", "generating_changes", "validating_patch", "verifying", "creating_pull_request"].includes(
+                a2aTask.status
+              )) && (
+              <ol className="space-y-1.5 rounded-md border border-border/40 bg-background/40 p-3 text-xs">
+                {deliveryProgressSteps(a2aTask).map((step) => (
+                  <li
+                    key={step.id}
+                    className={
+                      step.done
+                        ? "text-signal"
+                        : step.active
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {step.done ? "✓ " : step.active ? "→ " : "· "}
+                    {step.label}
+                    {step.active && executing ? (
+                      <Loader2 className="ml-2 inline h-3 w-3 animate-spin" />
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            )}
+
             {executing && (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>RepoDiet is applying and verifying your selected cleanup scope. This can take a few minutes on large repositories.</span>
+                <span>
+                  RepoDiet is working on your selected files. This can take a few minutes — you can
+                  refresh; progress is saved.
+                </span>
               </div>
             )}
+
+            {(() => {
+              const recovery = deliveryFailureRecovery(a2aTask);
+              if (!recovery) return null;
+              return (
+                <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+                  <p className="font-medium text-destructive">What failed</p>
+                  <p className="text-xs text-muted-foreground">{recovery.whatFailed}</p>
+                  <ul className="list-inside list-disc text-xs text-muted-foreground">
+                    <li>Payment confirmed: {recovery.paymentConfirmed ? "Yes" : "No"}</li>
+                    <li>
+                      Repository files changed on main:{" "}
+                      {recovery.repositoryFilesChanged ? "Yes" : "No (only a PR branch if created)"}
+                    </li>
+                    <li>Branch or PR exists: {recovery.branchOrPrExists ? "Yes" : "No"}</li>
+                    <li>Safe to retry without paying again: {recovery.retrySafe ? "Yes" : "No"}</li>
+                  </ul>
+                  <p className="text-xs text-foreground">{recovery.nextStep}</p>
+                </div>
+              );
+            })()}
+
             {a2aTask.status === "awaiting_approval" && (
               <div className="space-y-3 rounded-md border border-electric/25 bg-electric/5 p-3">
                 <div>
@@ -794,12 +935,20 @@ export function FixPrA2AFlow({
         {error && !showBaselineBlock && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {customerMode === "direct" && !quote && !hideQuoteButton && (
+          {customerMode === "direct" && (!quote || quoteExpired) && !hideQuoteButton && (
             <Button onClick={startQuote} disabled={loading || !githubVerified || selectedSafe.length === 0}>
-              {loading ? <Loader2 className="animate-spin" /> : scopeReviewed ? "Refresh quote" : "Review cleanup scope"}
+              {loading ? (
+                <Loader2 className="animate-spin" />
+              ) : quoteExpired ? (
+                "Generate fresh quote"
+              ) : scopeReviewed ? (
+                "Refresh quote"
+              ) : (
+                "Review cleanup scope"
+              )}
             </Button>
           )}
-          {customerMode === "direct" && quote && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
+          {customerMode === "direct" && quote && !quoteExpired && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
             <PaymentAuthorizationPanel
               quote={quote}
               loading={loading}

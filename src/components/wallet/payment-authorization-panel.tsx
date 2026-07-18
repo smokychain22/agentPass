@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { ConnectWalletButton } from "@/components/wallet/connect-wallet-button";
 import { useWallet } from "@/components/wallet/wallet-provider";
 import { sendUsdtPayment } from "@/lib/wallet/erc20-transfer";
+import { readErc20BalanceMicro } from "@/lib/wallet/eip1193-provider";
 import { shortenAddress } from "@/lib/wallet/chain-config";
+import { X402_ASSET } from "@/lib/payment/constants";
 import type { WorkflowQuote } from "@/lib/workflow/client";
 import {
   createTestPaymentReference,
@@ -19,6 +21,7 @@ import {
   exactChargeLabelFromMicro,
   formatExactUsdtFromMicro,
 } from "@/lib/pricing/exact-amount";
+import { loadPersistedSession, savePersistedSession } from "@/lib/session/persist-session";
 
 interface PaymentAuthorizationPanelProps {
   quote: WorkflowQuote;
@@ -59,6 +62,8 @@ export function PaymentAuthorizationPanel({
   const [localError, setLocalError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [simulated, setSimulated] = useState(false);
+  const [usdtBalanceMicro, setUsdtBalanceMicro] = useState<bigint | null>(null);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   const exact = useMemo(
     () => formatExactUsdtFromMicro(quote.amountMicro, { currency: quote.currency || "USDT" }),
@@ -83,6 +88,48 @@ export function PaymentAuthorizationPanel({
       setPayerInput(session.address);
     }
   }, [session?.address]);
+
+  useEffect(() => {
+    if (!session?.address || !isOnXLayer) {
+      setUsdtBalanceMicro(null);
+      setBalanceError(null);
+      return;
+    }
+    let cancelled = false;
+    void readErc20BalanceMicro({
+      owner: session.address,
+      tokenAddress: quote.assetContract || X402_ASSET,
+    })
+      .then((balance) => {
+        if (!cancelled) {
+          setUsdtBalanceMicro(balance);
+          setBalanceError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setUsdtBalanceMicro(null);
+          setBalanceError(
+            err instanceof Error ? err.message : "Could not read USDT balance."
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.address, isOnXLayer, quote.assetContract, quote.quoteId]);
+
+  const quoteExpired =
+    Boolean(quote.expiresAt) && new Date(quote.expiresAt!).getTime() <= Date.now();
+  const requiredMicro = BigInt(quote.amountMicro || "0");
+  const insufficientBalance =
+    usdtBalanceMicro !== null && usdtBalanceMicro < requiredMicro;
+
+  const persistQuoteId = () => {
+    const stored = loadPersistedSession();
+    if (!stored) return;
+    savePersistedSession({ ...stored, quoteId: quote.quoteId });
+  };
 
   const handlePreviewSimulate = () => {
     if (authorizationBlocked) {
@@ -127,6 +174,10 @@ export function PaymentAuthorizationPanel({
       setLocalError(authorizationBlockReason || "Payment authorization is blocked for this scope.");
       return;
     }
+    if (quoteExpired) {
+      setLocalError("This quote expired. Generate a fresh quote, then pay again.");
+      return;
+    }
     setLocalError(null);
 
     if (!session?.address) {
@@ -137,17 +188,33 @@ export function PaymentAuthorizationPanel({
       await switchNetwork();
       return;
     }
+    if (insufficientBalance) {
+      setLocalError(
+        `Insufficient USDT. Need ${displayAmount}; wallet balance is too low on X Layer.`
+      );
+      return;
+    }
 
-    setPaymentState("signature_requested");
     try {
       const payer = normalizeWalletAddress(session.address);
       storePayerWallet(payer);
-      const { txHash: hash } = await sendUsdtPayment({
-        from: payer,
-        to: quote.recipient,
-        amountMicro: quote.amountMicro,
-      });
-      setTxHash(hash);
+      persistQuoteId();
+
+      // Safe retry: if a transfer was already submitted, reuse the hash — do not pay twice.
+      let hash = txHash;
+      if (!hash) {
+        setPaymentState("signature_requested");
+        const sent = await sendUsdtPayment({
+          from: payer,
+          to: quote.recipient,
+          amountMicro: quote.amountMicro,
+          tokenAddress: quote.assetContract || X402_ASSET,
+          chainId: quote.chainId ?? 196,
+        });
+        hash = sent.txHash;
+        setTxHash(hash);
+      }
+
       setPaymentState("payment_pending");
       await onAuthorize({
         payer,
@@ -163,51 +230,54 @@ export function PaymentAuthorizationPanel({
   };
 
   const quoteDetails = (
-    <dl className="grid gap-1 rounded-md border border-border/40 bg-background/30 p-3 text-xs">
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Exact amount</dt>
-        <dd className="font-mono font-medium text-foreground">{displayAmount}</dd>
-      </div>
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Atomic amount</dt>
-        <dd className="font-mono">
-          {exact.amountMicro} (decimals {exact.decimals})
-        </dd>
-      </div>
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Quote ID</dt>
-        <dd className="font-mono">{quote.quoteId}</dd>
-      </div>
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Network / chain</dt>
-        <dd className="font-mono">
-          {quote.network}
-          {quote.chainId ? ` · chainId ${quote.chainId}` : ""}
-        </dd>
-      </div>
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Asset contract</dt>
-        <dd className="truncate font-mono">{quote.assetContract ?? "USDT on quote network"}</dd>
-      </div>
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Recipient</dt>
-        <dd className="truncate font-mono">{quote.recipient}</dd>
-      </div>
-      {quote.expiresAt && (
+    <details className="rounded-md border border-border/40 bg-background/30 p-3 text-xs">
+      <summary className="cursor-pointer font-medium text-electric">Advanced payment details</summary>
+      <dl className="mt-2 grid gap-1">
         <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">Expires</dt>
-          <dd className="font-mono">{new Date(quote.expiresAt).toLocaleString()}</dd>
+          <dt className="text-muted-foreground">Exact amount</dt>
+          <dd className="font-mono font-medium text-foreground">{displayAmount}</dd>
         </div>
-      )}
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Payment model</dt>
-        <dd className="font-mono">direct (not OKX escrow)</dd>
-      </div>
-      <div className="flex justify-between gap-2">
-        <dt className="text-muted-foreground">Transactions</dt>
-        <dd>one ERC-20 transfer (approve may be separate if allowance is zero)</dd>
-      </div>
-    </dl>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Atomic amount</dt>
+          <dd className="font-mono">
+            {exact.amountMicro} (decimals {exact.decimals})
+          </dd>
+        </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Quote ID</dt>
+          <dd className="font-mono">{quote.quoteId}</dd>
+        </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Network / chain</dt>
+          <dd className="font-mono">
+            {quote.network}
+            {quote.chainId ? ` · chainId ${quote.chainId}` : ""}
+          </dd>
+        </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Asset contract</dt>
+          <dd className="truncate font-mono">{quote.assetContract ?? "USDT on quote network"}</dd>
+        </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Recipient</dt>
+          <dd className="truncate font-mono">{quote.recipient}</dd>
+        </div>
+        {quote.expiresAt && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-muted-foreground">Expires</dt>
+            <dd className="font-mono">{new Date(quote.expiresAt).toLocaleString()}</dd>
+          </div>
+        )}
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Payment model</dt>
+          <dd className="font-mono">direct (not OKX escrow)</dd>
+        </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Transactions</dt>
+          <dd>one ERC-20 transfer (approve may be separate if allowance is zero)</dd>
+        </div>
+      </dl>
+    </details>
   );
 
   if (previewDryRun) {
@@ -303,49 +373,97 @@ export function PaymentAuthorizationPanel({
     );
   }
 
+  const walletReady = Boolean(session?.address && isOnXLayer);
   const liveLabel =
     authorizationBlocked
       ? "Payment blocked — fix cleanup scope"
-      : state === "disconnected" || state === "failed"
-        ? "Connect wallet to authorize"
-        : state === "wrong_network"
-          ? "Switch to X Layer"
-          : session?.address && isOnXLayer
-            ? exact.authorizeButtonLabel
-            : "Review payment";
+      : quoteExpired
+        ? "Quote expired — refresh quote"
+        : insufficientBalance
+          ? "Insufficient USDT"
+          : state === "disconnected" || state === "failed"
+            ? "Connect wallet first"
+            : state === "wrong_network"
+              ? "Switch to X Layer first"
+              : state === "connecting" || state === "switching_network"
+                ? "Waiting for wallet…"
+                : txHash
+                  ? "Confirm submitted payment"
+                  : walletReady
+                    ? exact.authorizeButtonLabel
+                    : "Connect wallet first";
+
+  const canAuthorize =
+    walletReady &&
+    !authorizationBlocked &&
+    !loading &&
+    !quoteExpired &&
+    !insufficientBalance &&
+    state !== "payment_pending" &&
+    state !== "signature_requested" &&
+    state !== "connecting" &&
+    state !== "switching_network";
+
+  const balanceLabel =
+    usdtBalanceMicro === null
+      ? null
+      : `${formatExactUsdtFromMicro(usdtBalanceMicro.toString(), {
+          currency: quote.currency || "USDT",
+        }).amountDisplay} ${quote.currency || "USDT"}`;
 
   return (
     <div className="mt-4 w-full space-y-3">
       <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Direct X Layer payment (website channel)</p>
+        <p className="font-medium text-foreground">Pay {displayAmount} to start cleanup</p>
         <p className="mt-1">
-          Connect your wallet on X Layer. It will send exactly <span className="font-mono text-foreground">{displayAmount}</span>{" "}
-          to <span className="font-mono text-xs">{quote.recipient}</span>. RepoDiet verifies the
-          transfer on-chain before cleanup starts.
+          Connect your wallet on X Layer (chain 196). RepoDiet will request exactly{" "}
+          <span className="font-mono text-foreground">{displayAmount}</span>, then verify the
+          transfer on-chain before changing any files.
         </p>
         <p className="mt-2 text-xs">
-          This website Fix &amp; PR path is a <strong className="text-foreground">direct payment</strong> to
-          RepoDiet — not OKX marketplace escrow. OKX.AI A2A (service 32947) uses a separate escrow +
-          buyer-acceptance lifecycle. Direct-site funds are not automatically reversed if cleanup fails;
-          see <span className="font-mono">docs/direct-site-payment-policy.md</span>.
+          This is a <strong className="text-foreground">direct payment</strong> to RepoDiet (website
+          channel), not OKX marketplace escrow.
         </p>
       </div>
 
       {quoteDetails}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-foreground">1. Connect wallet</p>
         <ConnectWalletButton />
         {session && isOnXLayer && (
-          <span className="font-mono text-xs text-muted-foreground">
-            Payer: {shortenAddress(session.address)}
-          </span>
+          <p className="font-mono text-xs text-muted-foreground">
+            Ready · payer {shortenAddress(session.address)} · X Layer
+            {balanceLabel ? ` · balance ${balanceLabel}` : ""}
+          </p>
         )}
+        {balanceError ? <p className="text-xs text-destructive">{balanceError}</p> : null}
+        {insufficientBalance ? (
+          <p className="text-sm text-destructive">
+            Insufficient USDT for {displayAmount}. Add funds on X Layer, then try again.
+          </p>
+        ) : null}
+        {quoteExpired ? (
+          <p className="text-sm text-destructive">
+            This quote expired. Use “Refresh quote” above, then authorize payment again.
+          </p>
+        ) : null}
+        {wallet?.error && (state === "failed" || state === "wrong_network") ? (
+          <p className="text-sm text-destructive">{wallet.error}</p>
+        ) : null}
       </div>
 
       {txHash && (
-        <p className="font-mono text-xs text-muted-foreground">
-          Tx: {txHash.slice(0, 10)}…{txHash.slice(-8)}
-        </p>
+        <div className="rounded-md border border-border/40 bg-background/40 p-2 text-xs">
+          <p className="font-medium text-foreground">
+            {state === "payment_verified" || state === "execution_started"
+              ? "Payment confirmed"
+              : "Payment submitted — waiting for confirmation"}
+          </p>
+          <p className="mt-1 font-mono text-muted-foreground">
+            Tx: {txHash.slice(0, 10)}…{txHash.slice(-8)}
+          </p>
+        </div>
       )}
 
       {authorizationBlocked && (
@@ -355,26 +473,33 @@ export function PaymentAuthorizationPanel({
       )}
       {localError && <p className="text-sm text-destructive">{localError}</p>}
 
-      <Button
-        onClick={() => {
-          void handleLiveAuthorize().catch(() => undefined);
-        }}
-        disabled={
-          loading ||
-          authorizationBlocked ||
-          state === "payment_pending" ||
-          state === "signature_requested"
-        }
-      >
-        {loading || state === "payment_pending" || state === "signature_requested" ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            {state === "signature_requested" ? "Confirm in wallet…" : "Verifying payment…"}
-          </>
-        ) : (
-          liveLabel
-        )}
-      </Button>
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-foreground">2. Authorize payment</p>
+        <Button
+          onClick={() => {
+            void handleLiveAuthorize().catch(() => undefined);
+          }}
+          disabled={!canAuthorize}
+        >
+          {loading || state === "payment_pending" || state === "signature_requested" ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {state === "signature_requested"
+                ? "Confirm in wallet…"
+                : state === "payment_pending"
+                  ? "Payment submitted — confirming…"
+                  : "Working…"}
+            </>
+          ) : (
+            liveLabel
+          )}
+        </Button>
+        {!walletReady && !authorizationBlocked ? (
+          <p className="text-[11px] text-muted-foreground">
+            The authorize button stays disabled until your wallet is connected on X Layer.
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

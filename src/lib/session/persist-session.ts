@@ -3,6 +3,8 @@ const STORAGE_KEY = "repodiet.session.v1";
 export interface PersistedSession {
   repoUrl: string;
   branch: string;
+  /** Pinned repository commit from the findings scan. */
+  pinnedCommitSha?: string;
   scanId?: string;
   scanRecordId?: string;
   scanComplete: boolean;
@@ -10,6 +12,8 @@ export interface PersistedSession {
   selectedFindingIds: string[];
   /** Alias persisted for clarity; mirrors selectedFindingIds when present. */
   cleanupSelectedFindingIds?: string[];
+  /** Human-readable paths for the cleanup selection (for Fix & PR restore). */
+  selectedFiles?: string[];
   /** REVIEW FIRST IDs selected for deeper verification — never cleanup. */
   reviewSelectedFindingIds?: string[];
   /** DO NOT TOUCH IDs selected for inspection/reporting only. */
@@ -17,6 +21,8 @@ export interface PersistedSession {
   patchKitId?: string;
   cleanupRunId?: string;
   a2aTaskId?: string;
+  /** Bound quote for the in-progress Fix & PR delivery. */
+  quoteId?: string;
   scopeReviewed?: boolean;
   selectedProjectRoot?: string;
   projectRootConfirmed?: boolean;
@@ -42,7 +48,13 @@ export function loadPersistedSession(): PersistedSession | null {
 export function savePersistedSession(session: PersistedSession): void {
   const storage = readStorage();
   if (!storage) return;
-  storage.setItem(STORAGE_KEY, JSON.stringify(session));
+  // Preserve quoteId across partial session writes that omit it.
+  const previous = loadPersistedSession();
+  const merged: PersistedSession = {
+    ...session,
+    quoteId: session.quoteId ?? previous?.quoteId,
+  };
+  storage.setItem(STORAGE_KEY, JSON.stringify(merged));
 }
 
 export function clearPersistedSession(): void {

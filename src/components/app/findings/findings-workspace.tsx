@@ -11,12 +11,7 @@ import { FindingDetail } from "./finding-detail";
 import { FindingsAccordion } from "./findings-accordion";
 import {
   actionLabel,
-  confidenceTierLabel,
-  confidenceTierVariant,
-  formatFindingAnalyzerLabel,
-  findingTarget,
   sortFindingsByPriority,
-  typeLabel,
 } from "../findings/findings-utils";
 import { cn } from "@/lib/utils";
 import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
@@ -25,6 +20,16 @@ import {
   offFilterCleanupSelectionMessage,
   runReviewSelectionAction,
 } from "@/lib/findings/selection-purposes";
+import {
+  automationBlockReason,
+  findingFileName,
+  findingTargetPath,
+  plainLanguageTitle,
+  plainLanguageWhatChanges,
+  plainLanguageWhy,
+  plainRiskLabel,
+  plainRiskLevel,
+} from "@/lib/findings/plain-language";
 import { FindingSelectionCheckbox } from "./finding-selection-checkbox";
 import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
 
@@ -51,10 +56,10 @@ const CATEGORIES: { key: CategoryKey; label: string }[] = [
 ];
 
 const BUCKETS: { key: BucketKey; label: string; level?: "safe" | "review" | "protected" }[] = [
-  { key: "all", label: "All buckets" },
-  { key: "safe_candidate", label: "Safe Candidate", level: "safe" },
-  { key: "review_first", label: "Review First", level: "review" },
-  { key: "do_not_touch", label: "Do Not Touch", level: "protected" },
+  { key: "all", label: "All suggestions" },
+  { key: "safe_candidate", label: "Safe cleanup", level: "safe" },
+  { key: "review_first", label: "Needs review", level: "review" },
+  { key: "do_not_touch", label: "Do not change", level: "protected" },
 ];
 
 const STORAGE_KEY = "repodiet.findingsWorkspace.v1";
@@ -301,6 +306,8 @@ export function FindingsWorkspace({
     const checkbox = getFindingCheckboxState(finding);
     const cleanupEligible = checkbox.purpose === "cleanup";
     const compact = options?.compact === true;
+    const risk = plainRiskLevel(finding);
+    const blockReason = automationBlockReason(finding);
     return (
       <li
         key={finding.id}
@@ -319,7 +326,7 @@ export function FindingsWorkspace({
           {onTogglePatchSelection ? (
             <FindingSelectionCheckbox
               findingId={finding.id}
-              title={finding.title}
+              title={plainLanguageTitle(finding)}
               checked={isCheckedForPurpose(finding)}
               enabled={checkbox.enabled}
               purpose={checkbox.dataPurpose}
@@ -337,55 +344,43 @@ export function FindingsWorkspace({
             className="min-w-0 flex-1 px-3 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-electric"
           >
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-foreground">{finding.title}</p>
-              <div className="flex shrink-0 flex-col items-end gap-1">
-                {finding.confidenceTier && (
-                  <RiskBadge level={confidenceTierVariant(finding.confidenceTier)}>
-                    {confidenceTierLabel(finding.confidenceTier)}
-                  </RiskBadge>
-                )}
-                <RiskBadge
-                  level={
-                    finding.action === "safe_candidate"
-                      ? "safe"
-                      : finding.action === "do_not_touch"
-                        ? "protected"
-                        : "review"
-                  }
-                >
-                  {actionLabel(finding.action)}
-                </RiskBadge>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{plainLanguageTitle(finding)}</p>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {findingFileName(finding)}
+                  <span className="mx-1 text-border">·</span>
+                  <span className="font-mono text-[11px]">{findingTargetPath(finding)}</span>
+                </p>
               </div>
+              <RiskBadge
+                level={risk === "safe" ? "safe" : risk === "protected" ? "protected" : "review"}
+              >
+                {plainRiskLabel(finding)}
+              </RiskBadge>
             </div>
-            <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
-              {findingTarget(finding)}
-            </p>
             {!compact ? (
-              <p className="mt-1 text-[10px] text-muted-foreground">
-                {typeLabel(finding.type)} · {formatFindingAnalyzerLabel(finding, rawToolReports)}
-                {cleanupEligible
-                  ? " · cleanup-eligible"
-                  : checkbox.purpose === "review"
-                    ? " · deeper review"
-                    : checkbox.purpose === "inspection"
-                      ? " · inspection only"
-                      : " · not eligible for automatic cleanup"}
-              </p>
+              <>
+                <p className="mt-2 text-xs text-muted-foreground">{plainLanguageWhy(finding)}</p>
+                <p className="mt-1 text-xs text-foreground/80">{plainLanguageWhatChanges(finding)}</p>
+                {blockReason ? (
+                  <p className="mt-1 text-xs text-warning">{blockReason}</p>
+                ) : null}
+              </>
             ) : (
-              <p className="mt-1 text-[10px] text-muted-foreground">
+              <p className="mt-1 text-xs text-muted-foreground">
                 {cleanupEligible
-                  ? "Cleanup-eligible"
-                  : checkbox.purpose === "review"
-                    ? "Select for deeper review"
-                    : checkbox.purpose === "inspection"
-                      ? "Inspection only"
-                      : "Not eligible for automatic cleanup"}
+                  ? "Ready for automatic Fix & PR"
+                  : blockReason || "Needs review before automatic cleanup"}
               </p>
             )}
+            <p className="mt-2 text-[11px] text-electric">
+              {expanded && selected?.id === finding.id ? "Hide technical details" : "View technical details"}
+            </p>
           </button>
         </div>
         {expanded && selected?.id === finding.id ? (
-          <div className="border-b border-border/40 bg-card/40 p-3 lg:hidden">
+          <div className="border-b border-border/40 bg-card/40 p-3">
+            <p className="mb-2 text-xs font-medium text-foreground">Advanced details</p>
             <FindingDetail finding={finding} rawToolReports={rawToolReports} />
           </div>
         ) : null}
@@ -413,58 +408,56 @@ export function FindingsWorkspace({
   return (
     <div id="workspace" className="space-y-4">
       {Toast}
+      <div className="rounded-md border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">How cleanup works</p>
+        <ol className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+          <li>1. Connect repository</li>
+          <li>2. Review suggested cleanup</li>
+          <li>3. Select files</li>
+          <li>4. Review price</li>
+          <li>5. Pay and create PR</li>
+          <li>6. Review and merge on GitHub</li>
+        </ol>
+      </div>
       <div className="space-y-2">
         <FindingsAccordion
-          title={`Safe candidates — ${safeFindings.length}`}
+          title={`Safe cleanup — ${safeFindings.length}`}
           summary={
             safeGroupOpen
-              ? `${safeCleanupEligible.length} cleanup-eligible with enabled checkboxes`
-              : "Open to select cleanup-eligible findings"
+              ? `${safeCleanupEligible.length} ready for automatic Fix & PR`
+              : "Open to review suggested safe cleanups"
           }
           open={safeGroupOpen}
           onOpenChange={setSafeGroupOpen}
         >
           <p className="mb-2 text-sm text-muted-foreground">
-            Risk bucket SAFE · {safeCleanupEligible.length} cleanup-eligible after preflight. Use a
-            row checkbox to select exactly one candidate (selection is keyed by finding ID).
+            Suggested safe cleanups · {safeCleanupEligible.length} can be removed automatically.
+            Select the files you want, then continue to Fix &amp; PR.
           </p>
           {selectedCount > 0 ? (
-            <p className="mb-2 font-mono text-xs text-signal" data-selected-count={selectedCount}>
+            <p className="mb-2 text-xs text-signal" data-selected-count={selectedCount}>
               {selectedCount} selected for cleanup
             </p>
           ) : (
-            <p className="mb-2 font-mono text-[10px] text-muted-foreground" data-selected-count={0}>
+            <p className="mb-2 text-xs text-muted-foreground" data-selected-count={0}>
               0 selected for cleanup
             </p>
           )}
-          {safeGroupOpen
-            ? renderFlatFindingList(safeCleanupEligible, "safe-cleanup-eligible")
-            : null}
-          {safeGroupOpen &&
-          safeFindings.length > safeCleanupEligible.length ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {safeFindings.length - safeCleanupEligible.length} additional SAFE-risk finding
-              {safeFindings.length - safeCleanupEligible.length === 1 ? "" : "s"} without
-              transformer preflight {safeFindings.length - safeCleanupEligible.length === 1
-                ? "is"
-                : "are"}{" "}
-              not selectable.
-            </p>
-          ) : null}
+          {safeGroupOpen ? renderFlatFindingList(safeFindings, "safe-cleanup") : null}
         </FindingsAccordion>
         <FindingsAccordion
-          title={`Review first — ${reviewFindings.length}`}
+          title={`Needs review — ${reviewFindings.length}`}
           summary={
             reviewGroupOpen
-              ? "Enabled checkboxes select for deeper review only — never Quick Cleanup"
-              : "Open to select findings for deeper review"
+              ? "Selectable for review — not automatic Fix & PR yet"
+              : "Open to review suggestions that need a human check"
           }
           open={reviewGroupOpen}
           onOpenChange={setReviewGroupOpen}
         >
           <p className="mb-2 text-sm text-muted-foreground">
-            REVIEW FIRST findings are not cleanup-eligible. Selecting a row queues deeper
-            verification only — it never enables Continue to Quick Cleanup.
+            These suggestions need a human check first. You can select them for review, but they
+            will not be changed automatically until a supported cleanup path exists.
           </p>
           <p
             className="mb-2 font-mono text-xs text-amber-300"
