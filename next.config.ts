@@ -4,6 +4,10 @@ import analyzerTraceIncludes from "./analyzer-trace-includes.json";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  env: {
+    // Expose deployment channel to the client for PREVIEW / PRODUCTION safety banners.
+    NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? process.env.NEXT_PUBLIC_VERCEL_ENV ?? "",
+  },
   serverExternalPackages: [
     "knip",
     "jscpd",

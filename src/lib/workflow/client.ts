@@ -4,6 +4,7 @@ import type { EligibilityPreflightResult } from "./eligibility-preflight";
 export interface WorkflowQuote {
   quoteId: string;
   amountMicro: string;
+  /** Exact buyer-facing charge label derived from amountMicro (e.g. "1.00 USDT"). */
   priceLabel: string;
   currency: string;
   network: string;
@@ -16,6 +17,10 @@ export interface WorkflowQuote {
   commitSha: string;
   findingIds: string[];
   settlementMode?: "trusted_test" | "test_hmac" | "live_x402";
+  /** direct_site ERC-20 transfer vs OKX marketplace escrow */
+  paymentModel?: "direct" | "escrow";
+  assetContract?: string;
+  chainId?: number;
 }
 
 export interface WorkflowA2ATask {
@@ -255,6 +260,8 @@ export async function payWorkflowQuote(input: {
   paymentReference: string;
   payer: string;
   paymentSignature?: string;
+  /** Exact atomic amount shown to the buyer; server rejects mismatches vs signed quote. */
+  amountMicro?: string;
 }): Promise<{ success: boolean; existingTaskId?: string }> {
   const res = await fetch("/api/tasks/pay", {
     method: "POST",
