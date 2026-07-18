@@ -11,11 +11,19 @@ import { getA2ATask } from "@/lib/a2a/task-store";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { assertDirectTaskOwner } from "@/lib/workflow/task-access";
 import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
+import {
+  buildPreviewDryRunDenial,
+  isPreviewPaymentBlocked,
+} from "@/lib/deployment/preview-dry-run";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    if (isPreviewPaymentBlocked()) {
+      return NextResponse.json(buildPreviewDryRunDenial(), { status: 403 });
+    }
+
     const body = (await request.json()) as Record<string, unknown>;
     let proof = paymentProofFromRequest(request, body);
 

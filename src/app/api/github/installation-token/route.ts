@@ -2,10 +2,18 @@ import { NextResponse } from "next/server";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
 import { createInstallationAccessToken } from "@/lib/github-app/installations";
 import { readInstallationSession } from "@/lib/github-app/session";
+import {
+  buildPreviewDryRunDenial,
+  isPreviewRepositoryWriteBlocked,
+} from "@/lib/deployment/preview-dry-run";
 
 export const runtime = "nodejs";
 
 export async function POST() {
+  if (isPreviewRepositoryWriteBlocked()) {
+    return NextResponse.json(buildPreviewDryRunDenial(), { status: 403 });
+  }
+
   if (!isGitHubAppConfigured()) {
     return NextResponse.json(
       { ok: false, error: { code: "GITHUB_APP_NOT_CONFIGURED", message: "GitHub App is not configured." } },

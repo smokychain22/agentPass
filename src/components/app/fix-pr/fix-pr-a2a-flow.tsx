@@ -120,6 +120,9 @@ export function FixPrA2AFlow({
       : "unknown";
   const isPreviewDeployment = deploymentEnv === "preview";
   const isProductionDeployment = deploymentEnv === "production";
+  // Client banner mirrors server dry-run: anything that is not Production is non-live.
+  const previewDryRunUi = !isProductionDeployment;
+  const [previewSimulationNote, setPreviewSimulationNote] = useState<string | null>(null);
 
   const readGithubReturnFromUrl = useCallback(() => {
     if (typeof window === "undefined") {
@@ -520,25 +523,28 @@ export function FixPrA2AFlow({
       </Panel>
 
       <Panel variant="elevated" padding="md">
-        {(isPreviewDeployment || isProductionDeployment) && (
+        {(previewDryRunUi || isProductionDeployment) && (
           <div
             className={`mb-4 rounded-md border p-3 text-sm ${
-              isPreviewDeployment
+              previewDryRunUi
                 ? "border-amber-500/40 bg-amber-500/10 text-amber-50"
                 : "border-destructive/40 bg-destructive/10 text-destructive"
             }`}
           >
             <p className="font-medium">
-              {isPreviewDeployment
-                ? "PREVIEW / NO REAL WRITE intended"
+              {previewDryRunUi
+                ? "PREVIEW — NO REAL PAYMENT OR REPOSITORY WRITE"
                 : "PRODUCTION environment"}
             </p>
             <p className="mt-1 text-xs">
-              {isPreviewDeployment
-                ? "Preview must not mutate customer repositories or spend real funds unless explicitly configured for a controlled live test."
+              {previewDryRunUi
+                ? "Server-enforced dry-run: real payment authorization, write-token minting, cleanup dispatch, and GitHub mutation are blocked. Use Simulate authorization for UI validation only."
                 : "This deployment can authorize real USDT and create real repository branches/PRs after payment. Do not treat it as a dry-run."}
             </p>
           </div>
+        )}
+        {previewSimulationNote && (
+          <FeedbackBanner variant="info" message={previewSimulationNote} className="mb-3" />
         )}
 
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
@@ -799,6 +805,12 @@ export function FixPrA2AFlow({
               loading={loading}
               authorizationBlocked={paymentBlocked}
               authorizationBlockReason={controlledGate.message}
+              previewDryRun={previewDryRunUi}
+              onSimulateAuthorization={() => {
+                setPreviewSimulationNote(
+                  "Preview simulation only — no wallet call, no USDT transfer, no write token, no worker dispatch, no GitHub mutation."
+                );
+              }}
               onAuthorize={authorizePayment}
             />
           )}

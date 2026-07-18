@@ -235,6 +235,11 @@ export function createGreenPrAttestation(input: {
   signer: AsymmetricSigner;
   now?: Date;
 }): GreenPrAttestationRecord {
+  if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== "production") {
+    throw new Error(
+      "PREVIEW_DRY_RUN_ONLY: production Green PR attestation cannot be issued outside Production."
+    );
+  }
   if (input.decision.role !== "verifier" ||
       !input.decision.contractSatisfied ||
       input.decision.acceptanceRecommendation !== "ACCEPT") {

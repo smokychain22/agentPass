@@ -21,11 +21,16 @@ The Fix & PR screen on the website is **not** OKX escrow. Marketing copy that de
 - Operator/support refunds (if any) are manual and out-of-band.
 - Duplicate charging is prevented by quote binding + single-use payment reference / entitlement checks on `POST /api/tasks/pay` and task fund.
 
-## Preview / test mode
+## Preview / test mode (server-enforced)
 
-- Preview deployments must not use live write credentials against customer repositories.
-- Trusted test quotes may record a non-on-chain payment reference for UI validation only.
-- Production Fix & PR with live wallet credentials can move real USDT — do not treat Production as a dry-run.
+When `VERCEL_ENV !== "production"` (unless both `REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT=1` and `REPODIET_PREVIEW_ALLOW_REPO_WRITE=1`):
+
+- `POST /api/tasks/pay` and task fund return `PREVIEW_DRY_RUN_ONLY` — no real payment verification.
+- Installation write-token minting, cleanup dispatch, and GitHub branch/commit/PR creation are blocked.
+- Receipts/attestations produced in Preview are marked simulated and must not be treated as production evidence.
+- The Fix & PR UI shows **Simulate authorization** (local non-persistent inspection only).
+
+Production Fix & PR with live wallet credentials can move real USDT — do not treat Production as a dry-run.
 
 ## Buyer approval
 

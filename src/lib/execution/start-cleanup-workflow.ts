@@ -31,6 +31,11 @@ export async function kickSandboxExecution(
 export async function startRepositoryCleanupExecution(
   payload: SandboxRunPayload
 ): Promise<{ sandboxRunId: string; workflowRunId?: string }> {
+  const { assertPreviewAllowsCleanupDispatch } = await import(
+    "@/lib/deployment/preview-dry-run"
+  );
+  assertPreviewAllowsCleanupDispatch();
+
   const session = await readInstallationSession();
   const enriched: SandboxRunPayload = {
     ...payload,

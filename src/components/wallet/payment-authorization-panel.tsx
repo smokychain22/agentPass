@@ -26,6 +26,12 @@ interface PaymentAuthorizationPanelProps {
   /** When true, hide/disable the authorize control (scope unsafe or preview gate). */
   authorizationBlocked?: boolean;
   authorizationBlockReason?: string | null;
+  /**
+   * Vercel Preview / non-production: replace live wallet payment with a local simulation.
+   * Must not call wallet, transfer, verify, mint write tokens, or dispatch writers.
+   */
+  previewDryRun?: boolean;
+  onSimulateAuthorization?: () => void;
   onAuthorize: (input: {
     payer: string;
     paymentReference: string;
@@ -42,6 +48,8 @@ export function PaymentAuthorizationPanel({
   loading,
   authorizationBlocked = false,
   authorizationBlockReason = null,
+  previewDryRun = false,
+  onSimulateAuthorization,
   onAuthorize,
 }: PaymentAuthorizationPanelProps) {
   const wallet = useWallet();
@@ -50,6 +58,7 @@ export function PaymentAuthorizationPanel({
   const [payerInput, setPayerInput] = useState(readStoredPayerWallet);
   const [localError, setLocalError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [simulated, setSimulated] = useState(false);
 
   const exact = useMemo(
     () => formatExactUsdtFromMicro(quote.amountMicro, { currency: quote.currency || "USDT" }),
@@ -75,7 +84,21 @@ export function PaymentAuthorizationPanel({
     }
   }, [session?.address]);
 
+  const handlePreviewSimulate = () => {
+    if (authorizationBlocked) {
+      setLocalError(authorizationBlockReason || "Payment authorization is blocked for this scope.");
+      return;
+    }
+    setLocalError(null);
+    setSimulated(true);
+    onSimulateAuthorization?.();
+  };
+
   const handleTestAuthorize = async () => {
+    if (previewDryRun) {
+      handlePreviewSimulate();
+      return;
+    }
     if (authorizationBlocked) {
       setLocalError(authorizationBlockReason || "Payment authorization is blocked for this scope.");
       return;
@@ -96,6 +119,10 @@ export function PaymentAuthorizationPanel({
   };
 
   const handleLiveAuthorize = async () => {
+    if (previewDryRun) {
+      handlePreviewSimulate();
+      return;
+    }
     if (authorizationBlocked) {
       setLocalError(authorizationBlockReason || "Payment authorization is blocked for this scope.");
       return;
@@ -182,6 +209,41 @@ export function PaymentAuthorizationPanel({
       </div>
     </dl>
   );
+
+  if (previewDryRun) {
+    return (
+      <div className="mt-4 w-full space-y-3">
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-50">
+          <p className="font-medium">PREVIEW — NO REAL PAYMENT OR REPOSITORY WRITE</p>
+          <p className="mt-1 text-xs">
+            Quoted production amount below is for inspection only. Simulation never calls a wallet,
+            transfers USDT, verifies a transaction, mints a write token, or mutates GitHub.
+          </p>
+        </div>
+
+        {quoteDetails}
+
+        {authorizationBlocked && (
+          <p className="text-sm text-destructive">
+            {authorizationBlockReason || "Payment authorization is blocked for this cleanup scope."}
+          </p>
+        )}
+        {localError && <p className="text-sm text-destructive">{localError}</p>}
+        {simulated && (
+          <p className="text-sm text-foreground">
+            Simulated authorization recorded locally only — no payment, no worker, no repository write.
+          </p>
+        )}
+
+        <Button
+          onClick={handlePreviewSimulate}
+          disabled={loading || authorizationBlocked || simulated}
+        >
+          {simulated ? "Simulation complete" : "Simulate authorization"}
+        </Button>
+      </div>
+    );
+  }
 
   if (trustedTestPayment) {
     const canPay = Boolean(payerInput.trim()) && !authorizationBlocked;

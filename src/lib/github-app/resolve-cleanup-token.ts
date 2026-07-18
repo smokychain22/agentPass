@@ -16,6 +16,10 @@ import {
 } from "@/lib/github-app/install-flow-store";
 import { readInstallationSession } from "@/lib/github-app/session";
 import { requiresRepositoryOwnerInstall } from "@/lib/github-app/repository";
+import {
+  PreviewDryRunError,
+  assertPreviewAllowsRepositoryWrite,
+} from "@/lib/deployment/preview-dry-run";
 
 export interface ResolveCleanupGitHubTokenInput {
   demo?: boolean;
@@ -164,6 +168,15 @@ async function assertInstallationRepositoryAccess(input: {
 export async function resolveCleanupGitHubToken(
   opts: ResolveCleanupGitHubTokenInput
 ): Promise<string> {
+  try {
+    assertPreviewAllowsRepositoryWrite();
+  } catch (err) {
+    if (err instanceof PreviewDryRunError) {
+      throw new ToolExecutionError(err.code, err.message, 403);
+    }
+    throw err;
+  }
+
   if (opts.demo) {
     if (!isDemoRepoUrl(opts.repoUrl)) {
       throw new ToolExecutionError(

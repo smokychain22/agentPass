@@ -1,6 +1,21 @@
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
+import {
+  PreviewDryRunError,
+  assertPreviewAllowsRepositoryWrite,
+} from "@/lib/deployment/preview-dry-run";
 
 const USER_AGENT = "RepoDiet-Operator/1.0 (+https://github.com/smokychain22/agentPass)";
+
+function assertMutableGitHubAllowed(): void {
+  try {
+    assertPreviewAllowsRepositoryWrite();
+  } catch (err) {
+    if (err instanceof PreviewDryRunError) {
+      throw new ToolExecutionError(err.code, err.message, 403);
+    }
+    throw err;
+  }
+}
 
 export interface GitHubRepoMeta {
   owner: string;
@@ -89,6 +104,7 @@ export class GitHubClient {
     branchName: string,
     fromSha: string
   ): Promise<void> {
+    assertMutableGitHubAllowed();
     await this.request(
       `/repos/${owner}/${repo}/git/refs`,
       {
@@ -179,6 +195,7 @@ export class GitHubClient {
     branch: string,
     message: string
   ): Promise<boolean> {
+    assertMutableGitHubAllowed();
     const sha = await this.getFileSha(owner, repo, path, branch);
     if (!sha) return false;
 
@@ -201,6 +218,7 @@ export class GitHubClient {
     content: string,
     message: string
   ): Promise<void> {
+    assertMutableGitHubAllowed();
     const sha = await this.getFileSha(owner, repo, path, branch);
     const body: Record<string, string> = {
       message,
@@ -227,6 +245,7 @@ export class GitHubClient {
     base: string,
     body: string
   ): Promise<{ url: string; number: number }> {
+    assertMutableGitHubAllowed();
     try {
       const pr = await this.request<{ html_url: string; number: number }>(
         `/repos/${owner}/${repo}/pulls`,

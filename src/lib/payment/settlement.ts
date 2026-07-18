@@ -110,6 +110,16 @@ async function assertQuoteCommerciallySafe(quote: BoundQuote): Promise<{ ok: fal
 }
 
 export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVerificationResult> {
+  const { isPreviewPaymentBlocked, buildPreviewDryRunDenial } = await import(
+    "@/lib/deployment/preview-dry-run"
+  );
+  if (isPreviewPaymentBlocked()) {
+    const denial = buildPreviewDryRunDenial(
+      "PREVIEW_DRY_RUN_ONLY: real payment verification is disabled outside Production."
+    );
+    return { ok: false, status: "invalid_payment", reason: denial.message };
+  }
+
   const quote = await getBoundQuote(proof.quoteId);
   if (!quote) {
     return { ok: false, status: "invalid_payment", reason: "Quote not found." };

@@ -926,6 +926,24 @@ export async function fundA2ATask(
   const quote = await getBoundQuote(quoteId);
   if (!quote) throw new Error("Quote not found.");
 
+  // Rejected / cancelled tasks and quote finding-scope changes require a new task + quote.
+  const taskFindingIds = [...(existing.input.findingIds ?? [])].sort();
+  const quoteFindingIds = [...(quote.findingIds ?? [])].sort();
+  if (
+    taskFindingIds.length > 0 &&
+    quoteFindingIds.length > 0 &&
+    JSON.stringify(taskFindingIds) !== JSON.stringify(quoteFindingIds)
+  ) {
+    throw new Error(
+      "Task finding scope is immutable after creation. Create a new task and quote for a different selection."
+    );
+  }
+  if (input.quoteId && existing.input.quoteId && input.quoteId !== existing.input.quoteId) {
+    throw new Error(
+      "Quote binding is immutable for this task. Create a new task and quote for a different selection."
+    );
+  }
+
   const order = await getOkxOrderByA2aTask(taskId);
   const paymentReference = input.paymentReference ?? quote.paymentReference;
   const payer = input.payer ?? quote.payer ?? order?.payer;
@@ -1197,6 +1215,49 @@ export async function cancelA2ATask(taskId: string): Promise<A2ATaskRecord> {
   if (!task) throw new Error("Task not found.");
   const sm = new A2ATaskStateMachine(task.transitions);
   return failTask(task, sm, "cancelled", "Task cancelled by client.");
+}
+
+/**
+ * Terminal rejection for unsafe / hard-rejected cleanup selections.
+ * Preserves task ID, quote ID, finding IDs, transitions, and error reason.
+ * Rejected tasks must not be reused with a different finding — start a new task/quote.
+ */
+export async function rejectUnsafeSelectionA2ATask(
+  taskId: string,
+  reason: string
+): Promise<A2ATaskRecord> {
+  const task = await getA2ATask(taskId);
+  if (!task) throw new Error("Task not found.");
+  if (task.status === "rejected") {
+    return task;
+  }
+  if (A2A_FAILURE_STATUSES.includes(task.status) || task.status === "completed" || task.status === "escrow_released") {
+    throw new Error(`Task is already terminal (status=${task.status}).`);
+  }
+  if (
+    task.status !== "awaiting_payment" &&
+    task.status !== "quote_required" &&
+    task.status !== "submitted" &&
+    task.status !== "validating"
+  ) {
+    throw new Error(`Task cannot be rejected for unsafe selection (status=${task.status}).`);
+  }
+  const sm = new A2ATaskStateMachine(task.transitions);
+  const detail = reason.startsWith("REJECTED_UNSAFE_SELECTION")
+    ? reason
+    : `REJECTED_UNSAFE_SELECTION: ${reason}`;
+  const finalized = await failTask(task, sm, "rejected", detail);
+  if (task.input.quoteId) {
+    try {
+      await updateBoundQuote(task.input.quoteId, {
+        status: "expired",
+        lifecycleStatus: "expired",
+      });
+    } catch {
+      // Quote expiry is best-effort; task rejection is authoritative.
+    }
+  }
+  return finalized;
 }
 
 export function formatA2ATaskResponse(task: A2ATaskRecord) {

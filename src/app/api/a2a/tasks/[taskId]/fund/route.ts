@@ -4,6 +4,10 @@ import { getA2ATask } from "@/lib/a2a/task-store";
 import { getA2aFundLock } from "@/lib/payment/payment-store";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { assertDirectTaskOwner } from "@/lib/workflow/task-access";
+import {
+  buildPreviewDryRunDenial,
+  isPreviewPaymentBlocked,
+} from "@/lib/deployment/preview-dry-run";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -22,6 +26,10 @@ export async function POST(
   };
 
   try {
+    if (isPreviewPaymentBlocked()) {
+      return NextResponse.json(buildPreviewDryRunDenial(), { status: 403 });
+    }
+
     const existing = await getA2ATask(taskId);
     if (!existing) {
       return NextResponse.json({ success: false, error: "Task not found." }, { status: 404 });
