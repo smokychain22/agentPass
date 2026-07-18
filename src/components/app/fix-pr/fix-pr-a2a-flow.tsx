@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
 import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
+import {
+  PrePaymentCleanupPreview,
+  selectionBlocksPayment,
+} from "@/components/app/fix-pr/pre-payment-cleanup-preview";
 import { CustomerPathSelector } from "@/components/wallet/customer-path-selector";
 import { useWallet } from "@/components/wallet/wallet-provider";
 import type { FindingsPayload } from "@/lib/findings/types";
@@ -44,6 +48,8 @@ import {
   type BaselineInvalidUi,
 } from "@/lib/workflow/baseline-invalid-ui";
 import { isKnownBaselineInvalidCommit } from "@/lib/workflow/known-invalid-commits";
+import { exactChargeLabelFromMicro } from "@/lib/pricing/exact-amount";
+import { evaluateControlledDeliverySelection } from "@/lib/cleanup/controlled-delivery-scope";
 
 interface FixPrA2AFlowProps {
   repoUrl: string;
@@ -99,6 +105,21 @@ export function FixPrA2AFlow({
       ),
     [findings, selectedFindingIds]
   );
+
+  const controlledGate = useMemo(
+    () => evaluateControlledDeliverySelection(selectedSafe.flatMap((f) => f.files)),
+    [selectedSafe]
+  );
+  const paymentBlocked = selectionBlocksPayment(selectedSafe);
+  // Client bundles only see NEXT_PUBLIC_* unless inlined at build time.
+  const deploymentEnv =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_VERCEL_ENV ||
+        process.env.NEXT_PUBLIC_DEPLOYMENT_ENV ||
+        "unknown"
+      : "unknown";
+  const isPreviewDeployment = deploymentEnv === "preview";
+  const isProductionDeployment = deploymentEnv === "production";
 
   const readGithubReturnFromUrl = useCallback(() => {
     if (typeof window === "undefined") {
@@ -294,6 +315,12 @@ export function FixPrA2AFlow({
   const authorizePayment = useCallback(
     async (input: { payer: string; paymentReference: string; paymentSignature?: string }) => {
       if (!quote || !a2aTask?.taskId) return;
+      if (paymentBlocked) {
+        throw new Error(
+          controlledGate.message ||
+            "Payment is blocked until the selected cleanup passes the pre-payment preview gate."
+        );
+      }
       setLoading(true);
       setError(null);
       setPaymentState("payment_pending");
@@ -303,6 +330,7 @@ export function FixPrA2AFlow({
           paymentReference: input.paymentReference,
           payer: input.payer,
           paymentSignature: input.paymentSignature,
+          amountMicro: quote.amountMicro,
         });
         const funded = await fundWorkflowTask({
           taskId: a2aTask.taskId,
@@ -324,7 +352,14 @@ export function FixPrA2AFlow({
         setLoading(false);
       }
     },
-    [a2aTask?.taskId, onTaskUpdate, quote, setPaymentState]
+    [
+      a2aTask?.taskId,
+      controlledGate.message,
+      onTaskUpdate,
+      paymentBlocked,
+      quote,
+      setPaymentState,
+    ]
   );
 
   const retryCleanup = useCallback(() => {
@@ -485,6 +520,27 @@ export function FixPrA2AFlow({
       </Panel>
 
       <Panel variant="elevated" padding="md">
+        {(isPreviewDeployment || isProductionDeployment) && (
+          <div
+            className={`mb-4 rounded-md border p-3 text-sm ${
+              isPreviewDeployment
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-50"
+                : "border-destructive/40 bg-destructive/10 text-destructive"
+            }`}
+          >
+            <p className="font-medium">
+              {isPreviewDeployment
+                ? "PREVIEW / NO REAL WRITE intended"
+                : "PRODUCTION environment"}
+            </p>
+            <p className="mt-1 text-xs">
+              {isPreviewDeployment
+                ? "Preview must not mutate customer repositories or spend real funds unless explicitly configured for a controlled live test."
+                : "This deployment can authorize real USDT and create real repository branches/PRs after payment. Do not treat it as a dry-run."}
+            </p>
+          </div>
+        )}
+
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-muted-foreground">Repository</dt>
@@ -492,19 +548,32 @@ export function FixPrA2AFlow({
           </div>
           <div>
             <dt className="text-muted-foreground">Source commit</dt>
-            <dd className="font-mono">{commitSha ? `${commitSha.slice(0, 8)}…` : "—"}</dd>
+            <dd className="font-mono">{commitSha ? `${commitSha.slice(0, 12)}…` : "—"}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Selected scope</dt>
             <dd>
               {selectedSafe.length} safe cleanup{selectedSafe.length === 1 ? "" : "s"}
+              {selectedSafe[0] ? (
+                <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                  {selectedSafe[0].id} · {selectedSafe[0].files[0]}
+                </span>
+              ) : null}
             </dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Provider</dt>
-            <dd>RepoDiet Cleanup Operator · A2A 32947</dd>
+            <dd>RepoDiet Cleanup Operator · A2A 32947 (direct-site channel)</dd>
           </div>
         </dl>
+
+        {selectedSafe.length > 0 && (
+          <PrePaymentCleanupPreview
+            findings={selectedSafe}
+            pinnedCommit={commitSha}
+            repository={repository}
+          />
+        )}
 
         <div className="mt-4 rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
           <p className="mb-1 font-medium text-foreground">Delivery includes</p>
@@ -519,14 +588,24 @@ export function FixPrA2AFlow({
         {quote && (
           <dl className="mt-4 grid gap-2 rounded-md border border-electric/20 bg-electric/5 p-3 text-sm">
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Price</dt>
-              <dd className="font-mono">{quote.priceLabel}</dd>
+              <dt className="text-muted-foreground">Exact payable amount</dt>
+              <dd className="font-mono font-medium">
+                {exactChargeLabelFromMicro(quote.amountMicro, quote.currency || "USDT")}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Atomic amount</dt>
+              <dd className="font-mono text-xs">{quote.amountMicro} micro-USDT</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">Network / asset</dt>
               <dd className="font-mono">
                 {quote.network} · {quote.currency}
               </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Payment model</dt>
+              <dd className="font-mono">direct (not OKX escrow)</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">Recipient</dt>
@@ -718,6 +797,8 @@ export function FixPrA2AFlow({
             <PaymentAuthorizationPanel
               quote={quote}
               loading={loading}
+              authorizationBlocked={paymentBlocked}
+              authorizationBlockReason={controlledGate.message}
               onAuthorize={authorizePayment}
             />
           )}

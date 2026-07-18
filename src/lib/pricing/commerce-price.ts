@@ -1,16 +1,18 @@
 import type { CommerceOperation } from "@/lib/payment/types";
 import { getAnalyzeRepositoryPrice } from "@/lib/payment/analyze-repository-price";
 import { getA2aCleanupPrTestPrice, isA2aTestPriceActive } from "@/lib/payment/a2a-test-price";
+import { exactChargeLabelFromMicro } from "@/lib/pricing/exact-amount";
 
 export interface CommercePrice {
   amountMicro: string;
   priceLabel: string;
   amountUsdt?: number;
+  /** Marketing / negotiation hint — never use as the payable charge label. */
+  negotiationHint?: string;
 }
 
 function formatUsdtLabel(amountMicro: string): string {
-  const amount = Number(amountMicro) / 1_000_000;
-  return `${amount.toFixed(amount >= 0.01 ? 2 : 6).replace(/\.?0+$/, "")} USDT`;
+  return exactChargeLabelFromMicro(amountMicro, "USDT");
 }
 
 export function resolveCommercePrice(
@@ -47,12 +49,13 @@ export function resolveCommercePrice(
           amountUsdt: test.amountUsdt,
         };
       }
-      // Public default reference price for A2A Verified Cleanup PR (negotiated).
+      // Payable charge is exact. Negotiation hint is separate marketing metadata.
       void options?.sourceFileCount;
       return {
         amountMicro: "1000000",
-        priceLabel: "negotiated (default 1 USD₮0)",
+        priceLabel: formatUsdtLabel("1000000"),
         amountUsdt: 1,
+        negotiationHint: "negotiated reference default 1.00 USDT",
       };
     }
     case "repo_guard":

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectWalletButton } from "@/components/wallet/connect-wallet-button";
@@ -15,10 +15,17 @@ import {
   readStoredPayerWallet,
   storePayerWallet,
 } from "@/lib/workflow/payment-ui";
+import {
+  exactChargeLabelFromMicro,
+  formatExactUsdtFromMicro,
+} from "@/lib/pricing/exact-amount";
 
 interface PaymentAuthorizationPanelProps {
   quote: WorkflowQuote;
   loading: boolean;
+  /** When true, hide/disable the authorize control (scope unsafe or preview gate). */
+  authorizationBlocked?: boolean;
+  authorizationBlockReason?: string | null;
   onAuthorize: (input: {
     payer: string;
     paymentReference: string;
@@ -27,12 +34,14 @@ interface PaymentAuthorizationPanelProps {
 }
 
 /**
- * Fix & PR payment gate — always the direct website path.
- * OKX.AI marketplace customers do not pay here; they hire ASP 5283 on OKX.AI.
+ * Fix & PR payment gate — direct website path only.
+ * OKX.AI marketplace customers settle via OKX escrow, not this panel.
  */
 export function PaymentAuthorizationPanel({
   quote,
   loading,
+  authorizationBlocked = false,
+  authorizationBlockReason = null,
   onAuthorize,
 }: PaymentAuthorizationPanelProps) {
   const wallet = useWallet();
@@ -41,6 +50,19 @@ export function PaymentAuthorizationPanel({
   const [payerInput, setPayerInput] = useState(readStoredPayerWallet);
   const [localError, setLocalError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+
+  const exact = useMemo(
+    () => formatExactUsdtFromMicro(quote.amountMicro, { currency: quote.currency || "USDT" }),
+    [quote.amountMicro, quote.currency]
+  );
+  const chargeLabel = exactChargeLabelFromMicro(quote.amountMicro, quote.currency || "USDT");
+  // Guard: never show negotiated marketing strings as the payable amount.
+  const displayAmount =
+    /negotiated/i.test(quote.priceLabel) || /USD₮0/.test(quote.priceLabel)
+      ? chargeLabel
+      : quote.priceLabel.includes("USDT") || quote.priceLabel.includes(quote.currency)
+        ? quote.priceLabel
+        : chargeLabel;
 
   useEffect(() => {
     const stored = readStoredPayerWallet();
@@ -54,6 +76,10 @@ export function PaymentAuthorizationPanel({
   }, [session?.address]);
 
   const handleTestAuthorize = async () => {
+    if (authorizationBlocked) {
+      setLocalError(authorizationBlockReason || "Payment authorization is blocked for this scope.");
+      return;
+    }
     setLocalError(null);
     setPaymentState("payment_pending");
     try {
@@ -70,6 +96,10 @@ export function PaymentAuthorizationPanel({
   };
 
   const handleLiveAuthorize = async () => {
+    if (authorizationBlocked) {
+      setLocalError(authorizationBlockReason || "Payment authorization is blocked for this scope.");
+      return;
+    }
     setLocalError(null);
 
     if (!session?.address) {
@@ -105,32 +135,67 @@ export function PaymentAuthorizationPanel({
     }
   };
 
+  const quoteDetails = (
+    <dl className="grid gap-1 rounded-md border border-border/40 bg-background/30 p-3 text-xs">
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Exact amount</dt>
+        <dd className="font-mono font-medium text-foreground">{displayAmount}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Atomic amount</dt>
+        <dd className="font-mono">
+          {exact.amountMicro} (decimals {exact.decimals})
+        </dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Quote ID</dt>
+        <dd className="font-mono">{quote.quoteId}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Network / chain</dt>
+        <dd className="font-mono">
+          {quote.network}
+          {quote.chainId ? ` · chainId ${quote.chainId}` : ""}
+        </dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Asset contract</dt>
+        <dd className="truncate font-mono">{quote.assetContract ?? "USDT on quote network"}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Recipient</dt>
+        <dd className="truncate font-mono">{quote.recipient}</dd>
+      </div>
+      {quote.expiresAt && (
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Expires</dt>
+          <dd className="font-mono">{new Date(quote.expiresAt).toLocaleString()}</dd>
+        </div>
+      )}
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Payment model</dt>
+        <dd className="font-mono">direct (not OKX escrow)</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-muted-foreground">Transactions</dt>
+        <dd>one ERC-20 transfer (approve may be separate if allowance is zero)</dd>
+      </div>
+    </dl>
+  );
+
   if (trustedTestPayment) {
-    const canPay = Boolean(payerInput.trim());
+    const canPay = Boolean(payerInput.trim()) && !authorizationBlocked;
     return (
       <div className="mt-4 w-full space-y-3">
         <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">Test payment — {quote.priceLabel}</p>
+          <p className="font-medium text-foreground">Test payment — {displayAmount}</p>
           <p className="mt-1">
             Enter your buyer wallet address and start cleanup. No on-chain USDT transfer is required
             in test mode. Payment is recorded against your wallet for the receipt only.
           </p>
         </div>
 
-        <dl className="grid gap-1 rounded-md border border-border/40 bg-background/30 p-3 text-xs">
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Amount</dt>
-            <dd className="font-mono">{quote.priceLabel}</dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Network</dt>
-            <dd className="font-mono">{quote.network}</dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Recipient (seller)</dt>
-            <dd className="truncate font-mono">{quote.recipient}</dd>
-          </div>
-        </dl>
+        {quoteDetails}
 
         <label className="block space-y-1.5 text-sm">
           <span className="text-muted-foreground">Your buyer wallet</span>
@@ -150,6 +215,11 @@ export function PaymentAuthorizationPanel({
           </p>
         )}
 
+        {authorizationBlocked && (
+          <p className="text-sm text-destructive">
+            {authorizationBlockReason || "Payment authorization is blocked for this cleanup scope."}
+          </p>
+        )}
         {localError && <p className="text-sm text-destructive">{localError}</p>}
 
         <Button
@@ -164,7 +234,7 @@ export function PaymentAuthorizationPanel({
               Starting cleanup…
             </>
           ) : (
-            `Pay ${quote.priceLabel} & start cleanup`
+            exact.authorizeButtonLabel
           )}
         </Button>
       </div>
@@ -172,40 +242,34 @@ export function PaymentAuthorizationPanel({
   }
 
   const liveLabel =
-    state === "disconnected" || state === "failed"
-      ? "Connect wallet to authorize"
-      : state === "wrong_network"
-        ? "Switch to X Layer"
-        : session?.address && isOnXLayer
-          ? "Authorize USDT payment"
-          : "Review payment";
+    authorizationBlocked
+      ? "Payment blocked — fix cleanup scope"
+      : state === "disconnected" || state === "failed"
+        ? "Connect wallet to authorize"
+        : state === "wrong_network"
+          ? "Switch to X Layer"
+          : session?.address && isOnXLayer
+            ? exact.authorizeButtonLabel
+            : "Review payment";
 
   return (
     <div className="mt-4 w-full space-y-3">
       <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Direct X Layer payment</p>
+        <p className="font-medium text-foreground">Direct X Layer payment (website channel)</p>
         <p className="mt-1">
-          Connect your own wallet on X Layer. It will send exactly {quote.priceLabel} to{" "}
-          <span className="font-mono text-xs">{quote.recipient}</span>. RepoDiet verifies the
-          transfer on-chain before cleanup starts. This is a direct payment to RepoDiet, not
-          OKX escrow.
+          Connect your wallet on X Layer. It will send exactly <span className="font-mono text-foreground">{displayAmount}</span>{" "}
+          to <span className="font-mono text-xs">{quote.recipient}</span>. RepoDiet verifies the
+          transfer on-chain before cleanup starts.
+        </p>
+        <p className="mt-2 text-xs">
+          This website Fix &amp; PR path is a <strong className="text-foreground">direct payment</strong> to
+          RepoDiet — not OKX marketplace escrow. OKX.AI A2A (service 32947) uses a separate escrow +
+          buyer-acceptance lifecycle. Direct-site funds are not automatically reversed if cleanup fails;
+          see <span className="font-mono">docs/direct-site-payment-policy.md</span>.
         </p>
       </div>
 
-      <dl className="grid gap-1 rounded-md border border-border/40 bg-background/30 p-3 text-xs">
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">Quote</dt>
-          <dd className="font-mono">{quote.quoteId}</dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">Amount</dt>
-          <dd className="font-mono">{quote.priceLabel}</dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">Network</dt>
-          <dd className="font-mono">{quote.network}</dd>
-        </div>
-      </dl>
+      {quoteDetails}
 
       <div className="flex flex-wrap items-center gap-2">
         <ConnectWalletButton />
@@ -222,13 +286,23 @@ export function PaymentAuthorizationPanel({
         </p>
       )}
 
+      {authorizationBlocked && (
+        <p className="text-sm text-destructive">
+          {authorizationBlockReason || "Payment authorization is blocked for this cleanup scope."}
+        </p>
+      )}
       {localError && <p className="text-sm text-destructive">{localError}</p>}
 
       <Button
         onClick={() => {
           void handleLiveAuthorize().catch(() => undefined);
         }}
-        disabled={loading || state === "payment_pending" || state === "signature_requested"}
+        disabled={
+          loading ||
+          authorizationBlocked ||
+          state === "payment_pending" ||
+          state === "signature_requested"
+        }
       >
         {loading || state === "payment_pending" || state === "signature_requested" ? (
           <>
