@@ -45,7 +45,7 @@ function task(partial: Partial<WorkflowA2ATask> & Pick<WorkflowA2ATask, "status"
   return {
     taskId: "task_test",
     type: "cleanup_pr",
-    purchaseChannel: "direct_site",
+    purchaseChannel: "okx_marketplace",
     repository: {
       owner: "velz-cmd",
       name: "repodiet-e2e-test",
@@ -92,28 +92,14 @@ async function run() {
     assert.equal(
       deliveryUiPhase({
         githubConnected: true,
-        walletConnected: false,
-        walletOnCorrectNetwork: false,
         hasQuote: true,
         task: task({ status: "awaiting_payment" }),
       }),
-      "awaiting_wallet"
+      "awaiting_escrow_funding"
     );
     assert.equal(
       deliveryUiPhase({
         githubConnected: true,
-        walletConnected: true,
-        walletOnCorrectNetwork: true,
-        hasQuote: true,
-        task: task({ status: "awaiting_payment" }),
-      }),
-      "awaiting_payment"
-    );
-    assert.equal(
-      deliveryUiPhase({
-        githubConnected: true,
-        walletConnected: true,
-        walletOnCorrectNetwork: true,
         hasQuote: true,
         task: task({ status: "verifying" }),
       }),
@@ -122,21 +108,17 @@ async function run() {
     assert.equal(
       deliveryUiPhase({
         githubConnected: true,
-        walletConnected: true,
-        walletOnCorrectNetwork: true,
         hasQuote: true,
         task: task({
           status: "delivery_ready",
           pullRequest: { url: "https://github.com/o/r/pull/1", number: 1, branch: "cleanup" },
         }),
       }),
-      "pr_created"
+      "pr_ready_for_review"
     );
     assert.equal(
       deliveryUiPhase({
         githubConnected: true,
-        walletConnected: true,
-        walletOnCorrectNetwork: true,
         hasQuote: true,
         task: task({ status: "verification_failed", error: "baseline failed" }),
       }),
@@ -146,7 +128,7 @@ async function run() {
 
   await test("delivery progress steps mark active work", () => {
     const steps = deliveryProgressSteps(task({ status: "generating_changes" }));
-    assert.equal(steps[0]?.done, true); // payment confirmed
+    assert.equal(steps.find((s) => s.id === "escrow")?.done, true);
     assert.ok(steps.some((s) => s.active && !s.done));
   });
 
@@ -158,7 +140,7 @@ async function run() {
     assert.equal(recovery!.paymentConfirmed, true);
     assert.equal(recovery!.repositoryFilesChanged, false);
     assert.equal(recovery!.retrySafe, true);
-    assert.match(recovery!.nextStep, /without paying again/i);
+    assert.match(recovery!.nextStep, /without funding escrow again|Escrow was already funded/i);
   });
 
   await test("withTimeout rejects hanging promises", async () => {

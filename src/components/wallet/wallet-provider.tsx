@@ -37,7 +37,7 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<WalletConnectionState>("disconnected");
   const [session, setSession] = useState<WalletSession | null>(null);
-  const [customerMode, setCustomerMode] = useState<CustomerExecutionMode>("direct");
+  const [customerMode, setCustomerMode] = useState<CustomerExecutionMode>("okx_marketplace");
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {

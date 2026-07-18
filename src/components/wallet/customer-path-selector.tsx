@@ -3,77 +3,42 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
-import type { CustomerExecutionMode } from "@/lib/wallet/types";
 import { resolveOkxAgentUrl } from "@/lib/wallet/okx-agent-url";
+import { getCanonicalOkxIdentityPublic } from "@/lib/okx/identity-public";
 
-interface CustomerPathSelectorProps {
-  mode: CustomerExecutionMode;
-  onModeChange: (mode: CustomerExecutionMode) => void;
-}
-
-export function CustomerPathSelector({ mode, onModeChange }: CustomerPathSelectorProps) {
+/**
+ * Fix & PR uses OKX A2A escrow only (service 32947).
+ * Direct-site wallet transfer is no longer offered.
+ */
+export function CustomerPathSelector() {
   const okxUrl = resolveOkxAgentUrl();
+  const identity = getCanonicalOkxIdentityPublic();
 
   return (
     <Panel variant="elevated" padding="md" className="space-y-3">
-      <p className="ds-label">How do you want to pay?</p>
-
-      <div className="grid gap-2 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={() => onModeChange("direct")}
-          className={`rounded-md border p-3 text-left text-sm transition-colors ${
-            mode === "direct"
-              ? "border-electric/50 bg-electric/10"
-              : "border-border/60 bg-card/40 hover:border-border"
-          }`}
-        >
-          <p className="font-medium text-foreground">Direct X Layer payment</p>
-          <p className="mt-1 text-muted-foreground">
-            Pay from your own wallet on X Layer. RepoDiet verifies payment server-side before
-            execution.
-          </p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onModeChange("okx_marketplace")}
-          className={`rounded-md border p-3 text-left text-sm transition-colors ${
-            mode === "okx_marketplace"
-              ? "border-electric/50 bg-electric/10"
-              : "border-border/60 bg-card/40 hover:border-border"
-          }`}
-        >
-          <p className="font-medium text-foreground">Use through OKX.AI</p>
-          <p className="mt-1 text-muted-foreground">
-            Hire RepoDiet through OKX.AI. Payment, delivery review, and release stay in the
-            official marketplace flow.
-          </p>
-        </button>
+      <p className="ds-label">Payment rail</p>
+      <div className="rounded-md border border-electric/40 bg-electric/5 p-3 text-sm">
+        <p className="font-medium text-foreground">
+          OKX A2A escrow · service {identity.a2aServiceId}
+        </p>
+        <p className="mt-1 text-muted-foreground">
+          RepoDiet Fix &amp; PR runs as registered OKX A2A service {identity.a2aServiceId} (ASP{" "}
+          {identity.aspAgentId}). You authorize the service, fund OKX escrow, review the pull
+          request, then accept delivery so OKX can release payment.
+        </p>
+        <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
+          <li>Funds stay in OKX escrow during cleanup and verification</li>
+          <li>RepoDiet never asks for a direct USDT transfer to its wallet</li>
+          <li>Acceptance and release follow the official OKX A2A lifecycle</li>
+        </ul>
+        {okxUrl ? (
+          <Button asChild size="sm" className="mt-3" variant="secondary">
+            <Link href={okxUrl} target="_blank" rel="noreferrer">
+              Open OKX.AI agent page
+            </Link>
+          </Button>
+        ) : null}
       </div>
-
-      {mode === "okx_marketplace" && (
-        <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground">
-          <p className="mb-2 font-medium text-foreground">OKX.AI marketplace path</p>
-          <ul className="list-inside list-disc space-y-1">
-            <li>Choose RepoDiet Cleanup Operator (A2A 32947)</li>
-            <li>Agree the repository and cleanup scope in OKX.AI</li>
-            <li>Return here only to inspect the delivered pull request</li>
-          </ul>
-          {okxUrl ? (
-            <Button asChild size="sm" className="mt-3">
-              <Link href={okxUrl} target="_blank" rel="noreferrer">
-                Open OKX.AI agent page
-              </Link>
-            </Button>
-          ) : (
-            <p className="mt-2 text-xs">
-              The public agent page is not available yet. Open OKX.AI and search for RepoDiet
-              (ASP 5283) after the listing goes live.
-            </p>
-          )}
-        </div>
-      )}
     </Panel>
   );
 }

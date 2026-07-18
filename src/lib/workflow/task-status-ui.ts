@@ -1,32 +1,35 @@
 import type { WorkflowA2ATask } from "./client";
 
 const STATUS_LABELS: Record<string, string> = {
-  awaiting_payment: "Awaiting payment",
-  funded: "Payment confirmed",
-  queued: "Cleanup queued",
-  fetching_repository: "Loading repository at pinned commit",
-  analyzing: "Preparing selected cleanup",
-  generating_changes: "Applying selected cleanup",
-  validating_patch: "Checking bounded diff",
+  submitted: "Preparing task",
+  quote_required: "Preparing task",
+  awaiting_payment: "Awaiting escrow funding",
+  funded: "Escrow funded",
+  queued: "Cleanup running",
+  fetching_repository: "Cleanup running",
+  analyzing: "Cleanup running",
+  generating_changes: "Cleanup running",
+  validating_patch: "Cleanup running",
   verifying: "Verification running",
-  awaiting_approval: "Ready to open pull request",
-  creating_pull_request: "Opening pull request",
-  monitoring_checks: "Waiting on GitHub checks",
-  delivery_ready: "PR ready — review and merge on GitHub",
-  delivery_submitted: "Delivery submitted — awaiting acceptance",
-  buyer_accepted: "Buyer accepted — awaiting escrow release",
-  escrow_released: "Escrow released to seller",
-  checks_failed: "GitHub checks failed",
-  diagnosis_ready: "Check failure diagnosed — review required",
-  owner_action_required: "Blocked — owner action required",
-  completed: "PR ready",
-  payment_failed: "Payment failed",
-  verification_failed: "Verification failed",
-  delivery_failed: "Pull request delivery failed",
-  analysis_failed: "Cleanup preparation failed",
-  rejected: "Cleanup rejected",
-  cancelled: "Cleanup cancelled",
-  expired: "Quote or task expired",
+  awaiting_approval: "Verification running",
+  creating_pull_request: "PR ready for review",
+  monitoring_checks: "PR ready for review",
+  delivery_ready: "PR ready for review",
+  delivery_submitted: "Awaiting acceptance",
+  buyer_accepted: "Accepted — awaiting OKX release",
+  escrow_released: "Accepted and released",
+  checks_failed: "Failed",
+  diagnosis_ready: "Failed",
+  owner_action_required: "Failed",
+  completed: "Accepted and released",
+  payment_failed: "Failed",
+  verification_failed: "Failed",
+  delivery_failed: "Failed",
+  analysis_failed: "Failed",
+  rejected: "Rejected",
+  disputed: "Disputed",
+  cancelled: "Cancelled",
+  expired: "Failed",
 };
 
 export function workflowTaskStatusLabel(status: string): string {
@@ -107,7 +110,13 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
     return "Payment was accepted, but RepoDiet could not verify cleanup changes for the selected scope. Try fewer safe findings or re-run eligibility preflight before paying again.";
   }
   if (task.status === "payment_failed") {
-    return "Payment was not accepted. Check your wallet address and try again.";
+    return "OKX escrow funding was not accepted. Authorize service 32947 again, fund escrow, then retry with the escrow reference.";
+  }
+  if (task.status === "disputed") {
+    return "This delivery is in OKX dispute / arbitration. Continue resolution in OKX.AI — RepoDiet will not invent an escrow outcome.";
+  }
+  if (task.status === "rejected") {
+    return "Delivery was rejected. Escrow follows OKX rejection rules; create a new A2A task if you want another cleanup attempt.";
   }
   return task.error ?? "The cleanup task did not complete.";
 }

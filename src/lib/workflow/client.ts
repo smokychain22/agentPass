@@ -46,7 +46,11 @@ export interface WorkflowA2ATask {
     buyerWallet?: string;
     escrowReleasedAt?: string;
     escrowReleaseReference?: string;
+    sellerWallet?: string;
+    disputeOpenedAt?: string;
+    disputeReason?: string;
   };
+  orderId?: string;
   prDelivery?: PrDeliveryMonitor;
   verification?: { status?: string; checks?: unknown[]; limitations?: string[] };
   error?: string;
@@ -403,4 +407,139 @@ export async function retryPrDeliveryChecks(input: {
     retried: data.retried === true,
     message: data.message ?? "Retry requested.",
   };
+}
+
+export async function fundOkxEscrowTask(input: {
+  taskId: string;
+  escrowReference: string;
+  buyerWallet: string;
+  okxAuthorizationReference?: string;
+}): Promise<WorkflowA2ATask> {
+  const res = await fetch(
+    `/api/okx/a2a/tasks/${encodeURIComponent(input.taskId)}/fund-escrow`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        escrowReference: input.escrowReference,
+        buyerWallet: input.buyerWallet,
+        okxAuthorizationReference: input.okxAuthorizationReference,
+      }),
+    }
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    task?: WorkflowA2ATask;
+    error?: string;
+    message?: string;
+    code?: string;
+  };
+  if (!res.ok || !data.success) {
+    throw new Error(data.message ?? data.error ?? "OKX escrow funding failed.");
+  }
+  if (data.task) return data.task;
+  const polled = await fetchWorkflowA2ATask(input.taskId);
+  return polled.task;
+}
+
+export async function acceptOkxA2aDelivery(input: {
+  taskId: string;
+  buyerWallet: string;
+  okxAcceptanceReference?: string;
+}): Promise<WorkflowA2ATask> {
+  const res = await fetch(
+    `/api/okx/a2a/tasks/${encodeURIComponent(input.taskId)}/accept`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        buyerWallet: input.buyerWallet,
+        okxAcceptanceReference: input.okxAcceptanceReference,
+      }),
+    }
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    task?: WorkflowA2ATask;
+    error?: string;
+  };
+  if (!res.ok || !data.success || !data.task) {
+    throw new Error(data.error ?? "OKX acceptance failed.");
+  }
+  return data.task;
+}
+
+export async function rejectOkxA2aDelivery(input: {
+  taskId: string;
+  buyerWallet?: string;
+  reason?: string;
+}): Promise<WorkflowA2ATask> {
+  const res = await fetch(
+    `/api/okx/a2a/tasks/${encodeURIComponent(input.taskId)}/reject`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    task?: WorkflowA2ATask;
+    error?: string;
+  };
+  if (!res.ok || !data.success || !data.task) {
+    throw new Error(data.error ?? "OKX rejection failed.");
+  }
+  return data.task;
+}
+
+export async function disputeOkxA2aDelivery(input: {
+  taskId: string;
+  buyerWallet?: string;
+  reason?: string;
+}): Promise<WorkflowA2ATask> {
+  const res = await fetch(
+    `/api/okx/a2a/tasks/${encodeURIComponent(input.taskId)}/dispute`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    task?: WorkflowA2ATask;
+    error?: string;
+  };
+  if (!res.ok || !data.success || !data.task) {
+    throw new Error(data.error ?? "OKX dispute failed.");
+  }
+  return data.task;
+}
+
+export async function recordOkxEscrowRelease(input: {
+  taskId: string;
+  escrowReleaseReference: string;
+  sellerWallet?: string;
+}): Promise<WorkflowA2ATask> {
+  const res = await fetch(
+    `/api/okx/a2a/tasks/${encodeURIComponent(input.taskId)}/release`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        escrowReleaseReference: input.escrowReleaseReference,
+        sellerWallet: input.sellerWallet,
+      }),
+    }
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    task?: WorkflowA2ATask;
+    error?: string;
+  };
+  if (!res.ok || !data.success || !data.task) {
+    throw new Error(data.error ?? "OKX escrow release recording failed.");
+  }
+  return data.task;
 }

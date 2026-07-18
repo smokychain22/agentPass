@@ -20,13 +20,15 @@ import { hashTaskOwnerSession, assertDirectTaskOwner } from "@/lib/workflow/task
 import {
   reviewDirectSiteDelivery,
 } from "@/lib/a2a/direct-site-lifecycle";
+import { newOkxOrderId, saveOkxOrder } from "@/lib/okx/store";
+import { durableNow } from "@/lib/store/durable-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const okxIdentity = getCanonicalOkxIdentity();
 
-/** Create scoped A2A cleanup task and return quote for browser payment flow. */
+/** Create scoped OKX A2A cleanup task (service 32947) with escrow quote. */
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -132,7 +134,7 @@ export async function POST(request: Request) {
       commitSha: body.commitSha,
       findingIds: gateResult.eligibleFindingIds,
       transformedSourceHashes: gateResult.transformedSourceHashes,
-      purchaseChannel: "direct_site",
+      purchaseChannel: "okx_marketplace",
       ownerSessionKeyHash: hashTaskOwnerSession(sessionKey),
     });
 
@@ -153,14 +155,34 @@ export async function POST(request: Request) {
       }
     }
 
+    const orderId = newOkxOrderId();
+    await saveOkxOrder({
+      orderId,
+      serviceId: "verified_cleanup_pr",
+      serviceType: "A2A",
+      repository,
+      branch: body.branch ?? findings.repo.branch,
+      commitSha: body.commitSha,
+      status: task.status,
+      taskId: task.id,
+      a2aTaskId: task.id,
+      quoteId: quote?.quoteId,
+      amountMicro: quote?.amountMicro,
+      createdAt: durableNow(),
+      updatedAt: durableNow(),
+    });
+
     return NextResponse.json({
       ok: true,
       task: formatA2ATaskResponse(task),
-      quote: quote ? formatWorkflowQuote(quote) : null,
+      quote: quote ? formatWorkflowQuote(quote, { paymentModel: "escrow" }) : null,
       github,
+      orderId,
       serviceId: String(okxIdentity.a2aServiceId),
       operation: OKX_A2A_PUBLIC_OPERATION,
       aspAgentId: String(okxIdentity.aspAgentId),
+      paymentModel: "escrow",
+      purchaseChannel: "okx_marketplace",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Workflow task creation failed.";
@@ -190,12 +212,17 @@ export async function GET(request: Request) {
   const quoteId = task.input.quoteId;
   const quote = quoteId ? await getBoundQuote(quoteId) : null;
 
+  const paymentModel =
+    task.input.purchaseChannel === "okx_marketplace" ? "escrow" : "direct";
+
   return NextResponse.json({
     ok: true,
     task: formatA2ATaskResponse(task),
-    quote: quote ? formatWorkflowQuote(quote) : null,
+    quote: quote ? formatWorkflowQuote(quote, { paymentModel }) : null,
     aspAgentId: String(okxIdentity.aspAgentId),
     serviceId: String(okxIdentity.a2aServiceId),
+    paymentModel,
+    purchaseChannel: task.input.purchaseChannel ?? "okx_marketplace",
   });
 }
 

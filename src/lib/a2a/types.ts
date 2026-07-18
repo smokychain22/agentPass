@@ -36,6 +36,7 @@ export type A2ATaskStatus =
   | "escrow_released"
   | "completed"
   | "rejected"
+  | "disputed"
   | "unsupported"
   | "payment_failed"
   | "analysis_failed"
@@ -46,6 +47,7 @@ export type A2ATaskStatus =
 
 export const A2A_FAILURE_STATUSES: A2ATaskStatus[] = [
   "rejected",
+  "disputed",
   "unsupported",
   "payment_failed",
   "analysis_failed",
@@ -175,6 +177,8 @@ export interface A2ATaskResult {
     escrowReleasedAt?: string;
     escrowReleaseReference?: string;
     sellerWallet?: string;
+    disputeOpenedAt?: string;
+    disputeReason?: string;
   };
 }
 

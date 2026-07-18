@@ -13,21 +13,24 @@ import {
   fetchPrDeliveryMonitor,
   reviewWorkflowDelivery,
   retryPrDeliveryChecks,
+  acceptOkxA2aDelivery,
+  rejectOkxA2aDelivery,
+  disputeOkxA2aDelivery,
   type PrDeliveryMonitor,
 } from "@/lib/workflow/client";
+import { useWallet } from "@/components/wallet/wallet-provider";
+import { getCanonicalOkxIdentityPublic } from "@/lib/okx/identity-public";
 import { cn } from "@/lib/utils";
 import { resolveOkxAgentUrl } from "@/lib/wallet/okx-agent-url";
 
 const TIMELINE_STEPS = [
-  { label: "Payment verified", evidence: ["funded"] },
-  { label: "Scope locked", evidence: ["awaiting_approval"] },
-  { label: "Isolated branch created", evidence: ["creating_pull_request"] },
-  { label: "Approved changes applied", evidence: ["generating_changes"] },
-  { label: "Patch validated", evidence: ["validating_patch"] },
-  { label: "Verification completed", evidence: ["verifying"] },
-  { label: "Pull request created", evidence: ["monitoring_checks"] },
-  { label: "Required checks passed", evidence: ["delivery_ready", "delivery_submitted", "buyer_accepted", "completed"] },
-  { label: "Buyer accepted delivery", evidence: ["buyer_accepted", "completed"] },
+  { label: "OKX escrow funded", evidence: ["funded"] },
+  { label: "Cleanup running", evidence: ["generating_changes", "validating_patch"] },
+  { label: "Verification running", evidence: ["verifying", "awaiting_approval"] },
+  { label: "Pull request created", evidence: ["creating_pull_request", "monitoring_checks"] },
+  { label: "PR ready for review", evidence: ["delivery_ready", "delivery_submitted"] },
+  { label: "Awaiting acceptance", evidence: ["delivery_submitted", "buyer_accepted"] },
+  { label: "Accepted and released", evidence: ["buyer_accepted", "escrow_released", "completed"] },
 ] as const;
 
 function stepDone(
@@ -57,6 +60,8 @@ function cleanupCausedLabel(value: boolean | "unknown"): string {
 
 export function VerifyTab() {
   const { session, findings, patchKit, a2aTask, setA2aTask } = useAppSession();
+  const wallet = useWallet();
+  const okxIdentity = getCanonicalOkxIdentityPublic();
   const [monitor, setMonitor] = useState<PrDeliveryMonitor | null>(null);
   const [loadingChecks, setLoadingChecks] = useState(false);
   const [retryLoading, setRetryLoading] = useState(false);
@@ -240,7 +245,7 @@ export function VerifyTab() {
             )}
             <div>
               <dt className="text-muted-foreground">Payment route</dt>
-              <dd>{marketplace ? "OKX.AI marketplace" : "Direct X Layer payment"}</dd>
+              <dd>OKX A2A escrow (service 32947)</dd>
             </div>
             {typeof receipt.receiptId === "string" && (
               <div>
@@ -410,50 +415,121 @@ export function VerifyTab() {
         </Panel>
       )}
 
-      {task && (task.status === "delivery_ready" || task.status === "delivery_submitted" || task.status === "buyer_accepted" || task.status === "owner_action_required" || task.status === "completed") && (
+      {task && (task.status === "delivery_ready" || task.status === "delivery_submitted" || task.status === "buyer_accepted" || task.status === "owner_action_required" || task.status === "completed" || task.status === "escrow_released" || task.status === "rejected" || task.status === "disputed") && (
         <Panel variant="elevated" padding="md">
           <p className="ds-label mb-2">Buyer decision</p>
-          {marketplace ? (
+          {task.status === "completed" || task.status === "escrow_released" ? (
+            <p className="text-sm text-signal">
+              Delivery accepted and OKX escrow release recorded. Review the receipt below.
+            </p>
+          ) : (
             <div className="space-y-3 text-sm">
               <p className="text-muted-foreground">
-                This order was purchased through OKX.AI. Accept, request changes, reject, and
-                escrow release must remain in the official marketplace task. RepoDiet will not
-                simulate those actions on this website.
+                Accept only after the pull request matches the agreed cleanup. Funds remain in OKX
+                A2A escrow (service {okxIdentity.a2aServiceId}) until you accept. Rejection and
+                disputes follow the official OKX lifecycle — RepoDiet does not reverse escrow itself.
               </p>
               <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => {
+                    void (async () => {
+                      if (!task) return;
+                      setReviewLoading(true);
+                      setReviewError(null);
+                      try {
+                        const buyerWallet =
+                          wallet.session?.address ||
+                          task.settlement?.buyerWallet ||
+                          "";
+                        if (!buyerWallet) {
+                          throw new Error("Connect your buyer wallet before accepting delivery.");
+                        }
+                        const next = await acceptOkxA2aDelivery({
+                          taskId: task.taskId,
+                          buyerWallet,
+                        });
+                        setA2aTask(next);
+                      } catch (err) {
+                        setReviewError(err instanceof Error ? err.message : "Accept failed.");
+                      } finally {
+                        setReviewLoading(false);
+                      }
+                    })();
+                  }}
+                  disabled={reviewLoading || !mergeReady}
+                >
+                  {reviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Accept delivery
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    void (async () => {
+                      if (!task) return;
+                      setReviewLoading(true);
+                      setReviewError(null);
+                      try {
+                        const next = await rejectOkxA2aDelivery({
+                          taskId: task.taskId,
+                          buyerWallet: wallet.session?.address || task.settlement?.buyerWallet,
+                          reason: "Buyer rejected delivered cleanup PR",
+                        });
+                        setA2aTask(next);
+                      } catch (err) {
+                        setReviewError(err instanceof Error ? err.message : "Reject failed.");
+                      } finally {
+                        setReviewLoading(false);
+                      }
+                    })();
+                  }}
+                  disabled={reviewLoading}
+                >
+                  Reject delivery
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    void (async () => {
+                      if (!task) return;
+                      setReviewLoading(true);
+                      setReviewError(null);
+                      try {
+                        const next = await disputeOkxA2aDelivery({
+                          taskId: task.taskId,
+                          buyerWallet: wallet.session?.address || task.settlement?.buyerWallet,
+                          reason: "Buyer opened OKX dispute / arbitration",
+                        });
+                        setA2aTask(next);
+                      } catch (err) {
+                        setReviewError(err instanceof Error ? err.message : "Dispute failed.");
+                      } finally {
+                        setReviewLoading(false);
+                      }
+                    })();
+                  }}
+                  disabled={reviewLoading}
+                >
+                  Open dispute
+                </Button>
                 {okxUrl && (
-                  <Button asChild>
+                  <Button asChild variant="secondary">
                     <a href={okxUrl} target="_blank" rel="noreferrer">Review in OKX.AI</a>
                   </Button>
                 )}
                 <Button variant="secondary" onClick={() => void syncTask()} disabled={reviewLoading}>
                   {reviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  <span className="ml-2">Sync marketplace status</span>
+                  <span className="ml-2">Sync status</span>
                 </Button>
               </div>
-              {!okxUrl && <p className="text-xs text-muted-foreground">Open your OKX.AI Agentic Wallet task and find RepoDiet ASP 5283.</p>}
-            </div>
-          ) : task.status === "completed" ? (
-            <p className="text-sm text-signal">Delivery accepted. The direct X Layer payment was settled when it was sent.</p>
-          ) : (
-            <div className="space-y-3 text-sm">
-              <p className="text-muted-foreground">
-                Accept only after the pull request matches the agreed scope and all required
-                checks pass. A direct payment is not OKX escrow and is not automatically reversed
-                by rejecting a delivery.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void handleReview("accept")} disabled={reviewLoading || !mergeReady}>
-                  {reviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Accept delivery
-                </Button>
-                <Button variant="secondary" onClick={() => void handleReview("request_changes")} disabled={reviewLoading}>
-                  Request changes
-                </Button>
-                <Button variant="destructive" onClick={() => void handleReview("reject")} disabled={reviewLoading}>
-                  Reject delivery
-                </Button>
-              </div>
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer text-electric">Advanced details</summary>
+                <p className="mt-1 font-mono">
+                  A2A {okxIdentity.a2aServiceId} · ASP {okxIdentity.aspAgentId} · task {task.taskId}
+                  {task.settlement?.escrowReference
+                    ? ` · escrow ${task.settlement.escrowReference}`
+                    : ""}
+                </p>
+              </details>
             </div>
           )}
           {reviewError && <p className="mt-3 text-sm text-red-300">{reviewError}</p>}

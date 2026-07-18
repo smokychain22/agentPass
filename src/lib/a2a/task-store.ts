@@ -53,6 +53,7 @@ export function isTerminalStatus(status: A2ATaskStatus): boolean {
   return [
     "completed",
     "rejected",
+    "disputed",
     "unsupported",
     "payment_failed",
     "analysis_failed",

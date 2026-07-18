@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/design-system/panel";
 import { FeedbackBanner } from "@/components/app/ui/feedback-banner";
-import { PaymentAuthorizationPanel } from "@/components/wallet/payment-authorization-panel";
+import { OkxEscrowPanel } from "@/components/wallet/okx-escrow-panel";
 import {
   PrePaymentCleanupPreview,
   selectionBlocksPayment,
@@ -22,8 +22,7 @@ import {
   fetchAuthoritativeRepositoryAccess,
   fetchRepositoryStatus,
   fetchWorkflowA2ATask,
-  fundWorkflowTask,
-  payWorkflowQuote,
+  fundOkxEscrowTask,
   type WorkflowA2ATask,
   type WorkflowQuote,
 } from "@/lib/workflow/client";
@@ -35,7 +34,7 @@ import {
   startGitHubGrantAccess,
   syncGitHubRepositoryAccess,
 } from "@/lib/patch-kit/client";
-import { isTrustedTestQuote } from "@/lib/workflow/payment-ui";
+import { getCanonicalOkxIdentityPublic } from "@/lib/okx/identity-public";
 import {
   isWorkflowTaskFailure,
   isWorkflowTaskTerminal,
@@ -96,23 +95,14 @@ export function FixPrA2AFlow({
   const [githubGrantError, setGithubGrantError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baselineInvalid, setBaselineInvalid] = useState<BaselineInvalidUi | null>(null);
-  const {
-    setPaymentState,
-    customerMode,
-    setCustomerMode,
-    session: walletSession,
-    isOnXLayer,
-    state: walletState,
-  } = useWallet();
+  const { setPaymentState, setCustomerMode } = useWallet();
   const cleanedReturnUrl = useRef(false);
   const githubBootstrapped = useRef<string | null>(null);
-
-  const trustedTestPayment = isTrustedTestQuote(quote);
+  const okxIdentity = getCanonicalOkxIdentityPublic();
 
   useEffect(() => {
-    if (!a2aTask?.purchaseChannel) return;
-    setCustomerMode(a2aTask.purchaseChannel === "okx_marketplace" ? "okx_marketplace" : "direct");
-  }, [a2aTask?.purchaseChannel, setCustomerMode]);
+    setCustomerMode("okx_marketplace");
+  }, [setCustomerMode]);
 
   const githubVerified =
     github?.authoritativeState === "repository_verified" && github?.connected === true;
@@ -340,7 +330,7 @@ export function FixPrA2AFlow({
   }, [a2aTask?.taskId, a2aTask?.status, onTaskUpdate]);
 
   const startQuote = useCallback(async () => {
-    if (customerMode !== "direct" || !commitSha || selectedSafe.length === 0) return;
+    if (!commitSha || selectedSafe.length === 0) return;
     setLoading(true);
     setError(null);
     setBaselineInvalid(null);
@@ -371,34 +361,30 @@ export function FixPrA2AFlow({
     } finally {
       setLoading(false);
     }
-  }, [branch, commitSha, customerMode, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
+  }, [branch, commitSha, findings.scanId, onScopeReviewed, onTaskUpdate, repoUrl, selectedSafe]);
 
-  const authorizePayment = useCallback(
-    async (input: { payer: string; paymentReference: string; paymentSignature?: string }) => {
+  const fundEscrow = useCallback(
+    async (input: {
+      buyerWallet: string;
+      escrowReference: string;
+      okxAuthorizationReference?: string;
+    }) => {
       if (!quote || !a2aTask?.taskId) return;
       if (paymentBlocked) {
         throw new Error(
           controlledGate.message ||
-            "Payment is blocked until the selected cleanup passes the pre-payment preview gate."
+            "Escrow funding is blocked until the selected cleanup passes the pre-payment preview gate."
         );
       }
       setLoading(true);
       setError(null);
       setPaymentState("payment_pending");
       try {
-        await payWorkflowQuote({
-          quoteId: quote.quoteId,
-          paymentReference: input.paymentReference,
-          payer: input.payer,
-          paymentSignature: input.paymentSignature,
-          amountMicro: quote.amountMicro,
-        });
-        const funded = await fundWorkflowTask({
+        const funded = await fundOkxEscrowTask({
           taskId: a2aTask.taskId,
-          quoteId: quote.quoteId,
-          paymentReference: input.paymentReference,
-          payer: input.payer,
-          paymentSignature: input.paymentSignature,
+          escrowReference: input.escrowReference,
+          buyerWallet: input.buyerWallet,
+          okxAuthorizationReference: input.okxAuthorizationReference,
         });
         onTaskUpdate(funded);
         setPaymentState("execution_started");
@@ -407,7 +393,7 @@ export function FixPrA2AFlow({
         if (refreshed.quote) setQuote(refreshed.quote);
       } catch (err) {
         setPaymentState("failed");
-        setError(err instanceof Error ? err.message : "Payment failed.");
+        setError(err instanceof Error ? err.message : "OKX escrow funding failed.");
         throw err;
       } finally {
         setLoading(false);
@@ -514,15 +500,16 @@ export function FixPrA2AFlow({
     <div className="space-y-4">
       <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <li>1. Connect repository</li>
-        <li>2. Review suggested cleanup</li>
-        <li>3. Select files</li>
-        <li>4. Review price</li>
-        <li>5. Pay and create PR</li>
-        <li>6. Review and merge on GitHub</li>
+        <li>2. Scan repository</li>
+        <li>3. Select suggested files</li>
+        <li>4. Review exact cleanup</li>
+        <li>5. Authorize A2A {okxIdentity.a2aServiceId}</li>
+        <li>6. Fund OKX escrow</li>
+        <li>7. Cleanup &amp; verify</li>
+        <li>8. Review PR &amp; accept</li>
+        <li>9. OKX releases payment</li>
       </ol>
-      {!a2aTask && (
-        <CustomerPathSelector mode={customerMode} onModeChange={setCustomerMode} />
-      )}
+      {!a2aTask && <CustomerPathSelector />}
       <Panel variant="elevated" padding="md">
         <p className="ds-label mb-3">Repository connection</p>
         {githubVerifying ? (
@@ -679,7 +666,7 @@ export function FixPrA2AFlow({
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">Payment type</dt>
-              <dd>Direct payment (not escrow)</dd>
+              <dd>OKX A2A escrow · service {okxIdentity.a2aServiceId}</dd>
             </div>
             {quote.expiresAt && (
               <div className="flex justify-between gap-4">
@@ -716,10 +703,9 @@ export function FixPrA2AFlow({
               <p className="text-xs text-muted-foreground">
                 {deliveryUiPhase({
                   githubConnected: githubVerified,
-                  walletConnected: Boolean(walletSession?.address),
-                  walletOnCorrectNetwork: isOnXLayer,
                   hasQuote: Boolean(quote),
                   task: a2aTask,
+                  preparingTask: loading && !a2aTask,
                 }).replaceAll("_", " ")}
               </p>
             </div>
@@ -873,12 +859,7 @@ export function FixPrA2AFlow({
                 )}
               </dl>
             )}
-            {trustedTestPayment && a2aTask.status !== "awaiting_payment" && (
-              <p className="text-xs text-muted-foreground">
-                Test payment mode: no on-chain USDT transfer is required for the 0.20 USDT personal test price.
-              </p>
-            )}
-          </div>
+</div>
         )}
 
         {showBaselineBlock && (
@@ -935,32 +916,33 @@ export function FixPrA2AFlow({
         {error && !showBaselineBlock && <FeedbackBanner variant="error" message={error} className="mt-3" />}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {customerMode === "direct" && (!quote || quoteExpired) && !hideQuoteButton && (
+          {(!quote || quoteExpired) && !hideQuoteButton && (
             <Button onClick={startQuote} disabled={loading || !githubVerified || selectedSafe.length === 0}>
               {loading ? (
                 <Loader2 className="animate-spin" />
               ) : quoteExpired ? (
-                "Generate fresh quote"
+                "Generate fresh OKX quote"
               ) : scopeReviewed ? (
-                "Refresh quote"
+                "Refresh OKX A2A quote"
               ) : (
-                "Review cleanup scope"
+                "Prepare OKX A2A cleanup task"
               )}
             </Button>
           )}
-          {customerMode === "direct" && quote && !quoteExpired && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
-            <PaymentAuthorizationPanel
+          {quote && !quoteExpired && a2aTask?.status === "awaiting_payment" && !hideQuoteButton && (
+            <OkxEscrowPanel
               quote={quote}
+              taskId={a2aTask.taskId}
               loading={loading}
               authorizationBlocked={paymentBlocked}
               authorizationBlockReason={controlledGate.message}
               previewDryRun={previewDryRunUi}
               onSimulateAuthorization={() => {
                 setPreviewSimulationNote(
-                  "Preview simulation only — no wallet call, no USDT transfer, no write token, no worker dispatch, no GitHub mutation."
+                  "Preview simulation only — no OKX escrow funding, no write token, no worker dispatch, no GitHub mutation."
                 );
               }}
-              onAuthorize={authorizePayment}
+              onFundEscrow={fundEscrow}
             />
           )}
           {isWorkflowTaskFailure(a2aTask) && !hideRetryCleanup && (

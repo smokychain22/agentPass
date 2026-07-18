@@ -232,6 +232,110 @@ export async function recordA2aEscrowRelease(
   return updated;
 }
 
+export async function rejectA2aDeliveryByBuyer(
+  taskId: string,
+  input: { buyerWallet?: string; reason?: string } = {}
+): Promise<A2ATaskRecord> {
+  const task = await getA2ATask(taskId);
+  if (!task) throw new Error("Task not found.");
+  if (task.input.purchaseChannel === "direct_site") {
+    throw new Error("Direct-site delivery must be reviewed in the RepoDiet workspace.");
+  }
+  if (task.status === "rejected" || task.status === "cancelled" || task.status === "disputed") {
+    return task;
+  }
+  if (
+    ![
+      "delivery_ready",
+      "delivery_submitted",
+      "buyer_accepted",
+      "monitoring_checks",
+      "checks_failed",
+      "owner_action_required",
+    ].includes(task.status)
+  ) {
+    throw new Error(`Cannot reject delivery in status ${task.status}.`);
+  }
+
+  const order = await getOkxOrderByA2aTask(taskId);
+  if (order) {
+    await updateOkxOrder(order.orderId, { status: "rejected" });
+  }
+
+  const sm = new A2ATaskStateMachine(task.transitions);
+  sm.emit(
+    "rejected",
+    "orchestrator",
+    input.reason?.trim() || "Buyer rejected delivered Green PR; escrow remains with OKX lifecycle."
+  );
+
+  const updated: A2ATaskRecord = {
+    ...task,
+    status: "rejected",
+    error: input.reason?.trim() || "Buyer rejected delivery",
+    result: {
+      ...task.result,
+      settlement: {
+        ...task.result.settlement,
+        buyerWallet: input.buyerWallet?.trim().toLowerCase() || task.result.settlement?.buyerWallet,
+      },
+    },
+    transitions: sm.cloneTransitions(),
+    updatedAt: durableNow(),
+    completedAt: durableNow(),
+  };
+  await saveA2ATask(updated);
+  await deliverTaskCallback(updated);
+  return updated;
+}
+
+export async function disputeA2aDeliveryByBuyer(
+  taskId: string,
+  input: { buyerWallet?: string; reason?: string } = {}
+): Promise<A2ATaskRecord> {
+  const task = await getA2ATask(taskId);
+  if (!task) throw new Error("Task not found.");
+  if (task.input.purchaseChannel === "direct_site") {
+    throw new Error("Direct-site delivery has no OKX dispute step.");
+  }
+  if (task.status === "disputed") return task;
+  if (task.status === "completed" || task.status === "escrow_released" || task.status === "cancelled") {
+    throw new Error(`Cannot dispute delivery in status ${task.status}.`);
+  }
+
+  const order = await getOkxOrderByA2aTask(taskId);
+  if (order) {
+    await updateOkxOrder(order.orderId, { status: "disputed" });
+  }
+
+  const sm = new A2ATaskStateMachine(task.transitions);
+  sm.emit(
+    "disputed",
+    "orchestrator",
+    input.reason?.trim() || "Buyer opened OKX dispute / arbitration for this delivery"
+  );
+
+  const updated: A2ATaskRecord = {
+    ...task,
+    status: "disputed",
+    error: input.reason?.trim() || "Delivery disputed via OKX arbitration",
+    result: {
+      ...task.result,
+      settlement: {
+        ...task.result.settlement,
+        buyerWallet: input.buyerWallet?.trim().toLowerCase() || task.result.settlement?.buyerWallet,
+        disputeOpenedAt: durableNow(),
+        disputeReason: input.reason?.trim(),
+      },
+    },
+    transitions: sm.cloneTransitions(),
+    updatedAt: durableNow(),
+  };
+  await saveA2ATask(updated);
+  await deliverTaskCallback(updated);
+  return updated;
+}
+
 export function describeA2aLifecycle(): string[] {
   return [
     "buyer creates A2A task",
