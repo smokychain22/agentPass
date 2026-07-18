@@ -6,7 +6,8 @@ import type {
 } from "./types";
 
 function percent(numerator: number, denominator: number): number {
-  if (denominator <= 0) return 0;
+  // Empty repository: vacuous 100% accounting when inventory successfully recorded zero paths.
+  if (denominator <= 0) return numerator <= 0 ? 100 : 0;
   return (numerator / denominator) * 100;
 }
 
@@ -18,7 +19,9 @@ function countOutcome(
 }
 
 function isMaterializationMismatch(status: MaterializationStatus): boolean {
-  return status === "MATERIALIZATION_FAILED_WITH_REASON";
+  return (
+    status === "MATERIALIZATION_FAILED_WITH_REASON" || status === "NOT_MATERIALIZED"
+  );
 }
 
 /**

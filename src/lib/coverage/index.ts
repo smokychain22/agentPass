@@ -67,3 +67,18 @@ export { discoverRepositoryTopology } from "./topology";
 
 export { buildUniversalCoverageReport } from "./build-coverage-report";
 export type { BuildUniversalCoverageReportArgs } from "./build-coverage-report";
+
+export { ANALYZER_REGISTRY, getAnalyzer, listAnalyzers, analyzersForLayer } from "./analyzer-registry";
+export type { AnalyzerId, AnalyzerDescriptor } from "./analyzer-registry";
+
+export {
+  FALLBACK_LAYER_ORDER,
+  nextFallbackLayer,
+  layersFromPlan,
+  outcomeForSuccessfulLayer,
+  applyFallbackChainToInventory,
+  makeAttempt,
+} from "./fallback-chain";
+
+export { runUniversalCoverage, legacyCoverageReport } from "./run-universal-coverage";
+export type { RunUniversalCoverageInput } from "./run-universal-coverage";
