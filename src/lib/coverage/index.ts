@@ -6,7 +6,7 @@ export {
   isForbiddenBareOutcome,
   isTerminalCoverageOutcome,
 } from "./outcomes";
-export type { ForbiddenBareOutcome } from "./outcomes";
+export type { ForbiddenBareOutcome, TerminalCoverageOutcome as TerminalCoverageOutcomeType } from "./outcomes";
 
 export type {
   GitObjectType,
@@ -25,3 +25,45 @@ export type {
 
 export { assertCoverageInvariants } from "./invariants";
 export { buildCoverageMetrics } from "./metrics";
+
+export {
+  fetchPinnedCommitTreeViaApi,
+  listPinnedCommitTreeViaGit,
+  loadPinnedCommitTree,
+  parseGitLsTreeZ,
+} from "./git-tree-inventory";
+export type { GitTreeEntry, PinnedCommitTree } from "./git-tree-inventory";
+
+export {
+  normalizeRepoRelativePath,
+  assertSafeRepoRelativePath,
+} from "./path-normalize";
+
+export {
+  detectGeneratedPath,
+  detectVendoredPath,
+  detectBinaryExt,
+  detectLfsPointerContent,
+  detectSymlinkMode,
+  detectGitlinkMode,
+  detectProtectedPath,
+  planAnalyzersForPath,
+  analyzerPlanFromLayers,
+  classifyTrackedPath,
+} from "./classify-path";
+export type {
+  PlanAnalyzersOptions,
+  ClassifyTrackedPathInput,
+  ClassifyTrackedPathResult,
+} from "./classify-path";
+
+export { reconcileGitTreeWithWorktree } from "./worktree-reconcile";
+export type {
+  ReconcileGitTreeInput,
+  ReconcileGitTreeResult,
+} from "./worktree-reconcile";
+
+export { discoverRepositoryTopology } from "./topology";
+
+export { buildUniversalCoverageReport } from "./build-coverage-report";
+export type { BuildUniversalCoverageReportArgs } from "./build-coverage-report";
