@@ -1,6 +1,10 @@
 /**
  * Server-side Preview / non-production dry-run enforcement.
- * Trust VERCEL_ENV (and explicit overrides). Never rely on the browser alone.
+ * Trust Vercel deployment labels (`VERCEL_ENV`). Never rely on the browser alone.
+ *
+ * When `VERCEL_ENV` is unset (local unit tests / offline), dry-run is off unless
+ * `REPODIET_FORCE_PREVIEW_DRY_RUN=1`. When `VERCEL_ENV=preview|development`,
+ * real payment and repository writes are refused unless explicitly re-enabled.
  */
 
 export type DeploymentEnvironment = "production" | "preview" | "development" | "test" | "unknown";
@@ -40,30 +44,40 @@ export function getDeploymentEnvironment(
   return vercel ? "unknown" : env.NODE_ENV === "production" ? "unknown" : "development";
 }
 
-/** True only for Vercel Production (or explicit live override). */
+/** True only for Vercel Production. */
 export function isProductionDeployment(env: NodeJS.ProcessEnv = process.env): boolean {
   return getDeploymentEnvironment(env) === "production";
 }
 
 /**
- * Non-production deployments run in dry-run for payment + repository mutation.
- * Explicit escape hatch for controlled live Preview tests only.
+ * True when this process is a Vercel-labeled non-production deployment
+ * (or dry-run was forced for local verification).
+ */
+export function isVercelNonProductionDeployment(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.REPODIET_FORCE_PREVIEW_DRY_RUN === "1") return true;
+  const vercel = (env.VERCEL_ENV || "").toLowerCase();
+  return vercel === "preview" || vercel === "development";
+}
+
+/**
+ * Non-production Vercel deployments run in dry-run for payment + repository mutation.
+ * Explicit escape hatches exist for controlled live Preview tests only.
  */
 export function isPreviewDryRun(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isVercelNonProductionDeployment(env)) return false;
   if (env.REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT === "1" && env.REPODIET_PREVIEW_ALLOW_REPO_WRITE === "1") {
-    // Both must be set for a fully live Preview — still not recommended.
     return false;
   }
-  return !isProductionDeployment(env);
+  return true;
 }
 
 export function isPreviewPaymentBlocked(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (isProductionDeployment(env)) return false;
+  if (!isVercelNonProductionDeployment(env)) return false;
   return env.REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT !== "1";
 }
 
 export function isPreviewRepositoryWriteBlocked(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (isProductionDeployment(env)) return false;
+  if (!isVercelNonProductionDeployment(env)) return false;
   return env.REPODIET_PREVIEW_ALLOW_REPO_WRITE !== "1";
 }
 

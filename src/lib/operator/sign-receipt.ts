@@ -103,8 +103,9 @@ export function signExecutionReceipt(receipt: ExecutionReceipt): {
   signedBy: string | null;
 } {
   const signedReceipt = toSignedReceiptV1(receipt);
-  // Preview / non-production receipts are simulated — never present as production delivery evidence.
-  if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== "production") {
+  // Vercel Preview/development receipts are simulated — never present as production delivery evidence.
+  const vercelEnv = (process.env.VERCEL_ENV || "").toLowerCase();
+  if (vercelEnv === "preview" || vercelEnv === "development" || process.env.REPODIET_FORCE_PREVIEW_DRY_RUN === "1") {
     const simulatedReceipt: ExecutionReceipt = {
       ...receipt,
       patchHash: `simulated-preview:${receipt.patchHash}`,

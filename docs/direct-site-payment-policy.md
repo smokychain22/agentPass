@@ -23,7 +23,7 @@ The Fix & PR screen on the website is **not** OKX escrow. Marketing copy that de
 
 ## Preview / test mode (server-enforced)
 
-When `VERCEL_ENV !== "production"` (unless both `REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT=1` and `REPODIET_PREVIEW_ALLOW_REPO_WRITE=1`):
+When `VERCEL_ENV` is `preview` or `development` (unless `REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT=1` / `REPODIET_PREVIEW_ALLOW_REPO_WRITE=1` for controlled live Preview tests):
 
 - `POST /api/tasks/pay` and task fund return `PREVIEW_DRY_RUN_ONLY` — no real payment verification.
 - Installation write-token minting, cleanup dispatch, and GitHub branch/commit/PR creation are blocked.

@@ -80,12 +80,29 @@ async function main() {
         VERCEL_ENV: "production",
         REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT: undefined,
         REPODIET_PREVIEW_ALLOW_REPO_WRITE: undefined,
+        REPODIET_FORCE_PREVIEW_DRY_RUN: undefined,
       },
       () => {
         assert.equal(isPreviewPaymentBlocked(), false);
         assert.equal(isPreviewRepositoryWriteBlocked(), false);
         assert.doesNotThrow(() => assertPreviewAllowsPayment());
         assert.doesNotThrow(() => assertPreviewAllowsRepositoryWrite());
+      }
+    );
+  });
+
+  await run("local/test without VERCEL_ENV does not dry-run by default", async () => {
+    await withEnv(
+      {
+        VERCEL_ENV: undefined,
+        NEXT_PUBLIC_VERCEL_ENV: undefined,
+        REPODIET_FORCE_PREVIEW_DRY_RUN: undefined,
+        NODE_ENV: "test",
+      },
+      () => {
+        assert.equal(isPreviewDryRun(), false);
+        assert.equal(isPreviewPaymentBlocked(), false);
+        assert.equal(isPreviewRepositoryWriteBlocked(), false);
       }
     );
   });
