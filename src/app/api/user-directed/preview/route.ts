@@ -3,9 +3,7 @@ import { NextResponse } from "next/server";
 import { getAppScan } from "@/lib/scan/app-scan-store";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { flattenFindings } from "@/lib/findings/client";
-import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { buildApplyableFilePatch } from "@/lib/patch-kit/applyable-patch-builder";
-import { buildTextDiff } from "@/lib/execution/fix-preflight";
 import { analyzeRequestedAction } from "@/lib/user-directed/analyze-requested-action";
 import { normalizeTrackedPath, pathIdFor } from "@/lib/user-directed/path-identity";
 import type {
@@ -14,11 +12,9 @@ import type {
   TransformationPlan,
 } from "@/lib/user-directed/types";
 import { nanoid } from "nanoid";
-import fs from "node:fs/promises";
-import path from "node:path";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+export const maxDuration = 60;
 
 function redactSecrets(diff: string): { diff: string; redacted: boolean } {
   const patterns = [
@@ -29,11 +25,10 @@ function redactSecrets(diff: string): { diff: string; redacted: boolean } {
   let out = diff;
   let redacted = false;
   for (const re of patterns) {
-    const next = out.replace(re, (match) => {
+    out = out.replace(re, (match) => {
       redacted = true;
       return match.replace(/[A-Za-z0-9_\-]{8,}/g, "[REDACTED]");
     });
-    out = next;
   }
   return { diff: out, redacted };
 }
@@ -48,9 +43,28 @@ function countLines(diff: string): { additions: number; deletions: number } {
   return { additions, deletions };
 }
 
+async function fetchPinnedFileContent(input: {
+  owner: string;
+  repo: string;
+  commitSha: string;
+  path: string;
+}): Promise<string | null> {
+  const url = `https://raw.githubusercontent.com/${input.owner}/${input.repo}/${input.commitSha}/${input.path}`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "text/plain", "User-Agent": "RepoDiet-preflight" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Isolated preflight → exact patch preview before payment.
- * No payable quote is created here; callers must POST /api/user-directed/quote after.
+ * Lightweight pre-payment patch preview (no full workspace checkout).
+ * Uses pinned-commit file contents from GitHub + applyable unified diffs.
  */
 export async function POST(request: Request) {
   try {
@@ -76,7 +90,6 @@ export async function POST(request: Request) {
     const findingsPayload = await getStoredFindings(scanId);
     const owner = findingsPayload?.repo.owner ?? scan?.payload.repo.owner;
     const repo = findingsPayload?.repo.name ?? scan?.payload.repo.name;
-    const branch = findingsPayload?.repo.branch ?? scan?.payload.repo.branch ?? "main";
     const pinnedCommit =
       body.pinnedCommit ?? findingsPayload?.repo.commitSha ?? scan?.payload.repo.commitSha;
     const repository = body.repository ?? (owner && repo ? `${owner}/${repo}` : undefined);
@@ -112,139 +125,22 @@ export async function POST(request: Request) {
     const actionType: RequestedActionType =
       body.actionType ?? body.plan?.proposedAction ?? "DELETE";
 
-    const repoUrl = `https://github.com/${owner}/${repo}`;
-    const workspace = await prepareRepoWorkspace(repoUrl, branch);
-    try {
-      const parts: string[] = [];
-      const filesDeleted: string[] = [];
-      const filesEdited: string[] = [];
-      const filesCreated: string[] = [];
-      const beforeHashes: string[] = [];
-      let referencesChanged = 0;
+    if (actionType === "INSPECT" || actionType === "KEEP" || actionType === "SUPPRESS") {
+      return NextResponse.json({
+        ok: true,
+        payableQuoteAllowed: false,
+        preview: null,
+        message: "No repository write is planned for this action.",
+      });
+    }
 
-      for (const rel of paths) {
-        const abs = path.join(workspace.rootDir, rel);
-        let original = "";
-        try {
-          original = await fs.readFile(abs, "utf8");
-        } catch {
-          // Missing at checkout — still invalid for delete
-        }
-        beforeHashes.push(
-          createHash("sha256").update(original || rel).digest("hex").slice(0, 16)
-        );
-
-        if (actionType === "DELETE") {
-          const applyable = buildApplyableFilePatch(rel, original || "", null);
-          const fallback = buildTextDiff(rel, original || "\n", "");
-          const piece = applyable || fallback;
-          if (!piece.trim()) {
-            return NextResponse.json(
-              {
-                ok: false,
-                error: `Preflight could not produce a real delete patch for ${rel}.`,
-                payableQuoteAllowed: false,
-              },
-              { status: 422 }
-            );
-          }
-          parts.push(piece);
-          filesDeleted.push(rel);
-        } else if (actionType === "EDIT" || actionType === "CUSTOM") {
-          const instruction = body.userInstruction ?? "";
-          // Bounded plan: propose a comment annotation — never execute arbitrary instructions.
-          const annotated =
-            original +
-            (original.endsWith("\n") ? "" : "\n") +
-            `// RepoDiet planned edit (review required): ${instruction.slice(0, 200)}\n`;
-          const piece = buildApplyableFilePatch(rel, original, annotated);
-          if (!piece) {
-            return NextResponse.json(
-              {
-                ok: false,
-                error: `Preflight could not produce a bounded edit plan for ${rel}.`,
-                payableQuoteAllowed: false,
-              },
-              { status: 422 }
-            );
-          }
-          parts.push(piece);
-          filesEdited.push(rel);
-        } else if (
-          actionType === "CONSOLIDATE_DUPLICATES" ||
-          actionType === "CHOOSE_CANONICAL"
-        ) {
-          const canonical = normalizeTrackedPath(
-            body.canonicalPath ?? body.plan?.requestedActions[0]?.canonicalPath ?? paths[0]
-          );
-          if (rel === canonical) continue;
-          const piece = buildApplyableFilePatch(rel, original || "", null);
-          if (!piece) {
-            return NextResponse.json(
-              {
-                ok: false,
-                error: `Preflight could not produce consolidation patch for ${rel}.`,
-                payableQuoteAllowed: false,
-              },
-              { status: 422 }
-            );
-          }
-          parts.push(piece);
-          filesDeleted.push(rel);
-          referencesChanged += 1;
-        } else if (actionType === "INSPECT" || actionType === "KEEP" || actionType === "SUPPRESS") {
-          return NextResponse.json({
-            ok: true,
-            payableQuoteAllowed: false,
-            preview: null,
-            message: "No repository write is planned for this action.",
-          });
-        } else {
-          // Unsupported automatic transform → planning response, not silent skip
-          const action: RequestedAction = {
-            id: `req_${nanoid(10)}`,
-            repository,
-            pinnedCommit,
-            pathIds: paths.map(pathIdFor),
-            findingIds,
-            actionType,
-            userInstruction: body.userInstruction,
-            canonicalPath: body.canonicalPath,
-            requestedAt: new Date().toISOString(),
-            requestedBy: body.requestedBy ?? "workspace_user",
-          };
-          const plan = analyzeRequestedAction({
-            action,
-            findings: flat,
-            transformerAvailable: false,
-          });
-          return NextResponse.json({
-            ok: true,
-            payableQuoteAllowed: false,
-            transformationPlans: [plan],
-            message: plan.summary,
-            nextStep: plan.nextStep,
-          });
-        }
-      }
-
-      const rawDiff = parts.join("\n");
-      if (!rawDiff.trim()) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Preflight produced an empty patch; no payable quote may be created.",
-            payableQuoteAllowed: false,
-          },
-          { status: 422 }
-        );
-      }
-
-      const { diff: unifiedDiff, redacted } = redactSecrets(rawDiff);
-      const { additions, deletions } = countLines(unifiedDiff);
-      const beforeHash = createHash("sha256").update(beforeHashes.join("|")).digest("hex");
-      const afterHash = createHash("sha256").update(unifiedDiff).digest("hex");
-
+    if (
+      actionType !== "DELETE" &&
+      actionType !== "EDIT" &&
+      actionType !== "CUSTOM" &&
+      actionType !== "CONSOLIDATE_DUPLICATES" &&
+      actionType !== "CHOOSE_CANONICAL"
+    ) {
       const action: RequestedAction = {
         id: `req_${nanoid(10)}`,
         repository,
@@ -257,70 +153,171 @@ export async function POST(request: Request) {
         requestedAt: new Date().toISOString(),
         requestedBy: body.requestedBy ?? "workspace_user",
       };
-
-      const relatedEligible = flat.some(
-        (f) =>
-          f.files.some((file) => paths.includes(normalizeTrackedPath(file))) &&
-          (f.action === "safe_candidate" ||
-            (f.evidence.signals ?? []).includes("classification=actionable_candidate"))
-      );
-
       const plan = analyzeRequestedAction({
         action,
         findings: flat,
-        unifiedDiff,
-        // Fail-closed: DELETE is executable only when an eligible finding backs the path.
-        // EDIT/CUSTOM may produce a bounded reviewable plan; payment still requires plan hash bind.
-        transformerAvailable:
-          actionType === "DELETE"
-            ? relatedEligible
-            : actionType === "EDIT" ||
-                actionType === "CUSTOM" ||
-                actionType === "CONSOLIDATE_DUPLICATES" ||
-                actionType === "CHOOSE_CANONICAL",
-        validationCommands: ["npm run typecheck", "npm run build"],
+        transformerAvailable: false,
       });
-
-      // Enrich file change stats on executable plans
-      if (plan.executable) {
-        plan.fileChanges = plan.fileChanges.map((c) => ({
-          ...c,
-          additions: c.action === "delete" ? 0 : additions,
-          deletions: c.action === "delete" ? Math.max(1, Math.floor(deletions / Math.max(1, filesDeleted.length))) : deletions,
-        }));
-      }
-
-      const preview = {
-        planId: plan.planId,
-        unifiedDiff,
-        filesCreated,
-        filesEdited,
-        filesDeleted,
-        filesRenamed: [] as Array<{ from: string; to: string }>,
-        referencesChanged,
-        dependenciesChanged: [] as string[],
-        beforeHash,
-        afterHash,
-        additions,
-        deletions,
-        validationCommands: plan.validationCommands,
-        predictedValidationSeconds: plan.predictedValidationSeconds ?? 90,
-        unexpectedChangeBudget: plan.unexpectedChangeBudget,
-        rollbackPlan: plan.rollbackPlan,
-        secretsRedacted: redacted,
-        normalizedPatchHash: plan.normalizedPatchHash,
-      };
-
       return NextResponse.json({
         ok: true,
-        payableQuoteAllowed: Boolean(plan.executable && plan.normalizedPatchHash),
-        preview,
+        payableQuoteAllowed: false,
         transformationPlans: [plan],
-        requestedAction: action,
+        message: plan.summary,
+        nextStep: plan.nextStep,
       });
-    } finally {
-      await workspace.cleanup();
     }
+
+    const parts: string[] = [];
+    const filesDeleted: string[] = [];
+    const filesEdited: string[] = [];
+    const filesCreated: string[] = [];
+    const beforeHashes: string[] = [];
+    let referencesChanged = 0;
+
+    for (const rel of paths) {
+      const original =
+        (await fetchPinnedFileContent({
+          owner,
+          repo,
+          commitSha: pinnedCommit,
+          path: rel,
+        })) ?? "";
+      beforeHashes.push(createHash("sha256").update(original || rel).digest("hex").slice(0, 16));
+
+      if (actionType === "DELETE") {
+        const piece = buildApplyableFilePatch(rel, original || "\n", null);
+        if (!piece?.trim()) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Preflight could not produce a real delete patch for ${rel}.`,
+              payableQuoteAllowed: false,
+            },
+            { status: 422 }
+          );
+        }
+        parts.push(piece);
+        filesDeleted.push(rel);
+      } else if (actionType === "EDIT" || actionType === "CUSTOM") {
+        const instruction = body.userInstruction ?? "";
+        const annotated =
+          original +
+          (original.endsWith("\n") ? "" : "\n") +
+          `// RepoDiet planned edit (review required): ${instruction.slice(0, 200)}\n`;
+        const piece = buildApplyableFilePatch(rel, original, annotated);
+        if (!piece) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Preflight could not produce a bounded edit plan for ${rel}.`,
+              payableQuoteAllowed: false,
+            },
+            { status: 422 }
+          );
+        }
+        parts.push(piece);
+        filesEdited.push(rel);
+      } else {
+        const canonical = normalizeTrackedPath(
+          body.canonicalPath ?? body.plan?.requestedActions[0]?.canonicalPath ?? paths[0]
+        );
+        if (rel === canonical) continue;
+        const piece = buildApplyableFilePatch(rel, original || "\n", null);
+        if (!piece) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Preflight could not produce consolidation patch for ${rel}.`,
+              payableQuoteAllowed: false,
+            },
+            { status: 422 }
+          );
+        }
+        parts.push(piece);
+        filesDeleted.push(rel);
+        referencesChanged += 1;
+      }
+    }
+
+    const rawDiff = parts.join("\n");
+    if (!rawDiff.trim()) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Preflight produced an empty patch; no payable quote may be created.",
+          payableQuoteAllowed: false,
+        },
+        { status: 422 }
+      );
+    }
+
+    const { diff: unifiedDiff, redacted } = redactSecrets(rawDiff);
+    const { additions, deletions } = countLines(unifiedDiff);
+    const beforeHash = createHash("sha256").update(beforeHashes.join("|")).digest("hex");
+    const afterHash = createHash("sha256").update(unifiedDiff).digest("hex");
+
+    const action: RequestedAction = {
+      id: `req_${nanoid(10)}`,
+      repository,
+      pinnedCommit,
+      pathIds: paths.map(pathIdFor),
+      findingIds,
+      actionType,
+      userInstruction: body.userInstruction,
+      canonicalPath: body.canonicalPath,
+      requestedAt: new Date().toISOString(),
+      requestedBy: body.requestedBy ?? "workspace_user",
+    };
+
+    const relatedEligible = flat.some(
+      (f) =>
+        f.files.some((file) => paths.includes(normalizeTrackedPath(file))) &&
+        (f.action === "safe_candidate" ||
+          (f.evidence.signals ?? []).includes("classification=actionable_candidate"))
+    );
+
+    const plan = analyzeRequestedAction({
+      action,
+      findings: flat,
+      unifiedDiff,
+      transformerAvailable:
+        actionType === "DELETE"
+          ? relatedEligible
+          : actionType === "EDIT" ||
+            actionType === "CUSTOM" ||
+            actionType === "CONSOLIDATE_DUPLICATES" ||
+            actionType === "CHOOSE_CANONICAL",
+      validationCommands: ["npm run typecheck", "npm run build"],
+    });
+
+    const preview = {
+      planId: plan.planId,
+      unifiedDiff,
+      filesCreated,
+      filesEdited,
+      filesDeleted,
+      filesRenamed: [] as Array<{ from: string; to: string }>,
+      referencesChanged,
+      dependenciesChanged: [] as string[],
+      beforeHash,
+      afterHash,
+      additions,
+      deletions,
+      validationCommands: plan.validationCommands,
+      predictedValidationSeconds: plan.predictedValidationSeconds ?? 90,
+      unexpectedChangeBudget: plan.unexpectedChangeBudget,
+      rollbackPlan: plan.rollbackPlan,
+      secretsRedacted: redacted,
+      normalizedPatchHash: plan.normalizedPatchHash,
+    };
+
+    return NextResponse.json({
+      ok: true,
+      payableQuoteAllowed: Boolean(plan.executable && plan.normalizedPatchHash),
+      preview,
+      transformationPlans: [plan],
+      requestedAction: action,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Preflight patch preview failed.";
     return NextResponse.json(
