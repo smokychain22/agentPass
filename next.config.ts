@@ -29,27 +29,6 @@ const nextConfig: NextConfig = {
       ...analyzerTraceIncludes,
     ],
   },
-  webpack: (config, { isServer }) => {
-    // Prevent accidental client bundling of Node builtins (plan-hash / quote HMAC).
-    if (!isServer) {
-      config.resolve = config.resolve ?? {};
-      config.resolve.fallback = {
-        ...(config.resolve.fallback ?? {}),
-        crypto: false,
-        fs: false,
-        path: false,
-        os: false,
-      };
-      config.resolve.alias = {
-        ...(config.resolve.alias ?? {}),
-        "@/lib/user-directed/plan-hash": false,
-        "@/lib/user-directed/dynamic-quote-engine": false,
-        "@/lib/user-directed/analyze-requested-action": false,
-        "node:crypto": false,
-      };
-    }
-    return config;
-  },
 };
 
 export default withWorkflow(nextConfig);
