@@ -3,26 +3,12 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
-import dynamic from "next/dynamic";
 import { ScanTab } from "@/components/app/scan-tab";
 import { FindingsTab } from "@/components/app/findings-tab";
 import { PatchKitTab } from "@/components/app/patch-kit-tab";
 import { VerifyTab } from "@/components/app/verify-tab";
 import { CleanupTab } from "@/components/app/cleanup-tab";
 import { AppSessionProvider, useAppSession } from "@/components/app/app-session";
-
-const UserDirectedWorkbench = dynamic(
-  () =>
-    import("@/components/app/user-directed-workbench").then(
-      (m) => m.UserDirectedWorkbench
-    ),
-  {
-    ssr: false,
-    loading: () => (
-      <p className="text-sm text-muted-foreground">Loading cleanup workbench…</p>
-    ),
-  }
-);
 import { AppTopBar } from "@/components/app/shell/app-top-bar";
 import { WalletProvider } from "@/components/wallet/wallet-provider";
 import { WorkflowRail } from "@/components/app/shell/workflow-rail";
@@ -39,9 +25,6 @@ function AppWorkspace() {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab") || "scan";
   const tab = tabParam as WorkflowTabId | "cleanup";
-  // Opt-in until Preview build graph is proven green; classic tabs remain default.
-  const useWorkbench =
-    searchParams.get("workbench") === "1" || searchParams.get("workbench") === "true";
   const isDemo = searchParams.get("demo") === "true" || searchParams.get("demo") === "1";
   const {
     session,
@@ -133,24 +116,9 @@ function AppWorkspace() {
             <WorkflowRail steps={workflowSteps} className="mb-6" />
 
             {tab === "scan" && <ScanTab />}
-            {tab === "findings" &&
-              (useWorkbench ? (
-                <UserDirectedWorkbench initialTab="suggestions" />
-              ) : (
-                <FindingsTab />
-              ))}
-            {tab === "patch" &&
-              (useWorkbench ? (
-                <UserDirectedWorkbench initialTab="patch" />
-              ) : (
-                <PatchKitTab />
-              ))}
-            {tab === "verify" &&
-              (useWorkbench ? (
-                <UserDirectedWorkbench initialTab="delivery" />
-              ) : (
-                <VerifyTab />
-              ))}
+            {tab === "findings" && <FindingsTab />}
+            {tab === "patch" && <PatchKitTab />}
+            {tab === "verify" && <VerifyTab />}
             {tab === "cleanup" && <CleanupTab />}
           </Container>
         </main>
