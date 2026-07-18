@@ -6,14 +6,13 @@ import { flattenFindings } from "@/lib/findings/client";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { buildApplyableFilePatch } from "@/lib/patch-kit/applyable-patch-builder";
 import { buildTextDiff } from "@/lib/execution/fix-preflight";
-import {
-  analyzeRequestedAction,
-  normalizeTrackedPath,
-  pathIdFor,
-  type RequestedAction,
-  type RequestedActionType,
-  type TransformationPlan,
-} from "@/lib/user-directed";
+import { analyzeRequestedAction } from "@/lib/user-directed/analyze-requested-action";
+import { normalizeTrackedPath, pathIdFor } from "@/lib/user-directed/path-identity";
+import type {
+  RequestedAction,
+  RequestedActionType,
+  TransformationPlan,
+} from "@/lib/user-directed/types";
 import { nanoid } from "nanoid";
 import fs from "node:fs/promises";
 import path from "node:path";
