@@ -27,6 +27,7 @@ import {
   plainLanguageTitle,
   plainLanguageWhatChanges,
   plainLanguageWhy,
+  plainLanguageNextStep,
   plainRiskLabel,
   plainRiskLevel,
 } from "@/lib/findings/plain-language";
@@ -47,7 +48,7 @@ type PageSize = 25 | 50 | 100;
 
 const CATEGORIES: { key: CategoryKey; label: string }[] = [
   { key: "all", label: "All findings" },
-  { key: "duplicates", label: "Potential Duplicates" },
+  { key: "duplicates", label: "Duplicate groups" },
   { key: "dead_files", label: "Potentially Unreferenced" },
   { key: "dependencies", label: "Unused Dependencies" },
   { key: "orphans", label: "Potential Orphan Modules" },
@@ -362,6 +363,7 @@ export function FindingsWorkspace({
               <>
                 <p className="mt-2 text-xs text-muted-foreground">{plainLanguageWhy(finding)}</p>
                 <p className="mt-1 text-xs text-foreground/80">{plainLanguageWhatChanges(finding)}</p>
+                <p className="mt-1 text-xs text-electric">{plainLanguageNextStep(finding)}</p>
                 {blockReason ? (
                   <p className="mt-1 text-xs text-warning">{blockReason}</p>
                 ) : null}
@@ -412,10 +414,10 @@ export function FindingsWorkspace({
         <p className="font-medium text-foreground">How cleanup works</p>
         <ol className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
           <li>1. Connect repository</li>
-          <li>2. Review suggested cleanup</li>
-          <li>3. Select files</li>
-          <li>4. Review price</li>
-          <li>5. Pay and create PR</li>
+          <li>2. Explore paths or review suggestions</li>
+          <li>3. Configure action and review exact patch</li>
+          <li>4. Review dynamic quote</li>
+          <li>5. Choose payment channel and authorize</li>
           <li>6. Review and merge on GitHub</li>
         </ol>
       </div>

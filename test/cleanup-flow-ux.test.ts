@@ -71,7 +71,7 @@ async function run() {
       },
     });
     assert.equal(plainLanguageTitle(f), "Remove confirmed unused file");
-    assert.match(plainLanguageWhy(f), /not imported or referenced/i);
+    assert.match(plainLanguageWhy(f), /no static imports|inbound references are 0|sufficient evidence/i);
     assert.match(plainLanguageWhatChanges(f), /remove only this file/i);
     assert.equal(plainRiskLabel(f), "Safe cleanup");
     assert.equal(automationBlockReason(f), null);

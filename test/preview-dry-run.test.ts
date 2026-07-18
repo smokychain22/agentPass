@@ -151,7 +151,7 @@ async function main() {
   await run("production hard-rejects runtime/config paths", () => {
     const gate = evaluateControlledDeliverySelection(["src/config/runtime-hook.ts"]);
     assert.equal(gate.allowed, false);
-    assert.match(gate.message ?? "", /runtime\/config hook/);
+    assert.match(gate.message ?? "", /runtime\/config path/);
   });
 
   await run("exact payable amount is unambiguous", () => {

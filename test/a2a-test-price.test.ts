@@ -26,11 +26,12 @@ function withEnv(key: string, value: string | undefined, fn: () => void) {
 async function run() {
   console.log("a2a-test-price");
 
-  test("production A2A cleanup PR small repo is 1 USDT", () => {
+  test("production A2A cleanup PR uses dynamic scope-based price", () => {
     withEnv("REPODIET_A2A_TEST_PRICE", undefined, () => {
       const quote = quoteCleanupPrPrice(100);
-      assert.equal(quote.amountMicro, "1000000");
-      assert.equal(quote.amountUsdt, 1);
+      assert.notEqual(quote.amountMicro, "1000000");
+      assert.ok(quote.amountUsdt > 0);
+      assert.ok(Number(quote.amountMicro) > 0);
     });
   });
 
@@ -59,7 +60,8 @@ async function run() {
       withEnv("VERCEL_ENV", "production", () => {
         withEnv("REPODIET_A2A_TEST_PRICE", "1", () => {
           const quote = quoteCleanupPrPrice(100);
-          assert.equal(quote.amountMicro, "1000000");
+          assert.notEqual(quote.amountMicro, "200000");
+          assert.ok(Number(quote.amountMicro) > 200000);
         });
       });
     });

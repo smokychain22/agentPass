@@ -19,7 +19,7 @@ function test(name: string, fn: () => void) {
 console.log("controlled-delivery-scope");
 
 test("rejects runtime-hook and generated paths", () => {
-  assert.equal(controlledDeliveryRejectReason("src/config/runtime-hook.ts"), "runtime/config hook");
+  assert.equal(controlledDeliveryRejectReason("src/config/runtime-hook.ts"), "runtime/config path");
   assert.equal(
     controlledDeliveryRejectReason("src/generated/api-client.generated.ts"),
     "generated file"
@@ -28,10 +28,11 @@ test("rejects runtime-hook and generated paths", () => {
   assert.equal(isControlledDeliveryPreferredPath("src/unused/confirmed-unused.ts"), true);
 });
 
-test("evaluate blocks runtime-hook selection", () => {
+test("evaluate blocks runtime-hook selection without preferred-path customer copy", () => {
   const gate = evaluateControlledDeliverySelection(["src/config/runtime-hook.ts"]);
   assert.equal(gate.allowed, false);
-  assert.match(gate.message ?? "", /runtime\/config hook/);
+  assert.match(gate.message ?? "", /runtime\/config path|blocked/i);
+  assert.doesNotMatch(gate.message ?? "", /Prefer src\/unused/i);
 });
 
 test("exact USDT label is unambiguous", () => {

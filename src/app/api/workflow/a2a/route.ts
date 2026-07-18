@@ -38,6 +38,12 @@ export async function POST(request: Request) {
       commitSha: string;
       findingIds: string[];
       autoApprove?: boolean;
+      /** Direct website vs OKX A2A marketplace — defaults to okx_marketplace for Fix & PR. */
+      purchaseChannel?: "okx_marketplace" | "direct_site";
+      /** Optional dynamic quote binding from user-directed plan preview. */
+      dynamicQuoteId?: string;
+      planHash?: string;
+      amountMicro?: string;
     };
 
     if (!body.repoUrl || !body.scanId || !body.commitSha || !body.findingIds?.length) {
@@ -127,6 +133,9 @@ export async function POST(request: Request) {
       throw err;
     }
 
+    const purchaseChannel =
+      body.purchaseChannel === "direct_site" ? "direct_site" : "okx_marketplace";
+
     const task = await submitA2ATask("repository.cleanup_pr", {
       repoUrl: body.repoUrl,
       branch: body.branch ?? findings.repo.branch,
@@ -134,7 +143,7 @@ export async function POST(request: Request) {
       commitSha: body.commitSha,
       findingIds: gateResult.eligibleFindingIds,
       transformedSourceHashes: gateResult.transformedSourceHashes,
-      purchaseChannel: "okx_marketplace",
+      purchaseChannel,
       ownerSessionKeyHash: hashTaskOwnerSession(sessionKey),
     });
 

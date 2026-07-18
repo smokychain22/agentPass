@@ -1,5 +1,9 @@
 import type { Finding } from "@/lib/findings/types";
 import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
+import {
+  evidenceBasedFindingExplanation,
+  evidenceBasedNextStep,
+} from "@/lib/user-directed/evidence-copy";
 
 /** Short file name for non-technical display. */
 export function findingFileName(finding: Finding): string {
@@ -44,35 +48,14 @@ export function plainLanguageTitle(finding: Finding): string {
   }
 }
 
-/** Why RepoDiet believes this is unused / safe — plain language. */
+/** Why RepoDiet believes this is unused / safe — evidence-based facts, not guesses. */
 export function plainLanguageWhy(finding: Finding): string {
-  const signals = finding.evidence.signals ?? [];
-  const inboundZero =
-    signals.some((s) => s === "inbound_refs=0" || s === "inboundImports=0") ||
-    signals.includes("empty_file=true");
+  return evidenceBasedFindingExplanation(finding);
+}
 
-  if (finding.type === "unused_file" && inboundZero) {
-    return "This file is not imported or referenced anywhere in the repository.";
-  }
-  if (finding.type === "unused_import") {
-    return "This import is never used in the file that declares it.";
-  }
-  if (finding.type === "unused_dependency") {
-    return "This package is listed in package.json but does not appear to be used by the project.";
-  }
-  if (finding.type === "duplicate_code" && signals.includes("exact_file_duplicate=true")) {
-    return "Another file contains the exact same contents. RepoDiet can keep one copy and update imports.";
-  }
-  if (finding.type === "duplicate_code") {
-    return "Similar code appears in more than one place. A human should confirm before automatic changes.";
-  }
-  if (finding.action === "do_not_touch") {
-    return "This path looks important to the app (route, config, or protected pattern). RepoDiet will not change it automatically.";
-  }
-  if (finding.action === "review_first") {
-    return "There is a signal this may be unused, but RepoDiet is not confident enough for automatic cleanup yet.";
-  }
-  return finding.evidence.summary || finding.reason || "RepoDiet detected a possible cleanup opportunity.";
+/** Actionable next step for review-first / protected findings. */
+export function plainLanguageNextStep(finding: Finding): string {
+  return evidenceBasedNextStep(finding);
 }
 
 /** What will change if the user selects this for Fix & PR. */
@@ -120,7 +103,7 @@ export function automationBlockReason(finding: Finding): string | null {
     return "Protected path — automatic cleanup is disabled for routes, config, and similar files.";
   }
   if (finding.action === "review_first") {
-    return "Needs review — no supported automatic transformer passed preflight for this finding yet.";
+    return "Additional verification is required before RepoDiet can safely apply this request.";
   }
   return "Not eligible for automatic Fix & PR with the current evidence.";
 }

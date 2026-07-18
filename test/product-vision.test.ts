@@ -48,10 +48,15 @@ test("free proof CTA label", () => {
   assert.equal(cta.count, 1);
 });
 
-test("cleanup PR default reference price is 1 USD₮0", () => {
-  assert.equal(quoteCleanupPrPrice(100).amountUsdt, 1);
-  assert.equal(quoteCleanupPrPrice(200).amountUsdt, 1);
-  assert.equal(quoteCleanupPrPrice(500).amountUsdt, 1);
+test("cleanup PR reference price is dynamic by scope, not fixed 1 USD₮0", () => {
+  const small = quoteCleanupPrPrice(100);
+  const medium = quoteCleanupPrPrice(200);
+  const large = quoteCleanupPrPrice(500);
+  assert.notEqual(small.amountMicro, "1000000");
+  assert.ok(small.amountUsdt > 0);
+  assert.ok(medium.amountUsdt >= small.amountUsdt);
+  assert.ok(large.amountUsdt >= medium.amountUsdt);
+  assert.notEqual(small.amountMicro, large.amountMicro);
 });
 
 test("execution engine exports required functions", () => {

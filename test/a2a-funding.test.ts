@@ -383,7 +383,8 @@ async function run() {
       assert.equal(mapTaskTypeToOperation("repository.verified_cleanup"), "verified_cleanup_pr");
       assert.notEqual(mapTaskTypeToOperation("repository.verified_cleanup"), "quick_cleanup");
       const price = resolveCommercePrice("verified_cleanup_pr", { sourceFileCount: 100 });
-      assert.equal(price.amountMicro, "1000000");
+      assert.notEqual(price.amountMicro, "1000000");
+      assert.ok(Number(price.amountMicro) > 0);
     });
   });
 
