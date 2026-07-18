@@ -64,12 +64,16 @@ export function resolveCommercePrice(
         };
       }
       // Fallback heuristic when no plan quote exists yet (never a universal fixed 1.00).
-      const paths = Math.max(1, options?.pathCount ?? options?.sourceFileCount ? 1 : 1);
+      const paths = Math.max(1, options?.pathCount ?? 1);
       const action = (options?.proposedAction ?? "DELETE").toUpperCase();
+      const tier = classifyRepoSize(options?.sourceFileCount ?? 100);
+      const tierSurcharge =
+        tier === "large" ? 400_000 : tier === "medium" ? 200_000 : 0;
       let micro =
         250_000 + // base
-        150_000 * paths + // per path
-        200_000; // validation
+        150_000 * paths + // per affected path
+        200_000 + // validation
+        tierSurcharge;
       if (action.includes("CONSOLIDATE") || action.includes("DUPLICATE")) micro += 750_000;
       else if (action.includes("EDIT") || action.includes("CUSTOM")) micro += 300_000;
       else micro += 100_000; // delete

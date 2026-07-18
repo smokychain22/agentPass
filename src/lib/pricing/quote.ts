@@ -11,7 +11,7 @@ export interface CleanupPrPriceQuote {
 
 export { classifyRepoSize };
 
-/** Default reference quote for A2A Verified Cleanup PR — negotiated, default 1 USD₮0. */
+/** Scope-aware reference quote for A2A Verified Cleanup PR (dynamic; not a fixed 1.00). */
 export function quoteCleanupPrPrice(sourceFileCount: number): CleanupPrPriceQuote {
   const tier = classifyRepoSize(sourceFileCount);
   const price = resolveCommercePrice("verified_cleanup_pr", { sourceFileCount });
@@ -23,7 +23,7 @@ export function quoteCleanupPrPrice(sourceFileCount: number): CleanupPrPriceQuot
     explanation:
       price.priceLabel.includes("0.20") || price.priceLabel.includes("0.2 ")
         ? price.priceLabel
-        : "A2A Verified Cleanup PR: negotiated pricing with default reference 1 USD₮0",
+        : `A2A Verified Cleanup PR: dynamic scope-based quote (${price.priceLabel}); OKX marketplace minimum may apply separately`,
   };
 }
 
