@@ -199,6 +199,10 @@ export async function createWorkflowA2ATask(input: {
   scanId: string;
   commitSha: string;
   findingIds: string[];
+  purchaseChannel?: "okx_marketplace" | "direct_site";
+  dynamicQuoteId?: string;
+  planHash?: string;
+  amountMicro?: string;
 }): Promise<{ task: WorkflowA2ATask; quote: WorkflowQuote | null; github: RepositoryConnectionStatus }> {
   const res = await fetch("/api/workflow/a2a", {
     method: "POST",
