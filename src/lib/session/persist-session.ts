@@ -6,7 +6,14 @@ export interface PersistedSession {
   scanId?: string;
   scanRecordId?: string;
   scanComplete: boolean;
+  /** Cleanup selection only — cleanup-eligible SAFE finding IDs. */
   selectedFindingIds: string[];
+  /** Alias persisted for clarity; mirrors selectedFindingIds when present. */
+  cleanupSelectedFindingIds?: string[];
+  /** REVIEW FIRST IDs selected for deeper verification — never cleanup. */
+  reviewSelectedFindingIds?: string[];
+  /** DO NOT TOUCH IDs selected for inspection/reporting only. */
+  inspectionSelectedFindingIds?: string[];
   patchKitId?: string;
   cleanupRunId?: string;
   a2aTaskId?: string;

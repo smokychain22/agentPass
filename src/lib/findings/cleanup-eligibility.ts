@@ -105,8 +105,9 @@ export function countCleanupEligible(findings: Finding[]): number {
 }
 
 /**
- * Checkbox enablement for a finding row — keyed only by stable finding identity
+ * Cleanup-checkbox enablement — keyed only by stable finding identity
  * and canonical preflight eligibility. Never by list index, active filter, or risk label alone.
+ * REVIEW FIRST / DO NOT TOUCH use separate selection purposes (see selection-purposes.ts).
  */
 export function isFindingCheckboxEnabled(finding: Finding): boolean {
   return isCleanupEligible(finding);

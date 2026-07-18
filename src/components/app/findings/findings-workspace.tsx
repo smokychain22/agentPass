@@ -19,11 +19,14 @@ import {
   typeLabel,
 } from "../findings/findings-utils";
 import { cn } from "@/lib/utils";
+import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
 import {
-  isCleanupEligible,
-  isFindingCheckboxEnabled,
-} from "@/lib/findings/cleanup-eligibility";
+  getFindingCheckboxState,
+  offFilterCleanupSelectionMessage,
+  runReviewSelectionAction,
+} from "@/lib/findings/selection-purposes";
 import { FindingSelectionCheckbox } from "./finding-selection-checkbox";
+import { useFeedbackToast } from "@/components/app/ui/feedback-banner";
 
 type CategoryKey =
   | "all"
@@ -77,33 +80,16 @@ export function matchesBucket(finding: Finding, bucket: BucketKey): boolean {
   return finding.action === bucket;
 }
 
-function typeGroupLabel(type: Finding["type"]): string {
-  switch (type) {
-    case "unused_import":
-      return "Unused imports";
-    case "unused_export":
-      return "Unused exports";
-    case "unused_file":
-      return "Unused files";
-    case "unused_dependency":
-      return "Unused dependencies";
-    case "duplicate_code":
-      return "Duplicates";
-    case "orphan_pattern":
-      return "Orphan modules";
-    case "ai_slop_signal":
-      return "AI-slop signals";
-    default:
-      return type;
-  }
-}
-
 interface FindingsWorkspaceProps {
   findings: Finding[];
   rawToolReports?: FindingsPayload["rawToolReports"];
+  /** Cleanup-eligible SAFE selection only. */
   selectedForPatch?: string[];
+  reviewSelectedFindingIds?: string[];
+  inspectionSelectedFindingIds?: string[];
   onTogglePatchSelection?: (findingId: string) => void;
   onClearSelection?: () => void;
+  onClearReviewSelection?: () => void;
   onSelectFindingIds?: (ids: string[]) => void;
 }
 
@@ -111,10 +97,14 @@ export function FindingsWorkspace({
   findings,
   rawToolReports,
   selectedForPatch = [],
+  reviewSelectedFindingIds = [],
+  inspectionSelectedFindingIds = [],
   onTogglePatchSelection,
   onClearSelection,
+  onClearReviewSelection,
   onSelectFindingIds,
 }: FindingsWorkspaceProps) {
+  const { show, Toast } = useFeedbackToast();
   const [browseOpen, setBrowseOpen] = useState(false);
   const [safeGroupOpen, setSafeGroupOpen] = useState(true);
   const [reviewGroupOpen, setReviewGroupOpen] = useState(false);
@@ -227,6 +217,19 @@ export function FindingsWorkspace({
     [filtered]
   );
   const selectedCount = selectedForPatch.length;
+  const reviewSelectedCount = reviewSelectedFindingIds.length;
+  const visibleIds = useMemo(() => new Set(filtered.map((f) => f.id)), [filtered]);
+  const offFilterMessage = useMemo(
+    () =>
+      offFilterCleanupSelectionMessage({
+        activeBucket: bucket,
+        cleanupSelectedIds: selectedForPatch,
+        findings,
+        visibleFindingIds: visibleIds,
+      }),
+    [bucket, selectedForPatch, findings, visibleIds]
+  );
+
   const selected =
     pageItems.find((f) => f.id === selectedId) ??
     filtered.find((f) => f.id === selectedId) ??
@@ -256,6 +259,22 @@ export function FindingsWorkspace({
     setExpandedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   };
 
+  const showSelectedCleanupFinding = () => {
+    const id = selectedForPatch.find((fid) => !visibleIds.has(fid)) ?? selectedForPatch[0];
+    if (!id) return;
+    setBucket("safe_candidate");
+    setCategory("all");
+    setSearch("");
+    setBrowseOpen(true);
+    setSafeGroupOpen(true);
+    selectFinding(id);
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-finding-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
   const collapseAll = () => {
     setExpandedIds([]);
     setSelectedId(null);
@@ -269,17 +288,26 @@ export function FindingsWorkspace({
     document.getElementById("findings-browse-top")?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const isCheckedForPurpose = (finding: Finding): boolean => {
+    const purpose = getFindingCheckboxState(finding).purpose;
+    if (purpose === "cleanup") return selectedForPatch.includes(finding.id);
+    if (purpose === "review") return reviewSelectedFindingIds.includes(finding.id);
+    if (purpose === "inspection") return inspectionSelectedFindingIds.includes(finding.id);
+    return false;
+  };
+
   const renderFindingRow = (finding: Finding, options?: { compact?: boolean }) => {
     const expanded = expandedIds.includes(finding.id);
-    // Canonical eligibility only — never derive from filter/index/risk label alone.
-    const eligible = isFindingCheckboxEnabled(finding);
+    const checkbox = getFindingCheckboxState(finding);
+    const cleanupEligible = checkbox.purpose === "cleanup";
     const compact = options?.compact === true;
     return (
       <li
         key={finding.id}
         data-finding-card={finding.id}
         data-finding-id={finding.id}
-        data-cleanup-eligible={eligible ? "true" : "false"}
+        data-cleanup-eligible={cleanupEligible ? "true" : "false"}
+        data-selection-purpose={checkbox.dataPurpose}
         data-risk-action={finding.action}
       >
         <div
@@ -292,8 +320,10 @@ export function FindingsWorkspace({
             <FindingSelectionCheckbox
               findingId={finding.id}
               title={finding.title}
-              checked={selectedForPatch.includes(finding.id)}
-              enabled={eligible}
+              checked={isCheckedForPurpose(finding)}
+              enabled={checkbox.enabled}
+              purpose={checkbox.dataPurpose}
+              ariaLabel={checkbox.ariaLabel}
               onToggle={onTogglePatchSelection}
             />
           ) : (
@@ -333,11 +363,23 @@ export function FindingsWorkspace({
             {!compact ? (
               <p className="mt-1 text-[10px] text-muted-foreground">
                 {typeLabel(finding.type)} · {formatFindingAnalyzerLabel(finding, rawToolReports)}
-                {eligible ? " · cleanup-eligible" : " · not eligible for automatic cleanup"}
+                {cleanupEligible
+                  ? " · cleanup-eligible"
+                  : checkbox.purpose === "review"
+                    ? " · deeper review"
+                    : checkbox.purpose === "inspection"
+                      ? " · inspection only"
+                      : " · not eligible for automatic cleanup"}
               </p>
             ) : (
               <p className="mt-1 text-[10px] text-muted-foreground">
-                {eligible ? "Cleanup-eligible" : "Not eligible for automatic cleanup"}
+                {cleanupEligible
+                  ? "Cleanup-eligible"
+                  : checkbox.purpose === "review"
+                    ? "Select for deeper review"
+                    : checkbox.purpose === "inspection"
+                      ? "Inspection only"
+                      : "Not eligible for automatic cleanup"}
               </p>
             )}
           </button>
@@ -368,39 +410,9 @@ export function FindingsWorkspace({
     );
   };
 
-  const renderTypeGroups = (items: Finding[], open: boolean) => {
-    if (!open) return null;
-    const byType = new Map<string, Finding[]>();
-    for (const f of items) {
-      const key = typeGroupLabel(f.type);
-      const list = byType.get(key) ?? [];
-      list.push(f);
-      byType.set(key, list);
-    }
-    return (
-      <div className="space-y-2">
-        {[...byType.entries()].map(([label, group]) => (
-          <FindingsAccordion
-            key={label}
-            title={`${label} — ${group.length}`}
-            defaultOpen={group.length <= 12}
-          >
-            <ul className="max-h-80 overflow-y-auto scrollbar-thin" role="list">
-              {group.slice(0, 25).map((f) => renderFindingRow(f, { compact: true }))}
-              {group.length > 25 ? (
-                <li className="py-2 text-xs text-muted-foreground">
-                  Showing first 25 of {group.length}. Use Browse findings for the full list.
-                </li>
-              ) : null}
-            </ul>
-          </FindingsAccordion>
-        ))}
-      </div>
-    );
-  };
-
   return (
     <div id="workspace" className="space-y-4">
+      {Toast}
       <div className="space-y-2">
         <FindingsAccordion
           title={`Safe candidates — ${safeFindings.length}`}
@@ -442,17 +454,86 @@ export function FindingsWorkspace({
         </FindingsAccordion>
         <FindingsAccordion
           title={`Review first — ${reviewFindings.length}`}
+          summary={
+            reviewGroupOpen
+              ? "Enabled checkboxes select for deeper review only — never Quick Cleanup"
+              : "Open to select findings for deeper review"
+          }
           open={reviewGroupOpen}
           onOpenChange={setReviewGroupOpen}
         >
-          {renderTypeGroups(reviewFindings, reviewGroupOpen)}
+          <p className="mb-2 text-sm text-muted-foreground">
+            REVIEW FIRST findings are not cleanup-eligible. Selecting a row queues deeper
+            verification only — it never enables Continue to Quick Cleanup.
+          </p>
+          <p
+            className="mb-2 font-mono text-xs text-amber-300"
+            data-review-selected-count={reviewSelectedCount}
+          >
+            Review selected: {reviewSelectedCount}
+          </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={reviewSelectedCount === 0}
+              data-review-action="deeper_verification"
+              onClick={() => {
+                const result = runReviewSelectionAction(
+                  "deeper_verification",
+                  reviewSelectedFindingIds
+                );
+                show("info", result.message);
+              }}
+            >
+              Run deeper verification
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={reviewSelectedCount === 0}
+              data-review-action="review_queue"
+              onClick={() => {
+                const result = runReviewSelectionAction("review_queue", reviewSelectedFindingIds);
+                show("info", result.message);
+              }}
+            >
+              Add to review queue
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={reviewSelectedCount === 0}
+              data-review-action="clear"
+              onClick={() => {
+                onClearReviewSelection?.();
+                const result = runReviewSelectionAction("clear", reviewSelectedFindingIds);
+                show("info", result.message);
+              }}
+            >
+              Clear review selection
+            </Button>
+          </div>
+          {reviewGroupOpen
+            ? renderFlatFindingList(reviewFindings, "review-deeper-selection")
+            : null}
         </FindingsAccordion>
         <FindingsAccordion
           title={`Do not touch — ${protectedFindings.length}`}
+          summary={
+            protectedGroupOpen
+              ? "Inspection/reporting selection only — never cleanup"
+              : "Open to inspect protected findings"
+          }
           open={protectedGroupOpen}
           onOpenChange={setProtectedGroupOpen}
         >
-          {renderTypeGroups(protectedFindings, protectedGroupOpen)}
+          {protectedGroupOpen
+            ? renderFlatFindingList(protectedFindings, "inspection-selection")
+            : null}
         </FindingsAccordion>
       </div>
 
@@ -571,6 +652,12 @@ export function FindingsWorkspace({
                     <span className="font-mono text-[10px] text-muted-foreground">
                       {selectedCount} selected for cleanup
                     </span>
+                    <span
+                      className="font-mono text-[10px] text-amber-300/90"
+                      data-review-selected-count={reviewSelectedCount}
+                    >
+                      Review selected: {reviewSelectedCount}
+                    </span>
                     {onClearSelection && (
                       <Button
                         type="button"
@@ -579,9 +666,28 @@ export function FindingsWorkspace({
                         disabled={selectedCount === 0}
                         onClick={onClearSelection}
                       >
-                        Clear selection
+                        Clear cleanup selection
                       </Button>
                     )}
+                    {offFilterMessage ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className="font-mono text-[10px] text-signal"
+                          data-off-filter-cleanup-message="true"
+                        >
+                          {offFilterMessage}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          data-show-selected-cleanup="true"
+                          onClick={showSelectedCleanupFinding}
+                        >
+                          Show selected cleanup finding
+                        </Button>
+                      </div>
+                    ) : null}
                     {onSelectFindingIds && (
                       <Button
                         type="button"
@@ -592,7 +698,9 @@ export function FindingsWorkspace({
                       >
                         {selectableEligible.length > 0
                           ? `Select all cleanup-eligible findings (${selectableEligible.length})`
-                          : "No cleanup-eligible findings in view"}
+                          : offFilterMessage
+                            ? offFilterMessage
+                            : "No cleanup-eligible findings in this view"}
                       </Button>
                     )}
                   </>

@@ -1,31 +1,44 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import type { FindingSelectionPurpose } from "@/lib/findings/selection-purposes";
 
 interface FindingSelectionCheckboxProps {
   findingId: string;
   title: string;
   checked: boolean;
   enabled: boolean;
+  purpose?: FindingSelectionPurpose | "none";
+  ariaLabel?: string;
   onToggle: (findingId: string) => void;
   className?: string;
 }
 
 /**
- * Per-finding cleanup checkbox. Selection is keyed by stable finding ID.
- * Disabled for review-first / do-not-touch / non-eligible findings.
+ * Per-finding checkbox. Purpose is cleanup | review | inspection.
+ * Selection is keyed by stable finding ID; purposes never mix.
  */
 export function FindingSelectionCheckbox({
   findingId,
   title,
   checked,
   enabled,
+  purpose = "none",
+  ariaLabel,
   onToggle,
   className,
 }: FindingSelectionCheckboxProps) {
-  const label = enabled
-    ? `Select ${title} for cleanup`
-    : `${title} — Not eligible for automatic cleanup`;
+  const label =
+    ariaLabel ??
+    (purpose === "review"
+      ? "Select for deeper review"
+      : purpose === "inspection"
+        ? `Select ${title} for inspection`
+        : purpose === "cleanup"
+          ? `Select ${title} for cleanup`
+          : `${title} — Not eligible for automatic cleanup`);
+
+  const cleanupEligible = purpose === "cleanup" && enabled;
 
   return (
     <label
@@ -43,7 +56,8 @@ export function FindingSelectionCheckbox({
       <input
         type="checkbox"
         data-finding-checkbox={findingId}
-        data-cleanup-eligible={enabled ? "true" : "false"}
+        data-selection-purpose={purpose}
+        data-cleanup-eligible={cleanupEligible ? "true" : "false"}
         checked={checked}
         disabled={!enabled}
         onChange={() => {
@@ -56,7 +70,11 @@ export function FindingSelectionCheckbox({
           "mt-1 h-4 w-4 shrink-0 rounded-sm border-2 bg-[#0B1220]",
           "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-electric",
           enabled
-            ? "border-[hsl(var(--signal))] accent-[hsl(var(--signal))]"
+            ? purpose === "review"
+              ? "border-amber-400/80 accent-amber-400"
+              : purpose === "inspection"
+                ? "border-muted-foreground/70 accent-muted-foreground"
+                : "border-[hsl(var(--signal))] accent-[hsl(var(--signal))]"
             : "border-muted-foreground/50 opacity-45"
         )}
       />
