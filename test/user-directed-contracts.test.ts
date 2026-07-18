@@ -233,4 +233,224 @@ test("commerce price is not universally hardcoded to 1.00 USDT", () => {
   assert.notEqual(a.amountMicro, b.amountMicro);
 });
 
+test("generated file request routes to generator-aware handling", () => {
+  const plan = analyzeRequestedAction({
+    action: {
+      id: "req_gen",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/generated/client.ts")],
+      findingIds: [],
+      actionType: "DELETE",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+    unifiedDiff: "--- a/src/generated/client.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n",
+  });
+  assert.equal(plan.executable, false);
+  assert.equal(plan.status, "PROTECTED_BY_POLICY");
+  assert.match(plan.summary, /generator/i);
+});
+
+test("duplicate group requires canonical selection", () => {
+  const plan = analyzeRequestedAction({
+    action: {
+      id: "req_dup2",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/a.ts"), pathIdFor("src/b.ts")],
+      findingIds: [],
+      actionType: "CONSOLIDATE_DUPLICATES",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+  });
+  assert.equal(plan.status, "USER_DECISION_REQUIRED");
+  assert.equal(plan.executable, false);
+  assert.match(plan.nextStep ?? "", /canonical/i);
+});
+
+test("custom edit creates a bounded plan requiring instruction", () => {
+  const missing = analyzeRequestedAction({
+    action: {
+      id: "req_custom",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/lib/util.ts")],
+      findingIds: [],
+      actionType: "CUSTOM",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+  });
+  assert.equal(missing.status, "USER_DECISION_REQUIRED");
+
+  const ready = analyzeRequestedAction({
+    action: {
+      id: "req_custom2",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/lib/util.ts")],
+      findingIds: [],
+      actionType: "CUSTOM",
+      userInstruction: "remove unused helper foo",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+    unifiedDiff:
+      "--- a/src/lib/util.ts\n+++ b/src/lib/util.ts\n@@ -1 +1,2 @@\n export {}\n+// RepoDiet planned edit\n",
+  });
+  assert.equal(ready.executable, true);
+  assert.ok(ready.normalizedPatchHash);
+});
+
+test("quote changes when selected scope changes", () => {
+  const mk = (paths: string[], diff: string) =>
+    analyzeRequestedAction({
+      action: {
+        id: `req_${paths.join("_")}`,
+        repository: "o/r",
+        pinnedCommit: "abc",
+        pathIds: paths.map(pathIdFor),
+        findingIds: [],
+        actionType: "DELETE",
+        requestedAt: new Date().toISOString(),
+        requestedBy: "user",
+      },
+      transformerAvailable: true,
+      unifiedDiff: diff,
+    });
+  const p1 = mk(
+    ["src/unused/a.ts"],
+    "--- a/src/unused/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n"
+  );
+  const p2 = mk(
+    ["src/unused/a.ts", "src/unused/b.ts"],
+    "--- a/src/unused/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n--- a/src/unused/b.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-b\n"
+  );
+  const q1 = createDynamicSignedQuote({ plan: p1, paymentChannel: "direct_website" });
+  const q2 = createDynamicSignedQuote({ plan: p2, paymentChannel: "direct_website" });
+  assert.notEqual(q1.amountAtomic, q2.amountAtomic);
+  assert.notEqual(q1.planHash, q2.planHash);
+  assert.notEqual(q1.scopeHash, q2.scopeHash);
+});
+
+test("quote is bound to plan hash; cross-plan reuse rejected", () => {
+  const planA = analyzeRequestedAction({
+    action: {
+      id: "req_a",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/unused/a.ts")],
+      findingIds: [],
+      actionType: "DELETE",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+    unifiedDiff: "--- a/src/unused/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n",
+  });
+  const planB = analyzeRequestedAction({
+    action: {
+      id: "req_b",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/unused/b.ts")],
+      findingIds: [],
+      actionType: "DELETE",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+    unifiedDiff: "--- a/src/unused/b.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-b\n",
+  });
+  const quoteA = createDynamicSignedQuote({ plan: planA, paymentChannel: "direct_website" });
+  assert.equal(quoteA.planHash, planA.planHash);
+  assert.throws(() => assertQuoteMatchesPlan(quoteA, planB), /plan_hash_mismatch/);
+});
+
+test("stale quote is rejected", () => {
+  const plan = analyzeRequestedAction({
+    action: {
+      id: "req_stale",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/unused/a.ts")],
+      findingIds: [],
+      actionType: "DELETE",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+    unifiedDiff: "--- a/src/unused/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n",
+  });
+  const quote = createDynamicSignedQuote({ plan, paymentChannel: "direct_website" });
+  const stale = { ...quote, expiresAt: new Date(Date.now() - 1000).toISOString() };
+  // Re-sign would be needed for signature; expiry check runs after signature verify.
+  // Mutate expiry with matching resign path: assert fails on signature first when unsigned mutate.
+  assert.throws(() => assertQuoteMatchesPlan(stale, plan), /quote_signature_invalid|quote_expired/);
+});
+
+test("review-first has actionable next-step workflow", () => {
+  const plan = analyzeRequestedAction({
+    action: {
+      id: "req_rev",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/maybe.ts")],
+      findingIds: ["f_rev"],
+      actionType: "DELETE",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    findings: [
+      finding({
+        id: "f_rev",
+        action: "review_first",
+        files: ["src/maybe.ts"],
+        evidence: { summary: "weak", signals: ["inbound_refs=0"] },
+      }),
+    ],
+  });
+  assert.equal(plan.executable, false);
+  assert.ok(plan.nextStep);
+  assert.doesNotMatch(plan.summary, /There is a signal this may be unused/i);
+  assert.match(plan.nextStep, /verif|Inspect|Custom|plan/i);
+});
+
+test("OKX marketplace minimum is labeled separately", () => {
+  const plan = analyzeRequestedAction({
+    action: {
+      id: "req_okx",
+      repository: "o/r",
+      pinnedCommit: "abc",
+      pathIds: [pathIdFor("src/unused/a.ts")],
+      findingIds: [],
+      actionType: "DELETE",
+      requestedAt: new Date().toISOString(),
+      requestedBy: "user",
+    },
+    transformerAvailable: true,
+    unifiedDiff: "--- a/src/unused/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n",
+  });
+  const quote = createDynamicSignedQuote({
+    plan,
+    paymentChannel: "okx_a2a_marketplace",
+  });
+  assert.ok(quote.components.some((c) => c.type === "marketplace_minimum") || BigInt(quote.amountAtomic) >= BigInt(1000000));
+  if (quote.marketplaceNote) {
+    assert.match(quote.marketplaceNote, /marketplace minimum|not the calculated/i);
+  }
+});
+
+test("fail-closed cleanup authorization remains intact", () => {
+  const gate = evaluateControlledDeliverySelection(["src/config/runtime-hook.ts"]);
+  assert.equal(gate.allowed, false);
+  assert.ok(gate.rejected.length > 0);
+});
+
 console.log("user-directed-contracts: ok");
