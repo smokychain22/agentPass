@@ -26,7 +26,10 @@ export function selectionPurposeOf(finding: Finding): FindingSelectionPurpose | 
   if (finding.action === "safe_candidate" && isCleanupEligible(finding)) {
     return "cleanup";
   }
-  // SAFE but not cleanup-eligible: not selectable for cleanup or review here.
+  // SAFE but not yet cleanup-eligible: selectable for review with an explicit automation block.
+  if (finding.action === "safe_candidate") {
+    return "review";
+  }
   return null;
 }
 

@@ -1,6 +1,7 @@
 import { X402_ASSET } from "@/lib/payment/constants";
 import { XLAYER_EVM_CHAIN_ID } from "@/lib/wallet/chain-config";
 import { getInjectedProvider } from "@/lib/wallet/eip1193-provider";
+import { WALLET_REQUEST_TIMEOUT_MS, withTimeout } from "@/lib/wallet/with-timeout";
 
 /** ERC-20 transfer(address,uint256) selector */
 const TRANSFER_SELECTOR = "0xa9059cbb";
@@ -49,23 +50,31 @@ export async function sendUsdtPayment(input: {
   const data = encodeErc20Transfer(to, input.amountMicro);
 
   const expectedChain = input.chainId ?? XLAYER_EVM_CHAIN_ID;
-  const chainIdHex = (await provider.request({ method: "eth_chainId" })) as string;
+  const chainIdHex = (await withTimeout(
+    provider.request({ method: "eth_chainId" }),
+    WALLET_REQUEST_TIMEOUT_MS,
+    "Could not read wallet network before payment."
+  )) as string;
   const chainId = parseInt(chainIdHex, 16);
   if (chainId !== expectedChain) {
     throw new Error(`Wrong network. Switch to X Layer (chain ${expectedChain}).`);
   }
 
-  const txHash = (await provider.request({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from,
-        to: token,
-        data,
-        value: "0x0",
-      },
-    ],
-  })) as string;
+  const txHash = (await withTimeout(
+    provider.request({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from,
+          to: token,
+          data,
+          value: "0x0",
+        },
+      ],
+    }),
+    WALLET_REQUEST_TIMEOUT_MS,
+    "Payment request timed out. Approve or reject the transfer in your wallet, then retry. If a transaction already appeared, do not send again — use Confirm submitted payment."
+  )) as string;
 
   if (!isLikelyTxHash(txHash)) {
     throw new Error("Wallet did not return a valid transaction hash.");

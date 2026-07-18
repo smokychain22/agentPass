@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -101,6 +102,18 @@ const emptySession: ScanSession = {
 
 const AppSessionContext = createContext<AppSessionContextValue | null>(null);
 
+function selectedFilesForIds(
+  findings: FindingsPayload | null,
+  ids: string[]
+): string[] {
+  if (!findings || ids.length === 0) return [];
+  const byId = new Map(flattenFindingsPayload(findings).map((f) => [f.id, f]));
+  return ids.flatMap((id) => {
+    const finding = byId.get(id);
+    return finding?.files?.[0] ? [finding.files[0]] : [];
+  });
+}
+
 function persist(
   session: ScanSession,
   findings: FindingsPayload | null,
@@ -109,20 +122,24 @@ function persist(
   a2aTaskId?: string,
   scopeReviewed?: boolean,
   reviewSelectedFindingIds: string[] = [],
-  inspectionSelectedFindingIds: string[] = []
+  inspectionSelectedFindingIds: string[] = [],
+  quoteId?: string
 ) {
   const data: PersistedSession = {
     repoUrl: session.repoUrl,
     branch: session.branch,
+    pinnedCommitSha: findings?.repo.commitSha,
     scanId: findings?.scanId ?? session.scanRecordId,
     scanRecordId: session.scanRecordId ?? findings?.scanId,
     scanComplete: session.scanComplete,
     selectedFindingIds: cleanupSelectedFindingIds,
     cleanupSelectedFindingIds,
+    selectedFiles: selectedFilesForIds(findings, cleanupSelectedFindingIds),
     reviewSelectedFindingIds,
     inspectionSelectedFindingIds,
     patchKitId: patchKit?.id,
     a2aTaskId,
+    quoteId,
     scopeReviewed,
     selectedProjectRoot: session.selectedProjectRoot,
     projectRootConfirmed: session.projectRootConfirmed,
@@ -145,6 +162,21 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   /** Backward-compatible alias — cleanup selection only. */
   const selectedFindingIds = cleanupSelectedFindingIds;
+
+  const findingsRef = useRef(findings);
+  const cleanupSelectedRef = useRef(cleanupSelectedFindingIds);
+  const reviewSelectedRef = useRef(reviewSelectedFindingIds);
+  const inspectionSelectedRef = useRef(inspectionSelectedFindingIds);
+  const patchKitRef = useRef(patchKit);
+  const a2aTaskRef = useRef(a2aTask);
+  const scopeReviewedRef = useRef(scopeReviewed);
+  findingsRef.current = findings;
+  cleanupSelectedRef.current = cleanupSelectedFindingIds;
+  reviewSelectedRef.current = reviewSelectedFindingIds;
+  inspectionSelectedRef.current = inspectionSelectedFindingIds;
+  patchKitRef.current = patchKit;
+  a2aTaskRef.current = a2aTask;
+  scopeReviewedRef.current = scopeReviewed;
 
   useEffect(() => {
     const stored = loadPersistedSession();
@@ -278,7 +310,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           task?.taskId,
           findingsBound ? stored.scopeReviewed ?? false : false,
           findingsBound ? reviewIds : [],
-          findingsBound ? inspectionIds : []
+          findingsBound ? inspectionIds : [],
+          stored.quoteId
         );
       })
       .catch(() => {
@@ -292,27 +325,96 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setFindingsState = useCallback((next: FindingsPayload | null) => {
-    setFindings(next);
-    if (next) {
+    if (!next) {
+      setFindings(null);
       setCleanupSelectedFindingIdsState([]);
       setReviewSelectedFindingIdsState([]);
       setInspectionSelectedFindingIdsState([]);
       setScopeReviewedState(false);
       setA2aTaskState(null);
-      setSession((prev) => {
-        const hasAuthenticScan = Boolean(prev.scanResult?.id || prev.scanRecordId);
+      setPatchKit(null);
+      return;
+    }
+
+    const prevFindings = findingsRef.current;
+    const sameScan =
+      Boolean(prevFindings?.scanId) && prevFindings!.scanId === next.scanId;
+    const storedQuoteId = loadPersistedSession()?.quoteId;
+
+    setFindings(next);
+
+    if (sameScan) {
+      const cleanupKept = sanitizeSelectedFindingIdsFromPayload(
+        next,
+        cleanupSelectedRef.current
+      );
+      const reviewKept = sanitizeReviewSelectedFindingIdsFromPayload(
+        next,
+        reviewSelectedRef.current
+      );
+      const inspectionKept = sanitizeInspectionSelectedFindingIdsFromPayload(
+        next,
+        inspectionSelectedRef.current
+      );
+      const patchKept =
+        patchKitRef.current?.scanId === next.scanId ? patchKitRef.current : null;
+      const taskKept = a2aTaskRef.current;
+      const scopeKept = scopeReviewedRef.current;
+
+      setCleanupSelectedFindingIdsState(cleanupKept);
+      setReviewSelectedFindingIdsState(reviewKept);
+      setInspectionSelectedFindingIdsState(inspectionKept);
+      if (!patchKept) setPatchKit(null);
+
+      setSession((sess) => {
         const updated = {
-          ...prev,
-          repoUrl: prev.repoUrl || next.repo.url || `https://github.com/${next.repo.owner}/${next.repo.name}`,
-          branch: prev.branch || next.repo.branch,
-          scanComplete: hasAuthenticScan ? true : prev.scanComplete,
-          scanRecordId: prev.scanRecordId ?? next.scanId,
+          ...sess,
+          repoUrl:
+            sess.repoUrl ||
+            next.repo.url ||
+            `https://github.com/${next.repo.owner}/${next.repo.name}`,
+          branch: sess.branch || next.repo.branch,
+          scanComplete: true,
+          scanRecordId: sess.scanRecordId ?? next.scanId,
         };
-        persist(updated, next, [], null, undefined, false, [], []);
+        persist(
+          updated,
+          next,
+          cleanupKept,
+          patchKept,
+          taskKept?.taskId,
+          scopeKept,
+          reviewKept,
+          inspectionKept,
+          storedQuoteId
+        );
         return updated;
       });
-      setPatchKit(null);
+      return;
     }
+
+    // New scan — clear selection and delivery state.
+    setCleanupSelectedFindingIdsState([]);
+    setReviewSelectedFindingIdsState([]);
+    setInspectionSelectedFindingIdsState([]);
+    setScopeReviewedState(false);
+    setA2aTaskState(null);
+    setPatchKit(null);
+    setSession((prev) => {
+      const hasAuthenticScan = Boolean(prev.scanResult?.id || prev.scanRecordId);
+      const updated = {
+        ...prev,
+        repoUrl:
+          prev.repoUrl ||
+          next.repo.url ||
+          `https://github.com/${next.repo.owner}/${next.repo.name}`,
+        branch: prev.branch || next.repo.branch,
+        scanComplete: hasAuthenticScan ? true : prev.scanComplete,
+        scanRecordId: prev.scanRecordId ?? next.scanId,
+      };
+      persist(updated, next, [], null, undefined, false, [], []);
+      return updated;
+    });
   }, []);
 
   const setScanComplete = useCallback(

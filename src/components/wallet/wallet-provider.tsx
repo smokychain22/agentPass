@@ -72,6 +72,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const connect = useCallback(async () => {
+    if (!getInjectedProvider()) {
+      setError("No wallet detected. Install MetaMask or another browser wallet, then try again.");
+      setState("failed");
+      return;
+    }
     setState("connecting");
     setError(null);
     try {
@@ -99,8 +104,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setSession(switched);
       setState("connected");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not switch to X Layer.");
-      setState("wrong_network");
+      const message = err instanceof Error ? err.message : "Could not switch to X Layer.";
+      setError(message);
+      // Timed-out switch must leave "Switching…" — fall back to wrong_network or failed.
+      setState(/timed out/i.test(message) ? "failed" : "wrong_network");
     }
   }, []);
 
