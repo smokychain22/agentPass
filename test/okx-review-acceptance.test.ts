@@ -112,7 +112,7 @@ async function run() {
   const intake = buildMarketplaceIntakeResponse("req_test");
   assert.equal(intake.aspAgentId, "5283");
   assert.ok(intake.scopeQuestions.length >= 5);
-  assert.match(intake.message, /verified repository cleanup/i);
+  assert.match(intake.message, /verified pull request/i);
   assert.equal(intake.nextAction, "PROVIDE_REPOSITORY_SCOPE");
 
   for (const scenario of A2A_SCENARIOS) {
