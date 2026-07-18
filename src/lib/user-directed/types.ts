@@ -20,6 +20,24 @@ export type RequestedActionType =
   | "UPDATE_CONFIGURATION"
   | "ADD_IGNORE_POLICY";
 
+export const REQUESTED_ACTION_TYPES: RequestedActionType[] = [
+  "INSPECT",
+  "DELETE",
+  "EDIT",
+  "RENAME",
+  "MOVE",
+  "CONSOLIDATE_DUPLICATES",
+  "CHOOSE_CANONICAL",
+  "REMOVE_DEPENDENCY",
+  "UPDATE_REFERENCES",
+  "UPDATE_CONFIGURATION",
+  "REGENERATE",
+  "KEEP",
+  "SUPPRESS",
+  "ADD_IGNORE_POLICY",
+  "CUSTOM",
+];
+
 export type PlanAnalysisStatus =
   | "PLAN_READY"
   | "DEEPER_VERIFICATION_REQUIRED"
@@ -150,4 +168,5 @@ export interface RepositoryPathNode {
   findingIds?: string[];
   inboundRefs?: number;
   indicators?: string[];
+  gitStatus?: string;
 }
