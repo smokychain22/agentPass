@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import { pathFromId, pathIndicators, normalizeTrackedPath } from "./path-identity";
 import { hashNormalizedPatch, hashTransformationPlan } from "./plan-hash";
+export { partitionPlans } from "./partition-plans";
 
 export interface AnalyzeRequestedActionInput {
   action: RequestedAction;
@@ -276,13 +277,3 @@ export function analyzeRequestedAction(input: AnalyzeRequestedActionInput): Tran
   };
 }
 
-/** Selection never implies eligibility. */
-export function partitionPlans(plans: TransformationPlan[]): {
-  cleanupEligiblePlans: string[];
-  blockedPlans: string[];
-} {
-  return {
-    cleanupEligiblePlans: plans.filter((p) => p.executable && p.status === "PLAN_READY").map((p) => p.planId),
-    blockedPlans: plans.filter((p) => !p.executable || p.status !== "PLAN_READY").map((p) => p.planId),
-  };
-}

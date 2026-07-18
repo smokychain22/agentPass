@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { TransformationPlan } from "@/lib/user-directed/types";
-import { partitionPlans } from "@/lib/user-directed/analyze-requested-action";
+import { partitionPlans } from "@/lib/user-directed/partition-plans";
 
 type Props = {
   plans: TransformationPlan[];
