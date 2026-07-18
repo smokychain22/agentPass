@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import {
   acceptA2aDeliveryByBuyer,
   describeA2aLifecycle,
+  disputeA2aDeliveryByBuyer,
   recordA2aEscrowRelease,
+  rejectA2aDeliveryByBuyer,
   submitA2aDeliveryEvidence,
 } from "../src/lib/a2a/settlement-lifecycle";
 import { saveA2ATask } from "../src/lib/a2a/task-store";
@@ -66,6 +68,44 @@ async function run() {
   assert.equal(released.status, "completed");
   assert.equal(released.result.settlement?.escrowReleaseReference, "okx_escrow_release_demo");
   assert.ok(released.completedAt);
+
+  const rejectId = `task_reject_${Date.now()}`;
+  await saveA2ATask({
+    ...base,
+    id: rejectId,
+    status: "delivery_submitted",
+    input: { ...base.input, purchaseChannel: "okx_marketplace" },
+    result: {
+      ...base.result,
+      settlement: { deliveryId: "delivery_reject_demo" },
+    },
+    transitions: [
+      { status: "delivery_submitted", at: new Date().toISOString(), role: "orchestrator" },
+    ],
+  });
+  const rejected = await rejectA2aDeliveryByBuyer(rejectId, { reason: "scope mismatch" });
+  assert.equal(rejected.status, "rejected");
+
+  const disputeId = `task_dispute_${Date.now()}`;
+  await saveA2ATask({
+    ...base,
+    id: disputeId,
+    status: "delivery_submitted",
+    input: { ...base.input, purchaseChannel: "okx_marketplace" },
+    result: {
+      ...base.result,
+      settlement: { deliveryId: "delivery_dispute_demo" },
+    },
+    transitions: [
+      { status: "delivery_submitted", at: new Date().toISOString(), role: "orchestrator" },
+    ],
+  });
+  const disputed = await disputeA2aDeliveryByBuyer(disputeId, {
+    buyerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    reason: "quality dispute",
+  });
+  assert.equal(disputed.status, "disputed");
+  assert.ok(disputed.result.settlement?.disputeOpenedAt);
 
   console.log("a2a settlement lifecycle: all passed");
 }

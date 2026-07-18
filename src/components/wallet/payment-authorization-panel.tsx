@@ -270,7 +270,7 @@ export function PaymentAuthorizationPanel({
         )}
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Payment model</dt>
-          <dd className="font-mono">direct (not OKX escrow)</dd>
+          <dd className="font-mono">x402 / quote settlement</dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Transactions</dt>
@@ -421,8 +421,8 @@ export function PaymentAuthorizationPanel({
           transfer on-chain before changing any files.
         </p>
         <p className="mt-2 text-xs">
-          This is a <strong className="text-foreground">direct payment</strong> to RepoDiet (website
-          channel), not OKX marketplace escrow.
+          For Fix &amp; PR delivery use OKX A2A escrow (service 32947). This panel is not the
+          Fix &amp; PR payment rail.
         </p>
       </div>
 

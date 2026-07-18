@@ -3,7 +3,10 @@ import { resolveWorkflowSettlementMode } from "@/lib/payment/a2a-test-price";
 import { exactChargeLabelFromMicro } from "@/lib/pricing/exact-amount";
 import type { WorkflowQuote } from "./client";
 
-export function formatWorkflowQuote(quote: BoundQuote): WorkflowQuote {
+export function formatWorkflowQuote(
+  quote: BoundQuote,
+  options?: { paymentModel?: "direct" | "escrow" }
+): WorkflowQuote {
   // Buyer-facing charge label must always be the exact numeric amount from amountMicro.
   const priceLabel = exactChargeLabelFromMicro(quote.amountMicro, quote.currency || "USDT");
   const chainId = Number(String(quote.network).split(":")[1] || "196");
@@ -25,8 +28,8 @@ export function formatWorkflowQuote(quote: BoundQuote): WorkflowQuote {
       operation: quote.operation,
       amountMicro: quote.amountMicro,
     }),
-    // Website Fix & PR uses direct ERC-20 settlement. OKX marketplace escrow is a separate channel.
-    paymentModel: "direct",
+    // Fix & PR uses OKX A2A escrow (service 32947). A2MCP x402 may still use direct.
+    paymentModel: options?.paymentModel ?? "escrow",
     assetContract: quote.asset,
     chainId: Number.isFinite(chainId) ? chainId : 196,
   };

@@ -56,6 +56,22 @@ export async function POST(request: Request) {
     if (quote.a2aTaskId) {
       const task = await getA2ATask(quote.a2aTaskId);
       if (task) {
+        if (
+          task.input.purchaseChannel === "okx_marketplace" ||
+          task.type === "repository.cleanup_pr" ||
+          task.type === "repository.verified_cleanup"
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                "Fix & PR uses OKX A2A escrow (service 32947). Fund escrow via POST /api/okx/a2a/tasks/{taskId}/fund-escrow — do not send USDT directly to RepoDiet.",
+              paymentModel: "escrow",
+              serviceId: "32947",
+            },
+            { status: 422 }
+          );
+        }
         try {
           assertDirectTaskOwner(task, await buildSessionKey(request));
         } catch {

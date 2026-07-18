@@ -23,6 +23,15 @@ export interface PersistedSession {
   a2aTaskId?: string;
   /** Bound quote for the in-progress Fix & PR delivery. */
   quoteId?: string;
+  /** OKX A2A order / escrow binding for Fix & PR. */
+  okxOrderId?: string;
+  okxAspAgentId?: string;
+  okxA2aServiceId?: string;
+  a2mcpPaymentId?: string;
+  escrowReference?: string;
+  acceptanceState?: string;
+  disputeState?: string;
+  prUrl?: string;
   scopeReviewed?: boolean;
   selectedProjectRoot?: string;
   projectRootConfirmed?: boolean;
