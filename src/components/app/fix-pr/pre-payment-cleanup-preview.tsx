@@ -4,9 +4,9 @@ import type { Finding } from "@/lib/findings/types";
 import {
   controlledDeliveryRejectReason,
   evaluateControlledDeliverySelection,
-  isControlledDeliveryPreferredPath,
   normalizeCleanupPath,
 } from "@/lib/cleanup/controlled-delivery-scope";
+import { evidenceBasedFindingExplanation } from "@/lib/user-directed/evidence-copy";
 import { resolvePhase1Plugin } from "@/lib/execution/fix-plugins/phase1-plugins";
 
 function proposedOperation(finding: Finding): string {
@@ -94,7 +94,6 @@ export function PrePaymentCleanupPreview(props: {
           const plugin = resolvePhase1Plugin(finding);
           const operation = proposedOperation(finding);
           const reject = controlledDeliveryRejectReason(path);
-          const preferred = isControlledDeliveryPreferredPath(path);
           const patch = patchPreviewForFinding(finding);
           return (
             <li
@@ -135,8 +134,14 @@ export function PrePaymentCleanupPreview(props: {
                 <div className="sm:col-span-2">
                   <dt className="text-muted-foreground">Eligibility</dt>
                   <dd>
-                    {finding.action} · {finding.classificationLabel ?? "unclassified"} ·{" "}
-                    {preferred ? "preferred controlled path" : reject ? `rejected: ${reject}` : "non-preferred"}
+                    {finding.action} · {finding.classificationLabel ?? "unclassified"}
+                    {reject ? ` · blocked: ${reject}` : " · within automatic cleanup policy"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-muted-foreground">Evidence</dt>
+                  <dd className="text-[11px] text-muted-foreground">
+                    {evidenceBasedFindingExplanation(finding)}
                   </dd>
                 </div>
                 <div className="sm:col-span-2">
