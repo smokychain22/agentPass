@@ -2,6 +2,7 @@ import type { Finding, FindingAction } from "@/lib/findings/types";
 import { isDoNotTouchPath } from "@/lib/findings/confidence-path-rules";
 import { isUnusedImportAutoTransformEnabled } from "@/lib/execution/unused-import-policy";
 import { parseUnusedImportEvidence } from "@/lib/execution/unused-import-evidence";
+import { hasExactDuplicateSignal } from "./exact-duplicate-signals";
 import type { EvidenceItem } from "./types";
 import type {
   ClassificationLabel,
@@ -57,8 +58,13 @@ function gradeForFinding(input: DecisionInput): FusionEvidenceGrade {
     return hasPreflightActionable && actionable ? "strong" : "moderate";
   }
   if (finding.type === "duplicate_code") {
-    const exact = finding.evidence.signals.some((s) => s.startsWith("exact_duplicate=true"));
-    return exact && nativeAnalyzer(finding) ? "moderate" : "weak";
+    const exact = hasExactDuplicateSignal(finding.evidence.signals);
+    // Exact file duplicates are consolidate_exact_duplicate candidates. With
+    // native hash evidence + actionable classification they are strong enough
+    // for SAFE cleanup (importers are rewired by the transformer).
+    if (exact && nativeAnalyzer(finding) && hasPreflightActionable) return "strong";
+    if (exact && nativeAnalyzer(finding)) return "moderate";
+    return "weak";
   }
   if (finding.type === "unused_file") {
     const inbound = finding.evidence.signals.find((s) => s.startsWith("inbound_refs="));
@@ -100,7 +106,7 @@ function labelFor(input: DecisionInput, grade: FusionEvidenceGrade): Classificat
     case "orphan_pattern":
       return "potential_orphan";
     case "duplicate_code":
-      return finding.evidence.signals.some((s) => s.startsWith("exact_duplicate=true"))
+      return hasExactDuplicateSignal(finding.evidence.signals)
         ? "exact_duplicate"
         : "near_duplicate";
     case "unused_import":

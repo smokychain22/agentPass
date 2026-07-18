@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { extractAnalyzerEvidence } from "../src/lib/evidence/analyzer-evidence";
 import { decideClassification } from "../src/lib/evidence/decision-matrix";
 import type { Finding } from "../src/lib/findings/types";
 import type { EvidenceItem, ReferenceChannelStatus } from "../src/lib/evidence/types";
@@ -178,6 +179,54 @@ test("keeps near duplicates review-first even with native analyzer", () => {
   assert.equal(result.classificationLabel, "near_duplicate");
   assert.equal(result.action, "review_first");
   assert.equal(result.autoFixAllowed, false);
+});
+
+test("exact_file_duplicate signal promotes to SAFE consolidate candidate", () => {
+  const finding = baseFinding({
+    id: "fnd_exactdup_copy",
+    type: "duplicate_code",
+    title: "Exact duplicate file: src/lib/exact-dup-copy.ts",
+    files: ["src/lib/exact-dup-canonical.ts", "src/lib/exact-dup-copy.ts"],
+    source: "repodiet_exact_dup",
+    sourceMode: "native",
+    evidence: {
+      summary: "Exact file duplicate detected by content hash.",
+      signals: [
+        "exact_file_duplicate=true",
+        "content_hash=abc123",
+        "canonical=src/lib/exact-dup-canonical.ts",
+        "duplicate=src/lib/exact-dup-copy.ts",
+        "inbound_refs_duplicate=1",
+        "classification=actionable_candidate",
+      ],
+    },
+  });
+  // Inbound refs on the duplicate are rewire targets, not counter-evidence.
+  const analyzerItems = extractAnalyzerEvidence(finding);
+  assert.equal(
+    analyzerItems.some(
+      (item) =>
+        item.summary.includes("Inbound references to duplicate file") &&
+        item.strength === "contradicting"
+    ),
+    false
+  );
+  assert.ok(
+    analyzerItems.some(
+      (item) =>
+        item.summary.includes("Inbound references to duplicate file") &&
+        item.strength === "supporting"
+    )
+  );
+  const result = decide(finding, analyzerItems.filter((i) => i.strength === "contradicting"), emptyChannels, {
+    hasPreflightActionable: true,
+    transformerAvailable: true,
+    actionable: true,
+  });
+  assert.equal(result.classificationLabel, "exact_duplicate");
+  assert.equal(result.grade, "strong");
+  assert.equal(result.action, "safe_candidate");
+  assert.equal(result.autoFixAllowed, true);
 });
 
 test("never auto-deletes unused dependencies", () => {
