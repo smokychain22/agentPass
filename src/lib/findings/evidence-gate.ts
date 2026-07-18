@@ -87,7 +87,15 @@ function countIndependentSignals(finding: Finding, bundle?: EvidenceBundle): {
     add("graph_zero_inbound", "RepoDiet graph: zero inbound references");
   }
 
-  if (finding.evidence.signals.some((s) => s.startsWith("exact_duplicate=true"))) {
+  if (
+    finding.evidence.signals.some(
+      (s) =>
+        s === "exact_file_duplicate=true" ||
+        s.startsWith("exact_file_duplicate=true") ||
+        s === "exact_duplicate=true" ||
+        s.startsWith("exact_duplicate=true")
+    )
+  ) {
     add("exact_duplicate", "Byte-identical duplicate confirmed");
   }
 

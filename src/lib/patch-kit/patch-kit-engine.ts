@@ -255,13 +255,20 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       ? filterFindingsBySelection(body.findings, body.selectedFindingIds)
       : await runFindingsEngine(repoUrl, branch);
 
+    const workspaceSource = workspace.repo.workspaceSource ?? "github_zip";
+    const isLocalMaterialization =
+      workspaceSource === "e2e_fixture" || workspaceSource === "local_demo";
+
+    // Owner/name refresh is fine for transferred repos, but local fixture/demo
+    // trees must not inherit a remote HEAD commit SHA — that commit's path set
+    // can disagree with the materialization and silently drop valid edits.
     const identity = await refreshRepositoryIdentityFromUrl(repoUrl, branch);
     if (identity) {
       findings = applyRepositoryIdentity(findings, identity);
     }
 
     let scanCommitSha = findings.repo.commitSha ?? workspace.repo.commitSha;
-    if (!scanCommitSha) {
+    if (!scanCommitSha && !isLocalMaterialization) {
       scanCommitSha =
         (await fetchBranchCommitSha(
           findings.repo.owner,
@@ -488,7 +495,22 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         .filter((a) => a.status === "retained" && a.pluginId === "remove_temp_file")
         .flatMap((a) => a.changedPaths)
     );
-    const remainingSafeDeletes = buckets.safeDelete.filter((item) => !alreadyDeleted.has(item.path));
+    const selectedPaths = selectedScope
+      ? new Set(
+          flatFindings
+            .filter((f) => selectedScope.has(f.id))
+            .flatMap((f) => f.files.map((p) => p.replace(/\\/g, "/").replace(/^\.\//, "")))
+        )
+      : null;
+    const remainingSafeDeletes = buckets.safeDelete.filter((item) => {
+      if (alreadyDeleted.has(item.path)) return false;
+      // Buyer-selected cleanup must not inject discovery deletes outside the scope.
+      if (selectedPaths) {
+        const rel = item.path.replace(/\\/g, "/").replace(/^\.\//, "");
+        return selectedPaths.has(rel);
+      }
+      return true;
+    });
 
     for (const item of remainingSafeDeletes) {
       const rel = item.path.replace(/\\/g, "/").replace(/^\.\//, "");
@@ -561,7 +583,32 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
       { findingIdsByPath }
     );
 
-    if (baseCommitSha && baseCommitSha !== "unknown" && changeOperations.length > 0) {
+    const transformerByPath = new Map<string, string>();
+    for (const attempt of cleanupResult.fixLoop.attempts) {
+      if (attempt.status !== "retained" || !attempt.pluginId) continue;
+      for (const changedPath of attempt.changedPaths) {
+        const rel = changedPath.replace(/\\/g, "/").replace(/^\.\//, "");
+        if (!transformerByPath.has(rel)) {
+          transformerByPath.set(rel, attempt.pluginId);
+        }
+      }
+    }
+    changeOperations = changeOperations.map((operation) => {
+      const fromAttempt = transformerByPath.get(
+        operation.filePath.replace(/\\/g, "/").replace(/^\.\//, "")
+      );
+      return fromAttempt ? { ...operation, transformerId: fromAttempt } : operation;
+    });
+
+    // Skip remote git-path reconcile for local fixture/demo materializations —
+    // the authoritative tree is the copied workspace, not a possibly divergent
+    // remote HEAD (e.g. e2e-fixture exact-dup files absent from GitHub tip).
+    if (
+      !isLocalMaterialization &&
+      baseCommitSha &&
+      baseCommitSha !== "unknown" &&
+      changeOperations.length > 0
+    ) {
       const reconciled = await reconcileEditsWithGitCommit({
         owner: findings.repo.owner,
         repo: findings.repo.name,

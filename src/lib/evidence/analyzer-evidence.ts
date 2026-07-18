@@ -1,4 +1,5 @@
 import type { Finding } from "@/lib/findings/types";
+import { hasExactDuplicateSignal } from "./exact-duplicate-signals";
 import type { EvidenceItem } from "./types";
 
 function signalValue(signals: string[], prefix: string): string | undefined {
@@ -41,13 +42,23 @@ export function extractAnalyzerEvidence(finding: Finding): EvidenceItem[] {
     });
   }
 
+  const exactDuplicate = hasExactDuplicateSignal(signals);
   const dupInbound = signalValue(signals, "inbound_refs_duplicate");
   if (dupInbound !== undefined) {
+    // For exact file duplicates, inbound refs are rewire targets for
+    // consolidate_exact_duplicate — not a reason to block cleanup.
+    const inboundCount = Number(dupInbound);
+    const strength =
+      exactDuplicate || !(Number.isFinite(inboundCount) && inboundCount > 0)
+        ? "supporting"
+        : "contradicting";
     items.push({
       channel: "graph",
       source: "repodiet_reference_graph",
-      summary: `Inbound references to duplicate file: ${dupInbound}`,
-      strength: Number(dupInbound) > 0 ? "contradicting" : "supporting",
+      summary: exactDuplicate
+        ? `Inbound references to duplicate file: ${dupInbound} (rewire targets for consolidation)`
+        : `Inbound references to duplicate file: ${dupInbound}`,
+      strength,
     });
   }
 
@@ -60,7 +71,7 @@ export function extractAnalyzerEvidence(finding: Finding): EvidenceItem[] {
     });
   }
 
-  if (signalBool(signals, "exact_duplicate")) {
+  if (exactDuplicate || signalBool(signals, "exact_duplicate")) {
     items.push({
       channel: "analyzer",
       source: "repodiet_exact_dup",
