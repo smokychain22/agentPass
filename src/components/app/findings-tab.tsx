@@ -118,10 +118,13 @@ export function FindingsTab() {
     session,
     findings,
     setFindings,
-    selectedFindingIds,
+    cleanupSelectedFindingIds,
+    reviewSelectedFindingIds,
+    inspectionSelectedFindingIds,
     toggleFindingSelection,
     selectAllSafeFindings,
     clearFindingSelection,
+    clearReviewSelection,
     setSelectedFindingIds,
   } = useAppSession();
   const { show, Toast } = useFeedbackToast();
@@ -259,7 +262,7 @@ export function FindingsTab() {
   const supportedCount =
     findings?.summary.eligibleFindings ?? countCleanupEligible(allFindings);
   const selectedEligibleCount = allFindings.filter(
-    (f) => selectedFindingIds.includes(f.id) && isCleanupEligible(f)
+    (f) => cleanupSelectedFindingIds.includes(f.id) && isCleanupEligible(f)
   ).length;
 
   const now = Date.now();
@@ -308,16 +311,16 @@ export function FindingsTab() {
                 "Run Findings"
               )}
             </Button>
-            {findings && gates.quickCleanupAvailable && selectedEligibleCount > 0 && (
-              <Button asChild>
+            {/* Primary Continue lives on FindingsProgressionBanner (includes selected count). */}
+            {findings && gates.quickCleanupAvailable && selectedEligibleCount > 0 ? (
+              <Button variant="secondary" asChild data-continue-toolbar="secondary">
                 <Link href="/app?tab=patch">Continue to Quick Cleanup</Link>
               </Button>
-            )}
-            {findings && (!gates.quickCleanupAvailable || selectedEligibleCount === 0) && (
-              <Button variant="secondary" disabled>
+            ) : findings ? (
+              <Button variant="secondary" disabled data-continue-toolbar="secondary">
                 Continue to Quick Cleanup
               </Button>
-            )}
+            ) : null}
             <details className="relative">
               <summary className="cursor-pointer list-none rounded-md border border-border/40 px-3 py-2 text-sm text-muted-foreground hover:bg-card-elevated">
                 Developer tools
@@ -632,9 +635,12 @@ export function FindingsTab() {
           <FindingsWorkspace
             findings={allFindings}
             rawToolReports={findings.rawToolReports}
-            selectedForPatch={selectedFindingIds}
+            selectedForPatch={cleanupSelectedFindingIds}
+            reviewSelectedFindingIds={reviewSelectedFindingIds}
+            inspectionSelectedFindingIds={inspectionSelectedFindingIds}
             onTogglePatchSelection={toggleFindingSelection}
             onClearSelection={clearFindingSelection}
+            onClearReviewSelection={clearReviewSelection}
             onSelectFindingIds={setSelectedFindingIds}
           />
 

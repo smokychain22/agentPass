@@ -6,25 +6,57 @@
   "pinnedBaseCommit": "c0838e4cda326098a363b44e0e3ebe98e81e9463",
   "pinnedBaseBranch": "main",
   "selectedCleanupCandidate": {
-    "path": "src/archive/OldDashboard.backup.tsx",
+    "path": "src/unused/empty-module.ts",
     "action": "delete",
-    "whyCleanupEligible": "Obvious unreferenced backup under src/archive/; listed in repodiet-ground-truth.json as automatic delete; not in mustKeep; reversible by restoring the single deleted file from main history.",
+    "whyCleanupEligible": "Intentionally empty unused module under src/unused/; preferred over config/runtime hooks and archive backups for the first controlled delivery. Delivery must still confirm Phase-1 transformer availability (empty_file or knip structural candidate), successful preflight, and a single-file bounded delete before publish.",
+    "transformerNote": "As of this plan update, empty-module.ts / confirmed-unused.ts may require empty_file evidence for isPhase1StructuralCandidate — do not select until preflightPasses=true on the live findings payload.",
     "expectedFileChanges": [
       {
-        "path": "src/archive/OldDashboard.backup.tsx",
+        "path": "src/unused/empty-module.ts",
         "changeType": "delete"
       }
+    ],
+    "preflightGates": [
+      "exact pinned commit c0838e4cda326098a363b44e0e3ebe98e81e9463",
+      "no static reference",
+      "no dynamic/string/glob reference",
+      "no package or framework convention reference",
+      "no side effect",
+      "deterministic transformer",
+      "single-file bounded diff",
+      "parser/build/test validation",
+      "successful preflight",
+      "rollback available"
     ]
+  },
+  "alternatePreferredIfEmptyModuleIneligible": {
+    "path": "src/unused/confirmed-unused.ts",
+    "action": "delete",
+    "note": "Use only after the same preflightGates pass for this path."
   },
   "alternativesRejectedForThisRun": [
     {
-      "path": "src/components/Dashboard.tsx",
-      "reason": "Unused Clock import already removed on current main — not eligible."
+      "path": "src/config/runtime-hook.ts",
+      "reason": "Configuration/runtime hook — excluded from first controlled delivery test."
     },
     {
-      "path": "src/unused/empty-module.ts",
-      "reason": "Valid but deferred; keep this controlled run to one archive delete."
+      "path": "src/archive/OldDashboard.backup.tsx",
+      "reason": "Deferred; prefer src/unused/* single-file deletes for the first controlled run."
+    },
+    {
+      "path": "src/components/Dashboard.tsx",
+      "reason": "Unused Clock import already removed on current main — not eligible."
     }
+  ],
+  "doNotUseForFirstTest": [
+    "generated files",
+    "runtime hooks",
+    "config files",
+    "routes/layouts/pages",
+    "plugin registries",
+    "side-effect registration files",
+    "package dependencies",
+    "multi-file transformations"
   ],
   "expectedBranchName": "repodiet/cleanup-YYYYMMDD-<nanoid6>",
   "expectedBranchNamePattern": "^repodiet/cleanup-[0-9]{8}-[A-Za-z0-9_-]{6}$",
@@ -61,7 +93,7 @@
   "rollbackProcedure": [
     "Close the RepoDiet cleanup PR without merging",
     "Delete the remote repodiet/cleanup-* branch",
-    "Confirm main remains at pinnedBaseCommit (or later unrelated commits) with OldDashboard.backup.tsx still present if PR was never merged",
+    "Confirm main remains at pinnedBaseCommit (or later unrelated commits) with empty-module.ts still present if PR was never merged",
     "If mistakenly merged: revert the merge commit on main"
   ],
   "executionGate": "Do not execute until operator explicitly starts the controlled delivery run after queue reconciliation and GitHub App probe PASS."
