@@ -9,15 +9,33 @@ export async function createInstallationAccessToken(
   options?: {
     repositories?: string[];
     permissions?: Record<string, "read" | "write">;
+    /** Explicit write-token request — blocked outside Production dry-run. */
+    forWrite?: boolean;
   }
 ): Promise<InstallationTokenResult> {
+  const { assertPreviewAllowsRepositoryWrite, isPreviewRepositoryWriteBlocked } = await import(
+    "@/lib/deployment/preview-dry-run"
+  );
+  if (options?.forWrite) {
+    assertPreviewAllowsRepositoryWrite();
+  }
+
   const appJwt = createGitHubAppJwt();
   const body: Record<string, unknown> = {};
   if (options?.repositories?.length) {
     body.repositories = options.repositories;
   }
-  if (options?.permissions && Object.keys(options.permissions).length > 0) {
-    body.permissions = options.permissions;
+  let permissions = options?.permissions;
+  // Outside Production, never mint a write-capable installation token unless live write is explicitly enabled.
+  if (isPreviewRepositoryWriteBlocked()) {
+    permissions = {
+      contents: "read",
+      metadata: "read",
+      pull_requests: "read",
+    };
+  }
+  if (permissions && Object.keys(permissions).length > 0) {
+    body.permissions = permissions;
   }
   const res = await fetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,

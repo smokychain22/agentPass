@@ -11,11 +11,19 @@ import { getA2ATask } from "@/lib/a2a/task-store";
 import { buildSessionKey } from "@/lib/github-app/browser-session";
 import { assertDirectTaskOwner } from "@/lib/workflow/task-access";
 import { isInternalTestBuyerAllowed } from "@/lib/wallet/test-buyer-guard";
+import {
+  buildPreviewDryRunDenial,
+  isPreviewPaymentBlocked,
+} from "@/lib/deployment/preview-dry-run";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    if (isPreviewPaymentBlocked()) {
+      return NextResponse.json(buildPreviewDryRunDenial(), { status: 403 });
+    }
+
     const body = (await request.json()) as Record<string, unknown>;
     let proof = paymentProofFromRequest(request, body);
 
@@ -26,6 +34,23 @@ export async function POST(request: Request) {
     const quote = await getBoundQuote(proof.quoteId);
     if (!quote) {
       return NextResponse.json({ success: false, error: "Quote not found." }, { status: 404 });
+    }
+
+    // Reject when the client-displayed amount differs from the signed quote.
+    // (Do this before copying quote fields onto the proof.)
+    const clientAmountMicro =
+      typeof body.amountMicro === "string" && body.amountMicro.length > 0
+        ? body.amountMicro
+        : null;
+    if (clientAmountMicro !== null && clientAmountMicro !== quote.amountMicro) {
+      return NextResponse.json(
+        {
+          success: false,
+          status: "wrong_amount",
+          error: "Displayed payment amount does not match the signed quote.",
+        },
+        { status: 402 }
+      );
     }
 
     if (quote.a2aTaskId) {

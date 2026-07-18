@@ -173,6 +173,18 @@ function buildPrBody(
 }
 
 export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
+  const { assertPreviewAllowsRepositoryWrite, PreviewDryRunError } = await import(
+    "@/lib/deployment/preview-dry-run"
+  );
+  try {
+    assertPreviewAllowsRepositoryWrite();
+  } catch (err) {
+    if (err instanceof PreviewDryRunError) {
+      throw new ToolExecutionError(err.code, err.message, 403);
+    }
+    throw err;
+  }
+
   const parsed = parseGitHubUrl(input.repoUrl);
   if (!parsed) {
     throw new ToolExecutionError(

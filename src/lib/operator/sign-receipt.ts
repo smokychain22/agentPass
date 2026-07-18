@@ -103,6 +103,27 @@ export function signExecutionReceipt(receipt: ExecutionReceipt): {
   signedBy: string | null;
 } {
   const signedReceipt = toSignedReceiptV1(receipt);
+  // Vercel Preview/development receipts are simulated — never present as production delivery evidence.
+  const vercelEnv = (process.env.VERCEL_ENV || "").toLowerCase();
+  if (vercelEnv === "preview" || vercelEnv === "development" || process.env.REPODIET_FORCE_PREVIEW_DRY_RUN === "1") {
+    const simulatedReceipt: ExecutionReceipt = {
+      ...receipt,
+      patchHash: `simulated-preview:${receipt.patchHash}`,
+      verificationHash: `simulated-preview:${receipt.verificationHash}`,
+      pullRequestUrl: undefined,
+      status: "failed",
+    };
+    return {
+      receipt: simulatedReceipt,
+      signedReceipt: {
+        ...toSignedReceiptV1(simulatedReceipt),
+        operator: "preview-dry-run",
+        status: "failed",
+      },
+      signature: null,
+      signedBy: "preview-dry-run",
+    };
+  }
   const privateKeyPem = process.env.REPODIET_OPERATOR_PRIVATE_KEY;
   if (!privateKeyPem) {
     if (process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production") {
