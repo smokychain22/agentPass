@@ -272,12 +272,19 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     patchKit.verificationGates &&
     !patchKit.verificationGates.allRequiredPassed
   ) {
-    const failed = patchKit.verificationGates.gates
-      .filter((g) => g.requiredForSafePr && g.status === "failed")
-      .map((g) => g.label);
+    const failedGates = patchKit.verificationGates.gates.filter(
+      (g) => g.requiredForSafePr && g.status === "failed"
+    );
+    const failed = failedGates.map((g) => g.label);
+    const details = failedGates
+      .map((g) => g.detail)
+      .filter((d): d is string => Boolean(d?.trim()))
+      .slice(0, 3);
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
-      `Mandatory verification gates failed: ${failed.join("; ") || "see pr-evidence-report"}`,
+      `Mandatory verification gates failed: ${failed.join("; ") || "see pr-evidence-report"}${
+        details.length ? ` (${details.join(" | ")})` : ""
+      }`,
       422
     );
   }

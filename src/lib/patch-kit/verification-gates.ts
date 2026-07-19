@@ -203,7 +203,10 @@ export function buildVerificationGateReport(
               ? "passed"
               : "failed",
       detail: postPatchRan
-        ? `${postPatch?.newFindingCount ?? 0} new finding(s) vs baseline fingerprint set`
+        ? `${postPatch?.newFindingCount ?? 0} new actionable finding(s) vs baseline (${(postPatch?.newFindingsIntroduced ?? [])
+            .slice(0, 3)
+            .map((f) => `${f.type}:${(f.files ?? []).join(",") || f.packageName || "?"}`)
+            .join("; ") || "none"})`
         : "Full re-analysis on patched tree.",
     },
     {
