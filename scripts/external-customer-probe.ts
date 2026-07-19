@@ -39,6 +39,8 @@ interface Evidence {
   workflowRunId?: string | null;
   workerId?: string | null;
   taskStatusAfterDispatch?: string;
+  dispatchLatencyMs?: number;
+  analysisDurationMs?: number;
   notes: string[];
 }
 
@@ -63,15 +65,20 @@ async function main() {
   const cardRes = await fetch(`${BASE}/.well-known/agent-card.json`);
   if (cardRes.status !== 200) fail(ev, `agent-card HTTP ${cardRes.status}`);
   const card = (await cardRes.json()) as Record<string, unknown>;
+  const identity = (card.identity ?? {}) as Record<string, unknown>;
+  const asp = String(identity.aspAgentId ?? card.aspAgentId ?? "");
+  const a2a = String(identity.a2aServiceId ?? card.a2aServiceId ?? "");
+  const a2mcp = String(identity.a2mcpServiceId ?? card.a2mcpServiceId ?? "");
   ev.agentCard = {
     name: card.name ?? card.productName,
-    asp: card.aspAgentId ?? (card as { asp?: unknown }).asp,
+    asp,
+    a2a,
+    a2mcp,
   };
-  const cardText = JSON.stringify(card);
-  if (!/RepoDiet/i.test(cardText)) fail(ev, "agent-card missing RepoDiet");
-  if (!cardText.includes("5283")) fail(ev, "agent-card missing ASP 5283");
-  if (!cardText.includes("32947")) fail(ev, "agent-card missing A2A 32947");
-  if (!cardText.includes("32948")) fail(ev, "agent-card missing A2MCP 32948");
+  if (!/RepoDiet/i.test(String(card.name ?? ""))) fail(ev, "agent-card missing RepoDiet");
+  if (asp !== "5283") fail(ev, `ASP expected 5283 got ${asp}`);
+  if (a2a !== "32947") fail(ev, `A2A expected 32947 got ${a2a}`);
+  if (a2mcp !== "32948") fail(ev, `A2MCP expected 32948 got ${a2mcp}`);
 
   // 2. Health
   const healthRes = await fetch(`${BASE}/api/okx/health`);
@@ -87,10 +94,29 @@ async function main() {
     activeWorkflowRuns: health.activeWorkflowRuns,
     activeWorkers: health.activeWorkers,
     workerHeartbeatAgeSeconds: health.workerHeartbeatAgeSeconds,
+    workerHeartbeatAgeMs: health.workerHeartbeatAgeMs,
     degradedReasons: health.degradedReasons,
   };
   if (health.workerHeartbeatAgeMs === null && health.workerHeartbeatAgeSeconds === 0) {
     fail(ev, "health coerces null heartbeat age to 0");
+  }
+  // Fail-closed observation: backlog without execution owners must degrade capacity.
+  if (
+    Number(health.queueDepth ?? 0) > 0 &&
+    Number(health.activeWorkflowRuns ?? 0) === 0 &&
+    Number(health.activeWorkers ?? 0) === 0 &&
+    health.workerCapacityReady === true
+  ) {
+    fail(ev, "health workerCapacityReady true despite queue backlog with zero runs/workers");
+  }
+  if (
+    Number(health.queueDepth ?? 0) > 0 &&
+    Number(health.activeWorkflowRuns ?? 0) === 0 &&
+    Array.isArray(health.degradedReasons) &&
+    (health.degradedReasons as unknown[]).length === 0 &&
+    health.a2aRuntimeReady === true
+  ) {
+    fail(ev, "health a2aRuntimeReady true with undispatched backlog and empty degradedReasons");
   }
 
   // 3. A2MCP unpaid → 402
@@ -172,10 +198,9 @@ async function main() {
 
   // 6. Task status immediately retrievable
   const statusRes = await fetch(`${BASE}/api/a2a/tasks/${taskId}`);
-  if (statusRes.status !== 200 && statusRes.status !== 403) {
-    // Some deployments bind session ownership; opaque task id may still 403 — note it.
-    ev.notes.push(`task status HTTP ${statusRes.status}`);
-  } else if (statusRes.status === 200) {
+  if (statusRes.status !== 200) {
+    fail(ev, `task status HTTP ${statusRes.status} (expected 200)`);
+  } else {
     const st = (await statusRes.json()) as Record<string, unknown>;
     if (st.ok === false && st.terminal !== true && st.status === "queued") {
       fail(ev, "nonterminal queued task reported ok:false");
@@ -199,7 +224,8 @@ async function main() {
     ((dsBody.job as { claimedBy?: string })?.claimedBy ?? null);
 
   // 8. Dispatch SLA — workflow run or lease within 30s
-  const dispatchDeadline = Date.now() + DISPATCH_SLA_MS;
+  const dispatchStarted = Date.now();
+  const dispatchDeadline = dispatchStarted + DISPATCH_SLA_MS;
   let dispatched = Boolean(ev.workflowRunId || ev.workerId);
   while (!dispatched && Date.now() < dispatchDeadline) {
     await new Promise((r) => setTimeout(r, 2_000));
@@ -217,51 +243,100 @@ async function main() {
     if (
       ev.workflowRunId ||
       ev.workerId ||
-      ["CLAIMED", "INVENTORY", "RUNNING_ANALYZERS", "READY", "COMPLETED"].includes(stage) ||
+      ["CLAIMED", "INVENTORY", "RUNNING_ANALYZERS", "READY", "COMPLETED", "WAITING_FOR_RUNNER", "DISPATCHED"].includes(
+        stage
+      ) ||
       String(body.dispatchState).includes("DISPATCHED") ||
       String(body.dispatchState) === "CLAIMED"
     ) {
       dispatched = true;
-      // DISPATCHED without run id yet still counts if stage advanced past QUEUED
-      if (!ev.workflowRunId && !ev.workerId && stage === "WAITING_FOR_RUNNER") {
-        dispatched = true;
-        ev.notes.push("dispatch accepted (WAITING_FOR_RUNNER) within SLA");
+      if (!ev.workflowRunId && !ev.workerId && (stage === "WAITING_FOR_RUNNER" || stage === "DISPATCHED")) {
+        ev.notes.push("dispatch accepted (WAITING_FOR_RUNNER/DISPATCHED) within SLA — run id may attach at claim");
       }
     }
-    if (["FAILED_TERMINAL", "FAILED_RETRYABLE", "CANCELLED"].includes(stage)) {
+    if (["FAILED_TERMINAL", "CANCELLED"].includes(stage)) {
       fail(ev, `deep-scan entered terminal failure before dispatch success: ${stage}`);
     }
   }
+  (ev as Evidence).dispatchLatencyMs = Date.now() - dispatchStarted;
   if (!dispatched) {
-    // Health must be degraded when jobs sit undispatched
-    const h2 = await fetch(`${BASE}/api/okx/health`).then((r) => r.json()) as Record<string, unknown>;
-    ev.notes.push(`health after miss: ${JSON.stringify({
-      a2aRuntimeReady: h2.a2aRuntimeReady,
-      workerCapacityReady: h2.workerCapacityReady,
-      degradedReasons: h2.degradedReasons,
-    })}`);
+    const h2 = (await fetch(`${BASE}/api/okx/health`).then((r) => r.json())) as Record<
+      string,
+      unknown
+    >;
+    ev.notes.push(
+      `health after miss: ${JSON.stringify({
+        a2aRuntimeReady: h2.a2aRuntimeReady,
+        workerCapacityReady: h2.workerCapacityReady,
+        degradedReasons: h2.degradedReasons,
+      })}`
+    );
     fail(ev, `no workflow run / lease / dispatched stage within ${DISPATCH_SLA_MS}ms`);
   }
 
-  // 9. Progress beyond bare queued (analysis SLA — soft note if findings absent)
-  const analysisDeadline = Date.now() + ANALYSIS_SLA_MS;
+  // 9. Progress beyond bare queued (analysis SLA)
+  const analysisStarted = Date.now();
+  const analysisDeadline = analysisStarted + ANALYSIS_SLA_MS;
   let progressed = false;
+  let terminalAnalysis = false;
   while (Date.now() < analysisDeadline) {
     const poll = await fetch(`${BASE}/api/deep-scans/${deepScanId}`);
     if (poll.status === 200) {
       const body = (await poll.json()) as Record<string, unknown>;
       const stage = String((body.job as { stage?: string })?.stage ?? body.stage ?? "");
       ev.taskStatusAfterDispatch = stage;
-      if (stage && stage !== "QUEUED") {
+      ev.workflowRunId =
+        (body.workflowRunId as string | null | undefined) ??
+        ((body.job as { workflowRunId?: string })?.workflowRunId ?? ev.workflowRunId);
+      ev.workerId =
+        (body.workerId as string | null | undefined) ??
+        ((body.job as { claimedBy?: string })?.claimedBy ?? ev.workerId);
+      if (stage && stage !== "QUEUED" && stage !== "DISPATCHING") {
         progressed = true;
-        if (["READY", "COMPLETED", "FAILED_TERMINAL", "FAILED_RETRYABLE"].includes(stage)) break;
+        if (
+          ["READY", "COMPLETED", "FAILED_TERMINAL", "FAILED_RETRYABLE", "WORKER_STALLED"].includes(
+            stage
+          )
+        ) {
+          terminalAnalysis = true;
+          break;
+        }
       }
     }
     await new Promise((r) => setTimeout(r, 5_000));
   }
+  (ev as Evidence).analysisDurationMs = Date.now() - analysisStarted;
   if (!progressed) {
     fail(ev, `task remained QUEUED beyond analysis window ${ANALYSIS_SLA_MS}ms`);
   }
+  if (!terminalAnalysis) {
+    ev.notes.push(
+      `analysis still in-flight at stage=${ev.taskStatusAfterDispatch} after ${ANALYSIS_SLA_MS}ms — progressed beyond queued`
+    );
+  }
+
+  // 10. Duplicate task must not fork a second payment / must create distinct task ids
+  const dupRes = await fetch(`${BASE}/api/a2a/tasks`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "repository.safe_cleanup",
+      repoUrl: REPO,
+      branch: BRANCH,
+      source: "external_customer_probe_duplicate",
+      asyncDelivery: true,
+    }),
+  });
+  const dupBody = (await dupRes.json()) as Record<string, unknown>;
+  const dupTaskId = String(dupBody.taskId ?? "");
+  const dupDeepScan = String(dupBody.deepScanJobId ?? "");
+  if (!dupTaskId || dupTaskId === taskId) {
+    fail(ev, "duplicate submission did not create a distinct taskId");
+  }
+  if (!dupDeepScan || dupDeepScan === deepScanId) {
+    fail(ev, "duplicate submission reused deepScanJobId — risk of duplicate execution");
+  }
+  ev.notes.push(`duplicateTaskId=${dupTaskId} duplicateDeepScanId=${dupDeepScan}`);
 
   ev.finishedAt = new Date().toISOString();
   ev.notes.push(

@@ -1,7 +1,15 @@
 import { REPODIET_PRODUCTION_FALLBACK_URL } from "@/lib/app/production-url";
 
 export function getServerBaseUrl(): string {
+  // On Vercel Preview, prefer the deployment host so advertised status/progress
+  // URLs stay on the same deployment that accepted the task.
+  const previewHost =
+    process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL.trim()}`
+      : undefined;
+
   const candidates = [
+    previewHost,
     process.env.NEXT_PUBLIC_APP_URL?.trim(),
     process.env.REPODIET_APP_URL?.trim(),
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.trim()}` : undefined,
