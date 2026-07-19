@@ -128,6 +128,12 @@ async function reviewerOnce(index: number): Promise<ReviewerRun> {
   if (latency > 10_000) run.failures.push(`ack latency ${latency}ms > 10s hard fail`);
   if (res.status !== 200) {
     run.failures.push(`A2A HTTP ${res.status}`);
+    try {
+      const errBody = (await res.json()) as Record<string, unknown>;
+      run.failures.push(`body:${String(errBody.code || errBody.error || "").slice(0, 180)}`);
+    } catch {
+      /* ignore */
+    }
     return run;
   }
   const body = (await res.json()) as Record<string, unknown>;
@@ -302,6 +308,8 @@ async function main() {
   for (let i = 1; i <= 3; i++) {
     console.error(`Reviewer run ${i}/3…`);
     runs.push(await reviewerOnce(i));
+    // Avoid stacking concurrent Actions + Redis pressure between canary runs.
+    if (i < 3) await new Promise((r) => setTimeout(r, 15_000));
   }
   evidence.reviewerRuns = runs;
   evidence.taskIds = runs.map((r) => r.taskId);

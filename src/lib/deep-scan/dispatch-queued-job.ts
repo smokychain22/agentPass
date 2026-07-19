@@ -160,7 +160,7 @@ export function isAlreadyActivelyDispatched(job: DeepScanJob): boolean {
  * and leave Preview jobs stuck in INVENTORY.
  */
 export function publicApiBaseUrl(
-  env: NodeJS.ProcessEnv = process.env
+  env: Record<string, string | undefined> = process.env
 ): string {
   if (env.VERCEL_ENV === "preview") {
     const explicit = env.REPODIET_PUBLIC_API_BASE_URL?.trim();
