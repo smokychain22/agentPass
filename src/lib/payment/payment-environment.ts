@@ -27,12 +27,23 @@ export interface PaymentEnvironment {
   isMainnet: boolean;
   /** Hard stop — testnet mode requested but mainnet material detected. */
   mainnetBlocked: boolean;
+  /** Production must never run with REPODIET_PAYMENT_MODE=testnet. */
+  productionTestnetMisconfig: boolean;
   blockReason?: string;
+}
+
+function isNextProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build";
 }
 
 function address(value: string | undefined, fallback: string): string {
   const raw = (value ?? fallback).trim().toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(raw)) {
+    // Avoid aborting `next build` when a Production env var is mistyped.
+    if (isNextProductionBuild() || !value?.trim()) {
+      const fb = fallback.trim().toLowerCase();
+      if (/^0x[a-f0-9]{40}$/.test(fb)) return fb;
+    }
     throw new Error(`invalid_payment_address:${raw.slice(0, 12)}`);
   }
   return raw;
@@ -85,14 +96,24 @@ export function getPaymentEnvironment(env: NodeJS.ProcessEnv = process.env): Pay
 
   let mainnetBlocked = false;
   let blockReason: string | undefined;
+  let productionTestnetMisconfig = false;
+
+  const vercelEnv = (env.VERCEL_ENV || "").toLowerCase();
+  if (paymentMode === "testnet" && vercelEnv === "production") {
+    productionTestnetMisconfig = true;
+    mainnetBlocked = true;
+    blockReason =
+      "PRODUCTION_TESTNET_MISCONFIGURATION: REPODIET_PAYMENT_MODE=testnet must not be scoped to Vercel Production. Move testnet vars to Preview only. NO_TRANSACTION_SENT.";
+  }
 
   if (paymentMode === "testnet" && isMainnet) {
     mainnetBlocked = true;
     blockReason =
+      blockReason ||
       "MAINNET_CONFIGURATION_DETECTED: REPODIET_PAYMENT_MODE=testnet but network/asset resolve to mainnet (eip155:196 / real USD₮0). NO_TRANSACTION_SENT.";
   }
 
-  if (paymentMode === "testnet") {
+  if (paymentMode === "testnet" && !productionTestnetMisconfig) {
     if (network !== TESTNET_NETWORK || chainId !== TESTNET_CHAIN_ID || asset !== TESTNET_USDT) {
       mainnetBlocked = true;
       blockReason =
@@ -109,9 +130,11 @@ export function getPaymentEnvironment(env: NodeJS.ProcessEnv = process.env): Pay
     asset,
     sellerWallet,
     buyerWallet,
-    isTestnet: paymentMode === "testnet" && isTestnet && !mainnetBlocked,
+    isTestnet:
+      paymentMode === "testnet" && isTestnet && !mainnetBlocked && !productionTestnetMisconfig,
     isMainnet,
     mainnetBlocked,
+    productionTestnetMisconfig,
     blockReason,
   };
 }
@@ -119,6 +142,11 @@ export function getPaymentEnvironment(env: NodeJS.ProcessEnv = process.env): Pay
 /** Throw before any signing / settlement when testnet mode sees mainnet material. */
 export function assertTestnetPaymentSafe(env: NodeJS.ProcessEnv = process.env): PaymentEnvironment {
   const pe = getPaymentEnvironment(env);
+  if (pe.productionTestnetMisconfig) {
+    const err = new Error(pe.blockReason || "PRODUCTION_TESTNET_MISCONFIGURATION");
+    (err as Error & { code: string }).code = "PRODUCTION_TESTNET_MISCONFIGURATION";
+    throw err;
+  }
   if (pe.mainnetBlocked) {
     const err = new Error(pe.blockReason || "MAINNET_CONFIGURATION_DETECTED");
     (err as Error & { code: string }).code = "MAINNET_CONFIGURATION_DETECTED";

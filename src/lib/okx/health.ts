@@ -31,6 +31,7 @@ export async function buildOkxHealthResponse() {
       isTestnet: paymentEnv.isTestnet,
       isMainnet: paymentEnv.isMainnet,
       mainnetBlocked: paymentEnv.mainnetBlocked,
+      productionTestnetMisconfig: paymentEnv.productionTestnetMisconfig,
       blockReason: paymentEnv.blockReason ?? null,
     },
     ...marketplace,

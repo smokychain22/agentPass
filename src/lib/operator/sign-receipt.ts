@@ -1,5 +1,6 @@
 import { createHash, createSign, createVerify } from "node:crypto";
 import { OPERATOR_ID, RECEIPT_VERSION } from "@/lib/payment/constants";
+import { isSafePreviewTestnetSigning } from "@/lib/deployment/preview-testnet-signing";
 
 export interface ExecutionReceipt {
   taskId: string;
@@ -103,9 +104,18 @@ export function signExecutionReceipt(receipt: ExecutionReceipt): {
   signedBy: string | null;
 } {
   const signedReceipt = toSignedReceiptV1(receipt);
-  // Vercel Preview/development receipts are simulated — never present as production delivery evidence.
   const vercelEnv = (process.env.VERCEL_ENV || "").toLowerCase();
-  if (vercelEnv === "preview" || vercelEnv === "development" || process.env.REPODIET_FORCE_PREVIEW_DRY_RUN === "1") {
+  const forceDryRun = process.env.REPODIET_FORCE_PREVIEW_DRY_RUN === "1";
+
+  // Ordinary Preview/development receipts stay unsigned dry-run.
+  // Explicit X Layer Testnet Preview canaries may sign with environment markers.
+  const allowPreviewTestnetSign =
+    vercelEnv === "preview" && !forceDryRun && isSafePreviewTestnetSigning();
+
+  if (
+    (vercelEnv === "preview" || vercelEnv === "development" || forceDryRun) &&
+    !allowPreviewTestnetSign
+  ) {
     const simulatedReceipt: ExecutionReceipt = {
       ...receipt,
       patchHash: `simulated-preview:${receipt.patchHash}`,

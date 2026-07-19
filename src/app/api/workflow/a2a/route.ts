@@ -26,11 +26,10 @@ import { durableNow } from "@/lib/store/durable-store";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const okxIdentity = getCanonicalOkxIdentity();
-
 /** Create scoped OKX A2A cleanup task (service 32947) with escrow quote. */
 export async function POST(request: Request) {
   try {
+    const okxIdentity = getCanonicalOkxIdentity();
     const body = (await request.json()) as {
       repoUrl: string;
       branch?: string;
@@ -220,6 +219,7 @@ export async function GET(request: Request) {
 
   const quoteId = task.input.quoteId;
   const quote = quoteId ? await getBoundQuote(quoteId) : null;
+  const okxIdentity = getCanonicalOkxIdentity();
 
   const paymentModel =
     task.input.purchaseChannel === "okx_marketplace" ? "escrow" : "direct";

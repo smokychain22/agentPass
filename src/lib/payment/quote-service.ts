@@ -55,8 +55,11 @@ export async function createBoundQuote(input: {
   contractDigest?: string;
 }): Promise<BoundQuote> {
   const paymentEnv = getPaymentEnvironment();
-  if (paymentEnv.mainnetBlocked) {
-    throw new Error(paymentEnv.blockReason || "MAINNET_CONFIGURATION_DETECTED");
+  if (paymentEnv.productionTestnetMisconfig || paymentEnv.mainnetBlocked) {
+    throw new Error(
+      paymentEnv.blockReason ||
+        "MAINNET_CONFIGURATION_DETECTED_OR_PRODUCTION_TESTNET_MISCONFIGURATION"
+    );
   }
 
   // Prefer explicit payment-environment resolution when mode is set so Preview
