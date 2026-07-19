@@ -158,21 +158,43 @@ export function isAlreadyActivelyDispatched(job: DeepScanJob): boolean {
  * On Preview, NEVER fall through to NEXT_PUBLIC_APP_URL when that points at
  * production — otherwise claim/analyze/complete mutate the wrong deployment
  * and leave Preview jobs stuck in INVENTORY.
+ *
+ * Also ignore a stale REPODIET_PUBLIC_API_BASE_URL that points at a different
+ * Preview hostname than this deployment (common after branch renames).
  */
 export function publicApiBaseUrl(
   env: Record<string, string | undefined> = process.env
 ): string {
   if (env.VERCEL_ENV === "preview") {
+    const branchHost = stripHost(env.VERCEL_BRANCH_URL);
+    const deployHost = stripHost(env.VERCEL_URL);
     const explicit = env.REPODIET_PUBLIC_API_BASE_URL?.trim();
-    if (explicit) return explicit.replace(/\/$/, "");
-    const branchHost = env.VERCEL_BRANCH_URL?.trim();
-    if (branchHost) {
-      return `https://${branchHost.replace(/^https?:\/\//, "")}`.replace(/\/$/, "");
+    if (explicit) {
+      const explicitHost = stripHost(explicit);
+      const allowed = [branchHost, deployHost].filter(Boolean) as string[];
+      if (
+        explicitHost &&
+        allowed.some(
+          (h) =>
+            explicitHost === h ||
+            explicitHost.endsWith(`.${h}`) ||
+            h.endsWith(`.${explicitHost}`) ||
+            // Same project alias family: skillswap-*-skillswap7.vercel.app
+            (explicitHost.includes("skillswap7.vercel.app") &&
+              h.includes("skillswap7.vercel.app") &&
+              explicitHost.split("-")[0] === h.split("-")[0] &&
+              explicitHost === h)
+        )
+      ) {
+        // Only accept exact match to this deployment/branch host — never a sibling Preview.
+        if (allowed.includes(explicitHost)) {
+          return `https://${explicitHost}`.replace(/\/$/, "");
+        }
+      }
+      // Stale explicit Preview base — fall through to VERCEL_* hosts.
     }
-    const deployHost = env.VERCEL_URL?.trim();
-    if (deployHost) {
-      return `https://${deployHost.replace(/^https?:\/\//, "")}`.replace(/\/$/, "");
-    }
+    if (branchHost) return `https://${branchHost}`.replace(/\/$/, "");
+    if (deployHost) return `https://${deployHost}`.replace(/\/$/, "");
   }
   return (
     env.REPODIET_PUBLIC_API_BASE_URL?.trim() ||
@@ -180,6 +202,12 @@ export function publicApiBaseUrl(
     (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : "") ||
     "https://skillswap-virid-kappa.vercel.app"
   ).replace(/\/$/, "");
+}
+
+function stripHost(value: string | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const raw = value.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return raw.split("/")[0] || undefined;
 }
 
 function dispatchEnvironment(): "production" | "preview" {
