@@ -242,7 +242,7 @@ await test("submodule_gitlink_is_accounted_for", async () => {
     const chained = applyFallbackChainToInventory(reconciled.inventory, {
       pinnedCommitSha: sha,
     });
-    assert.equal(chained.inventory[0]!.finalCoverageOutcome, "METADATA_ANALYZED");
+    assert.equal(chained.inventory[0]!.finalCoverageOutcome, "SUBMODULE_REPRESENTED");
   });
 });
 

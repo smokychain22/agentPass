@@ -1198,6 +1198,16 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
       prNumber: pr.data.pullRequest.number,
       prUrl: pr.data.pullRequest.url,
       branch: pr.data.repo.cleanupBranch,
+    }).then(async (monitored) => {
+      const { recordProductionEvidence } = await import("@/lib/okx/production-readiness");
+      await recordProductionEvidence({
+        lastRealPrCreatedAt: new Date().toISOString(),
+        lastRealPrUrl: pr.data.pullRequest.url,
+        lastRealPrNumber: pr.data.pullRequest.number,
+        lastSuccessfulA2aDeliveryAt: new Date().toISOString(),
+        lastSuccessfulA2aTaskId: current.id,
+      });
+      return monitored;
     });
   } catch (err) {
     return failTask(

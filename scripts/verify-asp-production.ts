@@ -139,7 +139,11 @@ async function main() {
         if (receipt.signature) {
           record("receipt signature", typeof receipt.signature === "string");
         } else {
-          record("receipt signature", true, "unsigned (no operator key in env — acceptable)");
+          record(
+            "receipt signature",
+            false,
+            "unsigned receipt — not acceptable for production verification"
+          );
         }
       }
     } catch (err) {

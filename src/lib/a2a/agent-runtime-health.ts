@@ -21,17 +21,17 @@ const HEALTH_KEY = "agent_runtime_health";
 
 function defaultHealth(): AgentRuntimeHealth {
   return {
-    agentOnline: true,
-    onchainOsAuthenticated: process.env.REPODIET_ONCHAIN_OS_AUTHENTICATED !== "0",
+    agentOnline: false,
+    onchainOsAuthenticated: process.env.REPODIET_ONCHAIN_OS_AUTHENTICATED === "1",
     lastTaskReceivedAt: null,
     lastAcknowledgementAt: null,
     queueDepth: 0,
     oldestUnacknowledgedTaskAgeSeconds: null,
     failedTaskCount: 0,
-    modelProviderAvailable: true,
-    a2mcpEndpointHealthy: true,
+    modelProviderAvailable: process.env.REPODIET_MODEL_PROVIDER_AVAILABLE !== "0",
+    a2mcpEndpointHealthy: false,
     deliveryWorkerHealthy: process.env.REPODIET_WORKER_UNAVAILABLE !== "1",
-    alertAgentCannotAnswer: false,
+    alertAgentCannotAnswer: true,
     lastSeenAt: durableNow(),
     updatedAt: durableNow(),
   };

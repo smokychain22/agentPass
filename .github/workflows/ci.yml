@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: typecheck-test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      REPODIET_TEST_OFFLINE: "1"
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and contract tests
+        run: npm test
+
+      - name: Worker build
+        run: npm run build:worker
+
+      - name: Production Next.js build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  contracts:
+    name: delivery-okx-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      REPODIET_TEST_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Delivery readiness contracts
+        run: npx tsx test/delivery-readiness.test.ts
+      - name: Controlled delivery scope
+        run: npx tsx test/controlled-delivery-scope.test.ts
+      - name: A2A settlement lifecycle
+        run: npx tsx test/a2a-settlement-lifecycle.test.ts
+      - name: A2MCP quote lifecycle
+        run: npx tsx test/a2mcp-quote-lifecycle.test.ts
+      - name: OKX A2A escrow rails
+        run: npx tsx test/okx-a2a-escrow-rails.test.ts
+      - name: Preview dry-run safety
+        run: npx tsx test/preview-dry-run.test.ts
+      - name: Production-grade fail-closed gates
+        run: npx tsx test/production-grade-fail-closed.test.ts

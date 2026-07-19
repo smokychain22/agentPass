@@ -358,30 +358,33 @@ export function buildToolsIndex() {
 
 export function buildHealthResponse() {
   const phase3Tools = Object.fromEntries(
-    PHASE3_TOOL_ENTRIES.map((t) => [t.name, "available"])
+    PHASE3_TOOL_ENTRIES.map((t) => [t.name, "listed"])
   );
   const legacyTools = {
-    scan_repo_bloat: "available",
-    detect_duplicate_code: "available",
-    find_dead_files: "available",
-    find_unused_dependencies: "available",
-    generate_cleanup_patch: "available",
-    generate_regression_checklist: "available",
-    find_orphan_patterns: "available",
+    scan_repo_bloat: "listed",
+    detect_duplicate_code: "listed",
+    find_dead_files: "listed",
+    find_unused_dependencies: "listed",
+    generate_cleanup_patch: "listed",
+    generate_regression_checklist: "listed",
+    find_orphan_patterns: "listed",
   };
 
   return {
     ok: true,
+    probeKind: "manifest_listing_only",
+    ready: false,
+    note: "This endpoint lists tools; it does not prove production readiness. Use /api/okx/production-readiness.",
     service: SERVICE_NAME,
     version: A2MCP_VERSION,
     runtime: "nodejs",
     engine: "shared_execution_engine",
     tools: { ...phase3Tools, ...legacyTools },
     analyzers: {
-      knip: { status: "native_or_fallback", honestLabeling: true },
-      jscpd: { status: "native_or_fallback", honestLabeling: true },
-      madge: { status: "native_or_fallback", honestLabeling: true },
-      heuristics: { status: "available", honestLabeling: true },
+      knip: { status: "declared", honestLabeling: true },
+      jscpd: { status: "declared", honestLabeling: true },
+      madge: { status: "declared", honestLabeling: true },
+      heuristics: { status: "declared", honestLabeling: true },
     },
   };
 }

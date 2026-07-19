@@ -305,6 +305,11 @@ export async function runPhase3ToolRoute(
           receiptId: receipt.receiptId,
         });
         await touchMarketplaceHealth({ a2mcpLastSuccessfulPaidCall: new Date().toISOString() });
+        const { recordProductionEvidence } = await import("@/lib/okx/production-readiness");
+        await recordProductionEvidence({
+          lastSuccessfulPaidA2mcpAt: new Date().toISOString(),
+          lastSuccessfulPaidA2mcpQuoteId: gateQuoteId ?? null,
+        });
       }
     }
 

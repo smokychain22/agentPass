@@ -77,8 +77,14 @@ async function main() {
       process.env.REPODIET_OPERATOR_PUBLIC_KEY
     );
     record("receipt signature verify", ok);
+  } else if (final.receipt?.signature) {
+    record("receipt signature verify", false, "signature present but REPODIET_OPERATOR_PUBLIC_KEY missing");
   } else {
-    record("receipt signature verify", true, "unsigned or no public key — acceptable in beta");
+    record(
+      "receipt signature verify",
+      false,
+      "unsigned receipt — not acceptable for production verification"
+    );
   }
 
   record("verification_failed not success", final.status !== "verification_failed" || final.success === false);
@@ -115,9 +121,15 @@ async function main() {
       const approveJson = await approveRes.json();
       record("approval endpoint", approveRes.ok, approveJson.status);
       if (approveJson.pullRequest?.url) {
-        record("PR URL returned", Boolean(approveJson.pullRequest.url));
+        record("PR URL returned", Boolean(approveJson.pullRequest.url), approveJson.pullRequest.url);
       } else if (approveJson.status === "delivery_failed") {
-        record("PR URL returned", true, "delivery_failed without GitHub token — honest");
+        record(
+          "PR URL returned",
+          false,
+          "delivery_failed — production verify requires a real GitHub PR, not a missing-token pass"
+        );
+      } else {
+        record("PR URL returned", false, `status=${approveJson.status}`);
       }
     }
   }

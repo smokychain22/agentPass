@@ -41,8 +41,8 @@ export function outcomeForSuccessfulLayer(
   if (entry.finalCoverageOutcome === "GENERATED_CLASSIFIED") return "GENERATED_CLASSIFIED";
   if (entry.finalCoverageOutcome === "VENDORED_CLASSIFIED") return "VENDORED_CLASSIFIED";
   if (entry.finalCoverageOutcome === "PROTECTED_BY_POLICY") return "PROTECTED_BY_POLICY";
-  if (entry.submodule) return "METADATA_ANALYZED";
-  if (entry.symlink) return "METADATA_ANALYZED";
+  if (entry.submodule) return "SUBMODULE_REPRESENTED";
+  if (entry.symlink) return "SYMLINK_REPRESENTED";
   if (entry.materializationStatus === "LFS_POINTER") return "METADATA_ANALYZED";
   if (entry.materializationStatus === "NOT_MATERIALIZED") return "UNREADABLE_WITH_REASON";
   if (entry.materializationStatus === "MATERIALIZATION_FAILED_WITH_REASON") {
@@ -133,10 +133,10 @@ export function applyFallbackChainToInventory(
       entry.materializationStatus === "SYMLINK_REPRESENTED"
     ) {
       if (entry.submodule || entry.materializationStatus === "SUBMODULE_GITLINK") {
-        return { ...entry, finalCoverageOutcome: "METADATA_ANALYZED" as const };
+        return { ...entry, finalCoverageOutcome: "SUBMODULE_REPRESENTED" as const };
       }
       if (entry.symlink || entry.materializationStatus === "SYMLINK_REPRESENTED") {
-        return { ...entry, finalCoverageOutcome: "METADATA_ANALYZED" as const };
+        return { ...entry, finalCoverageOutcome: "SYMLINK_REPRESENTED" as const };
       }
       if (entry.materializationStatus === "LFS_POINTER") {
         return { ...entry, finalCoverageOutcome: "METADATA_ANALYZED" as const };

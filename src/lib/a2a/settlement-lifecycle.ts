@@ -228,6 +228,14 @@ export async function recordA2aEscrowRelease(
     await markQuoteCompleted(updated.input.quoteId, updated.id);
   }
 
+  const { recordProductionEvidence } = await import("@/lib/okx/production-readiness");
+  await recordProductionEvidence({
+    lastSuccessfulEscrowReleaseAt: durableNow(),
+    lastSuccessfulEscrowReference: input.escrowReleaseReference.trim(),
+    lastSuccessfulA2aDeliveryAt: durableNow(),
+    lastSuccessfulA2aTaskId: updated.id,
+  });
+
   await deliverTaskCallback(updated);
   return updated;
 }
