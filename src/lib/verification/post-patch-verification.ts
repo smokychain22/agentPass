@@ -195,6 +195,11 @@ export async function runPostPatchVerification(input: {
 
     const baselineFps = fingerprintSet(baselineFlat);
     const baselinePaths = pathKeySet(baselineFlat);
+    const baselineFilePaths = new Set(
+      baselineFlat.flatMap((finding) =>
+        finding.files.map((file) => file.replace(/\\/g, "/").replace(/^\.\//, ""))
+      )
+    );
     const deletedPaths = new Set(
       input.changeManifest
         .filter((entry) => entry.operation === "delete")
@@ -210,6 +215,7 @@ export async function runPostPatchVerification(input: {
       const rels = finding.files.map((file) => file.replace(/\\/g, "/").replace(/^\.\//, ""));
       if (rels.length === 0 && !finding.packageName) return false;
       if (rels.some((rel) => deletedPaths.has(rel))) return false;
+      if (rels.some((rel) => baselineFilePaths.has(rel))) return false;
       if (baselineFps.has(findingFingerprint(finding))) return false;
       const pathKey = findingPathKey(finding);
       if (pathKey !== ":" && baselinePaths.has(pathKey)) return false;
