@@ -107,6 +107,32 @@ async function run() {
     );
   });
 
+  await test("reviewer message with repository does not stay in discovery-only intake", async () => {
+    const { resolveIntakeRepositoryUrl, isMarketplaceDiscoveryMessage } = await import(
+      "../src/lib/a2a/marketplace-intake"
+    );
+    const message =
+      "I would like to create a repository cleanup task using Agent ID 5283.\n\nRepository:\nhttps://github.com/velz-cmd/repodiet-e2e-test";
+    assert.equal(isMarketplaceDiscoveryMessage(message), true);
+    assert.equal(
+      resolveIntakeRepositoryUrl({ message }),
+      "https://github.com/velz-cmd/repodiet-e2e-test"
+    );
+    assert.equal(
+      resolveIntakeRepositoryUrl({
+        message: "I would like to create a repository cleanup task using Agent ID 5283.",
+        repoUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+      }),
+      "https://github.com/velz-cmd/repodiet-e2e-test"
+    );
+    assert.equal(
+      resolveIntakeRepositoryUrl({
+        message: "I would like to create a repository cleanup task using Agent ID 5283.",
+      }),
+      undefined
+    );
+  });
+
   await test("needsDispatchRecovery after grace for undispatched jobs", () => {
     const fresh = baseJob("deep_scan_fresh", {
       createdAt: new Date().toISOString(),

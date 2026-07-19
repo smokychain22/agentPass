@@ -38,6 +38,24 @@ export function isMarketplaceDiscoveryMessage(text: string): boolean {
   return DISCOVERY_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
+/** Extract a GitHub repository URL from free-form reviewer / marketplace text. */
+export function extractRepositoryUrlFromText(text: string): string | undefined {
+  const match = text.match(
+    /https?:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i
+  );
+  if (!match) return undefined;
+  return match[0].replace(/\.git$/i, "");
+}
+
+export function resolveIntakeRepositoryUrl(body: Record<string, unknown>): string | undefined {
+  if (typeof body.repoUrl === "string" && body.repoUrl.trim()) {
+    return body.repoUrl.trim().replace(/\.git$/i, "");
+  }
+  const message = extractUserMessage(body);
+  if (!message) return undefined;
+  return extractRepositoryUrlFromText(message);
+}
+
 export function buildMarketplaceIntakeResponse(requestId: string) {
   const baseUrl = getServerBaseUrl();
   const identity = getCanonicalOkxIdentity();

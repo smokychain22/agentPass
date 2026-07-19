@@ -9,6 +9,7 @@ import {
   buildMarketplaceIntakeResponse,
   extractUserMessage,
   isMarketplaceDiscoveryMessage,
+  resolveIntakeRepositoryUrl,
 } from "@/lib/a2a/marketplace-intake";
 import { nanoid } from "nanoid";
 import {
@@ -38,9 +39,12 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const message = extractUserMessage(body);
+    const repoUrl = resolveIntakeRepositoryUrl(body);
     await recordInboundTaskReceived();
 
-    if (message && isMarketplaceDiscoveryMessage(message)) {
+    // Discovery-only when the reviewer asks for the agent but has not supplied a repository yet.
+    // If repoUrl (or a GitHub URL inside the message) is present, continue into durable task intake.
+    if (message && isMarketplaceDiscoveryMessage(message) && !repoUrl) {
       logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
       const intake = buildMarketplaceIntakeResponse(requestId);
       await recordTaskAcknowledged({ queueDepth: 0 });
@@ -56,7 +60,12 @@ export async function POST(request: Request) {
       });
     }
 
-    const type = body.type as A2ATaskType;
+    const type =
+      typeof body.type === "string" && VALID_TYPES.includes(body.type as A2ATaskType)
+        ? (body.type as A2ATaskType)
+        : repoUrl
+          ? ("repository.safe_cleanup" as A2ATaskType)
+          : (body.type as A2ATaskType);
     if (!VALID_TYPES.includes(type)) {
       return NextResponse.json(
         {
@@ -72,7 +81,7 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    if (typeof body.repoUrl !== "string" || !body.repoUrl.trim()) {
+    if (!repoUrl) {
       await recordTaskAcknowledged({ queueDepth: 0 });
       return NextResponse.json(
         {
@@ -97,7 +106,7 @@ export async function POST(request: Request) {
     const task = await submitA2ATask(
       type,
       {
-        repoUrl: body.repoUrl.trim(),
+        repoUrl,
         branch: typeof body.branch === "string" ? body.branch.trim() : undefined,
         scanId: typeof body.scanId === "string" ? body.scanId.trim() : undefined,
         commitSha: typeof body.commitSha === "string" ? body.commitSha.trim() : undefined,
