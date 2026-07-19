@@ -1,12 +1,25 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { ScanTab } from "@/components/app/scan-tab";
-import { UserDirectedWorkbench } from "@/components/app/user-directed-workbench";
 import { CleanupTab } from "@/components/app/cleanup-tab";
 import { AppSessionProvider, useAppSession } from "@/components/app/app-session";
+
+const UserDirectedWorkbench = dynamic(
+  () =>
+    import("@/components/app/user-directed-workbench").then(
+      (m) => m.UserDirectedWorkbench
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <p className="text-sm text-muted-foreground">Loading cleanup workbench…</p>
+    ),
+  }
+);
 import { AppTopBar } from "@/components/app/shell/app-top-bar";
 import { WalletProvider } from "@/components/wallet/wallet-provider";
 import { WorkflowRail } from "@/components/app/shell/workflow-rail";

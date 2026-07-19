@@ -9,7 +9,6 @@ import type {
 } from "./types";
 import { pathFromId, pathIndicators, normalizeTrackedPath } from "./path-identity";
 import { hashNormalizedPatch, hashTransformationPlan } from "./plan-hash";
-export { partitionPlans } from "./partition-plans";
 
 export interface AnalyzeRequestedActionInput {
   action: RequestedAction;

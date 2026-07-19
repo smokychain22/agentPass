@@ -3,9 +3,11 @@ import {
   assertQuoteMatchesPlan,
   createDynamicSignedQuote,
   rejectClientModifiedPrice,
-  type PaymentChannelChoice,
-  type TransformationPlan,
-} from "@/lib/user-directed";
+} from "@/lib/user-directed/dynamic-quote-engine";
+import type {
+  PaymentChannelChoice,
+  TransformationPlan,
+} from "@/lib/user-directed/types";
 import { resolveCommercePrice } from "@/lib/pricing/commerce-price";
 
 export const runtime = "nodejs";

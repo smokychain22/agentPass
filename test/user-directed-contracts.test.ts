@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
+import { analyzeRequestedAction } from "../src/lib/user-directed/analyze-requested-action";
 import {
-  analyzeRequestedAction,
   createDynamicSignedQuote,
   assertQuoteMatchesPlan,
   rejectClientModifiedPrice,
-  partitionPlans,
-  pathIdFor,
+  verifyDynamicQuoteSignature,
+} from "../src/lib/user-directed/dynamic-quote-engine";
+import { partitionPlans } from "../src/lib/user-directed/partition-plans";
+import { pathIdFor } from "../src/lib/user-directed/path-identity";
+import {
   inventoryNodesFromTree,
   filterInventoryNodes,
   selectFolderContents,
-  evidenceBasedFindingExplanation,
-  verifyDynamicQuoteSignature,
-} from "../src/lib/user-directed";
+} from "../src/lib/user-directed/inventory";
+import { evidenceBasedFindingExplanation } from "../src/lib/user-directed/evidence-copy";
 import type { Finding } from "../src/lib/findings/types";
 import { evaluateControlledDeliverySelection } from "../src/lib/cleanup/controlled-delivery-scope";
 import { resolveCommercePrice } from "../src/lib/pricing/commerce-price";

@@ -10,9 +10,17 @@ import {
   type PatchPreviewModel,
 } from "@/components/patch-preview-panel";
 import { QuotePaymentPanel } from "@/components/quote-payment-panel";
-import { FindingsTab } from "@/components/app/findings-tab";
-import { VerifyTab } from "@/components/app/verify-tab";
+import dynamic from "next/dynamic";
 import { pathFromId } from "@/lib/user-directed/path-identity";
+
+const FindingsTab = dynamic(
+  () => import("@/components/app/findings-tab").then((m) => m.FindingsTab),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground">Loading suggestions…</p> }
+);
+const VerifyTab = dynamic(
+  () => import("@/components/app/verify-tab").then((m) => m.VerifyTab),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground">Loading delivery…</p> }
+);
 import type {
   DynamicSignedQuote,
   PaymentChannelChoice,

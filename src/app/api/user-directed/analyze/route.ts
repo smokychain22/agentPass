@@ -2,15 +2,14 @@ import { NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { flattenFindings } from "@/lib/findings/client";
-import {
-  analyzeRequestedAction,
-  partitionPlans,
-  pathIdFor,
-  normalizeTrackedPath,
-  type RequestedAction,
-  type RequestedActionType,
-  type TransformationPlan,
-} from "@/lib/user-directed";
+import { analyzeRequestedAction } from "@/lib/user-directed/analyze-requested-action";
+import { partitionPlans } from "@/lib/user-directed/partition-plans";
+import { pathIdFor, normalizeTrackedPath } from "@/lib/user-directed/path-identity";
+import type {
+  RequestedAction,
+  RequestedActionType,
+  TransformationPlan,
+} from "@/lib/user-directed/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
