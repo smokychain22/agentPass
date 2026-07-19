@@ -13,15 +13,23 @@ export async function GET(
   const { taskId } = await context.params;
   const task = await getA2ATask(taskId);
   if (!task) {
-    return NextResponse.json({ success: false, error: "Task not found." }, { status: 404 });
+    return NextResponse.json(
+      { ok: false, success: false, error: "Task not found.", terminal: true },
+      { status: 404 }
+    );
   }
   try {
     assertDirectTaskOwner(task, await buildSessionKey(request));
   } catch {
-    return NextResponse.json({ success: false, error: "Task access denied." }, { status: 403 });
+    return NextResponse.json(
+      { ok: false, success: false, error: "Task access denied.", terminal: true },
+      { status: 403 }
+    );
   }
+  const formatted = formatA2ATaskResponse(task);
   return NextResponse.json({
-    success: task.status === "completed",
-    ...formatA2ATaskResponse(task),
+    ...formatted,
+    // Legacy alias — nonterminal tasks are not API failures.
+    success: formatted.ok !== false,
   });
 }

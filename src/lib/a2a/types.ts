@@ -134,7 +134,13 @@ export interface A2ATaskResult {
   maintenanceOutcome?: MaintenanceOutcome;
   /** Durable deep-scan job for full repository analysis (not Quick Triage). */
   deepScanJobId?: string;
+  /** Same as deepScanJobId — explicit queue identity for dispatch correlation. */
+  queueJobId?: string;
   deepScanProgressUrl?: string;
+  dispatchState?: string;
+  dispatchAttempt?: number;
+  workflowRunId?: string;
+  workflowRunUrl?: string;
   findings?: Record<string, unknown>;
   changes?: {
     changedFiles: string[];
@@ -220,6 +226,7 @@ export function mapTaskTypeToOperation(
     case "repository.analysis":
       return null;
     case "repository.safe_cleanup":
+      // Intentional pre-contract analysis phase — preserve requestedTaskType separately.
       return "free_proof";
     case "repository.verified_cleanup":
       return "verified_cleanup_pr";

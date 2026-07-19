@@ -8,6 +8,10 @@ export type OkxMarketplaceLifecycleState =
   | "RECEIVED"
   | "ACKNOWLEDGED"
   | "WAITING_FOR_REPOSITORY"
+  | "REPOSITORY_RECEIVED"
+  | "ANALYSIS_QUEUED"
+  | "ANALYSIS_DISPATCHED"
+  | "ANALYSIS_RUNNING"
   | "ANALYZING"
   | "WAITING_FOR_DECISION"
   | "PLAN_READY"
@@ -25,6 +29,10 @@ export const OKX_MARKETPLACE_LIFECYCLE_STATES: OkxMarketplaceLifecycleState[] = 
   "RECEIVED",
   "ACKNOWLEDGED",
   "WAITING_FOR_REPOSITORY",
+  "REPOSITORY_RECEIVED",
+  "ANALYSIS_QUEUED",
+  "ANALYSIS_DISPATCHED",
+  "ANALYSIS_RUNNING",
   "ANALYZING",
   "WAITING_FOR_DECISION",
   "PLAN_READY",
@@ -41,9 +49,9 @@ export const OKX_MARKETPLACE_LIFECYCLE_STATES: OkxMarketplaceLifecycleState[] = 
 
 const FROM_INTERNAL: Partial<Record<A2ATaskStatus, OkxMarketplaceLifecycleState>> = {
   submitted: "ACKNOWLEDGED",
-  queued: "ACKNOWLEDGED",
+  queued: "ANALYSIS_QUEUED",
   validating: "ANALYZING",
-  fetching_repository: "WAITING_FOR_REPOSITORY",
+  fetching_repository: "ANALYSIS_RUNNING",
   analyzing: "ANALYZING",
   awaiting_approval: "WAITING_FOR_DECISION",
   quote_required: "NEGOTIATING",
@@ -81,6 +89,12 @@ export function mapA2AStatusToMarketplaceLifecycle(
   if (!status) {
     return opts?.hasRepository === false ? "WAITING_FOR_REPOSITORY" : "RECEIVED";
   }
+  if (status === "queued" && opts?.hasRepository === false) {
+    return "WAITING_FOR_REPOSITORY";
+  }
+  if (status === "fetching_repository" && opts?.hasRepository === false) {
+    return "WAITING_FOR_REPOSITORY";
+  }
   return FROM_INTERNAL[status as A2ATaskStatus] ?? "RECEIVED";
 }
 
@@ -95,3 +109,16 @@ export const IMMEDIATE_TASK_ACKNOWLEDGEMENT = [
 
 export const IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT =
   "RepoDiet received your repository-cleanup task. Provide the repository URL or connect the RepoDiet GitHub App. I will analyze it, prepare an exact cleanup plan and quote, and deliver a verified PR after OKX escrow is funded.";
+
+export const IMMEDIATE_TASK_ACKNOWLEDGEMENT_WITH_REPO = [
+  "RepoDiet received your repository and queued durable analysis.",
+  "",
+  "I will scan the repository, prepare an evidence-backed cleanup plan,",
+  "negotiate exact scope and price, then deliver a verified pull request",
+  "after OKX escrow is funded.",
+  "",
+  "Poll the task status URL for progress — do not resubmit the repository URL.",
+].join("\n");
+
+export const IMMEDIATE_TASK_ACKNOWLEDGEMENT_WITH_REPO_SHORT =
+  "RepoDiet received your repository and queued analysis. Poll task status for findings, plan, quote, and delivery progress.";

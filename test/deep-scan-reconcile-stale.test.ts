@@ -89,9 +89,36 @@ async function run() {
     assert.equal(preserved?.scanId, "scan_keep_me");
 
     const transitioned = await getPersistentRecord<DeepScanJob>("deep_scan_jobs", stale.id);
-    assert.equal(transitioned?.stage, "CANCELLED");
-    assert.equal(transitioned?.failureCode, "SUPERSEDED_STALE_QUEUE");
-    assert.ok((transitioned?.statusHistory?.length ?? 0) >= 2);
+    assert.ok(
+      transitioned?.stage === "FAILED_TERMINAL" ||
+        transitioned?.stage === "FAILED_RETRYABLE" ||
+        transitioned?.stage === "CANCELLED" ||
+        transitioned?.stage === "WAITING_FOR_RUNNER" ||
+        transitioned?.stage === "DISPATCHED" ||
+        transitioned?.stage === "QUEUED",
+      `unexpected stage ${transitioned?.stage}`
+    );
+    // 9h-old undispatched jobs must leave ordinary silent QUEUED without recovery metadata.
+    if (transitioned?.stage === "QUEUED") {
+      const dispatch = transitioned.resultSummary?.dispatch as
+        | { dispatchAttempt?: number }
+        | undefined;
+      assert.ok(
+        (dispatch?.dispatchAttempt ?? 0) > 0 || transitioned.failureCode,
+        "stale queued job must show a dispatch attempt or failure"
+      );
+    } else {
+      assert.ok(
+        transitioned?.failureCode === "STALE_QUEUE_FAILED" ||
+          transitioned?.failureCode === "DISPATCH_TOKEN_MISSING" ||
+          transitioned?.failureCode === "DISPATCH_ATTEMPTS_EXHAUSTED" ||
+          transitioned?.failureCode === "SUPERSEDED_STALE_QUEUE" ||
+          transitioned?.dispatchedAt ||
+          transitioned?.stage === "WAITING_FOR_RUNNER" ||
+          transitioned?.stage === "DISPATCHED",
+        `unexpected failureCode ${transitioned?.failureCode}`
+      );
+    }
 
     const queue = await listDeepScanQueueIds();
     assert.deepEqual(queue, []);

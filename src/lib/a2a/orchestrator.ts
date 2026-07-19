@@ -773,7 +773,7 @@ export async function submitA2ATask(
         projectRoot: ".",
         resolveRemote: true,
       });
-      const deepScan = await createDeepScanJob(
+      let deepScan = await createDeepScanJob(
         {
           repoUrl: repositoryTarget.repositoryUrl,
           branch: repositoryTarget.branch,
@@ -786,21 +786,50 @@ export async function submitA2ATask(
         },
         { idempotencyKey: `a2a:${task.id}:deep-scan`, repositoryTarget }
       );
+      // Persist durable dispatch immediately — never leave A2A jobs as QUEUED with no owner.
+      const { dispatchQueuedDeepScanJob, readDispatchMeta } = await import(
+        "@/lib/deep-scan/dispatch-queued-job"
+      );
+      const dispatchResult = await dispatchQueuedDeepScanJob({
+        jobId: deepScan.id,
+        requestId: `a2a_${task.id}`,
+        tenantId: `a2a:${task.id}`,
+      });
+      deepScan = dispatchResult.job;
+      const dispatchMeta = readDispatchMeta(deepScan);
       const baseUrl = getServerBaseUrl();
       task = {
         ...task,
         result: {
           ...task.result,
           deepScanJobId: deepScan.id,
+          queueJobId: deepScan.id,
           deepScanProgressUrl: `${baseUrl}/api/deep-scans/${deepScan.id}`,
+          dispatchState: dispatchMeta.dispatchState,
+          dispatchAttempt: dispatchMeta.dispatchAttempt,
+          workflowRunId: deepScan.workflowRunId,
+          workflowRunUrl: deepScan.workflowRunUrl,
         },
         updatedAt: new Date().toISOString(),
       };
+      if (!dispatchResult.dispatched) {
+        task = {
+          ...task,
+          limitations: [
+            ...task.limitations,
+            dispatchResult.error
+              ? `Deep-scan dispatch: ${dispatchResult.error}`
+              : "Deep-scan dispatch did not complete; recovery will retry.",
+          ],
+        };
+      }
       await saveA2ATask(task);
       logMarketplaceTelemetry("deep_scan_queued", {
         taskId: task.id,
         deepScanJobId: deepScan.id,
         repoUrl: input.repoUrl,
+        dispatchState: dispatchMeta.dispatchState,
+        workflowRunId: deepScan.workflowRunId ?? null,
       });
     } catch (err) {
       console.error("[repodiet-a2a] failed to enqueue deep scan", task.id, err);
@@ -841,17 +870,35 @@ export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskR
 
 export function formatAsyncA2ATaskAcknowledgement(task: A2ATaskRecord) {
   const baseUrl = getServerBaseUrl();
+  const hasRepository = Boolean(task.repository?.url || task.input.repoUrl);
   return buildAsyncTaskAcknowledgement({
     taskId: task.id,
-    contractState: task.input.contractDigest ? "SCOPE_LOCKED" : "SCOPE_PENDING",
+    contractState: task.input.contractDigest
+      ? "SCOPE_LOCKED"
+      : hasRepository
+        ? "REPOSITORY_RECEIVED"
+        : "SCOPE_PENDING",
     statusUrl: `${baseUrl}/api/a2a/tasks/${task.id}`,
     workerUnavailable: process.env.REPODIET_WORKER_UNAVAILABLE === "1",
     deepScanJobId: task.result.deepScanJobId,
+    queueJobId: task.result.queueJobId ?? task.result.deepScanJobId,
     deepScanProgressUrl:
       task.result.deepScanProgressUrl ??
       (task.result.deepScanJobId
         ? `${baseUrl}/api/deep-scans/${task.result.deepScanJobId}`
         : undefined),
+    hasRepository,
+    requestedTaskType: task.type,
+    currentPhase: hasRepository ? "repository_analysis" : "awaiting_repository",
+    status: hasRepository ? "analysis_queued" : task.status,
+    dispatchState:
+      typeof task.result.dispatchState === "string"
+        ? task.result.dispatchState
+        : hasRepository
+          ? "DISPATCHING"
+          : "NOT_DISPATCHED",
+    workflowRunId:
+      typeof task.result.workflowRunId === "string" ? task.result.workflowRunId : undefined,
   });
 }
 
@@ -1270,15 +1317,72 @@ export async function rejectUnsafeSelectionA2ATask(
   return finalized;
 }
 
+const A2A_TERMINAL_STATUSES = new Set([
+  "completed",
+  "rejected",
+  "cancelled",
+  "disputed",
+  "unsupported",
+  "payment_failed",
+  "analysis_failed",
+  "verification_failed",
+  "delivery_failed",
+  "checks_failed",
+  "expired",
+  "escrow_released",
+  "buyer_accepted",
+]);
+
 export function formatA2ATaskResponse(task: A2ATaskRecord) {
+  const hasRepository = Boolean(task.repository?.url || task.input.repoUrl);
+  const commercialOperation =
+    task.type === "repository.cleanup_pr" || task.type === "repository.verified_cleanup"
+      ? OKX_A2A_PUBLIC_OPERATION
+      : mapTaskTypeToOperation(task.type);
+  const terminal = A2A_TERMINAL_STATUSES.has(task.status);
+  const currentPhase =
+    task.status === "awaiting_payment" || task.status === "quote_required"
+      ? "commercial_negotiation"
+      : task.status === "awaiting_approval"
+        ? "scope_approval"
+        : task.status === "generating_changes" ||
+            task.status === "validating_patch" ||
+            task.status === "creating_pull_request"
+          ? "delivery"
+          : hasRepository
+            ? "repository_analysis"
+            : "awaiting_repository";
+
   return {
+    ok: true,
+    terminal,
     taskId: task.id,
+    requestedTaskType: task.type,
     type: task.type,
-    operation:
-      task.type === "repository.cleanup_pr" || task.type === "repository.verified_cleanup"
-        ? OKX_A2A_PUBLIC_OPERATION
-        : mapTaskTypeToOperation(task.type),
+    commercialOperation,
+    /** @deprecated Prefer commercialOperation + requestedTaskType — free_proof is the analysis phase op. */
+    operation: commercialOperation,
+    currentPhase,
     status: task.status,
+    dispatchState:
+      typeof task.result.dispatchState === "string" ? task.result.dispatchState : undefined,
+    dispatchAttempt:
+      typeof task.result.dispatchAttempt === "number" ? task.result.dispatchAttempt : undefined,
+    deepScanJobId:
+      typeof task.result.deepScanJobId === "string" ? task.result.deepScanJobId : undefined,
+    queueJobId:
+      typeof task.result.queueJobId === "string"
+        ? task.result.queueJobId
+        : typeof task.result.deepScanJobId === "string"
+          ? task.result.deepScanJobId
+          : undefined,
+    workflowRunId:
+      typeof task.result.workflowRunId === "string" ? task.result.workflowRunId : undefined,
+    nextAction: terminal
+      ? task.status === "completed" || task.status === "escrow_released"
+        ? "DONE"
+        : "INSPECT_FAILURE"
+      : "POLL_TASK_STATUS",
     purchaseChannel: task.input.purchaseChannel ?? "okx_marketplace",
     repository: task.repository,
     scanId: task.scanId,

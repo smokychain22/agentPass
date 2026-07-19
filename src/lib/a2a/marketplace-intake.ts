@@ -3,6 +3,8 @@ import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 import {
   IMMEDIATE_TASK_ACKNOWLEDGEMENT,
   IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
+  IMMEDIATE_TASK_ACKNOWLEDGEMENT_WITH_REPO,
+  IMMEDIATE_TASK_ACKNOWLEDGEMENT_WITH_REPO_SHORT,
 } from "@/lib/a2a/okx-marketplace-lifecycle";
 
 const DISCOVERY_PATTERNS = [
@@ -41,6 +43,8 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
   const identity = getCanonicalOkxIdentity();
 
   return {
+    ok: true,
+    terminal: false,
     status: "AVAILABLE",
     marketplaceLifecycle: "WAITING_FOR_REPOSITORY",
     acknowledged: true,
@@ -94,32 +98,61 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
 
 export function buildAsyncTaskAcknowledgement(input: {
   taskId: string;
-  contractState?: "SCOPE_PENDING" | "SCOPE_LOCKED";
+  contractState?: "SCOPE_PENDING" | "SCOPE_LOCKED" | "REPOSITORY_RECEIVED";
   nextAction?: string;
   estimatedDelivery?: string;
   statusUrl: string;
   workerUnavailable?: boolean;
   deepScanJobId?: string;
+  queueJobId?: string;
   deepScanProgressUrl?: string;
+  hasRepository?: boolean;
+  requestedTaskType?: string;
+  currentPhase?: string;
+  status?: string;
+  dispatchState?: string;
+  workflowRunId?: string;
 }) {
+  const hasRepository = input.hasRepository === true || Boolean(input.deepScanJobId);
+  const lifecycle =
+    input.contractState === "SCOPE_LOCKED"
+      ? "ANALYZING"
+      : hasRepository
+        ? "ANALYSIS_QUEUED"
+        : "WAITING_FOR_REPOSITORY";
+
   return {
-    status: input.workerUnavailable ? "DELIVERY_DELAYED" : "ACCEPTED",
+    ok: true,
+    terminal: false,
+    status: input.workerUnavailable
+      ? "DELIVERY_DELAYED"
+      : input.status ?? (hasRepository ? "analysis_queued" : "ACCEPTED"),
     acknowledged: true,
     immediateAcknowledgement: true,
-    marketplaceLifecycle: input.contractState === "SCOPE_LOCKED" ? "ANALYZING" : "WAITING_FOR_REPOSITORY",
+    marketplaceLifecycle: lifecycle,
     taskId: input.taskId,
-    contractState: input.contractState ?? "SCOPE_PENDING",
+    requestedTaskType: input.requestedTaskType,
+    currentPhase: input.currentPhase ?? (hasRepository ? "repository_analysis" : "awaiting_repository"),
+    dispatchState: input.dispatchState ?? (hasRepository ? "DISPATCHING" : "NOT_DISPATCHED"),
+    contractState:
+      input.contractState ?? (hasRepository ? "REPOSITORY_RECEIVED" : "SCOPE_PENDING"),
     nextAction: input.nextAction ?? "POLL_TASK_STATUS",
     estimatedDelivery: input.estimatedDelivery ?? "typically 5–30 minutes depending on repository size",
     statusUrl: input.statusUrl,
     deepScanJobId: input.deepScanJobId,
+    queueJobId: input.queueJobId ?? input.deepScanJobId,
     deepScanProgressUrl: input.deepScanProgressUrl,
+    workflowRunId: input.workflowRunId,
     code: input.workerUnavailable ? "WORKER_UNAVAILABLE" : "TASK_ACCEPTED",
     message: input.workerUnavailable
       ? "Task accepted; worker capacity is delayed. Negotiation state preserved — no funds accepted until delivery can run. Deep scan job is persisted when repository scope is known."
-      : IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
-    messageFull: IMMEDIATE_TASK_ACKNOWLEDGEMENT,
-    scanStarted: false,
+      : hasRepository
+        ? IMMEDIATE_TASK_ACKNOWLEDGEMENT_WITH_REPO_SHORT
+        : IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
+    messageFull: hasRepository
+      ? IMMEDIATE_TASK_ACKNOWLEDGEMENT_WITH_REPO
+      : IMMEDIATE_TASK_ACKNOWLEDGEMENT,
+    scanStarted: hasRepository,
     sessionSource: "OKX_A2A",
     paymentChannel: "okx_escrow_only",
     directWebsitePaymentHidden: true,

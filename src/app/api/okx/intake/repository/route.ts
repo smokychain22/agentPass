@@ -133,6 +133,12 @@ export async function POST(request: Request) {
         idempotencyKey: `intake:${tenant.tenantId}:${intake.repository}:${intake.sourceCommit}:${intake.projectRoot}`,
       }
     );
+    const { dispatchQueuedDeepScanJob } = await import("@/lib/deep-scan/dispatch-queued-job");
+    await dispatchQueuedDeepScanJob({
+      jobId: job.id,
+      requestId: `intake_${job.id}`,
+      tenantId: tenant.tenantId,
+    });
     deepScanJobId = job.id;
     progressUrl = `${baseUrl}/api/deep-scans/${job.id}`;
   }

@@ -7,19 +7,29 @@ import {
   updateDeepScanStage,
 } from "./job-store";
 import type { DeepScanJob, DeepScanStage } from "./types";
+import {
+  correlateWorkflowRunForJob,
+  dispatchQueuedDeepScanJob,
+  DISPATCH_STARTUP_GRACE_MS,
+  MAX_DISPATCH_ATTEMPTS,
+  needsDispatchRecovery,
+  readDispatchMeta,
+} from "./dispatch-queued-job";
 
 const COLLECTION = "deep_scan_jobs" as const;
 const ACTIVE_INDEX = "active:index";
 const REPORT_KEY = "stale_queue_reconciliation_report";
 
-/** Queued jobs older than this with no live worker/workflow are superseded. */
-const STALE_QUEUED_MS = 15 * 60 * 1000;
+/** Absolute ceiling — jobs older than this without execution become terminal. */
+const STALE_QUEUED_HARD_MS = 60 * 60 * 1000;
 
 export type ReconcileTransition =
   | "WORKER_STALLED"
   | "CANCELLED"
   | "SUPERSEDED"
   | "FAILED"
+  | "REDISPATCH"
+  | "ATTACH_WORKFLOW"
   | "KEEP"
   | "ALREADY_TERMINAL";
 
@@ -68,7 +78,9 @@ function isTerminalStage(stage: DeepScanStage): boolean {
 
 function isActiveCapacityJob(job: DeepScanJob): boolean {
   if (job.status === "complete" || job.status === "failed") return false;
-  if (isTerminalStage(job.stage)) return false;
+  if (isTerminalStage(job.stage) && job.stage !== "FAILED_RETRYABLE") return false;
+  // FAILED_RETRYABLE may briefly exist before re-queue; treat RETRY_PENDING QUEUED as active.
+  if (job.stage === "FAILED_RETRYABLE") return false;
   return job.status === "queued" || job.status === "running";
 }
 
@@ -116,11 +128,9 @@ async function workflowRunExists(workflowRunId?: string): Promise<boolean | null
     if (res.status === 404) return false;
     if (!res.ok) return null;
     const body = (await res.json()) as { status?: string; conclusion?: string | null };
-    // "exists" — any recorded run counts; live means in_progress/queued.
     if (body.status === "in_progress" || body.status === "queued" || body.status === "waiting") {
       return true;
     }
-    // Completed/cancelled runs are not live workers.
     return false;
   } catch {
     return null;
@@ -131,7 +141,7 @@ function recommendTransition(
   job: DeepScanJob,
   liveWorkflow: boolean | null
 ): { transition: ReconcileTransition; reason: string } {
-  if (isTerminalStage(job.stage)) {
+  if (isTerminalStage(job.stage) && job.stage !== "FAILED_RETRYABLE") {
     return { transition: "ALREADY_TERMINAL", reason: `Already terminal (${job.stage}).` };
   }
   if (job.stage === "READY" || job.stage === "COMPLETED" || job.scanId || job.findingsId) {
@@ -147,6 +157,7 @@ function recommendTransition(
   const ageMs = Date.now() - Date.parse(job.createdAt);
   const inactive =
     !job.lastActivityAt || Date.now() - Date.parse(job.lastActivityAt) > DEEP_SCAN_LEASE_LIKE_MS();
+  const meta = readDispatchMeta(job);
 
   // Claimed / running with expired lease and no live workflow → WORKER_STALLED
   if (job.claimedBy && lease === "expired" && liveWorkflow !== true) {
@@ -164,20 +175,51 @@ function recommendTransition(
     };
   }
 
-  // Queued / dispatch stages with no live workflow and stale age → SUPERSEDED (CANCELLED)
+  // Dispatched with known run id that still exists → keep / attach
+  if (job.workflowRunId && liveWorkflow === true) {
+    return {
+      transition: "KEEP",
+      reason: "Live workflow run attached.",
+    };
+  }
+
+  // Undispatched / no lease past grace → try attach then redispatch
   if (
+    !job.workflowRunId &&
+    lease === "none" &&
     (job.stage === "QUEUED" ||
       job.stage === "DISPATCHING" ||
       job.stage === "DISPATCHED" ||
-      job.stage === "WAITING_FOR_RUNNER") &&
-    liveWorkflow !== true &&
-    ageMs >= STALE_QUEUED_MS
+      job.stage === "WAITING_FOR_RUNNER" ||
+      job.stage === "FAILED_RETRYABLE" ||
+      meta.dispatchState === "RETRY_PENDING" ||
+      meta.dispatchState === "NOT_DISPATCHED")
   ) {
-    return {
-      transition: "SUPERSEDED",
-      reason:
-        "Stale queue entry with no live GitHub Actions workflow — superseded without redispatch.",
-    };
+    if (ageMs < DISPATCH_STARTUP_GRACE_MS && meta.dispatchAttempt > 0) {
+      return {
+        transition: "KEEP",
+        reason: "Within dispatch startup grace — awaiting workflow correlation.",
+      };
+    }
+    if (ageMs < DISPATCH_STARTUP_GRACE_MS && meta.dispatchAttempt === 0 && !job.dispatchedAt) {
+      return {
+        transition: "REDISPATCH",
+        reason: "Accepted job has no dispatch attempt — dispatch now.",
+      };
+    }
+    if (meta.dispatchAttempt >= MAX_DISPATCH_ATTEMPTS || ageMs >= STALE_QUEUED_HARD_MS) {
+      return {
+        transition: "FAILED",
+        reason: `Dispatch recovery exhausted (attempts=${meta.dispatchAttempt}, ageMs=${ageMs}).`,
+      };
+    }
+    if (needsDispatchRecovery(job) || meta.dispatchAttempt === 0) {
+      return {
+        transition: "REDISPATCH",
+        reason:
+          "QUEUED with no workflowRunId and no lease past grace — redispatch with backoff.",
+      };
+    }
   }
 
   // Running stages with no lease and no live workflow → FAILED
@@ -200,16 +242,16 @@ function recommendTransition(
     };
   }
 
-  if (ageMs < STALE_QUEUED_MS) {
+  if (ageMs < DISPATCH_STARTUP_GRACE_MS) {
     return {
       transition: "KEEP",
-      reason: "Recently enqueued — within stale grace window.",
+      reason: "Recently enqueued — within dispatch startup grace.",
     };
   }
 
   return {
-    transition: "SUPERSEDED",
-    reason: "No live worker activity; safe to release capacity.",
+    transition: "REDISPATCH",
+    reason: "No live worker activity; attempt durable redispatch before terminal failure.",
   };
 }
 
@@ -223,6 +265,26 @@ async function applyTransition(
   reason: string
 ): Promise<ReconcileTransition | null> {
   if (transition === "KEEP" || transition === "ALREADY_TERMINAL") return null;
+
+  if (transition === "ATTACH_WORKFLOW") {
+    const correlated = await correlateWorkflowRunForJob(job, { maxWaitMs: 3_000 });
+    return correlated.matched ? "ATTACH_WORKFLOW" : null;
+  }
+
+  if (transition === "REDISPATCH") {
+    // First try to attach an existing run (idempotent correlation).
+    const correlated = await correlateWorkflowRunForJob(job, { maxWaitMs: 2_000 });
+    if (correlated.matched) {
+      return "ATTACH_WORKFLOW";
+    }
+    await dispatchQueuedDeepScanJob({
+      jobId: job.id,
+      requestId: `reconcile_${job.id}`,
+      tenantId: job.tenantId ?? job.request.tenantId,
+      force: true,
+    });
+    return "REDISPATCH";
+  }
 
   if (transition === "WORKER_STALLED") {
     await updateDeepScanStage(job.id, "WORKER_STALLED", reason, {
@@ -245,6 +307,14 @@ async function applyTransition(
       claimToken: undefined,
       progressTokenHash: undefined,
       leaseExpiresAt: undefined,
+      resultSummary: {
+        ...(job.resultSummary ?? {}),
+        dispatch: {
+          ...((job.resultSummary?.dispatch as Record<string, unknown>) ?? {}),
+          dispatchState: "FAILED_TERMINAL",
+          lastDispatchError: reason,
+        },
+      },
     });
     return "FAILED";
   }
@@ -347,7 +417,9 @@ export async function reconcileStaleDeepScanQueue(options?: {
     const inspection = await inspectJob(jobId);
     // Re-read after reclaim may have already stalled some jobs.
     const job = await getDeepScanJob(jobId);
-    if (job && isTerminalStage(job.stage) && inspection.safeRecommendedTransition !== "KEEP") {
+    if (job && isTerminalStage(job.stage) && job.stage !== "FAILED_RETRYABLE" &&
+        inspection.safeRecommendedTransition !== "KEEP" &&
+        inspection.safeRecommendedTransition !== "REDISPATCH") {
       inspection.currentStage = job.stage;
       inspection.status = job.status;
       inspection.safeRecommendedTransition = "ALREADY_TERMINAL";
@@ -357,7 +429,6 @@ export async function reconcileStaleDeepScanQueue(options?: {
         job.stage === "CANCELLED" ||
         job.stage === "FAILED_TERMINAL"
       ) {
-        // Count reclaim transitions toward reconciled when they cleared capacity.
         if (activeIndex.includes(jobId)) staleJobsReconciled += 1;
       }
       inspections.push(inspection);
@@ -375,10 +446,12 @@ export async function reconcileStaleDeepScanQueue(options?: {
       continue;
     }
 
-    if (apply && inspection.safeRecommendedTransition !== "KEEP" &&
-        inspection.safeRecommendedTransition !== "ALREADY_TERMINAL") {
+    if (
+      apply &&
+      inspection.safeRecommendedTransition !== "KEEP" &&
+      inspection.safeRecommendedTransition !== "ALREADY_TERMINAL"
+    ) {
       if (!job) {
-        // Phantom queue id — drop from capacity indexes only.
         await trackDeepScanActive(jobId, false);
         inspection.transitionApplied = "SUPERSEDED";
         staleJobsReconciled += 1;
@@ -401,13 +474,15 @@ export async function reconcileStaleDeepScanQueue(options?: {
   for (const id of queueIds) {
     const job = await getDeepScanJob(id);
     if (!job) continue;
-    if (isTerminalStage(job.stage)) continue;
-    if (job.status === "complete" || job.status === "failed") continue;
+    if (isTerminalStage(job.stage) && job.stage !== "FAILED_RETRYABLE") continue;
+    if (job.status === "complete" || job.status === "failed") {
+      // Retry-pending QUEUED after FAILED_RETRYABLE uses status queued.
+      if (job.stage !== "QUEUED") continue;
+    }
     keepQueue.push(id);
   }
   if (apply) {
     await replaceDeepScanQueueIds(keepQueue);
-    // Prune active index of terminal jobs.
     const nextActive: string[] = [];
     for (const id of Array.from(new Set(activeIndex))) {
       const job = await getDeepScanJob(id);
