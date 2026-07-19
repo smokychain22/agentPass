@@ -490,11 +490,24 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const retainedFixCount = cleanupResult.metrics.issuesChanged;
 
-    const alreadyDeleted = new Set(
-      cleanupResult.fixLoop.attempts
-        .filter((a) => a.status === "retained" && a.pluginId === "remove_temp_file")
-        .flatMap((a) => a.changedPaths)
-    );
+    // Pure-JS delete transforms emit diffs without mutating the workspace tree.
+    // Materialize retained deletes on disk before discovery deletes + post-patch
+    // verification so detector re-runs observe the patched tree.
+    const alreadyDeleted = new Set<string>();
+    for (const attempt of cleanupResult.fixLoop.attempts) {
+      if (attempt.status !== "retained") continue;
+      for (const changedPath of attempt.changedPaths) {
+        const rel = changedPath.replace(/\\/g, "/").replace(/^\.\//, "");
+        const original =
+          attempt.originalSources?.[changedPath] ?? attempt.originalSources?.[rel] ?? "";
+        const modified =
+          attempt.modifiedSources?.[changedPath] ?? attempt.modifiedSources?.[rel];
+        if (modified === "" && original !== undefined) {
+          await fs.rm(path.join(workspace.rootDir, rel), { force: true }).catch(() => {});
+          alreadyDeleted.add(rel);
+        }
+      }
+    }
     const selectedPaths = selectedScope
       ? new Set(
           flatFindings
