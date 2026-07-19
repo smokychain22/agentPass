@@ -6,17 +6,8 @@ import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 import { resolveTenantIdentity } from "@/lib/tenant/request-auth";
 import { analysisError, createRequestId } from "@/lib/findings/analysis-errors";
 import { ensureBrowserSessionId } from "@/lib/github-app/browser-session";
-import {
-  dispatchAnalysisWorkflow,
-  isActionsDispatcherConfigured,
-} from "@/lib/github-actions/dispatch-analysis";
-import {
-  analysisConfigDigest,
-  createDispatchNonce,
-  dispatchNonceTtlMs,
-  storeDispatchNonce,
-} from "@/lib/github-actions/dispatch-nonce-store";
-import { touchMarketplaceHealth } from "@/lib/okx/marketplace-telemetry";
+import { isActionsDispatcherConfigured } from "@/lib/github-actions/dispatch-analysis";
+import { analysisConfigDigest } from "@/lib/github-actions/dispatch-nonce-store";
 import { repositoryTargetFromKnown } from "@/lib/repository/repository-target";
 import { RepositoryIdentityIncompleteError } from "@/lib/repository/repository-target";
 
@@ -258,100 +249,29 @@ export async function POST(request: Request) {
   }
 
   // Idempotent: already dispatched / running / ready — do not create another workflow.
-  const alreadyActive =
-    Boolean(job.workflowRunId) ||
-    ["DISPATCHING", "DISPATCHED", "WAITING_FOR_RUNNER", "CLAIMED", "INVENTORY", "RESOLVING_PROJECTS", "BUILDING_GRAPH", "RUNNING_ANALYZERS", "NORMALIZING_FINDINGS", "VALIDATING_EVIDENCE", "READY", "COMPLETED"].includes(
-      job.stage
-    );
+  const { dispatchQueuedDeepScanJob, isAlreadyActivelyDispatched } = await import(
+    "@/lib/deep-scan/dispatch-queued-job"
+  );
 
   let dispatchError: string | undefined;
-  if (!alreadyActive && dispatcherConfigured) {
-    await updateDeepScanStage(job.id, "DISPATCHING", "Requesting GitHub Actions analysis worker");
-    const nonce = createDispatchNonce();
-    const expiresAt = new Date(Date.now() + dispatchNonceTtlMs()).toISOString();
-    await storeDispatchNonce({
-      nonce,
+  if (!isAlreadyActivelyDispatched(job)) {
+    // Always attempt durable dispatch helper — it fail-closes when token missing.
+    const result = await dispatchQueuedDeepScanJob({
       jobId: job.id,
+      requestId,
       tenantId,
-      requestId,
-      createdAt: new Date().toISOString(),
-      expiresAt,
     });
-
-    const apiBaseUrl = (
-      process.env.REPODIET_PUBLIC_API_BASE_URL?.trim() ||
-      process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-      "https://skillswap-virid-kappa.vercel.app"
-    ).replace(/\/$/, "");
-
-    const environment =
-      process.env.VERCEL_ENV === "preview" ? "preview" : "production";
-
-    const dispatched = await dispatchAnalysisWorkflow({
-      jobId: job.id,
-      requestId,
-      dispatchNonce: nonce,
-      environment,
-      apiBaseUrl,
-    });
-
-    if (dispatched.ok) {
-      job =
-        (await updateDeepScanStage(job.id, "DISPATCHED", "repository_dispatch accepted (HTTP 204)", {
-          dispatchNonce: nonce,
-          dispatchedAt: dispatched.dispatchedAt,
-          workerMode: "github_actions_on_demand",
-          analysisConfigDigest: digest,
-          // Do not invent workflowRunId — claim job records github.run_id.
-          workflowRunId: undefined,
-          workflowRunUrl: undefined,
-          resultSummary: {
-            ...(job.resultSummary ?? {}),
-            dispatch: {
-              eventType: dispatched.eventType,
-              dispatchNonceDigest: dispatched.dispatchNonceDigest,
-              dispatchState: "DISPATCHED",
-              dispatchRequestedAt: dispatched.dispatchedAt,
-            },
-          },
-        })) ?? job;
-      job =
-        (await updateDeepScanStage(
-          job.id,
-          "WAITING_FOR_RUNNER",
-          "Waiting for GitHub Actions runner"
-        )) ?? job;
-      await touchMarketplaceHealth({
-        dispatcherReady: true,
-        workerMode: "github_actions_on_demand",
-        activeWorkflowRuns: 1,
-        workerReady: true,
-        workerReadySource: "github_actions_dispatcher",
-      });
-    } else {
-      dispatchError = dispatched.message;
-      job =
-        (await updateDeepScanStage(job.id, "QUEUED", `Dispatch deferred: ${dispatched.code}`, {
-          failureCode: dispatched.code,
-          failureMessage: dispatched.message,
-          dispatchNonce: nonce,
-          workerMode: "github_actions_on_demand",
-          analysisConfigDigest: digest,
-        })) ?? job;
-      await touchMarketplaceHealth({
-        dispatcherReady: false,
-        recentWorkerFailureRate: 1,
-      });
+    job = result.job;
+    if (!result.dispatched) {
+      dispatchError = result.error;
     }
-  } else if (!alreadyActive && !dispatcherConfigured && !daemonReady) {
+  }
+
+  if (!job.analysisConfigDigest) {
     job =
-      (await updateDeepScanStage(
-        job.id,
-        "QUEUED",
-        "Queued — configure REPODIET_ACTIONS_DISPATCH_TOKEN to start free GitHub Actions workers",
-        { workerMode: "github_actions_on_demand", analysisConfigDigest: digest }
-      )) ?? job;
+      (await updateDeepScanStage(job.id, job.stage, job.progress?.detail, {
+        analysisConfigDigest: digest,
+      })) ?? job;
   }
 
   const statusUrl = `/api/deep-scans/${job.id}`;
@@ -382,7 +302,7 @@ export async function POST(request: Request) {
       projectRoot,
       tenantId,
       correlationId: correlation,
-      analysisConfigDigest: digest,
+      analysisConfigDigest: job.analysisConfigDigest ?? digest,
       message: dispatcherReady
         ? stage === "WAITING_FOR_RUNNER" || stage === "DISPATCHED"
           ? "Starting secure analysis worker on GitHub Actions."

@@ -11,6 +11,9 @@
 # Does NOT push branches or create pull requests.
 
 name: RepoDiet analysis worker
+# run-name includes jobId + nonce digest so Vercel can correlate the Actions run
+# after repository_dispatch returns 204 without a run id.
+run-name: "repodiet ${{ github.event.client_payload.jobId }} ${{ github.event.client_payload.dispatchNonce }}"
 
 on:
   repository_dispatch:

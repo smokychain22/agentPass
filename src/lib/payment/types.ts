@@ -64,6 +64,10 @@ export interface BoundQuote {
   status: QuoteStatus;
   lifecycleStatus: PaymentLifecycleStatus;
   createdAt: string;
+  /** Explicit payment environment — required for testnet canaries. */
+  environment?: "testnet" | "mainnet" | "unset";
+  paymentMode?: "testnet" | "mainnet" | "unset";
+  chainId?: number | null;
   idempotencyKey?: string;
   taskId?: string;
   a2aTaskId?: string;

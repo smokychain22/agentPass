@@ -62,6 +62,12 @@ export function isVercelNonProductionDeployment(env: NodeJS.ProcessEnv = process
 /**
  * Non-production Vercel deployments run in dry-run for payment + repository mutation.
  * Explicit escape hatches exist for controlled live Preview tests only.
+ *
+ * Testnet Preview canaries must set:
+ *   REPODIET_PAYMENT_MODE=testnet
+ *   REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT=1
+ *   REPODIET_PREVIEW_ALLOW_REPO_WRITE=1 (only when GitHub App delivery is in scope)
+ * Mainnet payment remains blocked on Preview even with the live-payment flag.
  */
 export function isPreviewDryRun(env: NodeJS.ProcessEnv = process.env): boolean {
   if (!isVercelNonProductionDeployment(env)) return false;
@@ -73,7 +79,11 @@ export function isPreviewDryRun(env: NodeJS.ProcessEnv = process.env): boolean {
 
 export function isPreviewPaymentBlocked(env: NodeJS.ProcessEnv = process.env): boolean {
   if (!isVercelNonProductionDeployment(env)) return false;
-  return env.REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT !== "1";
+  if (env.REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT !== "1") return true;
+  // Live Preview payment is permitted only for explicit testnet mode.
+  const mode = (env.REPODIET_PAYMENT_MODE || "").trim().toLowerCase();
+  if (mode === "testnet") return false;
+  return true;
 }
 
 export function isPreviewRepositoryWriteBlocked(env: NodeJS.ProcessEnv = process.env): boolean {

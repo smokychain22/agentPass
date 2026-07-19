@@ -295,13 +295,23 @@ async function run() {
     assert.equal(complete.includes("claimToken:"), false);
   });
 
-  await test("analyze route uses repository_dispatch and does not invent run ids", () => {
+  await test("analyze route uses shared durable dispatch helper", () => {
     const source = fs.readFileSync("src/app/api/findings/analyze/route.ts", "utf8");
-    assert.match(source, /dispatchAnalysisWorkflow/);
-    assert.match(source, /WAITING_FOR_RUNNER/);
-    assert.match(source, /createDispatchNonce/);
-    assert.match(source, /repository_dispatch accepted/);
-    assert.match(source, /workflowRunId:\s*undefined/);
+    assert.match(source, /dispatchQueuedDeepScanJob/);
+    assert.match(source, /isAlreadyActivelyDispatched/);
+  });
+
+  await test("A2A submit dispatches deep-scan jobs", () => {
+    const source = fs.readFileSync("src/lib/a2a/orchestrator.ts", "utf8");
+    assert.match(source, /dispatchQueuedDeepScanJob/);
+    assert.match(source, /dispatchState/);
+  });
+
+  await test("workflow run-name includes jobId and dispatch nonce for correlation", () => {
+    const source = fs.readFileSync(".github/workflows/repodiet-analysis-worker.yml", "utf8");
+    assert.match(source, /run-name:/);
+    assert.match(source, /client_payload\.jobId/);
+    assert.match(source, /client_payload\.dispatchNonce/);
   });
 
   console.log("github-actions-worker: all passed");

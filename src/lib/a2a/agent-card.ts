@@ -86,7 +86,11 @@ export function buildAgentCard() {
     payment: {
       a2mcp: {
         protocol: "x402",
-        network: "X Layer (eip155:196)",
+        network: `X Layer (${identity.network})`,
+        chainId: identity.chainId ?? null,
+        asset: identity.settlementAsset,
+        environment: identity.environment ?? "unset",
+        paymentMode: identity.paymentMode ?? "unset",
         amount: "0.03 USD₮0",
         operation: "analyze_repository",
         quoteEndpoint: `${baseUrl}/api/tasks/quote`,
@@ -95,7 +99,11 @@ export function buildAgentCard() {
       },
       a2a: {
         protocol: "A2A_escrow",
-        network: "X Layer (eip155:196)",
+        network: `X Layer (${identity.network})`,
+        chainId: identity.chainId ?? null,
+        asset: identity.settlementAsset,
+        environment: identity.environment ?? "unset",
+        paymentMode: identity.paymentMode ?? "unset",
         pricing: "negotiated",
         defaultReference: "1 USD₮0",
         settlement: "task_agreement_escrow_delivery_buyer_acceptance_release",

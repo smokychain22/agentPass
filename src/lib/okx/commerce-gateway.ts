@@ -111,7 +111,7 @@ export async function gateA2mcpCall(input: {
     if (!lock.claimed && lock.existingTaskId) {
       throw new EntitlementDeniedError(
         "DUPLICATE_REQUEST",
-        `Duplicate paid request — original task: ${lock.existingTaskId}`,
+        `Duplicate request for this idempotency key — original task: ${lock.existingTaskId}. Authorization and payment state are not implied.`,
         409
       );
     }

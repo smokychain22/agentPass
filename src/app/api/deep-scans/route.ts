@@ -135,6 +135,14 @@ export async function POST(request: Request) {
       }
     );
 
+    const { dispatchQueuedDeepScanJob } = await import("@/lib/deep-scan/dispatch-queued-job");
+    const dispatched = await dispatchQueuedDeepScanJob({
+      jobId: job.id,
+      requestId: `deep_${job.id}`,
+      tenantId: tenant.tenantId,
+    });
+    const liveJob = dispatched.job;
+
     const workerReady = await isWorkerAvailable();
     const allowInline =
       body.allowInlineExecutor === true &&
@@ -146,7 +154,7 @@ export async function POST(request: Request) {
       after(() => {
         void (async () => {
           const claimed = await claimNextDeepScanJob("inline-deep-scan");
-          if (claimed && claimed.id === job.id) {
+          if (claimed && claimed.id === liveJob.id) {
             await executeDeepScanJob(claimed.id, "inline-deep-scan", {
               alreadyClaimed: true,
               claimToken: claimed.claimToken,
@@ -169,35 +177,43 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         ...capacityQueuedResponse({
-          taskId: job.id,
-          statusUrl: `/api/deep-scans/${job.id}`,
+          taskId: liveJob.id,
+          statusUrl: `/api/deep-scans/${liveJob.id}`,
           queuePosition: Math.max(0, capacityAfter.queueDepth - 1),
           reason: capacityBefore.tenantAtCapacity ? "TENANT" : "GLOBAL",
         }),
-        jobId: job.id,
+        jobId: liveJob.id,
         tenantId: tenant.tenantId,
         repository: intake.repository,
         sourceCommit: tenant.sourceCommit,
-        stage: job.stage,
-        progressUrl: `/api/deep-scans/${job.id}`,
-        workerReady,
+        stage: liveJob.stage,
+        dispatchState: dispatched.dispatchState,
+        workflowRunId: liveJob.workflowRunId ?? null,
+        progressUrl: `/api/deep-scans/${liveJob.id}`,
+        workerReady: workerReady || dispatched.dispatched,
       });
     }
 
     return NextResponse.json({
       ok: true,
-      jobId: job.id,
+      jobId: liveJob.id,
       tenantId: tenant.tenantId,
       repository: intake.repository,
       sourceCommit: tenant.sourceCommit,
-      status: job.status,
-      stage: job.stage,
-      progressUrl: `/api/deep-scans/${job.id}`,
-      workerReady,
+      status: liveJob.status,
+      stage: liveJob.stage,
+      dispatchState: dispatched.dispatchState,
+      workflowRunId: liveJob.workflowRunId ?? null,
+      progressUrl: `/api/deep-scans/${liveJob.id}`,
+      workerReady: workerReady || dispatched.dispatched,
       queueDepth: capacityAfter.queueDepth,
-      message: workerReady
-        ? "Deep scan queued for RepoDiet worker."
-        : "Deep scan persisted. Waiting for RepoDiet worker heartbeat to claim — not executed solely via after().",
+      message: dispatched.dispatched
+        ? "Deep scan dispatched to GitHub Actions analysis worker."
+        : workerReady
+          ? "Deep scan queued for RepoDiet worker."
+          : dispatched.error
+            ? `Deep scan persisted; dispatch: ${dispatched.error}`
+            : "Deep scan persisted. Waiting for RepoDiet worker heartbeat to claim — not executed solely via after().",
       note: "A2MCP Quick Triage remains bounded; this endpoint is for full durable analysis. No repository allowlist.",
     });
   } catch (err) {
