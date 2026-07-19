@@ -177,6 +177,11 @@ async function reviewerOnce(index: number): Promise<ReviewerRun> {
           actionableFixes: Number(summary.findings.actionableFixes ?? 0),
         };
       }
+      if (!analysis.done) {
+        run.failures.push(
+          `analysis not terminal within 180s (stage=${analysis.stage || "unknown"})`
+        );
+      }
       if (!analysis.done && analysis.stage === "QUEUED") {
         run.failures.push("analysis still QUEUED after 180s");
       }

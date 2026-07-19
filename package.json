@@ -43,6 +43,7 @@
     "probe:github-app": "tsx scripts/probe-github-app-readiness.ts",
     "canary:okx-testnet-stage1": "tsx scripts/okx-testnet-stage1-canary.ts",
     "probe:testnet-balances": "tsx scripts/probe-testnet-balances.ts",
+    "prune:deep-scans": "tsx scripts/prune-terminal-deep-scans.ts",
     "verify:x402": "tsx scripts/verify-x402-production.ts",
     "verify:guard": "tsx scripts/verify-guard-production.ts",
     "smoke:full": "tsx scripts/full-production-smoke-test.ts",
