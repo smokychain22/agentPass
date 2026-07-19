@@ -205,6 +205,11 @@ export async function runPostPatchVerification(input: {
         .filter((entry) => entry.operation === "delete")
         .map((entry) => entry.filePath.replace(/\\/g, "/").replace(/^\.\//, ""))
     );
+    const editedPaths = new Set(
+      input.changeManifest
+        .filter((entry) => entry.operation === "edit")
+        .map((entry) => entry.filePath.replace(/\\/g, "/").replace(/^\.\//, ""))
+    );
 
     // Prefer path-centric matching: baseline full scan and post-patch knip/jscpd/madge
     // often emit the same file under different finding types (unused_file vs orphan_pattern),
@@ -220,6 +225,23 @@ export async function runPostPatchVerification(input: {
       const pathKey = findingPathKey(finding);
       if (pathKey !== ":" && baselinePaths.has(pathKey)) return false;
       if (finding.action !== "safe_candidate") return false;
+      // Knip often rediscovers other unused files after deletes (report ranking/limits).
+      // That is not a regression caused by our patch — only flag issues on edited files
+      // or newly unused dependencies when the change set includes edits.
+      if (editedPaths.size === 0) {
+        if (
+          finding.type === "unused_file" ||
+          finding.type === "orphan_pattern" ||
+          finding.type === "ai_slop_signal"
+        ) {
+          return false;
+        }
+      } else if (
+        finding.type !== "unused_dependency" &&
+        !rels.some((rel) => editedPaths.has(rel))
+      ) {
+        return false;
+      }
       return true;
     });
 
