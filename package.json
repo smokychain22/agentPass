@@ -37,6 +37,7 @@
     "test:asp": "tsx scripts/verify-asp-production.ts",
     "verify:asp": "tsx scripts/verify-asp-production.ts",
     "verify:a2a": "tsx scripts/verify-a2a-production.ts",
+    "verify:a2a:strict": "tsx scripts/verify-a2a-production-strict.ts",
     "verify:x402": "tsx scripts/verify-x402-production.ts",
     "verify:guard": "tsx scripts/verify-guard-production.ts",
     "smoke:full": "tsx scripts/full-production-smoke-test.ts",
