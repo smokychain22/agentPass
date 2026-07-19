@@ -153,11 +153,31 @@ export function isAlreadyActivelyDispatched(job: DeepScanJob): boolean {
   return ACTIVE_DISPATCH_STAGES.has(job.stage) && Boolean(job.dispatchedAt);
 }
 
-function publicApiBaseUrl(): string {
+/**
+ * Public HTTPS origin that GitHub Actions workers must call back to.
+ * On Preview, NEVER fall through to NEXT_PUBLIC_APP_URL when that points at
+ * production — otherwise claim/analyze/complete mutate the wrong deployment
+ * and leave Preview jobs stuck in INVENTORY.
+ */
+export function publicApiBaseUrl(
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  if (env.VERCEL_ENV === "preview") {
+    const explicit = env.REPODIET_PUBLIC_API_BASE_URL?.trim();
+    if (explicit) return explicit.replace(/\/$/, "");
+    const branchHost = env.VERCEL_BRANCH_URL?.trim();
+    if (branchHost) {
+      return `https://${branchHost.replace(/^https?:\/\//, "")}`.replace(/\/$/, "");
+    }
+    const deployHost = env.VERCEL_URL?.trim();
+    if (deployHost) {
+      return `https://${deployHost.replace(/^https?:\/\//, "")}`.replace(/\/$/, "");
+    }
+  }
   return (
-    process.env.REPODIET_PUBLIC_API_BASE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+    env.REPODIET_PUBLIC_API_BASE_URL?.trim() ||
+    env.NEXT_PUBLIC_APP_URL?.trim() ||
+    (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : "") ||
     "https://skillswap-virid-kappa.vercel.app"
   ).replace(/\/$/, "");
 }

@@ -133,6 +133,27 @@ async function run() {
     );
   });
 
+  await test("Preview worker callback URL does not use production NEXT_PUBLIC_APP_URL", async () => {
+    const { publicApiBaseUrl } = await import("../src/lib/deep-scan/dispatch-queued-job");
+    assert.equal(
+      publicApiBaseUrl({
+        VERCEL_ENV: "preview",
+        VERCEL_URL: "skillswap-abc-skillswap7.vercel.app",
+        NEXT_PUBLIC_APP_URL: "https://skillswap-virid-kappa.vercel.app",
+      }),
+      "https://skillswap-abc-skillswap7.vercel.app"
+    );
+    assert.equal(
+      publicApiBaseUrl({
+        VERCEL_ENV: "preview",
+        VERCEL_BRANCH_URL: "skillswap-git-cursor-a2a-dispatch-reliability-8b2b-skillswap7.vercel.app",
+        VERCEL_URL: "skillswap-abc-skillswap7.vercel.app",
+        NEXT_PUBLIC_APP_URL: "https://skillswap-virid-kappa.vercel.app",
+      }),
+      "https://skillswap-git-cursor-a2a-dispatch-reliability-8b2b-skillswap7.vercel.app"
+    );
+  });
+
   await test("needsDispatchRecovery after grace for undispatched jobs", () => {
     const fresh = baseJob("deep_scan_fresh", {
       createdAt: new Date().toISOString(),
