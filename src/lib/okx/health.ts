@@ -5,11 +5,13 @@ import { buildOperatorProfile } from "./operator-identity";
 import { listOkxServices } from "./services";
 import { getMarketplaceHealthSnapshot } from "./marketplace-telemetry";
 import { getAgentRuntimeHealth } from "@/lib/a2a/agent-runtime-health";
+import { getPaymentEnvironment } from "@/lib/payment/payment-environment";
 
 export async function buildOkxHealthResponse() {
   const marketplace = await getMarketplaceHealthSnapshot();
   const agentRuntime = await getAgentRuntimeHealth();
   const staleQueueReport = await getLastStaleQueueReconciliationReport();
+  const paymentEnv = getPaymentEnvironment();
   const heartbeatAgeSeconds =
     marketplace.workerHeartbeatAgeMs == null
       ? null
@@ -20,6 +22,17 @@ export async function buildOkxHealthResponse() {
     operator: buildOperatorProfile(),
     entitlementMode: resolveEntitlementMode(),
     a2mcpPaidMode: isOkxPaidMode(),
+    paymentEnvironment: {
+      environment: paymentEnv.environment,
+      paymentMode: paymentEnv.paymentMode,
+      network: paymentEnv.network,
+      chainId: paymentEnv.chainId,
+      asset: paymentEnv.asset,
+      isTestnet: paymentEnv.isTestnet,
+      isMainnet: paymentEnv.isMainnet,
+      mainnetBlocked: paymentEnv.mainnetBlocked,
+      blockReason: paymentEnv.blockReason ?? null,
+    },
     ...marketplace,
     agentRuntime: {
       agentOnline: agentRuntime.agentOnline,

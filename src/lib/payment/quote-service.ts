@@ -12,6 +12,11 @@ import {
 import { getBoundQuote, saveBoundQuote, updateBoundQuote } from "./payment-store";
 import type { BoundQuote, VerificationProfile } from "./types";
 import { paymentRequiredBody } from "./x402";
+import {
+  getPaymentEnvironment,
+  MAINNET_NETWORK,
+  MAINNET_USDT,
+} from "./payment-environment";
 
 function microToAmount(micro: string): string {
   const n = Number(micro);
@@ -49,6 +54,42 @@ export async function createBoundQuote(input: {
   transformedSourceHashes?: Record<string, string>;
   contractDigest?: string;
 }): Promise<BoundQuote> {
+  const paymentEnv = getPaymentEnvironment();
+  if (paymentEnv.mainnetBlocked) {
+    throw new Error(paymentEnv.blockReason || "MAINNET_CONFIGURATION_DETECTED");
+  }
+
+  // Prefer explicit payment-environment resolution when mode is set so Preview
+  // testnet canaries never bind mainnet material from stale module defaults.
+  const network =
+    paymentEnv.paymentMode === "testnet" || paymentEnv.paymentMode === "mainnet"
+      ? paymentEnv.network
+      : X402_NETWORK;
+  const asset =
+    paymentEnv.paymentMode === "testnet" || paymentEnv.paymentMode === "mainnet"
+      ? paymentEnv.asset
+      : X402_ASSET;
+  const recipient =
+    paymentEnv.paymentMode === "testnet" || paymentEnv.paymentMode === "mainnet"
+      ? paymentEnv.sellerWallet
+      : X402_RECIPIENT;
+  const chainId =
+    paymentEnv.paymentMode === "testnet" || paymentEnv.paymentMode === "mainnet"
+      ? paymentEnv.chainId
+      : Number(String(network).split(":")[1] || "") || null;
+  const environment =
+    paymentEnv.paymentMode === "unset"
+      ? network === MAINNET_NETWORK || asset === MAINNET_USDT
+        ? "mainnet"
+        : paymentEnv.environment
+      : paymentEnv.environment;
+
+  if (paymentEnv.paymentMode === "testnet" && (network === MAINNET_NETWORK || asset === MAINNET_USDT)) {
+    throw new Error(
+      "MAINNET_CONFIGURATION_DETECTED: testnet mode cannot issue mainnet quotes. NO_TRANSACTION_SENT."
+    );
+  }
+
   const quoteId = `quote_${nanoid(12)}`;
   const nonce = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + QUOTE_TTL_MS).toISOString();
@@ -72,10 +113,13 @@ export async function createBoundQuote(input: {
     contractDigest: input.contractDigest ?? "",
     amountMicro,
     currency: X402_CURRENCY,
-    network: X402_NETWORK,
-    recipient: X402_RECIPIENT,
+    network,
+    recipient,
     nonce,
     expiresAt,
+    environment,
+    paymentMode: paymentEnv.paymentMode,
+    chainId: String(chainId ?? ""),
   };
 
   const reqHash = requestHash(hashInput);
@@ -92,9 +136,9 @@ export async function createBoundQuote(input: {
     amount: microToAmount(amountMicro),
     amountMicro,
     currency: X402_CURRENCY,
-    network: X402_NETWORK,
-    recipient: X402_RECIPIENT,
-    asset: X402_ASSET,
+    network,
+    recipient,
+    asset,
     nonce,
     expiresAt,
     requestHash: reqHash,
@@ -103,6 +147,9 @@ export async function createBoundQuote(input: {
     status: amountMicro === "0" ? "funded" : "payment_required",
     lifecycleStatus: amountMicro === "0" ? "funded" : "quote_created",
     createdAt: new Date().toISOString(),
+    environment,
+    paymentMode: paymentEnv.paymentMode,
+    chainId,
     idempotencyKey: input.idempotencyKey,
     scanId: input.scanId,
     transformedSourceHashes,

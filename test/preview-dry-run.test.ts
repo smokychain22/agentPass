@@ -81,12 +81,37 @@ async function main() {
         REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT: undefined,
         REPODIET_PREVIEW_ALLOW_REPO_WRITE: undefined,
         REPODIET_FORCE_PREVIEW_DRY_RUN: undefined,
+        REPODIET_PAYMENT_MODE: undefined,
       },
       () => {
         assert.equal(isPreviewPaymentBlocked(), false);
         assert.equal(isPreviewRepositoryWriteBlocked(), false);
         assert.doesNotThrow(() => assertPreviewAllowsPayment());
         assert.doesNotThrow(() => assertPreviewAllowsRepositoryWrite());
+      }
+    );
+  });
+
+  await run("preview live payment requires testnet mode + allow flag", async () => {
+    await withEnv(
+      {
+        VERCEL_ENV: "preview",
+        REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT: "1",
+        REPODIET_PAYMENT_MODE: undefined,
+      },
+      () => {
+        assert.equal(isPreviewPaymentBlocked(), true);
+      }
+    );
+    await withEnv(
+      {
+        VERCEL_ENV: "preview",
+        REPODIET_PREVIEW_ALLOW_LIVE_PAYMENT: "1",
+        REPODIET_PAYMENT_MODE: "testnet",
+      },
+      () => {
+        assert.equal(isPreviewPaymentBlocked(), false);
+        assert.doesNotThrow(() => assertPreviewAllowsPayment());
       }
     );
   });

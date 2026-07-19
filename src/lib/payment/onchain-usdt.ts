@@ -1,5 +1,5 @@
 import { X402_ASSET, X402_NETWORK } from "@/lib/payment/constants";
-import { XLAYER_EVM_CHAIN_ID } from "@/lib/wallet/chain-config";
+import { resolveXLayerRpcUrl } from "@/lib/wallet/chain-config";
 import { isLikelyTxHash, normalizeHexAddress } from "@/lib/wallet/erc20-transfer";
 
 /** ERC-20 Transfer(address,address,uint256) topic */
@@ -26,13 +26,8 @@ export interface OnchainUsdtVerificationResult {
   amountMicro?: string;
 }
 
-function xlayerRpcUrl(override?: string): string {
-  return (
-    override?.trim() ||
-    process.env.XLAYER_RPC_URL?.trim() ||
-    process.env.REPODIET_XLAYER_RPC_URL?.trim() ||
-    "https://rpc.xlayer.tech"
-  );
+function xlayerRpcUrl(override?: string, network?: string): string {
+  return resolveXLayerRpcUrl({ override, network });
 }
 
 function topicAddress(topic: string): string {
@@ -93,7 +88,7 @@ export async function verifyOnchainUsdtTransfer(
   }
 
   const network = input.network ?? X402_NETWORK;
-  if (network !== X402_NETWORK && network !== `eip155:${XLAYER_EVM_CHAIN_ID}`) {
+  if (network !== X402_NETWORK) {
     return { ok: false, reason: `Wrong network. Expected ${X402_NETWORK}.` };
   }
 
@@ -109,7 +104,7 @@ export async function verifyOnchainUsdtTransfer(
   }
 
   const expectedAmount = BigInt(input.amountMicro);
-  const rpcUrl = xlayerRpcUrl(input.rpcUrl);
+  const rpcUrl = xlayerRpcUrl(input.rpcUrl, network);
 
   let receipt: Awaited<ReturnType<typeof waitForReceipt>>;
   try {
