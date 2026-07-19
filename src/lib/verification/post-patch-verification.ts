@@ -204,6 +204,8 @@ export async function runPostPatchVerification(input: {
     // Prefer path-centric matching: baseline full scan and post-patch knip/jscpd/madge
     // often emit the same file under different finding types (unused_file vs orphan_pattern),
     // which previously failed "no new findings" and blocked verified cleanup PRs.
+    // Only block on newly introduced *actionable* findings — review/orphan noise that
+    // rediscovers adjacent dead code after a delete must not veto a green verified patch.
     const newFindings = patchedFlat.filter((finding) => {
       const rels = finding.files.map((file) => file.replace(/\\/g, "/").replace(/^\.\//, ""));
       if (rels.length === 0 && !finding.packageName) return false;
@@ -211,6 +213,7 @@ export async function runPostPatchVerification(input: {
       if (baselineFps.has(findingFingerprint(finding))) return false;
       const pathKey = findingPathKey(finding);
       if (pathKey !== ":" && baselinePaths.has(pathKey)) return false;
+      if (finding.action !== "safe_candidate") return false;
       return true;
     });
 
