@@ -9,7 +9,7 @@ import { runMadge } from "@/lib/findings/run-madge";
 import { normalizeFindings } from "@/lib/findings/normalize-findings";
 import { detectUnusedImportsInSource } from "@/lib/findings/unused-import-detector";
 import { verifyCyclesIndependent } from "@/lib/repository-graph/resolver-graph";
-import { findingFingerprint, fingerprintSet } from "./finding-fingerprint";
+import { findingFingerprint, fingerprintSet, pathKeySet, findingPathKey } from "./finding-fingerprint";
 import { computeRecallByRuleFamily } from "@/lib/findings/recall-metrics";
 
 export interface DetectorRerunResult {
@@ -194,7 +194,25 @@ export async function runPostPatchVerification(input: {
     const patchedFlat = flattenFindings(patchedPayload);
 
     const baselineFps = fingerprintSet(baselineFlat);
-    const newFindings = patchedFlat.filter((f) => !baselineFps.has(findingFingerprint(f)));
+    const baselinePaths = pathKeySet(baselineFlat);
+    const deletedPaths = new Set(
+      input.changeManifest
+        .filter((entry) => entry.operation === "delete")
+        .map((entry) => entry.filePath.replace(/\\/g, "/").replace(/^\.\//, ""))
+    );
+
+    // Prefer path-centric matching: baseline full scan and post-patch knip/jscpd/madge
+    // often emit the same file under different finding types (unused_file vs orphan_pattern),
+    // which previously failed "no new findings" and blocked verified cleanup PRs.
+    const newFindings = patchedFlat.filter((finding) => {
+      const rels = finding.files.map((file) => file.replace(/\\/g, "/").replace(/^\.\//, ""));
+      if (rels.length === 0 && !finding.packageName) return false;
+      if (rels.some((rel) => deletedPaths.has(rel))) return false;
+      if (baselineFps.has(findingFingerprint(finding))) return false;
+      const pathKey = findingPathKey(finding);
+      if (pathKey !== ":" && baselinePaths.has(pathKey)) return false;
+      return true;
+    });
 
     const originalFindingsResolved = detectorReruns.every((r) => r.passed);
     const noNewFindings = newFindings.length === 0;

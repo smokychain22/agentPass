@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { findingFingerprint, fingerprintSet } from "../src/lib/verification/finding-fingerprint";
+import { findingFingerprint, findingPathKey, fingerprintSet } from "../src/lib/verification/finding-fingerprint";
 import type { Finding } from "../src/lib/findings/types";
 
 function test(name: string, fn: () => void) {
@@ -45,6 +45,13 @@ test("fingerprintSet deduplicates", () => {
   const f = baseFinding({ type: "unused_file", files: ["x.ts"] });
   const set = fingerprintSet([f, { ...f, id: "f2" }]);
   assert.equal(set.size, 1);
+});
+
+test("path key ignores finding type duplication", () => {
+  const a = baseFinding({ type: "unused_file", files: ["src/a.ts"] });
+  const b = baseFinding({ type: "orphan_pattern", files: ["src/a.ts"] });
+  assert.equal(findingPathKey(a), findingPathKey(b));
+  assert.notEqual(findingFingerprint(a), findingFingerprint(b));
 });
 
 console.log("finding-fingerprint: all passed");
