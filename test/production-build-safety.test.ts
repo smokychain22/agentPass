@@ -64,7 +64,7 @@ async function main() {
     );
   });
 
-  await run("identity conflicts throw at runtime but not during next build", async () => {
+  await run("identity conflicts throw at runtime but soft-resolve during next build", async () => {
     await withEnv(
       {
         OKX_ASP_AGENT_ID: "5283",
@@ -73,6 +73,7 @@ async function main() {
         NEXT_PHASE: undefined,
         VERCEL_ENV: "production",
         REPODIET_PAYMENT_MODE: undefined,
+        REPODIET_SOFT_OKX_IDENTITY: undefined,
       },
       () => {
         assert.throws(() => getCanonicalOkxIdentity(), /okx_identity_conflict/);
@@ -92,6 +93,22 @@ async function main() {
         assert.equal(isNextProductionBuild(), true);
         const id = getCanonicalOkxIdentity();
         assert.equal(id.aspAgentId, 5283);
+      }
+    );
+
+    await withEnv(
+      {
+        OKX_ASP_AGENT_ID: "5283",
+        REPODIET_OKX_AGENT_ID: "9999",
+        NEXT_PUBLIC_APP_URL: "https://skillswap-virid-kappa.vercel.app",
+        NEXT_PHASE: undefined,
+        VERCEL_ENV: "preview",
+        REPODIET_PAYMENT_MODE: undefined,
+      },
+      () => {
+        const id = getCanonicalOkxIdentity();
+        assert.equal(id.aspAgentId, 5283);
+        assert.ok((id.identityConflicts || []).some((c) => c.includes("okx_identity_conflict")));
       }
     );
   });

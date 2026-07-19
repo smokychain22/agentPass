@@ -26,6 +26,8 @@ export interface CanonicalOkxIdentity {
   /** Present when Production was misconfigured with testnet payment mode. */
   productionTestnetMisconfig?: boolean;
   identityConflictDuringBuild?: boolean;
+  /** Soft-resolved alias conflicts (Preview / build). Empty when strict agreement. */
+  identityConflicts?: string[];
 }
 
 /** Next.js sets this only while compiling the production bundle. */
@@ -40,19 +42,29 @@ function configuredValues(names: string[]): Array<{ name: string; value: string 
   });
 }
 
-function consistentValue(names: string[], fallback: string, normalize = (value: string) => value) {
+function consistentValue(
+  names: string[],
+  fallback: string,
+  normalize = (value: string) => value,
+  conflictSink?: string[]
+) {
   const configured = configuredValues(names);
   const normalized = configured.map(({ name, value }) => ({ name, value: normalize(value) }));
   const distinct = [...new Set(normalized.map(({ value }) => value))];
   if (distinct.length > 1) {
-    // Module-level imports (payment/green-pr constants, route modules) evaluate during
-    // `next build`. Throwing here aborts the Vercel Production compile when the owner
-    // accidentally scopes conflicting aliases onto Production. Prefer defaults at build
-    // time; runtime request paths still throw below when not building.
-    if (isNextProductionBuild()) {
-      return normalize(fallback);
+    const conflict = `okx_identity_conflict:${normalized.map(({ name }) => name).join(",")}`;
+    conflictSink?.push(conflict);
+    // During `next build`, and on Preview (where owners often dual-scope vars),
+    // prefer the first declared alias instead of aborting every route with HTTP 500.
+    // Production runtime stays strict unless REPODIET_SOFT_OKX_IDENTITY=1.
+    const soft =
+      isNextProductionBuild() ||
+      process.env.REPODIET_SOFT_OKX_IDENTITY === "1" ||
+      (process.env.VERCEL_ENV || "").toLowerCase() === "preview";
+    if (soft) {
+      return normalized[0]!.value;
     }
-    throw new Error(`okx_identity_conflict:${normalized.map(({ name }) => name).join(",")}`);
+    throw new Error(conflict);
   }
   return distinct[0] ?? normalize(fallback);
 }
@@ -97,17 +109,24 @@ function appUrl(value: string): string {
 
 export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
   const payment = getPaymentEnvironment();
+  const identityConflicts: string[] = [];
   const aspAgentId = consistentValue(
     ["OKX_ASP_AGENT_ID", "REPODIET_OKX_AGENT_ID", "OKX_AGENT_ID", "NEXT_PUBLIC_OKX_ASP_AGENT_ID"],
-    String(DEFAULT_IDENTITY.aspAgentId)
+    String(DEFAULT_IDENTITY.aspAgentId),
+    (v) => v,
+    identityConflicts
   );
   const a2aServiceId = consistentValue(
     ["OKX_A2A_SERVICE_ID", "REPODIET_OKX_A2A_SERVICE_ID", "NEXT_PUBLIC_OKX_A2A_SERVICE_ID"],
-    String(DEFAULT_IDENTITY.a2aServiceId)
+    String(DEFAULT_IDENTITY.a2aServiceId),
+    (v) => v,
+    identityConflicts
   );
   const a2mcpServiceId = consistentValue(
     ["OKX_A2MCP_SERVICE_ID", "REPODIET_OKX_A2MCP_SERVICE_ID", "NEXT_PUBLIC_OKX_A2MCP_SERVICE_ID"],
-    String(DEFAULT_IDENTITY.a2mcpServiceId)
+    String(DEFAULT_IDENTITY.a2mcpServiceId),
+    (v) => v,
+    identityConflicts
   );
 
   // When payment mode is explicitly set, prefer payment-environment resolution.
@@ -119,7 +138,12 @@ export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
       ? DEFAULT_IDENTITY.network
       : payment.paymentMode === "testnet" || payment.paymentMode === "mainnet"
         ? payment.network
-        : consistentValue(["REPODIET_X402_NETWORK", "REPODIET_PAYMENT_NETWORK"], DEFAULT_IDENTITY.network);
+        : consistentValue(
+            ["REPODIET_X402_NETWORK", "REPODIET_PAYMENT_NETWORK"],
+            DEFAULT_IDENTITY.network,
+            (v) => v,
+            identityConflicts
+          );
   const settlementAsset =
     productionTestnetMisconfig
       ? DEFAULT_IDENTITY.settlementAsset
@@ -128,14 +152,16 @@ export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
         : consistentValue(
             ["REPODIET_X402_ASSET", "REPODIET_PAYMENT_ASSET"],
             DEFAULT_IDENTITY.settlementAsset,
-            (value) => address(value, "settlement_asset")
+            (value) => address(value, "settlement_asset"),
+            identityConflicts
           );
 
   return {
     appUrl: consistentValue(
       ["NEXT_PUBLIC_APP_URL", "REPODIET_APP_URL"],
       DEFAULT_IDENTITY.appUrl,
-      appUrl
+      appUrl,
+      identityConflicts
     ),
     aspAgentId: positiveInteger(aspAgentId, "asp_agent_id"),
     a2aServiceId: positiveInteger(a2aServiceId, "a2a_service_id"),
@@ -143,12 +169,14 @@ export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
     sellerWallet: consistentValue(
       ["OKX_AGENTIC_WALLET_ADDRESS", "PAY_TO_ADDRESS", "REPODIET_PAY_TO"],
       DEFAULT_IDENTITY.sellerWallet,
-      (value) => address(value, "seller_wallet")
+      (value) => address(value, "seller_wallet"),
+      identityConflicts
     ),
     buyerWallet: consistentValue(
       ["NEXT_PUBLIC_REPODIET_OWNER_BUYER_WALLET"],
       DEFAULT_IDENTITY.buyerWallet,
-      (value) => address(value, "buyer_wallet")
+      (value) => address(value, "buyer_wallet"),
+      identityConflicts
     ),
     network,
     settlementAsset,
@@ -157,6 +185,7 @@ export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
     environment: productionTestnetMisconfig ? "unset" : payment.environment,
     productionTestnetMisconfig,
     identityConflictDuringBuild: isNextProductionBuild() || undefined,
+    identityConflicts: identityConflicts.length ? identityConflicts : undefined,
   };
 }
 

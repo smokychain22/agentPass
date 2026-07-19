@@ -6,12 +6,14 @@ import { listOkxServices } from "./services";
 import { getMarketplaceHealthSnapshot } from "./marketplace-telemetry";
 import { getAgentRuntimeHealth } from "@/lib/a2a/agent-runtime-health";
 import { getPaymentEnvironment } from "@/lib/payment/payment-environment";
+import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 
 export async function buildOkxHealthResponse() {
   const marketplace = await getMarketplaceHealthSnapshot();
   const agentRuntime = await getAgentRuntimeHealth();
   const staleQueueReport = await getLastStaleQueueReconciliationReport();
   const paymentEnv = getPaymentEnvironment();
+  const identity = getCanonicalOkxIdentity();
   const heartbeatAgeSeconds =
     marketplace.workerHeartbeatAgeMs == null
       ? null
@@ -34,6 +36,7 @@ export async function buildOkxHealthResponse() {
       productionTestnetMisconfig: paymentEnv.productionTestnetMisconfig,
       blockReason: paymentEnv.blockReason ?? null,
     },
+    identityConflicts: identity.identityConflicts ?? [],
     ...marketplace,
     agentRuntime: {
       agentOnline: agentRuntime.agentOnline,
