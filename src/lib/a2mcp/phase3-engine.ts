@@ -588,4 +588,264 @@ export async function executeGetTaskStatus(taskId: string): Promise<AgentTaskRec
   return undefined;
 }
 
+function emptyFindingsStub(scanId?: string): FindingsPayload {
+  const now = new Date().toISOString();
+  return {
+    scanId: scanId || `scan_missing_${createTaskId().slice(-8)}`,
+    repo: { owner: "unknown", name: "unknown", branch: "main" },
+    summary: {
+      totalFindings: 0,
+      duplicateClusters: 0,
+      unusedFiles: 0,
+      unusedDependencies: 0,
+      unusedExports: 0,
+      orphanPatterns: 0,
+      slopSignals: 0,
+      reviewRequired: 0,
+      safeCandidates: 0,
+      doNotTouch: 0,
+    },
+    duplicates: [],
+    unused: { files: [], dependencies: [], exports: [] },
+    orphans: [],
+    slopSignals: [],
+    riskBuckets: { safeDelete: [], reviewFirst: [], doNotTouch: [] },
+    artifacts: { findingsJson: false },
+    mode: "live",
+    rawToolReports: {
+      knip: { status: "fallback", sourceMode: "fallback", durationMs: 0, source: "knip" },
+      jscpd: { status: "fallback", sourceMode: "fallback", durationMs: 0, source: "jscpd" },
+      madge: { status: "fallback", sourceMode: "fallback", durationMs: 0, source: "madge" },
+    },
+  };
+}
+
+async function resolveOrEmptyFindings(record: Record<string, unknown>): Promise<FindingsPayload> {
+  try {
+    const ref = Phase3InputSchemas.repoRef(record);
+    return await resolveFindingsPayload(ref, getAgentTask);
+  } catch {
+    return emptyFindingsStub(
+      typeof record.scanId === "string" ? record.scanId : undefined
+    );
+  }
+}
+
+export async function executeGetScanStatus(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const statusTaskId =
+    (typeof record.taskId === "string" && record.taskId) ||
+    (typeof record.scanTaskId === "string" && record.scanTaskId) ||
+    undefined;
+  const scanId = typeof record.scanId === "string" ? record.scanId : undefined;
+
+  if (statusTaskId) {
+    const existing = await executeGetTaskStatus(statusTaskId);
+    if (existing) {
+      const findings = existing.scanId
+        ? (await getStoredFindings(existing.scanId)) ?? emptyFindingsStub(existing.scanId)
+        : emptyFindingsStub(scanId);
+      return completeTask(taskId, "get_scan_status", findings, {
+        scanId: existing.scanId ?? scanId ?? null,
+        status: existing.status,
+        underlyingTaskId: existing.id,
+        underlyingTool: existing.type,
+        result: existing.result,
+      });
+    }
+  }
+
+  if (scanId) {
+    const findings = await getStoredFindings(scanId);
+    if (findings) {
+      return completeTask(taskId, "get_scan_status", findings, {
+        scanId,
+        status: "completed",
+        summary: findings.summary,
+      });
+    }
+  }
+
+  const empty = await resolveOrEmptyFindings(record);
+  return completeTask(taskId, "get_scan_status", empty, {
+    scanId: scanId ?? null,
+    status: statusTaskId ? "unknown" : "missing_scan",
+    message: "Provide scanId or taskId from a prior scan_repository call.",
+  });
+}
+
+export async function executeGetRepositoryCoverage(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const findings = await resolveFindingsPayload(Phase3InputSchemas.repoRef(body), getAgentTask);
+  const health = await executeGetRepositoryHealth(body, createTaskId());
+  return completeTask(taskId, "get_repository_coverage", findings, {
+    ...(health.result ?? {}),
+    coverage: {
+      analyzers: findings.rawToolReports,
+      summary: findings.summary,
+      riskBuckets: {
+        safe: findings.riskBuckets.safeDelete.length,
+        review: findings.riskBuckets.reviewFirst.length,
+        protected: findings.riskBuckets.doNotTouch.length,
+      },
+    },
+  });
+}
+
+export async function executeListFindings(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const findings = await resolveFindingsPayload(Phase3InputSchemas.repoRef(body), getAgentTask);
+  const { flattenFindings } = await import("@/lib/findings/client");
+  const flat = flattenFindings(findings);
+  return completeTask(taskId, "list_findings", findings, {
+    scanId: findings.scanId,
+    count: flat.length,
+    findings: flat.map((f) => ({
+      id: f.id,
+      type: f.type,
+      title: f.title,
+      files: f.files,
+      action: f.action,
+      confidence: f.confidence,
+      confidenceTier: f.confidenceTier,
+    })),
+  });
+}
+
+export async function executeGetFindingEvidence(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const findingId = typeof record.findingId === "string" ? record.findingId : "";
+  if (!findingId) {
+    throw new Error("findingId is required.");
+  }
+  const findings = await resolveFindingsPayload(Phase3InputSchemas.repoRef(body), getAgentTask);
+  const { flattenFindings } = await import("@/lib/findings/client");
+  const flat = flattenFindings(findings);
+  const finding = flat.find((f) => f.id === findingId);
+  if (!finding) {
+    throw new Error(`Finding ${findingId} not found for scan.`);
+  }
+  return completeTask(taskId, "get_finding_evidence", findings, {
+    scanId: findings.scanId,
+    findingId,
+    evidence: finding.evidence,
+    confidenceTier: finding.confidenceTier,
+    evidenceGate: finding.evidenceGate,
+    protectionReason: finding.protectionReason,
+    signals: finding.evidence.signals,
+  });
+}
+
+export async function executePrepareCleanupPlan(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const findings = await resolveFindingsPayload(Phase3InputSchemas.repoRef(body), getAgentTask);
+  const { flattenFindings } = await import("@/lib/findings/client");
+  const { prepareAutomaticCleanupPlan } = await import(
+    "@/lib/user-directed/auto-cleanup-plan"
+  );
+  const { buildScanOutcomeSummary } = await import(
+    "@/lib/user-directed/scan-outcome-summary"
+  );
+  const flat = flattenFindings(findings);
+  const repository = `${findings.repo.owner}/${findings.repo.name}`;
+  const pinnedCommit = findings.repo.commitSha || "unknown";
+  const excludeFindingIds = Array.isArray(record.excludeFindingIds)
+    ? record.excludeFindingIds.filter((id): id is string => typeof id === "string")
+    : undefined;
+  const prepared = prepareAutomaticCleanupPlan({
+    repository,
+    pinnedCommit,
+    findings: flat,
+    excludeFindingIds,
+    requestedBy: "a2mcp_prepare_cleanup_plan",
+  });
+  return completeTask(taskId, "prepare_cleanup_plan", findings, {
+    scanId: findings.scanId,
+    outcome: buildScanOutcomeSummary(findings),
+    summary: prepared.summary,
+    planCount: prepared.plans.length,
+    includedFindingIds: prepared.includedFindingIds,
+    plans: prepared.plans.map((p) => ({
+      planId: p.planId,
+      status: p.status,
+      executable: p.executable,
+      proposedAction: p.proposedAction,
+      summary: p.summary,
+      planHash: p.planHash,
+      selectedFindingIds: p.selectedFindingIds,
+      selectedRepositoryPaths: p.selectedRepositoryPaths,
+    })),
+    transformerSelectionRequired: false,
+  });
+}
+
+export async function executeGetPlanStatus(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const planId = typeof record.planId === "string" ? record.planId : undefined;
+  const findings = await resolveOrEmptyFindings(record);
+  return completeTask(taskId, "get_plan_status", findings, {
+    planId: planId ?? null,
+    status: planId ? "unknown" : "missing_plan_id",
+    message:
+      "Plans are prepared via prepare_cleanup_plan. Pass planId from that response to track inclusion.",
+    readOnly: true,
+  });
+}
+
+export async function executeGetDeliveryStatus(
+  body: unknown,
+  taskId: string
+): Promise<AgentTaskRecord> {
+  const record = body as Record<string, unknown>;
+  const a2aTaskId =
+    (typeof record.a2aTaskId === "string" && record.a2aTaskId) ||
+    (typeof record.taskId === "string" && record.taskId) ||
+    undefined;
+  const findings = await resolveOrEmptyFindings(record);
+
+  if (a2aTaskId) {
+    const { getA2ATask } = await import("@/lib/a2a/task-store");
+    const { mapA2AStatusToMarketplaceLifecycle } = await import(
+      "@/lib/a2a/okx-marketplace-lifecycle"
+    );
+    const task = await getA2ATask(a2aTaskId);
+    if (task) {
+      return completeTask(taskId, "get_delivery_status", findings, {
+        a2aTaskId,
+        status: task.status,
+        marketplaceLifecycle: mapA2AStatusToMarketplaceLifecycle(task.status),
+        prUrl: task.result.pullRequest?.url ?? null,
+        deliveryReady: [
+          "delivery_ready",
+          "delivery_submitted",
+          "buyer_accepted",
+          "completed",
+        ].includes(task.status),
+      });
+    }
+  }
+
+  return completeTask(taskId, "get_delivery_status", findings, {
+    a2aTaskId: a2aTaskId ?? null,
+    status: "not_found",
+    message: "Provide a2aTaskId from an OKX A2A cleanup task.",
+  });
+}
+
 export { createTaskId };

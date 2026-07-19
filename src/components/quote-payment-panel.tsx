@@ -1,6 +1,7 @@
 "use client";
 
 import type { DynamicSignedQuote, PaymentChannelChoice } from "@/lib/user-directed/types";
+import type { SessionSource } from "@/lib/user-directed/session-source";
 
 type Props = {
   quote: DynamicSignedQuote | null;
@@ -12,6 +13,8 @@ type Props = {
   onAuthorize: () => void;
   authorizing: boolean;
   canQuote: boolean;
+  hideDirectPayment?: boolean;
+  sessionSource?: SessionSource;
 };
 
 export function QuotePaymentPanel({
@@ -24,17 +27,25 @@ export function QuotePaymentPanel({
   onAuthorize,
   authorizing,
   canQuote,
+  hideDirectPayment = false,
+  sessionSource,
 }: Props) {
   return (
     <section className="space-y-4 rounded-md border border-border/50 bg-card/30 p-4" aria-label="Quote and payment">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Quote & Payment</p>
-          <h2 className="mt-1 text-lg font-semibold">Dynamic scope-based quote</h2>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Pay</p>
+          <h2 className="mt-1 text-lg font-semibold">
+            {hideDirectPayment ? "OKX escrow quote" : "Dynamic scope-based quote"}
+          </h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Price is computed from the verified plan and exact patch — not a fixed 1.00 USDT.
-            Changing selection, plan, or pinned commit invalidates the quote.
+            {hideDirectPayment
+              ? "This session originated from OKX. Payment uses official OKX X Layer escrow only — never a direct website transfer labeled as escrow."
+              : "Price is computed from the verified plan and exact patch — not a fixed 1.00 USDT. Changing selection, plan, or pinned commit invalidates the quote."}
           </p>
+          {sessionSource ? (
+            <p className="mt-1 text-xs text-muted-foreground">Session source: {sessionSource}</p>
+          ) : null}
         </div>
         <button
           type="button"
@@ -97,33 +108,34 @@ export function QuotePaymentPanel({
 
           <fieldset className="space-y-3 rounded-md border border-border/40 p-3">
             <legend className="px-1 text-sm font-medium">Payment channel</legend>
-            <label className="flex cursor-pointer gap-3 text-sm">
-              <input
-                type="radio"
-                name="payment-channel"
-                checked={channel === "direct_website"}
-                onChange={() => onChannelChange("direct_website")}
-              />
-              <span>
-                <span className="font-medium">Direct website payment</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Exact scope-based price with direct-payment policy and failure/refund handling.
-                  Bound to this quote and plan.
+            {!hideDirectPayment ? (
+              <label className="flex cursor-pointer gap-3 text-sm">
+                <input
+                  type="radio"
+                  name="payment-channel"
+                  checked={channel === "direct_website"}
+                  onChange={() => onChannelChange("direct_website")}
+                />
+                <span>
+                  <span className="font-medium">Direct website payment</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Exact scope-based price with direct-payment policy and failure/refund handling.
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            ) : null}
             <label className="flex cursor-pointer gap-3 text-sm">
               <input
                 type="radio"
                 name="payment-channel"
-                checked={channel === "okx_a2a_marketplace"}
+                checked={channel === "okx_a2a_marketplace" || hideDirectPayment}
                 onChange={() => onChannelChange("okx_a2a_marketplace")}
               />
               <span>
-                <span className="font-medium">OKX.AI A2A marketplace</span>
+                <span className="font-medium">OKX.AI A2A marketplace escrow</span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Official A2A task with negotiated/escrow amount and delivery review lifecycle.
-                  Marketplace minimums are labeled separately from calculated cleanup cost.
+                  Official A2A task with X Layer escrow. Funds release after buyer acceptance —
+                  not a direct transfer.
                 </span>
               </span>
             </label>
@@ -138,10 +150,14 @@ export function QuotePaymentPanel({
           <button
             type="button"
             className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-            disabled={!channel || authorizing}
+            disabled={(!channel && !hideDirectPayment) || authorizing}
             onClick={onAuthorize}
           >
-            {authorizing ? "Authorizing…" : "Authorize payment for this plan"}
+            {authorizing
+              ? "Authorizing…"
+              : hideDirectPayment
+                ? "Approve OKX escrow for this plan"
+                : "Authorize payment for this plan"}
           </button>
         </>
       )}

@@ -20,6 +20,7 @@ export type RequestedActionType =
   | "UPDATE_CONFIGURATION"
   | "ADD_IGNORE_POLICY";
 
+/** Full action vocabulary. UI menus must not list both SUPPRESS and ADD_IGNORE_POLICY. */
 export const REQUESTED_ACTION_TYPES: RequestedActionType[] = [
   "INSPECT",
   "DELETE",
@@ -34,9 +35,11 @@ export const REQUESTED_ACTION_TYPES: RequestedActionType[] = [
   "REGENERATE",
   "KEEP",
   "SUPPRESS",
-  "ADD_IGNORE_POLICY",
   "CUSTOM",
 ];
+
+/** @deprecated Prefer SUPPRESS — kept for persisted payloads only. */
+export const LEGACY_IGNORE_ACTION: RequestedActionType = "ADD_IGNORE_POLICY";
 
 export type PlanAnalysisStatus =
   | "PLAN_READY"

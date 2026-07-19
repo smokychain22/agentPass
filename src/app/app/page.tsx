@@ -128,10 +128,10 @@ function AppWorkspace() {
 
             {tab === "scan" && <ScanTab />}
             {tab === "findings" && (
-              <UserDirectedWorkbench initialTab="suggestions" />
+              <UserDirectedWorkbench initialStage="review" />
             )}
-            {tab === "patch" && <UserDirectedWorkbench initialTab="patch" />}
-            {tab === "verify" && <UserDirectedWorkbench initialTab="delivery" />}
+            {tab === "patch" && <UserDirectedWorkbench initialStage="plan" />}
+            {tab === "verify" && <UserDirectedWorkbench initialStage="delivery" />}
             {tab === "cleanup" && <CleanupTab />}
           </Container>
         </main>

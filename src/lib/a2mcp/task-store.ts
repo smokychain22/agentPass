@@ -15,7 +15,14 @@ export type AgentTaskType =
   | "configure_repository_policy"
   | "activate_repo_guard"
   | "verify_patch"
-  | "repository_health_delta";
+  | "repository_health_delta"
+  | "get_scan_status"
+  | "get_repository_coverage"
+  | "list_findings"
+  | "get_finding_evidence"
+  | "prepare_cleanup_plan"
+  | "get_plan_status"
+  | "get_delivery_status";
 
 export type AgentTaskStatus = "queued" | "running" | "completed" | "failed";
 
