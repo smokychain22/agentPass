@@ -98,6 +98,10 @@ export async function resolveRepositoryConnectionStatus(input: {
   const connected =
     isRepositoryVerifiedState(authoritative.authoritativeState) &&
     authoritative.installationTokenAvailable;
+  const writeReady =
+    connected &&
+    authoritative.contentsPermission === "write" &&
+    authoritative.pullRequestsPermission === "write";
   const messages = accessCopyForState(accessState, repo, owner);
 
   const installationId = authoritative.installationFound
@@ -111,8 +115,9 @@ export async function resolveRepositoryConnectionStatus(input: {
     repository: fullName,
     owner,
     canRead: true,
-    canCreateBranch: connected,
-    canCreatePullRequest: connected,
+    // Never claim branch/PR write from "connected" alone — require installation write perms.
+    canCreateBranch: writeReady,
+    canCreatePullRequest: writeReady,
     defaultBranch: input.branch,
     commitSha: input.commitSha,
     accessState,

@@ -3,7 +3,10 @@ import path from "node:path";
 import { execa } from "execa";
 import { createHash } from "node:crypto";
 import type { Finding } from "@/lib/findings/types";
-import { generateUnifiedDeletePatch } from "@/lib/patch-kit/generate-unified-diff";
+import {
+  buildPureJsDeletePatch,
+  generateUnifiedDeletePatch,
+} from "@/lib/patch-kit/generate-unified-diff";
 import type { ClassifiedItem } from "@/lib/patch-kit/types";
 import {
   findFilesImporting,
@@ -108,6 +111,21 @@ async function applyDeleteFile(
     originals[rel] = await fs.readFile(path.join(rootDir, rel), "utf8");
   } catch {
     originals[rel] = "";
+  }
+
+  // Prefer pure-JS single-file delete (same as dry-run eligibility) so zip/serverless
+  // workspaces without a reliable git baseline still produce deliverable patches.
+  const purePatch = buildPureJsDeletePatch(rel, originals[rel] ?? "");
+  if (purePatch.trim()) {
+    return {
+      pluginId,
+      strategyId,
+      unifiedDiff: purePatch,
+      changedPaths: [rel],
+      originalSources: originals,
+      modifiedSources: { [rel]: "" },
+      expectedFix: `Delete ${rel}`,
+    };
   }
 
   const { patch, deletedPaths } = await generateUnifiedDeletePatch(rootDir, safeItems);

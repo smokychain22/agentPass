@@ -91,7 +91,61 @@ async function main() {
       "utf8"
     );
     assert.match(source, /generateUnifiedDeletePatch/);
+    assert.match(source, /buildPureJsDeletePatch/);
+    assert.match(source, /pure-js \(zip\/serverless safe\)/);
     assert.match(source, /\["diff", "--no-color", "HEAD"/);
+  });
+
+  await test("pure-js delete patch format is applyable", async () => {
+    // Mirror buildPureJsDeletePatch — keeps this file runnable under plain node.
+    function buildPureJsDeletePatch(relPath, content) {
+      const normalized = content.replace(/\r\n/g, "\n");
+      const fileLines =
+        normalized === ""
+          ? []
+          : normalized.endsWith("\n")
+            ? normalized.slice(0, -1).split("\n")
+            : normalized.split("\n");
+      const lines = [
+        `diff --git a/${relPath} b/${relPath}`,
+        `deleted file mode 100644`,
+        `--- a/${relPath}`,
+        `+++ /dev/null`,
+      ];
+      if (fileLines.length === 0) {
+        lines.push(`@@ -0,0 +0,0 @@`);
+      } else {
+        lines.push(`@@ -1,${fileLines.length} +0,0 @@`);
+        for (const line of fileLines) lines.push(`-${line}`);
+      }
+      return `${lines.join("\n")}\n`;
+    }
+
+    const rel = "src/orphan-demo.ts";
+    const content = "export const orphan = true;\n";
+    const pure = buildPureJsDeletePatch(rel, content);
+    assert.match(pure, /diff --git/);
+    assert.match(pure, /deleted file mode/);
+    assert.match(pure, /-export const orphan = true;/);
+
+    const fresh = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-pure-apply-"));
+    await fs.mkdir(path.dirname(path.join(fresh, rel)), { recursive: true });
+    await fs.writeFile(path.join(fresh, rel), content, "utf8");
+    await execa("git", ["init"], { cwd: fresh, reject: false });
+    await execa("git", ["add", "-A"], { cwd: fresh, reject: false });
+    await execa(
+      "git",
+      ["-c", "user.email=repodiet@local", "-c", "user.name=RepoDiet", "commit", "-m", "baseline"],
+      { cwd: fresh, reject: false }
+    );
+    const patchFile = path.join(fresh, "cleanup.patch");
+    await fs.writeFile(patchFile, pure, "utf8");
+    const check = await execa("git", ["apply", "--check", patchFile], {
+      cwd: fresh,
+      reject: false,
+    });
+    assert.equal(check.exitCode, 0, check.stderr || check.stdout || pure);
+    await fs.rm(fresh, { recursive: true, force: true });
   });
 
   console.log("\nAll unified diff tests passed.");
