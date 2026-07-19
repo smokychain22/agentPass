@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { useAppSession } from "@/components/app/app-session";
 import { RepositoryExplorer } from "@/components/repository-explorer";
 import { SelectedWorkPanel } from "@/components/selected-work-panel";
@@ -12,15 +13,27 @@ import {
 import { QuotePaymentPanel } from "@/components/quote-payment-panel";
 import dynamic from "next/dynamic";
 import { pathFromId } from "@/lib/user-directed/path-identity";
-
-const FindingsTab = dynamic(
-  () => import("@/components/app/findings-tab").then((m) => m.FindingsTab),
-  { ssr: false, loading: () => <p className="text-sm text-muted-foreground">Loading suggestions…</p> }
-);
-const VerifyTab = dynamic(
-  () => import("@/components/app/verify-tab").then((m) => m.VerifyTab),
-  { ssr: false, loading: () => <p className="text-sm text-muted-foreground">Loading delivery…</p> }
-);
+import {
+  DEFAULT_PRODUCT_MODE,
+  WORKBENCH_STAGES,
+  type ProductMode,
+  type WorkbenchStage,
+} from "@/lib/user-directed/product-modes";
+import {
+  allowsDirectWebsitePayment,
+  resolveSessionSource,
+  type SessionSource,
+} from "@/lib/user-directed/session-source";
+import { buildScanOutcomeSummary } from "@/lib/user-directed/scan-outcome-summary";
+import { flattenFindingsPayload } from "@/lib/findings/selection";
+import { riskBucketOf, isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
+import { buildGuidedReviewPrompt } from "@/lib/user-directed/guided-review";
+import {
+  outcomeLabelForFinding,
+  recommendedActionForFinding,
+  resultLabelForAction,
+} from "@/lib/user-directed/recommended-action";
+import { plainLanguageWhy } from "@/lib/findings/plain-language";
 import type {
   DynamicSignedQuote,
   PaymentChannelChoice,
@@ -30,48 +43,81 @@ import type {
 } from "@/lib/user-directed/types";
 import { createWorkflowA2ATask } from "@/lib/workflow/client";
 
-export type ProductWorkbenchTab =
-  | "overview"
-  | "explorer"
-  | "suggestions"
-  | "selected"
-  | "plan"
-  | "patch"
-  | "validation"
-  | "quote"
-  | "delivery";
-
-const TABS: Array<{ id: ProductWorkbenchTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "explorer", label: "Repository Explorer" },
-  { id: "suggestions", label: "Suggestions" },
-  { id: "selected", label: "Selected Work" },
-  { id: "plan", label: "Change Plan" },
-  { id: "patch", label: "Patch Preview" },
-  { id: "validation", label: "Validation" },
-  { id: "quote", label: "Quote & Payment" },
-  { id: "delivery", label: "Delivery" },
-];
+const VerifyTab = dynamic(
+  () => import("@/components/app/verify-tab").then((m) => m.VerifyTab),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground">Loading delivery…</p> }
+);
 
 type Props = {
-  initialTab?: ProductWorkbenchTab;
+  /** @deprecated Prefer stage — mapped for app/?tab= compatibility */
+  initialTab?: string;
+  initialStage?: WorkbenchStage;
 };
 
-export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
+function stageFromLegacyTab(tab?: string): WorkbenchStage {
+  switch (tab) {
+    case "plan":
+    case "patch":
+    case "validation":
+    case "selected":
+      return "plan";
+    case "quote":
+      return "pay";
+    case "delivery":
+    case "verify":
+      return "delivery";
+    default:
+      return "review";
+  }
+}
+
+export type ProductWorkbenchTab = WorkbenchStage;
+
+export function UserDirectedWorkbench({
+  initialTab,
+  initialStage,
+}: Props) {
+  const searchParams = useSearchParams();
   const {
     session,
     findings,
     selectedFindingIds,
+    setSelectedFindingIds,
     setA2aTask,
     setScopeReviewed,
+    a2aTask,
   } = useAppSession();
 
-  const [tab, setTab] = useState<ProductWorkbenchTab>(initialTab);
+  const sessionSource: SessionSource = useMemo(
+    () =>
+      resolveSessionSource({
+        querySource: searchParams.get("source") ?? searchParams.get("sessionSource"),
+        purchaseChannel: a2aTask?.purchaseChannel ?? null,
+        okxJobId: searchParams.get("okxJobId") ?? searchParams.get("jobId"),
+        okxTaskId: searchParams.get("taskId") ?? searchParams.get("okxTaskId"),
+      }),
+    [searchParams, a2aTask?.purchaseChannel]
+  );
+
+  const okxOnlyPayment = !allowsDirectWebsitePayment(sessionSource);
+
+  const [stage, setStage] = useState<WorkbenchStage>(
+    initialStage ?? stageFromLegacyTab(initialTab)
+  );
+  const [mode, setMode] = useState<ProductMode>(DEFAULT_PRODUCT_MODE);
   const [nodes, setNodes] = useState<RepositoryPathNode[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
   const [plans, setPlans] = useState<TransformationPlan[]>([]);
+  const [excludedFindingIds, setExcludedFindingIds] = useState<string[]>([]);
+  const [planSummary, setPlanSummary] = useState<{
+    deleteCount: number;
+    consolidateCount: number;
+    referenceUpdateCount: number;
+    editCount: number;
+    validationCommands: string[];
+  } | null>(null);
   const [lastActionType, setLastActionType] = useState<RequestedActionType>("DELETE");
   const [lastInstruction, setLastInstruction] = useState("");
   const [lastCanonical, setLastCanonical] = useState<string | undefined>();
@@ -82,8 +128,17 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
   const [quote, setQuote] = useState<DynamicSignedQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [channel, setChannel] = useState<PaymentChannelChoice | null>(null);
+  const [channel, setChannel] = useState<PaymentChannelChoice | null>(
+    okxOnlyPayment ? "okx_a2a_marketplace" : null
+  );
   const [authorizing, setAuthorizing] = useState(false);
+  const [planOpen, setPlanOpen] = useState({
+    selected: true,
+    patch: false,
+    evidence: false,
+    validation: false,
+    rollback: false,
+  });
 
   const scanId = session.scanRecordId || session.scanResult?.id;
   const repository =
@@ -100,6 +155,26 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
     [selectedPathIds]
   );
 
+  const outcome = useMemo(() => buildScanOutcomeSummary(findings), [findings]);
+  const flatFindings = useMemo(
+    () => (findings ? flattenFindingsPayload(findings) : []),
+    [findings]
+  );
+  const reviewFindings = useMemo(
+    () =>
+      flatFindings.filter(
+        (f) => riskBucketOf(f) === "REVIEW" && !isCleanupEligible(f)
+      ),
+    [flatFindings]
+  );
+  const eligibleFindings = useMemo(
+    () =>
+      flatFindings.filter(
+        (f) => isCleanupEligible(f) && !excludedFindingIds.includes(f.id)
+      ),
+    [flatFindings, excludedFindingIds]
+  );
+
   const executablePlan = plans.find((p) => p.executable && p.normalizedPatchHash);
 
   const invalidateQuoteAndPreview = useCallback(() => {
@@ -107,8 +182,12 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
     setQuote(null);
     setQuoteError(null);
     setPreviewError(null);
-    setChannel(null);
-  }, []);
+    if (!okxOnlyPayment) setChannel(null);
+  }, [okxOnlyPayment]);
+
+  useEffect(() => {
+    if (okxOnlyPayment) setChannel("okx_a2a_marketplace");
+  }, [okxOnlyPayment]);
 
   const onSelectionChange = useCallback(
     (pathIds: string[]) => {
@@ -152,6 +231,47 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
     };
   }, [scanId]);
 
+  async function prepareAutomaticPlan() {
+    if (!scanId) return;
+    setAnalyzing(true);
+    invalidateQuoteAndPreview();
+    try {
+      const res = await fetch("/api/user-directed/prepare-cleanup-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scanId,
+          repository,
+          pinnedCommit,
+          excludeFindingIds: excludedFindingIds,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        transformationPlans?: TransformationPlan[];
+        summary?: typeof planSummary;
+        includedFindingIds?: string[];
+      };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Prepare cleanup plan failed.");
+      }
+      setPlans(data.transformationPlans ?? []);
+      setPlanSummary(data.summary ?? null);
+      if (data.includedFindingIds?.length) {
+        setSelectedFindingIds(data.includedFindingIds);
+      }
+      setScopeReviewed(true);
+      setStage("plan");
+      setPlanOpen((s) => ({ ...s, selected: true, patch: true }));
+    } catch (err) {
+      setPlans([]);
+      setPreviewError(err instanceof Error ? err.message : "Prepare failed.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   async function analyzeScope(input: {
     actionType: RequestedActionType;
     userInstruction: string;
@@ -187,7 +307,7 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
       }
       setPlans(data.transformationPlans ?? []);
       setScopeReviewed(true);
-      setTab("plan");
+      setStage("plan");
     } catch (err) {
       setPlans([]);
       setPreviewError(err instanceof Error ? err.message : "Analyze failed.");
@@ -221,7 +341,6 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
         error?: string;
         preview?: PatchPreviewModel | null;
         transformationPlans?: TransformationPlan[];
-        payableQuoteAllowed?: boolean;
       };
       if (!res.ok || !data.ok) {
         throw new Error(data.error || "Preflight failed.");
@@ -233,7 +352,7 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
       if (!data.preview) {
         setPreviewError("No write patch for this action — quote is not available.");
       }
-      setTab("patch");
+      setPlanOpen((s) => ({ ...s, patch: true }));
     } catch (err) {
       setPreview(null);
       setPreviewError(err instanceof Error ? err.message : "Preflight failed.");
@@ -251,7 +370,9 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
     setQuoteLoading(true);
     setQuoteError(null);
     try {
-      const paymentChannel = channel ?? "direct_website";
+      const paymentChannel = okxOnlyPayment
+        ? "okx_a2a_marketplace"
+        : channel ?? "direct_website";
       const res = await fetch("/api/user-directed/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -266,7 +387,7 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
         throw new Error(data.error || "Quote failed.");
       }
       setQuote(data.quote);
-      setTab("quote");
+      setStage("pay");
     } catch (err) {
       setQuote(null);
       setQuoteError(err instanceof Error ? err.message : "Quote failed.");
@@ -276,17 +397,17 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
   }
 
   async function authorizePayment() {
-    if (!quote || !channel || !executablePlan || !scanId) return;
+    const effectiveChannel = okxOnlyPayment ? "okx_a2a_marketplace" : channel;
+    if (!quote || !effectiveChannel || !executablePlan || !scanId) return;
     setAuthorizing(true);
     setQuoteError(null);
     try {
-      // Re-bind quote to chosen channel
       const res = await fetch("/api/user-directed/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           plan: executablePlan,
-          paymentChannel: channel,
+          paymentChannel: effectiveChannel,
           clientAmountAtomic: quote.amountAtomic,
         }),
       });
@@ -306,7 +427,7 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
           ? `https://github.com/${session.scanResult.repo.owner}/${session.scanResult.repo.name}`
           : `https://github.com/${repository}`);
       const purchaseChannel =
-        channel === "okx_a2a_marketplace" ? "okx_marketplace" : "direct_site";
+        effectiveChannel === "okx_a2a_marketplace" ? "okx_marketplace" : "direct_site";
       const { task } = await createWorkflowA2ATask({
         repoUrl,
         branch: session.branch || session.scanResult?.repo?.branch,
@@ -322,7 +443,7 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
         amountMicro: data.quote.amountAtomic,
       });
       setA2aTask(task);
-      setTab("delivery");
+      setStage("delivery");
     } catch (err) {
       setQuoteError(err instanceof Error ? err.message : "Authorization failed.");
     } finally {
@@ -339,7 +460,7 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
 
   function requestEditPlan(plan: TransformationPlan) {
     setSelectedPathIds(plan.selectedRepositoryPaths.map((p) => `path_${p}`));
-    setTab("selected");
+    setMode("ADVANCED");
     void analyzeScope({
       actionType: "EDIT",
       userInstruction: "Request edit plan from review-first finding",
@@ -360,159 +481,366 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
     });
   }
 
+  function toggleExclude(findingId: string) {
+    setExcludedFindingIds((ids) =>
+      ids.includes(findingId) ? ids.filter((id) => id !== findingId) : [...ids, findingId]
+    );
+    invalidateQuoteAndPreview();
+  }
+
   return (
-    <div className="space-y-4" data-user-directed-workbench>
+    <div className="space-y-4" data-user-directed-workbench data-session-source={sessionSource}>
       <nav
         className="flex flex-wrap gap-1 rounded-md border border-border/40 bg-card/20 p-1"
-        aria-label="Product workflow tabs"
+        aria-label="Product workflow stages"
+        data-stage-count="4"
       >
-        {TABS.map((t) => (
+        {WORKBENCH_STAGES.map((t) => (
           <button
             key={t.id}
             type="button"
-            onClick={() => setTab(t.id)}
-            className={`rounded px-2.5 py-1.5 text-xs ${
-              tab === t.id
+            onClick={() => setStage(t.id)}
+            className={`rounded px-3 py-1.5 text-sm ${
+              stage === t.id
                 ? "bg-electric/15 text-electric"
                 : "text-muted-foreground hover:text-foreground"
             }`}
-            aria-current={tab === t.id ? "page" : undefined}
+            aria-current={stage === t.id ? "page" : undefined}
           >
             {t.label}
           </button>
         ))}
       </nav>
 
-      {tab === "overview" ? (
-        <section className="space-y-3 rounded-md border border-border/50 bg-card/30 p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Overview</p>
-          <h2 className="text-lg font-semibold">User-directed repository cleanup</h2>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Select any repository path, then choose what you want RepoDiet to inspect or change.
-            RepoDiet suggestions and your explorer selection both feed the same TransformationPlan
-            pipeline. Payment only after exact patch review and a dynamic signed quote.
-          </p>
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-            <li>Browse the pinned Git-tree inventory</li>
-            <li>Configure a requested action</li>
-            <li>Review the transformation plan and exact patch</li>
-            <li>Review validation and the dynamic quote</li>
-            <li>Choose Direct website or OKX.AI A2A payment</li>
-          </ol>
+      {okxOnlyPayment ? (
+        <p className="rounded-md border border-border/40 bg-card/20 px-3 py-2 text-xs text-muted-foreground">
+          OKX session — payment uses official OKX escrow only. Direct website payment is hidden.
+          {searchParams.get("okxJobId") || searchParams.get("jobId")
+            ? ` Job ${searchParams.get("okxJobId") || searchParams.get("jobId")}.`
+            : null}
+        </p>
+      ) : null}
+
+      {stage === "review" ? (
+        <section className="space-y-4" aria-label="Review">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["AUTOMATIC_CLEANUP", "Automatic Cleanup"],
+                ["GUIDED_REVIEW", "Guided Review"],
+                ["ADVANCED", "Advanced"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setMode(id)}
+                className={`rounded-md border px-3 py-1.5 text-xs ${
+                  mode === id
+                    ? "border-electric/50 bg-electric/10 text-electric"
+                    : "border-border/50 text-muted-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "AUTOMATIC_CLEANUP" ? (
+            <section className="space-y-4 rounded-md border border-border/50 bg-card/30 p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Automatic Cleanup
+              </p>
+              <h2 className="text-lg font-semibold">RepoDiet found</h2>
+              <ul className="grid gap-2 text-sm sm:grid-cols-2">
+                <li>{outcome.safeRemovals} files safe to remove</li>
+                <li>{outcome.duplicateConsolidations} duplicate group to consolidate</li>
+                <li>{outcome.referencesToUpdate} references requiring updates</li>
+                <li>{outcome.itemsNeedingDecision} items needing your decision</li>
+                <li>{outcome.protectedPaths} protected paths untouched</li>
+              </ul>
+              <div className="rounded-md border border-border/40 bg-background/40 p-3 text-sm">
+                <p className="font-medium">Estimated result</p>
+                <p className="mt-1 text-muted-foreground">
+                  {outcome.predictedFilesChanged} files changed · {outcome.predictedLinesRemoved}{" "}
+                  lines removed · No protected files touched
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {eligibleFindings.slice(0, 12).map((f) => {
+                  const action = recommendedActionForFinding(f);
+                  const included = !excludedFindingIds.includes(f.id);
+                  return (
+                    <article
+                      key={f.id}
+                      className="rounded-md border border-border/40 bg-background/30 p-3 text-sm"
+                    >
+                      <p className="font-medium">{outcomeLabelForFinding(f)}</p>
+                      <p className="mt-0.5">
+                        <code className="text-xs">{f.files[0] ?? f.title}</code>
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Result: {resultLabelForAction(action, f.files.length || 1)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="rounded border border-border/50 px-2 py-1 text-xs"
+                          onClick={() => toggleExclude(f.id)}
+                        >
+                          {included ? "Exclude from cleanup" : "Include in cleanup"}
+                        </button>
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer">View evidence</summary>
+                          <ul className="mt-1 list-disc pl-4">
+                            {(f.evidence.signals ?? []).slice(0, 6).map((s) => (
+                              <li key={s}>{s}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                  disabled={analyzing || !scanId}
+                  onClick={() => void prepareAutomaticPlan()}
+                >
+                  {analyzing ? "Preparing…" : "Prepare cleanup plan"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                  onClick={() => setMode("GUIDED_REVIEW")}
+                >
+                  Review uncertain items
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                  onClick={() => setMode("ADVANCED")}
+                >
+                  Advanced repository explorer
+                </button>
+              </div>
+              {previewError ? <p className="text-sm text-destructive">{previewError}</p> : null}
+            </section>
+          ) : null}
+
+          {mode === "GUIDED_REVIEW" ? (
+            <section className="space-y-4 rounded-md border border-border/50 bg-card/30 p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Guided Review</p>
+              <h2 className="text-lg font-semibold">Items needing your decision</h2>
+              {reviewFindings.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No uncertain findings — you can prepare the automatic cleanup plan.
+                </p>
+              ) : (
+                reviewFindings.slice(0, 20).map((f) => {
+                  const prompt = buildGuidedReviewPrompt(f);
+                  return (
+                    <article
+                      key={f.id}
+                      className="space-y-2 rounded-md border border-border/40 bg-background/30 p-3 text-sm"
+                    >
+                      <p className="font-medium">{prompt.question}</p>
+                      {prompt.blockerDetail ? (
+                        <p className="text-xs text-muted-foreground">{prompt.blockerDetail}</p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        {prompt.choices.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="rounded border border-border/50 px-2 py-1 text-xs"
+                            onClick={() => {
+                              if (c.id === "yes_keep") {
+                                void analyzeScope({
+                                  actionType: "KEEP",
+                                  userInstruction: `Keep ${prompt.path} intentionally`,
+                                });
+                              } else if (c.id === "no_verify_deletion") {
+                                setSelectedPathIds(
+                                  (f.files ?? []).map((p) => `path_${p}`)
+                                );
+                                void analyzeScope({
+                                  actionType: "INSPECT",
+                                  userInstruction: `Verify deletion for ${prompt.path}`,
+                                });
+                              }
+                            }}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+              <button
+                type="button"
+                className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                onClick={() => setMode("AUTOMATIC_CLEANUP")}
+              >
+                Back to Automatic Cleanup
+              </button>
+            </section>
+          ) : null}
+
+          {mode === "ADVANCED" ? (
+            <div className="space-y-4">
+              <RepositoryExplorer
+                nodes={nodes}
+                selectedPathIds={selectedPathIds}
+                onSelectionChange={onSelectionChange}
+                loading={inventoryLoading}
+                error={inventoryError}
+              />
+              <SelectedWorkPanel
+                repository={repository}
+                pinnedCommit={pinnedCommit}
+                selectedPathIds={selectedPathIds}
+                selectedPaths={selectedPaths}
+                selectedFindingIds={selectedFindingIds}
+                analyzing={analyzing}
+                plans={plans}
+                onAnalyze={analyzeScope}
+                onClearSelection={() => onSelectionChange([])}
+                progressiveDisclosure
+                findings={flatFindings}
+              />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {stage === "plan" ? (
+        <section className="space-y-3" aria-label="Plan">
+          {planSummary ? (
+            <div className="rounded-md border border-border/50 bg-card/30 p-4 text-sm">
+              <p className="font-medium">Combined cleanup plan</p>
+              <p className="mt-1 text-muted-foreground">
+                Delete {planSummary.deleteCount} · consolidate {planSummary.consolidateCount} ·
+                update refs {planSummary.referenceUpdateCount} · edits {planSummary.editCount}
+              </p>
+            </div>
+          ) : null}
+
+          <Expandable
+            title="Selected work"
+            open={planOpen.selected}
+            onToggle={() => setPlanOpen((s) => ({ ...s, selected: !s.selected }))}
+          >
+            <ChangePlanPanel
+              plans={plans}
+              onRequestDeeperVerification={requestDeeperVerification}
+              onRequestEditPlan={requestEditPlan}
+              onMarkRetained={markRetained}
+              onSuppress={suppressPlan}
+            />
+          </Expandable>
+
+          <Expandable
+            title="Exact patch"
+            open={planOpen.patch}
+            onToggle={() => setPlanOpen((s) => ({ ...s, patch: !s.patch }))}
+          >
+            <PatchPreviewPanel
+              plans={plans}
+              preview={preview}
+              loading={previewLoading}
+              error={previewError}
+              onGeneratePreview={generatePreview}
+            />
+          </Expandable>
+
+          <Expandable
+            title="Evidence"
+            open={planOpen.evidence}
+            onToggle={() => setPlanOpen((s) => ({ ...s, evidence: !s.evidence }))}
+          >
+            <ul className="space-y-2 text-sm text-muted-foreground">
+              {plans.flatMap((p) =>
+                p.evidence.slice(0, 4).map((e, i) => (
+                  <li key={`${p.planId}-${i}`}>
+                    [{e.kind}] {e.detail}
+                  </li>
+                ))
+              )}
+              {plans.length === 0 ? <li>Prepare a cleanup plan to see evidence.</li> : null}
+            </ul>
+          </Expandable>
+
+          <Expandable
+            title="Validation"
+            open={planOpen.validation}
+            onToggle={() => setPlanOpen((s) => ({ ...s, validation: !s.validation }))}
+          >
+            <ul className="text-sm">
+              {(
+                preview?.validationCommands ??
+                planSummary?.validationCommands ??
+                executablePlan?.validationCommands ??
+                []
+              ).map((c) => (
+                <li key={c}>
+                  <code>{c}</code>
+                </li>
+              ))}
+            </ul>
+          </Expandable>
+
+          <Expandable
+            title="Rollback"
+            open={planOpen.rollback}
+            onToggle={() => setPlanOpen((s) => ({ ...s, rollback: !s.rollback }))}
+          >
+            <p className="text-sm text-muted-foreground">
+              {preview?.rollbackPlan ??
+                executablePlan?.rollbackPlan ??
+                "Close or revert the delivery PR to restore the pinned commit."}
+            </p>
+          </Expandable>
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background"
-              onClick={() => setTab("explorer")}
+              className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+              disabled={!executablePlan && !preview}
+              onClick={() => {
+                if (!preview) void generatePreview();
+                else void createQuote();
+              }}
             >
-              Open Repository Explorer
+              Continue to Pay
             </button>
             <button
               type="button"
               className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-              onClick={() => setTab("suggestions")}
+              onClick={() => setStage("review")}
             >
-              View Suggestions
+              Back to Review
             </button>
           </div>
         </section>
       ) : null}
 
-      {tab === "explorer" ? (
-        <RepositoryExplorer
-          nodes={nodes}
-          selectedPathIds={selectedPathIds}
-          onSelectionChange={onSelectionChange}
-          loading={inventoryLoading}
-          error={inventoryError}
-        />
-      ) : null}
-
-      {tab === "suggestions" ? <FindingsTab /> : null}
-
-      {tab === "selected" ? (
-        <SelectedWorkPanel
-          repository={repository}
-          pinnedCommit={pinnedCommit}
-          selectedPathIds={selectedPathIds}
-          selectedPaths={selectedPaths}
-          selectedFindingIds={selectedFindingIds}
-          analyzing={analyzing}
-          plans={plans}
-          onAnalyze={analyzeScope}
-          onClearSelection={() => onSelectionChange([])}
-        />
-      ) : null}
-
-      {tab === "plan" ? (
-        <ChangePlanPanel
-          plans={plans}
-          onRequestDeeperVerification={requestDeeperVerification}
-          onRequestEditPlan={requestEditPlan}
-          onMarkRetained={markRetained}
-          onSuppress={suppressPlan}
-        />
-      ) : null}
-
-      {tab === "patch" ? (
-        <PatchPreviewPanel
-          plans={plans}
-          preview={preview}
-          loading={previewLoading}
-          error={previewError}
-          onGeneratePreview={generatePreview}
-        />
-      ) : null}
-
-      {tab === "validation" ? (
-        <section className="space-y-3 rounded-md border border-border/50 bg-card/30 p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Validation</p>
-          <h2 className="text-lg font-semibold">Validation plan</h2>
-          {executablePlan || preview ? (
-            <>
-              <ul className="text-sm">
-                {(preview?.validationCommands ??
-                  executablePlan?.validationCommands ??
-                  []
-                ).map((c) => (
-                  <li key={c}>
-                    <code>{c}</code>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-sm text-muted-foreground">
-                Predicted time: ~
-                {preview?.predictedValidationSeconds ??
-                  executablePlan?.predictedValidationSeconds ??
-                  90}
-                s
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Unexpected-change budget:{" "}
-                {preview?.unexpectedChangeBudget ??
-                  executablePlan?.unexpectedChangeBudget ??
-                  0}{" "}
-                files
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Rollback: {preview?.rollbackPlan ?? executablePlan?.rollbackPlan}
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Generate a patch preview to see the exact validation commands for this plan.
-            </p>
-          )}
-        </section>
-      ) : null}
-
-      {tab === "quote" ? (
+      {stage === "pay" ? (
         <QuotePaymentPanel
           quote={quote}
           loading={quoteLoading}
           error={quoteError}
-          channel={channel}
+          channel={okxOnlyPayment ? "okx_a2a_marketplace" : channel}
           onChannelChange={(c) => {
+            if (okxOnlyPayment) return;
             setChannel(c);
             setQuote(null);
           }}
@@ -520,10 +848,39 @@ export function UserDirectedWorkbench({ initialTab = "overview" }: Props) {
           onAuthorize={authorizePayment}
           authorizing={authorizing}
           canQuote={Boolean(executablePlan)}
+          hideDirectPayment={okxOnlyPayment}
+          sessionSource={sessionSource}
         />
       ) : null}
 
-      {tab === "delivery" ? <VerifyTab /> : null}
+      {stage === "delivery" ? <VerifyTab /> : null}
+    </div>
+  );
+}
+
+function Expandable({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-border/50 bg-card/20">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium"
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        {title}
+        <span className="text-muted-foreground">{open ? "−" : "+"}</span>
+      </button>
+      {open ? <div className="border-t border-border/40 p-3">{children}</div> : null}
     </div>
   );
 }

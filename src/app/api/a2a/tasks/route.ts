@@ -15,6 +15,10 @@ import {
   logMarketplaceTelemetry,
   touchMarketplaceHealth,
 } from "@/lib/okx/marketplace-telemetry";
+import {
+  recordInboundTaskReceived,
+  recordTaskAcknowledged,
+} from "@/lib/a2a/agent-runtime-health";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -34,15 +38,17 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const message = extractUserMessage(body);
+    await recordInboundTaskReceived();
 
     if (message && isMarketplaceDiscoveryMessage(message)) {
       logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
       const intake = buildMarketplaceIntakeResponse(requestId);
+      await recordTaskAcknowledged({ queueDepth: 0 });
       logMarketplaceTelemetry("a2a_acknowledgement_sent", {
         requestId,
         durationMs: Date.now() - started,
       });
-      await touchMarketplaceHealth({ a2aInitialResponseReady: true });
+      await touchMarketplaceHealth({ a2aInitialResponseReady: true, a2aRuntimeReady: true });
       return NextResponse.json({
         success: true,
         ...intake,
@@ -52,14 +58,32 @@ export async function POST(request: Request) {
 
     const type = body.type as A2ATaskType;
     if (!VALID_TYPES.includes(type)) {
-      return NextResponse.json({ success: false, error: "Invalid task type." }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid task type.",
+          acknowledged: true,
+          message:
+            "RepoDiet received your message but could not map it to a cleanup task type. Include the word task and Agent ID 5283, or provide type + repoUrl.",
+          code: "INVALID_TASK_TYPE",
+          retryable: true,
+          requestId,
+        },
+        { status: 400 }
+      );
     }
     if (typeof body.repoUrl !== "string" || !body.repoUrl.trim()) {
+      await recordTaskAcknowledged({ queueDepth: 0 });
       return NextResponse.json(
         {
           success: false,
           error: "repoUrl is required for task execution. For marketplace discovery, send message/prompt.",
           code: "SCOPE_REQUIRED",
+          acknowledged: true,
+          immediateAcknowledgement: true,
+          marketplaceLifecycle: "WAITING_FOR_REPOSITORY",
+          message:
+            "RepoDiet received your repository-cleanup task. Provide the repository URL or connect the RepoDiet GitHub App.",
           retryable: true,
           paymentRequired: false,
           paymentAlreadySettled: false,
@@ -97,6 +121,7 @@ export async function POST(request: Request) {
 
     if (asyncDelivery && (task.status === "queued" || task.status === "submitted")) {
       const ack = formatAsyncA2ATaskAcknowledgement(task);
+      await recordTaskAcknowledged({ queueDepth: 1 });
       logMarketplaceTelemetry("a2a_acknowledgement_sent", {
         requestId,
         taskId: task.id,
@@ -110,6 +135,7 @@ export async function POST(request: Request) {
       });
     }
 
+    await recordTaskAcknowledged({ queueDepth: 0 });
     return NextResponse.json({
       success: task.status === "completed" || !task.error,
       ...formatA2ATaskResponse(task),
@@ -122,6 +148,8 @@ export async function POST(request: Request) {
         success: false,
         error: message,
         code: "TASK_SUBMISSION_FAILED",
+        acknowledged: true,
+        message: `RepoDiet received your request but could not complete intake: ${message}`,
         retryable: true,
         paymentRequired: false,
         paymentAlreadySettled: false,

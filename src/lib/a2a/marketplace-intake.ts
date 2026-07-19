@@ -1,5 +1,9 @@
 import { getServerBaseUrl } from "@/lib/docs/base-url";
 import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
+import {
+  IMMEDIATE_TASK_ACKNOWLEDGEMENT,
+  IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
+} from "@/lib/a2a/okx-marketplace-lifecycle";
 
 const DISCOVERY_PATTERNS = [
   /agent\s*(id\s*)?5283/i,
@@ -7,6 +11,8 @@ const DISCOVERY_PATTERNS = [
   /hire\s+agent\s*5283/i,
   /repodiet.*service/i,
   /verified\s+repository\s+cleanup/i,
+  /repository\s+cleanup\s+task/i,
+  /create\s+a\s+repository\s+cleanup\s+task/i,
 ];
 
 export function extractUserMessage(body: Record<string, unknown>): string | undefined {
@@ -36,12 +42,15 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
 
   return {
     status: "AVAILABLE",
+    marketplaceLifecycle: "WAITING_FOR_REPOSITORY",
+    acknowledged: true,
+    immediateAcknowledgement: true,
     aspAgentId: String(identity.aspAgentId),
     a2aServiceId: String(identity.a2aServiceId),
     a2mcpServiceId: String(identity.a2mcpServiceId),
     service: "RepoDiet — Verified Repository Cleanup",
-    message:
-      "RepoDiet can analyze and clean a GitHub repository through a verified pull request. This response is immediate and does not start a deep scan. Provide repository scope below. Any authorized OKX buyer may use any GitHub repository they control — there is no repository allowlist.",
+    message: IMMEDIATE_TASK_ACKNOWLEDGEMENT,
+    messageShort: IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
     supported: {
       languages: ["JavaScript", "TypeScript"],
       frameworks: ["React", "Next.js", "Node.js"],
@@ -64,17 +73,22 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
     ],
     nextAction: "PROVIDE_REPOSITORY_SCOPE",
     contractState: "SCOPE_PENDING",
+    sessionSource: "OKX_A2A",
+    paymentChannel: "okx_escrow_only",
+    directWebsitePaymentHidden: true,
     repositoryIntakeEndpoint: `${baseUrl}/api/okx/intake/repository`,
     quickTriageEndpoint: `${baseUrl}/api/a2mcp/quick-triage`,
     deepScanEndpoint: `${baseUrl}/api/deep-scans`,
     a2aOrderEndpoint: `${baseUrl}/api/okx/a2a/orders`,
     taskStatusEndpoint: `${baseUrl}/api/a2a/tasks/{taskId}`,
+    agentHealthEndpoint: `${baseUrl}/api/okx/agent-health`,
     requestId,
     retryable: false,
     paymentRequired: false,
     paymentAlreadySettled: false,
     multiTenant: true,
     repositoryAllowlist: false,
+    scanStarted: false,
   };
 }
 
@@ -90,6 +104,9 @@ export function buildAsyncTaskAcknowledgement(input: {
 }) {
   return {
     status: input.workerUnavailable ? "DELIVERY_DELAYED" : "ACCEPTED",
+    acknowledged: true,
+    immediateAcknowledgement: true,
+    marketplaceLifecycle: input.contractState === "SCOPE_LOCKED" ? "ANALYZING" : "WAITING_FOR_REPOSITORY",
     taskId: input.taskId,
     contractState: input.contractState ?? "SCOPE_PENDING",
     nextAction: input.nextAction ?? "POLL_TASK_STATUS",
@@ -100,7 +117,12 @@ export function buildAsyncTaskAcknowledgement(input: {
     code: input.workerUnavailable ? "WORKER_UNAVAILABLE" : "TASK_ACCEPTED",
     message: input.workerUnavailable
       ? "Task accepted; worker capacity is delayed. Negotiation state preserved — no funds accepted until delivery can run. Deep scan job is persisted when repository scope is known."
-      : "Task accepted. Full repository analysis runs as a durable deep-scan job; this acknowledgement does not wait for scan completion.",
+      : IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
+    messageFull: IMMEDIATE_TASK_ACKNOWLEDGEMENT,
+    scanStarted: false,
+    sessionSource: "OKX_A2A",
+    paymentChannel: "okx_escrow_only",
+    directWebsitePaymentHidden: true,
     retryable: true,
     paymentRequired: false,
     paymentAlreadySettled: false,

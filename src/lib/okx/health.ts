@@ -4,9 +4,11 @@ import { isOkxPaidMode } from "./entitlement";
 import { buildOperatorProfile } from "./operator-identity";
 import { listOkxServices } from "./services";
 import { getMarketplaceHealthSnapshot } from "./marketplace-telemetry";
+import { getAgentRuntimeHealth } from "@/lib/a2a/agent-runtime-health";
 
 export async function buildOkxHealthResponse() {
   const marketplace = await getMarketplaceHealthSnapshot();
+  const agentRuntime = await getAgentRuntimeHealth();
   const staleQueueReport = await getLastStaleQueueReconciliationReport();
   const heartbeatAgeSeconds =
     marketplace.workerHeartbeatAgeMs == null
@@ -19,6 +21,22 @@ export async function buildOkxHealthResponse() {
     entitlementMode: resolveEntitlementMode(),
     a2mcpPaidMode: isOkxPaidMode(),
     ...marketplace,
+    agentRuntime: {
+      agentOnline: agentRuntime.agentOnline,
+      onchainOsAuthenticated: agentRuntime.onchainOsAuthenticated,
+      lastTaskReceivedAt: agentRuntime.lastTaskReceivedAt,
+      lastAcknowledgementAt: agentRuntime.lastAcknowledgementAt,
+      queueDepth: agentRuntime.queueDepth,
+      oldestUnacknowledgedTaskAgeSeconds: agentRuntime.oldestUnacknowledgedTaskAgeSeconds,
+      failedTaskCount: agentRuntime.failedTaskCount,
+      modelProviderAvailable: agentRuntime.modelProviderAvailable,
+      a2mcpEndpointHealthy: agentRuntime.a2mcpEndpointHealthy,
+      deliveryWorkerHealthy: agentRuntime.deliveryWorkerHealthy,
+      alertAgentCannotAnswer: agentRuntime.alertAgentCannotAnswer,
+      lastSeenAt: agentRuntime.lastSeenAt,
+    },
+    silentTimeoutPossible: false,
+    immediateTaskAcknowledgment: true,
     // Public redacted readiness contract (overrides raw marketplace fields).
     workerReady: marketplace.workerReady,
     workerHeartbeatAgeSeconds: heartbeatAgeSeconds ?? 0,
