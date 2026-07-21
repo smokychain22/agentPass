@@ -84,6 +84,21 @@ async function main() {
     assert.equal(res.status, 402);
   });
 
+  await test("production validation runs at request time and fails closed", () => {
+    withEnv(
+      {
+        VERCEL_ENV: "production",
+        REPODIET_APP_URL: "https://skillswap-skillswap7.vercel.app",
+      },
+      () => {
+        assert.throws(
+          () => paymentRequiredBody(resourceUrl, QUICK_TRIAGE_AMOUNT),
+          /okx_identity_conflict:NEXT_PUBLIC_APP_URL,REPODIET_APP_URL/
+        );
+      }
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // 2. PAYMENT-REQUIRED decodes to: x402Version=2, resource object, accepts array
   // ---------------------------------------------------------------------------
