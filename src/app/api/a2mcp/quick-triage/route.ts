@@ -7,6 +7,7 @@ import {
   executeGreenPrVerification,
   isGreenPrVerificationOperation,
 } from "@/lib/a2mcp/green-pr-verification";
+import { normalizeRepositoryTarget } from "@/lib/repository/repository-target";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,10 +101,30 @@ export async function POST(request: Request) {
     );
   }
 
+  let repositoryTarget: Awaited<ReturnType<typeof normalizeRepositoryTarget>>;
+  try {
+    repositoryTarget = await normalizeRepositoryTarget({
+      repositoryUrl,
+      branch,
+      resolveRemote: true,
+    });
+  } catch {
+    return NextResponse.json(
+      buildToolErrorResponse(
+        "analyze_repository",
+        taskId,
+        "UNSUPPORTED_REPOSITORY",
+        "The public GitHub repository or requested branch could not be resolved to a commit."
+      ),
+      { status: 422 }
+    );
+  }
+
   const forwardedBody = {
     repoUrl: repositoryUrl,
     repositoryUrl,
-    branch,
+    branch: repositoryTarget.branch,
+    commitSha: repositoryTarget.sourceCommit,
     maximumFindings: Math.floor(maximumFindings),
     source: "quick_triage",
     operation: "analyze_repository",

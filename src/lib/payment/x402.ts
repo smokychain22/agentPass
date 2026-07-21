@@ -51,6 +51,7 @@ export function paymentRequiredBody(
         extra: {
           name: "USD₮0",
           version: "1",
+          ...(quoteId ? { quoteId } : {}),
         },
       },
     ],

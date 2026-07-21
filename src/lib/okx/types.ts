@@ -37,6 +37,8 @@ export interface PaymentRequirementInput {
   commitSha: string;
   requestHash: string;
   resourceUrl: string;
+  requestMethod: string;
+  requestPayloadHash: string;
   findingIds?: string[];
   idempotencyKey?: string;
 }
@@ -109,6 +111,7 @@ export interface PaymentReceipt {
   network?: string;
   operation?: string;
   repository?: string;
+  commitSha?: string;
   resultDigest?: string;
   completedAt?: string;
   /** Authorized quote commercial digest (buyer-authorized request). */
@@ -124,6 +127,9 @@ export interface CommerceBinding {
   findingIds: string[];
   operation: CommerceOperation;
   requestHash: string;
+  resourceUrl?: string;
+  requestMethod?: string;
+  requestPayloadHash?: string;
 }
 
 export interface OkxOrderRecord {

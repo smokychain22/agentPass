@@ -4,6 +4,7 @@ import { getAgentTask } from "@/lib/a2mcp/task-store";
 import type { CommerceBinding } from "./types";
 import { buildCommerceBinding } from "./commerce-gateway";
 import type { CommerceOperation } from "@/lib/payment/types";
+import { a2mcpPayloadHash, canonicalRequestResource } from "@/lib/payment/a2mcp-request-binding";
 import {
   decodeAttestationStatement,
   getGreenPrAttestation,
@@ -13,8 +14,16 @@ import {
 
 export async function resolveBindingFromBody(
   body: Record<string, unknown>,
-  operation: CommerceOperation
+  operation: CommerceOperation,
+  request?: { url: string; method: string }
 ): Promise<CommerceBinding> {
+  const requestFields = request
+    ? {
+        resourceUrl: canonicalRequestResource(request.url),
+        requestMethod: request.method.toUpperCase(),
+        requestPayloadHash: a2mcpPayloadHash(body),
+      }
+    : {};
   const commitSha =
     typeof body.commitSha === "string" && body.commitSha.trim()
       ? body.commitSha.trim()
@@ -33,6 +42,7 @@ export async function resolveBindingFromBody(
     const contract = await getMaintenanceContractByDigest(receipt.payload.contractDigest);
     if (!contract) throw new Error("Maintenance contract not found for receipt.");
     return buildCommerceBinding({
+      ...requestFields,
       operation,
       repository: `${contract.contract.repository.owner}/${contract.contract.repository.name}`,
       branch: contract.contract.repository.branch,
@@ -52,6 +62,7 @@ export async function resolveBindingFromBody(
     const contract = await getMaintenanceContractByDigest(statement.predicate.contractDigest);
     if (!contract) throw new Error("Maintenance contract not found for attestation.");
     return buildCommerceBinding({
+      ...requestFields,
       operation,
       repository: `${contract.contract.repository.owner}/${contract.contract.repository.name}`,
       branch: contract.contract.repository.branch,
@@ -68,6 +79,7 @@ export async function resolveBindingFromBody(
     const findings = await getStoredFindings(scanId);
     if (!findings) throw new Error(`Findings not found for scanId ${scanId}.`);
     return buildCommerceBinding({
+      ...requestFields,
       operation,
       repository: `${findings.repo.owner}/${findings.repo.name}`,
       branch: findings.repo.branch,
@@ -82,6 +94,7 @@ export async function resolveBindingFromBody(
       const findings = await getStoredFindings(task.scanId);
       if (findings) {
         return buildCommerceBinding({
+          ...requestFields,
           operation,
           repository: `${findings.repo.owner}/${findings.repo.name}`,
           branch: findings.repo.branch,
@@ -96,6 +109,7 @@ export async function resolveBindingFromBody(
     const parsed = parseGitHubUrl(repoUrl);
     if (!parsed) throw new Error("Invalid repository URL.");
     return buildCommerceBinding({
+      ...requestFields,
       operation,
       repository: `${parsed.owner}/${parsed.repo}`,
       branch,
@@ -117,6 +131,7 @@ export async function resolveBindingFromBody(
             })()
           : "unknown/unknown";
     return buildCommerceBinding({
+      ...requestFields,
       operation,
       repository,
       branch,

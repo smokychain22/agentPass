@@ -132,7 +132,8 @@ function emptyFindings(repoUrl: string, branch?: string, scanId?: string): Findi
  */
 export async function runBoundedQuickTriageScan(
   repoUrl: string,
-  branch?: string
+  branch?: string,
+  commitSha?: string
 ): Promise<BoundedQuickTriageResult> {
   const timings: QuickTriageStageTiming[] = [];
   const overallStarted = Date.now();
@@ -149,7 +150,7 @@ export async function runBoundedQuickTriageScan(
     workspace = await withBudget(
       "fetch_and_extract",
       QUICK_TRIAGE_FETCH_BUDGET_MS,
-      () => prepareRepoWorkspace(repoUrl, branch),
+      () => prepareRepoWorkspace(repoUrl, branch, undefined, commitSha),
       timings,
       () => {
         fetchFailed = true;

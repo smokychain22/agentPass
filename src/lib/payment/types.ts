@@ -60,6 +60,11 @@ export interface BoundQuote {
   expiresAt: string;
   requestHash: string;
   bindingHash: string;
+  /** Exact protected HTTP request authorized by this quote. */
+  executionRequestHash?: string;
+  resourceUrl?: string;
+  requestMethod?: string;
+  requestPayloadHash?: string;
   priceLabel: string;
   status: QuoteStatus;
   lifecycleStatus: PaymentLifecycleStatus;
@@ -87,6 +92,7 @@ export interface BoundQuote {
   lastFailedTaskId?: string;
   completedTaskId?: string;
   completedReceiptId?: string;
+  settlementResponseHeader?: string;
 }
 
 export interface PaymentProof {
@@ -122,4 +128,8 @@ export interface EntitlementContext {
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
   contractDigest?: string;
+  requestHash?: string;
+  resourceUrl?: string;
+  requestMethod?: string;
+  requestPayloadHash?: string;
 }

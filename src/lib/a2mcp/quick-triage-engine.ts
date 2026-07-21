@@ -102,7 +102,7 @@ export async function executeQuickTriage(
     throw new Error("repositoryUrl/repoUrl is required for Quick Triage.");
   }
 
-  const bounded = await runBoundedQuickTriageScan(ref.repoUrl, ref.branch);
+  const bounded = await runBoundedQuickTriageScan(ref.repoUrl, ref.branch, ref.commitSha);
   return completeQuickTriageTask(taskId, bounded.findings, maximumFindings, {
     timings: bounded.timings,
     totalMs: bounded.totalMs,
