@@ -6,6 +6,7 @@ export interface RepoRefInput {
   branch?: string;
   scanId?: string;
   taskId?: string;
+  commitSha?: string;
 }
 
 function readRepoRef(body: Record<string, unknown>): RepoRefInput {
@@ -14,6 +15,7 @@ function readRepoRef(body: Record<string, unknown>): RepoRefInput {
     branch: typeof body.branch === "string" ? body.branch.trim() : undefined,
     scanId: typeof body.scanId === "string" ? body.scanId.trim() : undefined,
     taskId: typeof body.taskId === "string" ? body.taskId.trim() : undefined,
+    commitSha: typeof body.commitSha === "string" ? body.commitSha.trim() : undefined,
   };
 }
 

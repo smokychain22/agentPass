@@ -53,6 +53,11 @@ export async function createBoundQuote(input: {
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
   contractDigest?: string;
+  executionRequestHash?: string;
+  resourceUrl?: string;
+  requestMethod?: string;
+  requestPayloadHash?: string;
+  amountMicroOverride?: string;
 }): Promise<BoundQuote> {
   const paymentEnv = getPaymentEnvironment();
   if (paymentEnv.mainnetBlocked) {
@@ -93,7 +98,11 @@ export async function createBoundQuote(input: {
   const quoteId = `quote_${nanoid(12)}`;
   const nonce = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + QUOTE_TTL_MS).toISOString();
-  const { amountMicro, priceLabel } = priceForOperation(input.operation, input.sourceFileCount);
+  const priced = priceForOperation(input.operation, input.sourceFileCount);
+  const amountMicro = input.amountMicroOverride ?? priced.amountMicro;
+  const priceLabel = input.amountMicroOverride
+    ? `${(Number(input.amountMicroOverride) / 1_000_000).toFixed(2)} USD₮0`
+    : priced.priceLabel;
   const findingIds = [...input.findingIds].sort();
   const transformedSourceHashes = input.transformedSourceHashes
     ? Object.fromEntries(
@@ -120,6 +129,10 @@ export async function createBoundQuote(input: {
     environment,
     paymentMode: paymentEnv.paymentMode,
     chainId: String(chainId ?? ""),
+    executionRequestHash: input.executionRequestHash ?? "",
+    resourceUrl: input.resourceUrl ?? "",
+    requestMethod: input.requestMethod ?? "",
+    requestPayloadHash: input.requestPayloadHash ?? "",
   };
 
   const reqHash = requestHash(hashInput);
@@ -143,6 +156,10 @@ export async function createBoundQuote(input: {
     expiresAt,
     requestHash: reqHash,
     bindingHash,
+    executionRequestHash: input.executionRequestHash,
+    resourceUrl: input.resourceUrl,
+    requestMethod: input.requestMethod,
+    requestPayloadHash: input.requestPayloadHash,
     priceLabel,
     status: amountMicro === "0" ? "funded" : "payment_required",
     lifecycleStatus: amountMicro === "0" ? "funded" : "quote_created",
@@ -185,6 +202,10 @@ export function validateQuoteBinding(
     scanId?: string;
     transformedSourceHashes?: Record<string, string>;
     contractDigest?: string;
+    requestHash?: string;
+    resourceUrl?: string;
+    requestMethod?: string;
+    requestPayloadHash?: string;
   }
 ): { ok: boolean; reason?: string; status?: BoundQuote["lifecycleStatus"] } {
   if (new Date(quote.expiresAt).getTime() < Date.now()) {
@@ -208,6 +229,18 @@ export function validateQuoteBinding(
   }
   if (quote.operation !== context.operation) {
     return { ok: false, reason: "Operation mismatch.", status: "invalid_payment" };
+  }
+  if (quote.executionRequestHash && quote.executionRequestHash !== context.requestHash) {
+    return { ok: false, reason: "Protected request digest mismatch.", status: "invalid_payment" };
+  }
+  if (quote.resourceUrl && quote.resourceUrl !== context.resourceUrl) {
+    return { ok: false, reason: "Protected resource mismatch.", status: "invalid_payment" };
+  }
+  if (quote.requestMethod && quote.requestMethod !== context.requestMethod) {
+    return { ok: false, reason: "Protected request method mismatch.", status: "invalid_payment" };
+  }
+  if (quote.requestPayloadHash && quote.requestPayloadHash !== context.requestPayloadHash) {
+    return { ok: false, reason: "Protected request payload mismatch.", status: "invalid_payment" };
   }
   const a = [...quote.findingIds].sort().join(",");
   const b = [...context.findingIds].sort().join(",");

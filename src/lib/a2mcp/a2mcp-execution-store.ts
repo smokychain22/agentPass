@@ -7,6 +7,7 @@ export interface A2mcpCompletedExecution {
   receiptId?: string;
   httpStatus: number;
   responseBody: Record<string, unknown>;
+  responseHeaders?: Record<string, string>;
   resultDigest: string;
   completedAt: string;
 }

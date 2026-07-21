@@ -69,6 +69,11 @@ export async function createQuoteForOperation(input: {
   scanId?: string;
   transformedSourceHashes?: Record<string, string>;
   contractDigest?: string;
+  executionRequestHash?: string;
+  resourceUrl?: string;
+  requestMethod?: string;
+  requestPayloadHash?: string;
+  amountMicroOverride?: string;
 }): Promise<BoundQuote> {
   if (isKnownBaselineInvalidCommit(input.commitSha)) {
     throw new Error("baseline_invalid: Repository baseline is invalid at the pinned source commit.");
@@ -333,6 +338,11 @@ export async function requireEntitlement(
     quote = (await repairMisConsumedQuote(context.quoteId)) ?? quote;
   }
 
+  const binding = validateQuoteBinding(quote, context);
+  if (!binding.ok) {
+    return { ok: false, status: binding.status ?? "invalid_payment", reason: binding.reason };
+  }
+
   if (quote.amountMicro === "0") {
     return { ok: true, status: "funded", quote };
   }
@@ -370,11 +380,6 @@ export async function requireEntitlement(
       return { ok: false, status: "replayed", reason: lock.reason };
     }
     return { ok: true, status: "funded", quote: lock.quote };
-  }
-
-  const binding = validateQuoteBinding(quote, context);
-  if (!binding.ok) {
-    return { ok: false, status: binding.status ?? "invalid_payment", reason: binding.reason };
   }
 
   if (quote.status !== "funded" && quote.lifecycleStatus !== "funded") {

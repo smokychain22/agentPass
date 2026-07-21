@@ -24,6 +24,7 @@ import type {
 import { getBoundQuote } from "@/lib/payment/payment-store";
 import { getOkxReceipt, newReceiptId, saveOkxReceipt } from "./store";
 import { getOperatorAgentId } from "./operator-identity";
+import { QUICK_TRIAGE_AMOUNT } from "@/lib/payment/x402-config-validation";
 
 function resultHash(payload: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`;
@@ -39,6 +40,12 @@ export class RepodietPaymentAdapter implements OkxPaymentProvider {
       findingIds: input.findingIds ?? [],
       operation: input.serviceId as import("@/lib/payment/types").CommerceOperation,
       idempotencyKey: input.idempotencyKey,
+      executionRequestHash: input.requestHash,
+      resourceUrl: input.resourceUrl,
+      requestMethod: input.requestMethod,
+      requestPayloadHash: input.requestPayloadHash,
+      amountMicroOverride:
+        input.serviceId === "analyze_repository" ? QUICK_TRIAGE_AMOUNT : undefined,
     });
 
     return {
@@ -125,6 +132,7 @@ export async function signOkxReceipt(input: {
   network?: string;
   operation?: string;
   repository?: string;
+  commitSha?: string;
   /** Authorized quote commercial digest — must not be replaced by an execution binding digest. */
   quoteRequestDigest?: string;
   /** Narrower commerce-binding digest used at request gate time. */
@@ -142,7 +150,7 @@ export async function signOkxReceipt(input: {
   const signedV1 = signExecutionReceipt({
     taskId: input.taskId,
     repository: input.repository ?? "",
-    commitSha: "",
+    commitSha: input.commitSha ?? "",
     findingIds: [],
     patchHash: hash,
     verificationHash: hash,
@@ -203,6 +211,7 @@ export async function signOkxReceipt(input: {
     network: input.network,
     operation: input.operation,
     repository: input.repository,
+    commitSha: input.commitSha,
   };
   await saveOkxReceipt(receipt);
   return receipt;

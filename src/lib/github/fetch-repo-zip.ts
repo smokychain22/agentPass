@@ -37,6 +37,13 @@ function zipUrl(owner: string, repo: string, branch: string): string {
   return `https://github.com/${owner}/${repo}/archive/refs/heads/${encodeURIComponent(branch)}.zip`;
 }
 
+function commitZipUrl(owner: string, repo: string, commitSha: string): string {
+  if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
+    throw new RepoFetchError("Resolved commit SHA must contain exactly 40 hexadecimal characters.");
+  }
+  return `https://github.com/${owner}/${repo}/archive/${commitSha}.zip`;
+}
+
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 
 async function tryFetch(
@@ -134,6 +141,19 @@ export async function fetchRepoZip(
   }
 
   throw new RepoFetchError(FETCH_ERROR);
+}
+
+export async function fetchRepoZipAtCommit(
+  owner: string,
+  repo: string,
+  commitSha: string
+): Promise<ArrayBuffer> {
+  const response = await tryFetch(commitZipUrl(owner, repo, commitSha));
+  if (response.ok) return response.arrayBuffer();
+  if (response.status === 403) {
+    throw new RepoFetchError("Repository appears to be private or access is forbidden.");
+  }
+  throw new RepoFetchError("Could not fetch the repository at the resolved commit SHA.");
 }
 
 export async function isPublicGitHubRepository(owner: string, repo: string): Promise<boolean> {

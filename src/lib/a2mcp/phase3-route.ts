@@ -18,7 +18,6 @@ import type { CommerceOperation } from "@/lib/payment/types";
 import { paymentRequiredJsonResponse } from "@/lib/payment/x402-payment-required";
 import {
   getCompletedA2mcpExecution,
-  getCompletedA2mcpExecutionByQuote,
   newCompletedExecution,
   saveCompletedA2mcpExecution,
 } from "@/lib/a2mcp/a2mcp-execution-store";
@@ -62,6 +61,8 @@ export async function runPhase3ToolRoute(
   let gateQuoteId: string | undefined;
   let requestHash: string | undefined;
   let executionRequestDigest: string | undefined;
+  let paymentResponseHeader: string | undefined;
+  let paymentReference: string | undefined;
 
   try {
     if (request.method !== "POST") {
@@ -79,7 +80,10 @@ export async function runPhase3ToolRoute(
     }
 
     if (paid) {
-      const binding = await resolveBindingFromBody(body, operation);
+      const binding = await resolveBindingFromBody(body, operation, {
+        url: request.url,
+        method: request.method,
+      });
       executionRequestDigest = binding.requestHash;
       requestHash = executionRequestDigest;
 
@@ -89,42 +93,22 @@ export async function runPhase3ToolRoute(
         undefined;
 
       if (quoteId) {
-        const quoteForCache = await getBoundQuote(quoteId);
-        const digests = [executionRequestDigest, quoteForCache?.requestHash].filter(
-          (value): value is string => Boolean(value)
-        );
-        for (const digest of digests) {
-          const cached = await getCompletedA2mcpExecution(quoteId, digest);
-          if (cached) {
-            logMarketplaceTelemetry("a2mcp_replay_served", {
-              quoteId,
-              taskId,
-              receiptId: cached.receiptId,
-            });
-            return NextResponse.json(
-              {
-                ...cached.responseBody,
-                alreadyProcessed: true,
-                idempotentReplay: true,
-                originalTaskId: cached.taskId,
-                receiptId: cached.receiptId,
-              },
-              { status: cached.httpStatus }
-            );
-          }
-        }
-        // Quote-level cache (covers digest-key drift between quote/execution layers).
-        const byQuote = await getCompletedA2mcpExecutionByQuote(quoteId);
-        if (byQuote) {
+        const cached = await getCompletedA2mcpExecution(quoteId, executionRequestDigest);
+        if (cached) {
+          logMarketplaceTelemetry("a2mcp_replay_served", {
+            quoteId,
+            taskId,
+            receiptId: cached.receiptId,
+          });
           return NextResponse.json(
             {
-              ...byQuote.responseBody,
+              ...cached.responseBody,
               alreadyProcessed: true,
               idempotentReplay: true,
-              originalTaskId: byQuote.taskId,
-              receiptId: byQuote.receiptId,
+              originalTaskId: cached.taskId,
+              receiptId: cached.receiptId,
             },
-            { status: byQuote.httpStatus }
+            { status: cached.httpStatus, headers: cached.responseHeaders }
           );
         }
       }
@@ -137,6 +121,8 @@ export async function runPhase3ToolRoute(
         binding,
       });
       gateQuoteId = gate.quote?.quoteId ?? quoteId;
+      paymentResponseHeader = gate.paymentResponseHeader;
+      paymentReference = gate.paymentReference;
       executionRequestDigest = gate.requestHash ?? executionRequestDigest;
       // Prefer authorized quote commercial digest for receipt binding.
       requestHash = gate.quote?.requestHash ?? gate.requestHash;
@@ -168,7 +154,13 @@ export async function runPhase3ToolRoute(
                   originalTaskId: cached.taskId,
                   receiptId: cached.receiptId,
                 },
-                { status: cached.httpStatus }
+                {
+                  status: cached.httpStatus,
+                  headers: cached.responseHeaders ??
+                    (paymentResponseHeader
+                      ? { "PAYMENT-RESPONSE": paymentResponseHeader, "Cache-Control": "no-store" }
+                      : undefined),
+                }
               );
             }
           }
@@ -233,7 +225,12 @@ export async function runPhase3ToolRoute(
             requestHash,
             hint: "Funded entitlement preserved — retry the same quoteId without a new payment.",
           },
-          { status: 200 }
+          {
+            status: 200,
+            headers: paymentResponseHeader
+              ? { "PAYMENT-RESPONSE": paymentResponseHeader, "Cache-Control": "no-store" }
+              : { "Cache-Control": "no-store" },
+          }
         );
       }
       throw err;
@@ -263,6 +260,7 @@ export async function runPhase3ToolRoute(
         network: quote?.network,
         operation: quote?.operation,
         repository: quote?.repository,
+        commitSha: task.repository.commitSha,
       });
       task.receipt = {
         ...task.receipt,
@@ -275,12 +273,20 @@ export async function runPhase3ToolRoute(
         operatorAgentId: receipt.operatorAgentId,
         paymentReference: receipt.paymentReference,
         quoteId: receipt.quoteId,
+        signedReceipt: receipt.signedReceipt,
+        signedReceiptV2: receipt.signedReceiptV2,
+        signatureV2: receipt.signatureV2,
+        commitSha: receipt.commitSha,
       };
 
       if (gateQuoteId) {
         await markQuoteCompleted(gateQuoteId, taskId, receipt.receiptId);
         const responsePreview = buildToolActionResponse(tool, task);
-        Object.assign(responsePreview, { service: tool });
+        Object.assign(responsePreview, {
+          service: tool,
+          paymentReference: quote?.paymentReference ?? paymentReference,
+          transactionReference: quote?.paymentReference ?? paymentReference,
+        });
         const completed = newCompletedExecution({
           quoteId: gateQuoteId,
           requestHash: quoteRequestDigest,
@@ -288,6 +294,13 @@ export async function runPhase3ToolRoute(
           receiptId: receipt.receiptId,
           httpStatus: 200,
           responseBody: responsePreview as unknown as Record<string, unknown>,
+          responseHeaders: quote?.settlementResponseHeader
+            ? {
+                "PAYMENT-RESPONSE": quote.settlementResponseHeader,
+                "Cache-Control": "no-store",
+                "Access-Control-Expose-Headers": "PAYMENT-RESPONSE",
+              }
+            : undefined,
           resultDigest: resultDigest(task.result),
         });
         await saveCompletedA2mcpExecution(completed);
@@ -328,13 +341,25 @@ export async function runPhase3ToolRoute(
 
     const response = buildToolActionResponse(tool, task);
     if (paid) {
-      Object.assign(response, { service: tool });
+      Object.assign(response, {
+        service: tool,
+        paymentReference,
+        transactionReference: paymentReference,
+      });
     }
     // Cache-Control: no-store prevents intermediary caches from serving stale
     // paid responses or returning a cached result to a different buyer.
     return NextResponse.json(response, {
       status: task.status === "failed" ? 422 : 200,
-      headers: paid ? { "Cache-Control": "no-store" } : undefined,
+      headers: paid
+        ? {
+            "Cache-Control": "no-store",
+            ...(paymentResponseHeader ? { "PAYMENT-RESPONSE": paymentResponseHeader } : {}),
+            ...(paymentResponseHeader
+              ? { "Access-Control-Expose-Headers": "PAYMENT-RESPONSE" }
+              : {}),
+          }
+        : undefined,
     });
   } catch (err) {
     if (err instanceof PaymentRequiredError) {

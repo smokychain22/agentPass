@@ -10,7 +10,12 @@ import {
 } from "@/lib/demo/constants";
 import { getDemoRepoLocalPath } from "@/lib/demo/paths";
 import { parseGitHubUrl, buildRepoUrl } from "@/lib/github/parse-github-url";
-import { fetchRepoZip, fetchBranchCommitSha, RepoFetchError } from "@/lib/github/fetch-repo-zip";
+import {
+  fetchRepoZip,
+  fetchRepoZipAtCommit,
+  fetchBranchCommitSha,
+  RepoFetchError,
+} from "@/lib/github/fetch-repo-zip";
 import { assertZipSize } from "@/lib/a2mcp/limits";
 import { unzipRepoToDir } from "@/lib/scanner/unzip-repo";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
@@ -38,6 +43,7 @@ async function prepareFromGithubZip(
   owner: string,
   name: string,
   branchInput: string | undefined,
+  commitShaInput: string | undefined,
   url: string,
   onStage?: (stage: ScanJobStage) => void
 ): Promise<RepoWorkspace> {
@@ -45,10 +51,13 @@ async function prepareFromGithubZip(
 
   try {
     onStage?.("resolving_branch");
-    const { buffer, branch } = await fetchRepoZip(owner, name, branchInput);
+    const branch = branchInput || "main";
+    const buffer = commitShaInput
+      ? await fetchRepoZipAtCommit(owner, name, commitShaInput)
+      : (await fetchRepoZip(owner, name, branchInput)).buffer;
     onStage?.("downloading_archive");
     assertZipSize(buffer.byteLength);
-    const commitSha = (await fetchBranchCommitSha(owner, name, branch)) ?? undefined;
+    const commitSha = commitShaInput ?? (await fetchBranchCommitSha(owner, name, branch)) ?? undefined;
 
     await fs.writeFile(workspace.archivePath, Buffer.from(buffer));
     onStage?.("extracting_archive");
@@ -102,6 +111,7 @@ async function prepareLocalDemoWorkspace(): Promise<RepoWorkspace> {
       DEMO_REPO_OWNER,
       DEMO_REPO_NAME,
       DEMO_REPO_BRANCH,
+      undefined,
       DEMO_REPO_URL
     );
   }
@@ -156,7 +166,8 @@ async function prepareE2eFixtureWorkspace(repoUrl: string): Promise<RepoWorkspac
 export async function prepareRepoWorkspace(
   repoUrl: string,
   branchInput?: string,
-  onStage?: (stage: ScanJobStage) => void
+  onStage?: (stage: ScanJobStage) => void,
+  commitShaInput?: string
 ): Promise<RepoWorkspace> {
   if (isDemoRepoUrl(repoUrl)) {
     return prepareLocalDemoWorkspace();
@@ -179,6 +190,7 @@ export async function prepareRepoWorkspace(
     parsed.owner,
     parsed.repo,
     branchOverride,
+    commitShaInput,
     buildRepoUrl(parsed.owner, parsed.repo),
     onStage
   );
