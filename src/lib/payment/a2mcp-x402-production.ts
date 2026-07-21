@@ -136,7 +136,7 @@ export interface FacilitatorDiagnostic {
 
 export type FacilitatorDiagnosticSink = (diagnostic: FacilitatorDiagnostic) => void;
 
-const SECRET_VALUE_PATTERN = /\b(ok[-_ ]access[-_ ]key|api[-_ ]?key|secret|passphrase|private[-_ ]?key|github[-_ ]?token|session[-_ ]?secret)\b\s*[:=]?\s*["']?[A-Za-z0-9_./+-]{4,}["']?/gi;
+const SECRET_VALUE_PATTERN = /\b(okx[-_ ]?(?:api[-_ ]?key|secret|passphrase)|ok[-_ ]access[-_ ]key|api[-_ ]?key|secret|passphrase|private[-_ ]?key|github[-_ ]?token|session[-_ ]?secret)\b\s*[:=]?\s*["']?[A-Za-z0-9_./+-]{4,}["']?/gi;
 
 function safeBrokerText(value: unknown, secrets: string[] = []): string | null | undefined {
   if (value == null) return value as null | undefined;
@@ -148,6 +148,11 @@ function safeBrokerText(value: unknown, secrets: string[] = []): string | null |
     if (secret) text = text.split(secret).join("[redacted]");
   }
   return text.slice(0, 240);
+}
+
+/** Redacts and bounds facilitator text before a diagnostic response leaves the server. */
+export function redactX402DiagnosticText(value: unknown): string {
+  return safeBrokerText(value) ?? "";
 }
 
 function redactAddress(value: unknown): string | undefined {
@@ -535,10 +540,89 @@ function diagnosticContext(body: JsonRecord | undefined): Pick<FacilitatorDiagno
   };
 }
 
-interface OkxX402BrokerOptions {
+export interface OkxX402BrokerOptions {
   now?: () => Date;
   correlationId?: () => string;
   diagnosticSink?: FacilitatorDiagnosticSink;
+}
+
+export interface X402VerifyOnlyResult {
+  data?: VerifyData;
+  diagnostic: FacilitatorDiagnostic;
+  internalCode: string;
+}
+
+export interface X402VerifyOnlyClient {
+  verify(
+    paymentPayload: X402PaymentPayloadV2,
+    paymentRequirements: JsonRecord
+  ): Promise<X402VerifyOnlyResult>;
+}
+
+/**
+ * Exposes only facilitator verification. The returned frozen capability has no
+ * settlement or settlement-status method, so diagnostic callers cannot redeem
+ * an authorization even accidentally.
+ */
+export function createOkxX402VerifyOnlyClient(input: {
+  correlationId: string;
+  diagnosticSink?: FacilitatorDiagnosticSink;
+  fetchImpl?: typeof fetch;
+  env?: NodeJS.ProcessEnv;
+}): X402VerifyOnlyClient {
+  return Object.freeze({
+    async verify(
+      paymentPayload: X402PaymentPayloadV2,
+      paymentRequirements: JsonRecord
+    ) {
+      let captured: FacilitatorDiagnostic | undefined;
+      const sink: FacilitatorDiagnosticSink = (diagnostic) => {
+        captured = diagnostic;
+        input.diagnosticSink?.(diagnostic);
+      };
+      const client = new OkxX402Broker(input.fetchImpl ?? fetch, input.env ?? process.env, {
+        correlationId: () => input.correlationId,
+        diagnosticSink: sink,
+      });
+      try {
+        const data = await client.verify(paymentPayload, paymentRequirements);
+        return {
+          data,
+          diagnostic: captured ?? fallbackVerifyDiagnostic(input.correlationId, paymentPayload),
+          internalCode: "VERIFICATION_ACCEPTED",
+        };
+      } catch (error) {
+        return {
+          diagnostic: captured ?? fallbackVerifyDiagnostic(input.correlationId, paymentPayload),
+          internalCode: error instanceof A2mcpX402Error
+            ? error.code
+            : "PAYMENT_VERIFICATION_REJECTED",
+        };
+      }
+    },
+  });
+}
+
+function fallbackVerifyDiagnostic(
+  correlationId: string,
+  paymentPayload: X402PaymentPayloadV2
+): FacilitatorDiagnostic {
+  return {
+    event: "repodiet.x402.facilitator",
+    phase: "verify",
+    correlationId,
+    paymentAttemptId: paymentAttemptId({ paymentPayload }),
+    timestamp: new Date().toISOString(),
+    path: "/api/v6/pay/x402/verify",
+    x402Version: paymentPayload.x402Version,
+    scheme: paymentPayload.accepted.scheme,
+    network: paymentPayload.accepted.network,
+    asset: paymentPayload.accepted.asset,
+    amount: paymentPayload.accepted.amount,
+    recipient: redactAddress(paymentPayload.accepted.payTo),
+    validAfter: paymentPayload.payload.authorization.validAfter,
+    validBefore: paymentPayload.payload.authorization.validBefore,
+  };
 }
 
 export class OkxX402Broker implements X402Broker {
