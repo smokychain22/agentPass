@@ -1382,7 +1382,15 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
       ? task.status === "completed" || task.status === "escrow_released"
         ? "DONE"
         : "INSPECT_FAILURE"
-      : "POLL_TASK_STATUS",
+      : task.status === "quote_required" || task.status === "awaiting_payment"
+        ? "FUND_OR_APPROVE_QUOTE"
+        : task.status === "awaiting_approval"
+          ? "APPROVE_SCOPE"
+          : task.status === "delivery_ready" || task.status === "delivery_submitted"
+            ? "REVIEW_DELIVERY"
+            : task.status === "analysis_failed" && task.result.recoverable
+              ? "RETRY_ANALYSIS"
+              : "POLL_TASK_STATUS",
     purchaseChannel: task.input.purchaseChannel ?? "okx_marketplace",
     repository: task.repository,
     scanId: task.scanId,

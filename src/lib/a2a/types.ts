@@ -141,6 +141,11 @@ export interface A2ATaskResult {
   dispatchAttempt?: number;
   workflowRunId?: string;
   workflowRunUrl?: string;
+  /** Optimistic concurrency version for parent↔child reconciliation. */
+  stateVersion?: number;
+  reconciledFromScanAt?: string;
+  childScanStage?: string;
+  recoverable?: boolean;
   findings?: Record<string, unknown>;
   changes?: {
     changedFiles: string[];

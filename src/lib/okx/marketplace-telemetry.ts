@@ -22,6 +22,7 @@ export type MarketplaceTelemetryEvent =
   | "a2a_acknowledgement_sent"
   | "a2a_task_queued"
   | "a2a_task_delivered"
+  | "a2a_parent_reconciled_from_scan"
   | "deep_scan_queued"
   | "deep_scan_ready";
 
