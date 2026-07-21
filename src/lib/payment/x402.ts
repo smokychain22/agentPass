@@ -17,12 +17,17 @@ export interface PaymentVerification {
 export function paymentRequiredBody(
   resourceUrl: string,
   amountMicro: string,
-  quoteId?: string
+  quoteId?: string,
+  options?: { description?: string }
 ) {
   return {
     x402Version: 2,
     error: "payment required",
-    resource: { url: resourceUrl, mimeType: "application/json" },
+    resource: {
+      url: resourceUrl,
+      description: options?.description ?? "RepoDiet A2MCP Quick Triage — analyze_repository",
+      mimeType: "application/json",
+    },
     quoteId,
     accepts: [
       {
@@ -34,8 +39,8 @@ export function paymentRequiredBody(
         asset: X402_ASSET,
         extra: {
           version: "1",
-          symbol: "USDT",
-          name: "USDT",
+          name: "USD₮0",
+          symbol: "USD₮0",
           currency: "USDT",
           transferMethod: "eip3009",
           service: "RepoDiet",

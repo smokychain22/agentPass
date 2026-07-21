@@ -39,12 +39,59 @@ function address(value: string | undefined, fallback: string): string {
 }
 
 export function resolvePaymentMode(env: NodeJS.ProcessEnv = process.env): PaymentMode {
+  // Prefer REPODIET_PAYMENT_ENV (testnet|production) then REPODIET_PAYMENT_MODE (testnet|mainnet).
+  const envAlias = (env.REPODIET_PAYMENT_ENV || "").trim().toLowerCase();
+  if (envAlias === "testnet") return "testnet";
+  if (envAlias === "production" || envAlias === "mainnet") return "mainnet";
+
   const explicit = (env.REPODIET_PAYMENT_MODE || "").trim().toLowerCase();
   if (explicit === "testnet" || explicit === "mainnet") return explicit;
+  if (explicit === "production") return "mainnet";
   // Legacy aliases — do not invent a mode from VERCEL_ENV alone.
   if ((env.REPODIET_X402_NETWORK || "").trim() === TESTNET_NETWORK) return "testnet";
   if ((env.REPODIET_X402_NETWORK || "").trim() === MAINNET_NETWORK) return "mainnet";
   return "unset";
+}
+
+/**
+ * Fail closed when production/mainnet mode is selected but network/asset/payee are incomplete
+ * or resolve to testnet terms.
+ */
+export function assertProductionPaymentConfig(
+  env: NodeJS.ProcessEnv = process.env
+): PaymentEnvironment {
+  const pe = getPaymentEnvironment(env);
+  if (pe.paymentMode !== "mainnet") {
+    const err = new Error(
+      "PRODUCTION_PAYMENT_CONFIG_REQUIRED: set REPODIET_PAYMENT_ENV=production (or REPODIET_PAYMENT_MODE=mainnet)."
+    );
+    (err as Error & { code: string }).code = "PRODUCTION_PAYMENT_CONFIG_REQUIRED";
+    throw err;
+  }
+  if (pe.network !== MAINNET_NETWORK || pe.chainId !== MAINNET_CHAIN_ID || pe.asset !== MAINNET_USDT) {
+    const err = new Error(
+      `PRODUCTION_PAYMENT_MISMATCH: expected ${MAINNET_NETWORK} / ${MAINNET_USDT}, got ${pe.network} / ${pe.asset}`
+    );
+    (err as Error & { code: string }).code = "PRODUCTION_PAYMENT_MISMATCH";
+    throw err;
+  }
+  if (pe.isTestnet) {
+    const err = new Error("PRODUCTION_PAYMENT_MIXED: production mode must never emit testnet terms.");
+    (err as Error & { code: string }).code = "PRODUCTION_PAYMENT_MIXED";
+    throw err;
+  }
+  const payTo =
+    env.OKX_AGENTIC_WALLET_ADDRESS?.trim() ||
+    env.PAY_TO_ADDRESS?.trim() ||
+    env.REPODIET_PAY_TO?.trim();
+  if (!payTo || !/^0x[a-fA-F0-9]{40}$/.test(payTo)) {
+    const err = new Error(
+      "PRODUCTION_PAYMENT_PAYEE_MISSING: set OKX_AGENTIC_WALLET_ADDRESS / PAY_TO_ADDRESS to a valid EVM address."
+    );
+    (err as Error & { code: string }).code = "PRODUCTION_PAYMENT_PAYEE_MISSING";
+    throw err;
+  }
+  return pe;
 }
 
 export function getPaymentEnvironment(env: NodeJS.ProcessEnv = process.env): PaymentEnvironment {

@@ -6,22 +6,65 @@ import { listOkxServices } from "./services";
 import { getMarketplaceHealthSnapshot } from "./marketplace-telemetry";
 import { getAgentRuntimeHealth } from "@/lib/a2a/agent-runtime-health";
 import { getPaymentEnvironment } from "@/lib/payment/payment-environment";
+import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 
 export async function buildOkxHealthResponse() {
   const marketplace = await getMarketplaceHealthSnapshot();
   const agentRuntime = await getAgentRuntimeHealth();
   const staleQueueReport = await getLastStaleQueueReconciliationReport();
   const paymentEnv = getPaymentEnvironment();
+  const identity = getCanonicalOkxIdentity();
   const heartbeatAgeSeconds =
     marketplace.workerHeartbeatAgeMs == null
       ? null
       : Math.max(0, Math.floor(marketplace.workerHeartbeatAgeMs / 1000));
+
+  const configurationReady = Boolean(marketplace.configurationReady);
+  const discoveryReady = Boolean(identity.aspAgentId && identity.a2mcpServiceId);
+  const unpaidChallengeHealthy =
+    paymentEnv.mainnetBlocked !== true &&
+    Boolean(paymentEnv.network && paymentEnv.asset && paymentEnv.sellerWallet);
+  const paymentVerificationReady = Boolean(marketplace.paymentVerifierReady);
+  const workerReady = Boolean(marketplace.workerReady);
+  const signerReady = Boolean(marketplace.receiptSignerReady);
+  const githubDeliveryReady = Boolean(marketplace.githubAppReady);
+  const lastPaidCallAt = marketplace.a2mcpLastSuccessfulPaidCall;
+  const lastPaidCallStatus = lastPaidCallAt ? "succeeded" : "never";
+
+  // Endpoint is healthy for unpaid 402 challenges even when no customer has paid yet.
+  const a2mcpEndpointHealthy =
+    unpaidChallengeHealthy && configurationReady && discoveryReady;
+
+  const degradedReasons = [
+    ...(marketplace.degradedReasons ?? []),
+    ...(!unpaidChallengeHealthy ? ["payment_challenge_config_incomplete"] : []),
+    ...(!paymentVerificationReady ? ["payment_verification_not_ready"] : []),
+    ...(!workerReady ? ["worker_not_ready"] : []),
+    ...(!signerReady ? ["receipt_signer_not_ready"] : []),
+    ...(!githubDeliveryReady ? ["github_delivery_not_ready"] : []),
+  ];
+
+  const overallReady =
+    a2mcpEndpointHealthy &&
+    paymentVerificationReady &&
+    workerReady &&
+    signerReady &&
+    degradedReasons.length === 0;
+
   return {
     ok: true,
     service: "RepoDiet OKX Commerce Gateway",
     operator: buildOperatorProfile(),
     entitlementMode: resolveEntitlementMode(),
     a2mcpPaidMode: isOkxPaidMode(),
+    application: {
+      version: process.env.npm_package_version ?? "1.0.0",
+      commit:
+        process.env.VERCEL_GIT_COMMIT_SHA ||
+        process.env.GIT_COMMIT_SHA ||
+        process.env.COMMIT_SHA ||
+        null,
+    },
     paymentEnvironment: {
       environment: paymentEnv.environment,
       paymentMode: paymentEnv.paymentMode,
@@ -33,6 +76,21 @@ export async function buildOkxHealthResponse() {
       mainnetBlocked: paymentEnv.mainnetBlocked,
       blockReason: paymentEnv.blockReason ?? null,
     },
+    configurationReady,
+    discoveryReady,
+    unpaidChallengeHealthy,
+    paymentVerificationReady,
+    workerReady,
+    signerReady,
+    githubDeliveryReady,
+    lastPaidCallAt,
+    lastPaidCallStatus,
+    lastA2ATaskAt: agentRuntime.lastTaskReceivedAt,
+    lastSuccessfulA2ADeliveryAt: marketplace.lastSuccessfulWorkerRun ?? null,
+    a2mcpLastSuccessfulPaidCall: lastPaidCallAt,
+    a2mcpEndpointHealthy,
+    overallReady,
+    degradedReasons,
     ...marketplace,
     agentRuntime: {
       agentOnline: agentRuntime.agentOnline,
@@ -42,23 +100,18 @@ export async function buildOkxHealthResponse() {
       queueDepth: agentRuntime.queueDepth,
       oldestUnacknowledgedTaskAgeSeconds: agentRuntime.oldestUnacknowledgedTaskAgeSeconds,
       failedTaskCount: agentRuntime.failedTaskCount,
-      // Do not claim model/delivery health from static defaults.
       modelProviderAvailable: null,
-      a2mcpEndpointHealthy: agentRuntime.a2mcpEndpointHealthy,
+      a2mcpEndpointHealthy,
       deliveryWorkerHealthy: null,
       alertAgentCannotAnswer: agentRuntime.alertAgentCannotAnswer,
       lastSeenAt: agentRuntime.lastSeenAt,
     },
     silentTimeoutPossible: false,
     immediateTaskAcknowledgment: true,
-    configurationReady: Boolean(marketplace.configurationReady),
     queueReady: Boolean(marketplace.queueReady ?? marketplace.deepScanQueueReady),
     workerCapacityReady: marketplace.workerCapacityReady !== false,
     workflowReady: marketplace.workflowReady !== false,
     a2aRuntimeReady: Boolean(marketplace.a2aRuntimeReady),
-    degradedReasons: marketplace.degradedReasons ?? [],
-    // Public redacted readiness contract (overrides raw marketplace fields).
-    workerReady: marketplace.workerReady,
     workerHeartbeatAgeSeconds: heartbeatAgeSeconds,
     workerHeartbeatAgeMs: marketplace.workerHeartbeatAgeMs,
     activeWorkers: marketplace.activeWorkers,
