@@ -120,6 +120,8 @@ class Broker implements X402Broker {
   settleCalls = 0;
   valid = true;
   settleSuccess = true;
+  initialStatus: "success" | "pending" | "timeout" = "success";
+  statusCalls = 0;
 
   async verify() {
     this.verifyCalls += 1;
@@ -128,9 +130,23 @@ class Broker implements X402Broker {
 
   async settle() {
     this.settleCalls += 1;
+    if (this.initialStatus !== "success") {
+      return {
+        success: this.initialStatus === "pending",
+        status: this.initialStatus,
+        payer: BUYER,
+        transaction: `0x${"ab".repeat(32)}`,
+        network: MAINNET_NETWORK,
+      };
+    }
     return this.settleSuccess
       ? { success: true, status: "success", payer: BUYER, transaction: `0x${"ab".repeat(32)}`, network: MAINNET_NETWORK }
-      : { success: false, status: "failed", errorMessage: "SECRET_SIGNATURE" };
+      : { success: false, status: "failed", errorMessage: "broker settlement failed" };
+  }
+
+  async settlementStatus() {
+    this.statusCalls += 1;
+    return { success: true, status: "success", payer: BUYER, transaction: `0x${"ab".repeat(32)}`, network: MAINNET_NETWORK };
   }
 }
 
@@ -175,12 +191,16 @@ async function main() {
   });
 
   const validationCases: Array<[string, (p: X402PaymentPayloadV2) => void, string]> = [
-    ["wrong amount", (p) => { p.accepted.amount = "1"; }, "PAYMENT_MISMATCH"],
-    ["wrong asset", (p) => { p.accepted.asset = `0x${"2".repeat(40)}`; }, "PAYMENT_MISMATCH"],
-    ["wrong network", (p) => { p.accepted.network = "eip155:1952"; }, "PAYMENT_MISMATCH"],
-    ["wrong recipient", (p) => { p.accepted.payTo = `0x${"3".repeat(40)}`; }, "PAYMENT_MISMATCH"],
-    ["expired authorization", (p) => { p.payload.authorization.validBefore = String(now - 1); }, "EXPIRED_AUTHORIZATION"],
-    ["resource mismatch", (p) => { p.resource.url = `${RESOURCE}/other`; }, "PAYMENT_MISMATCH"],
+    ["wrong amount", (p) => { p.accepted.amount = "1"; }, "PAYMENT_AMOUNT_MISMATCH"],
+    ["wrong asset", (p) => { p.accepted.asset = `0x${"2".repeat(40)}`; }, "PAYMENT_ASSET_MISMATCH"],
+    ["wrong network", (p) => { p.accepted.network = "eip155:1952"; }, "PAYMENT_NETWORK_MISMATCH"],
+    ["wrong recipient", (p) => { p.accepted.payTo = `0x${"3".repeat(40)}`; }, "PAYMENT_RECIPIENT_MISMATCH"],
+    ["wrong authorization recipient", (p) => { p.payload.authorization.to = `0x${"4".repeat(40)}`; }, "PAYMENT_RECIPIENT_MISMATCH"],
+    ["wrong authorization value", (p) => { p.payload.authorization.value = "1"; }, "PAYMENT_AMOUNT_MISMATCH"],
+    ["expired authorization", (p) => { p.payload.authorization.validBefore = String(now - 1); }, "PAYMENT_AUTHORIZATION_EXPIRED"],
+    ["malformed nonce", (p) => { p.payload.authorization.nonce = "0x1234"; }, "PAYMENT_PAYLOAD_INVALID"],
+    ["malformed signature", (p) => { p.payload.signature = "0x1234"; }, "PAYMENT_SIGNATURE_INVALID"],
+    ["resource mismatch", (p) => { p.resource.url = `${RESOURCE}/other`; }, "PAYMENT_REQUIREMENTS_MISMATCH"],
   ];
   for (const [name, mutate, code] of validationCases) {
     await test(`${name} is rejected before broker verification`, async () => {
@@ -208,7 +228,7 @@ async function main() {
     broker.valid = false;
     await assert.rejects(
       () => verifyAndSettleA2mcpPayment({ payload: payload(q, "9"), quote: q, binding: b, broker, nowSeconds: now }),
-      (error: unknown) => error instanceof A2mcpX402Error && error.code === "INVALID_PAYMENT" && !error.message.includes("SECRET_SIGNATURE")
+      (error: unknown) => error instanceof A2mcpX402Error && error.code === "PAYMENT_SIGNATURE_INVALID" && !error.message.includes("SECRET_SIGNATURE")
     );
     assert.equal(broker.settleCalls, 0);
   });
@@ -220,11 +240,30 @@ async function main() {
     broker.settleSuccess = false;
     await expectCode(
       () => verifyAndSettleA2mcpPayment({ payload: payload(q, "a"), quote: q, binding: b, broker, nowSeconds: now }),
-      "SETTLEMENT_FAILED"
+      "PAYMENT_SETTLEMENT_REJECTED"
     );
     assert.equal(broker.verifyCalls, 1);
     assert.equal(broker.settleCalls, 1);
   });
+
+  for (const status of ["pending", "timeout"] as const) {
+    await test(`${status} settlement is polled before evidence is released`, async () => {
+      const b = binding({ requestHash: `${status}-settlement-request` });
+      const q = quote(`q_${status}_settlement`, b);
+      const broker = new Broker();
+      broker.initialStatus = status;
+      const result = await verifyAndSettleA2mcpPayment({
+        payload: payload(q, status === "pending" ? "d" : "e"),
+        quote: q,
+        binding: b,
+        broker,
+        nowSeconds: now,
+      });
+      assert.equal(result.status, "success");
+      assert.equal(broker.settleCalls, 1);
+      assert.equal(broker.statusCalls, 1);
+    });
+  }
 
   await test("valid payment verifies and settles once; identical replay does neither again", async () => {
     const b = binding({ requestHash: "successful-request" });
