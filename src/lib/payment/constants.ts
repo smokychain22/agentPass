@@ -1,6 +1,16 @@
-import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
+import {
+  DEFAULT_IDENTITY,
+  getCanonicalOkxIdentity,
+} from "@/lib/okx/identity";
 
-const okxIdentity = getCanonicalOkxIdentity();
+// Next imports the server module graph while `next build` is performing static
+// analysis. Environment conflicts must still fail closed when a request reaches
+// the payment runtime, but they must not make a deployment artifact impossible
+// to build before a request exists.
+const okxIdentity =
+  process.env.NEXT_PHASE === "phase-production-build"
+    ? DEFAULT_IDENTITY
+    : getCanonicalOkxIdentity();
 
 export const X402_NETWORK = okxIdentity.network;
 export const X402_CURRENCY = "USDT" as const;
