@@ -15,6 +15,19 @@ function test(name: string, fn: () => Promise<void>) {
 async function run() {
   console.log("quick-triage-route");
 
+  await test("rejects invalid JSON before payment handling", async () => {
+    const req = new Request("http://localhost/api/a2mcp/quick-triage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"repositoryUrl":',
+    });
+    const res = await POST(req);
+    const json = (await res.json()) as { error?: { code?: string } };
+    assert.equal(res.status, 400);
+    assert.equal(json.error?.code, "INVALID_INPUT");
+    assert.equal(res.headers.has("PAYMENT-REQUIRED"), false);
+  });
+
   await test("rejects invalid repository URL", async () => {
     const req = new Request("http://localhost/api/a2mcp/quick-triage", {
       method: "POST",

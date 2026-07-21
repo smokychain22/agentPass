@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { CommerceBinding } from "@/lib/okx/types";
 import type { BoundQuote } from "./types";
 import {
@@ -74,14 +74,14 @@ interface OkxEnvelope<T> {
   data?: T;
 }
 
-interface VerifyData {
+export interface VerifyData {
   isValid?: boolean;
   invalidReason?: string | null;
   invalidMessage?: string | null;
   payer?: string;
 }
 
-interface SettleData {
+export interface SettleData {
   success?: boolean;
   errorReason?: string | null;
   errorMessage?: string | null;
@@ -94,25 +94,81 @@ interface SettleData {
 export class A2mcpX402Error extends Error {
   readonly code: string;
   readonly retryable: boolean;
+  readonly correlationId?: string;
 
-  constructor(code: string, message: string, retryable = false) {
+  constructor(code: string, message: string, retryable = false, correlationId?: string) {
     super(message);
     this.name = "A2mcpX402Error";
     this.code = code;
     this.retryable = retryable;
+    this.correlationId = correlationId;
   }
+}
+
+export interface FacilitatorDiagnostic {
+  event: "repodiet.x402.facilitator";
+  phase: "verify" | "settle" | "settlement_status";
+  correlationId: string;
+  paymentAttemptId: string;
+  timestamp: string;
+  path: string;
+  httpStatus?: number;
+  okxCode?: string;
+  okxMessage?: string;
+  isValid?: boolean;
+  invalidReason?: string | null;
+  invalidMessage?: string | null;
+  payer?: string;
+  settlementSuccess?: boolean;
+  settlementStatus?: string;
+  settlementErrorReason?: string | null;
+  settlementErrorMessage?: string | null;
+  x402Version?: number;
+  scheme?: string;
+  network?: string;
+  asset?: string;
+  amount?: string;
+  recipient?: string;
+  validAfter?: string;
+  validBefore?: string;
+  requestShape?: JsonRecord;
+}
+
+export type FacilitatorDiagnosticSink = (diagnostic: FacilitatorDiagnostic) => void;
+
+const SECRET_VALUE_PATTERN = /\b(ok[-_ ]access[-_ ]key|api[-_ ]?key|secret|passphrase|private[-_ ]?key|github[-_ ]?token|session[-_ ]?secret)\b\s*[:=]?\s*["']?[A-Za-z0-9_./+-]{4,}["']?/gi;
+
+function safeBrokerText(value: unknown, secrets: string[] = []): string | null | undefined {
+  if (value == null) return value as null | undefined;
+  let text = String(value)
+    .replace(SECRET_VALUE_PATTERN, "$1 [redacted]")
+    .replace(/0x[a-fA-F0-9]{80,}/g, "[redacted-hex]")
+    .replace(/(?:gh[opusr]_|Bearer\s+)[A-Za-z0-9._-]+/gi, "[redacted-token]");
+  for (const secret of secrets) {
+    if (secret) text = text.split(secret).join("[redacted]");
+  }
+  return text.slice(0, 240);
+}
+
+function redactAddress(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(value)) return undefined;
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+function defaultDiagnosticSink(diagnostic: FacilitatorDiagnostic): void {
+  console.error(JSON.stringify(diagnostic));
 }
 
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", `${label} must be an object.`);
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", `${label} must be an object.`);
   }
   return value as JsonRecord;
 }
 
 function stringField(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", `${label} is missing.`);
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", `${label} is missing.`);
   }
   return value.trim();
 }
@@ -126,12 +182,27 @@ function decodeBase64Json(value: string): unknown {
 export function decodePaymentSignatureHeader(header: string): X402PaymentPayloadV2 {
   try {
     const root = record(decodeBase64Json(header), "PAYMENT-SIGNATURE");
+    if (Number(root.x402Version) !== 2) {
+      throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "Only x402Version 2 is accepted.");
+    }
+    if (Array.isArray(root.accepts)) {
+      throw new A2mcpX402Error(
+        "PAYMENT_PAYLOAD_INVALID",
+        "Choose one payment option in accepted; accepts[] is not a paid payload."
+      );
+    }
     const accepted = record(root.accepted, "accepted");
     const resource = record(root.resource, "resource");
     const payload = record(root.payload, "payload");
+    if (payload.permit2Authorization != null) {
+      throw new A2mcpX402Error(
+        "PAYMENT_PAYLOAD_INVALID",
+        "The exact EIP-3009 service accepts authorization only."
+      );
+    }
     const authorization = record(payload.authorization, "authorization");
     return {
-      x402Version: Number(root.x402Version),
+      x402Version: 2,
       resource: {
         url: stringField(resource.url, "resource.url"),
         description: typeof resource.description === "string" ? resource.description : undefined,
@@ -163,7 +234,7 @@ export function decodePaymentSignatureHeader(header: string): X402PaymentPayload
     };
   } catch (error) {
     if (error instanceof A2mcpX402Error) throw error;
-    throw new A2mcpX402Error("INVALID_PAYMENT", "PAYMENT-SIGNATURE is not valid base64 JSON.");
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "PAYMENT-SIGNATURE is not valid base64 JSON.");
   }
 }
 
@@ -176,11 +247,11 @@ function equalAddress(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-function assertEqual(actual: string, expected: string, label: string): void {
+function assertEqual(actual: string, expected: string, label: string, code: string): void {
   const a = Buffer.from(actual.toLowerCase());
   const b = Buffer.from(expected.toLowerCase());
   if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", `${label} does not match the issued challenge.`);
+    throw new A2mcpX402Error(code, `${label} does not match the issued challenge.`);
   }
 }
 
@@ -197,28 +268,31 @@ export function validatePaymentPayloadForRequest(input: {
     throw new A2mcpX402Error("INVALID_PAYMENT", "Only x402Version 2 is accepted.");
   }
   if (payload.accepted.scheme !== "exact") {
-    throw new A2mcpX402Error("INVALID_PAYMENT", "Only the exact payment scheme is accepted.");
+    throw new A2mcpX402Error("PAYMENT_REQUIREMENTS_MISMATCH", "Only the exact payment scheme is accepted.");
   }
   if (payload.accepted.maxTimeoutSeconds !== 300) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", "payment timeout does not match the issued challenge.");
+    throw new A2mcpX402Error("PAYMENT_REQUIREMENTS_MISMATCH", "payment timeout does not match the issued challenge.");
   }
   if (new Date(quote.expiresAt).getTime() <= now * 1000) {
     throw new A2mcpX402Error("EXPIRED_QUOTE", "Payment quote has expired.");
   }
-  assertEqual(payload.accepted.network, MAINNET_NETWORK, "network");
-  assertEqual(payload.accepted.network, quote.network, "network");
-  assertEqual(payload.accepted.asset, MAINNET_USDT, "asset");
-  assertEqual(payload.accepted.asset, quote.asset, "asset");
-  assertEqual(payload.accepted.amount, QUICK_TRIAGE_AMOUNT, "amount");
-  assertEqual(payload.accepted.amount, quote.amountMicro, "amount");
+  assertEqual(payload.accepted.network, MAINNET_NETWORK, "network", "PAYMENT_NETWORK_MISMATCH");
+  assertEqual(payload.accepted.network, quote.network, "network", "PAYMENT_NETWORK_MISMATCH");
+  assertEqual(payload.accepted.asset, MAINNET_USDT, "asset", "PAYMENT_ASSET_MISMATCH");
+  assertEqual(payload.accepted.asset, quote.asset, "asset", "PAYMENT_ASSET_MISMATCH");
+  assertEqual(payload.accepted.amount, QUICK_TRIAGE_AMOUNT, "amount", "PAYMENT_AMOUNT_MISMATCH");
+  assertEqual(payload.accepted.amount, quote.amountMicro, "amount", "PAYMENT_AMOUNT_MISMATCH");
   if (!equalAddress(payload.accepted.payTo, quote.recipient)) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", "recipient does not match the issued challenge.");
+    throw new A2mcpX402Error("PAYMENT_RECIPIENT_MISMATCH", "recipient does not match the issued challenge.");
   }
   if (!quote.resourceUrl || payload.resource.url !== quote.resourceUrl) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", "resource does not match the issued challenge.");
+    throw new A2mcpX402Error("PAYMENT_REQUIREMENTS_MISMATCH", "resource does not match the issued challenge.");
   }
   if (quoteIdFromPaymentPayload(payload) !== quote.quoteId) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", "quote identifier does not match the issued challenge.");
+    throw new A2mcpX402Error("PAYMENT_REQUIREMENTS_MISMATCH", "quote identifier does not match the issued challenge.");
+  }
+  if (payload.accepted.extra?.name !== "USD₮0" || payload.accepted.extra?.version !== "1") {
+    throw new A2mcpX402Error("PAYMENT_REQUIREMENTS_MISMATCH", "token-domain metadata does not match the issued challenge.");
   }
 
   const bindingCheck = validateQuoteBinding(quote, {
@@ -238,34 +312,40 @@ export function validatePaymentPayloadForRequest(input: {
 
   const authorization = payload.payload.authorization;
   if (!/^0x[a-fA-F0-9]{40}$/.test(authorization.from)) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", "payer address is invalid.");
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "payer address is invalid.");
+  }
+  if (!/^0x[a-fA-F0-9]{40}$/.test(authorization.to)) {
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "authorization recipient is invalid.");
   }
   if (!equalAddress(authorization.to, quote.recipient)) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", "authorization recipient mismatch.");
+    throw new A2mcpX402Error("PAYMENT_RECIPIENT_MISMATCH", "authorization recipient mismatch.");
   }
   if (authorization.value !== quote.amountMicro) {
-    throw new A2mcpX402Error("PAYMENT_MISMATCH", "authorization amount mismatch.");
+    throw new A2mcpX402Error("PAYMENT_AMOUNT_MISMATCH", "authorization amount mismatch.");
   }
   if (!/^0x[a-fA-F0-9]{64}$/.test(authorization.nonce)) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", "authorization nonce is invalid.");
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "authorization nonce is invalid.");
   }
-  if (!/^0x[a-fA-F0-9]+$/.test(payload.payload.signature)) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", "payment signature is malformed.");
+  if (!/^0x[a-fA-F0-9]{130}$/.test(payload.payload.signature)) {
+    throw new A2mcpX402Error("PAYMENT_SIGNATURE_INVALID", "payment signature is malformed.");
+  }
+  if (!/^\d+$/.test(authorization.validAfter) || !/^\d+$/.test(authorization.validBefore)) {
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "authorization validity timestamps are invalid.");
   }
   const validAfter = Number(authorization.validAfter);
   const validBefore = Number(authorization.validBefore);
   if (!Number.isFinite(validAfter) || !Number.isFinite(validBefore) || validBefore <= validAfter) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", "authorization validity window is invalid.");
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "authorization validity window is invalid.");
   }
   if (validAfter > now) {
     throw new A2mcpX402Error("NOT_YET_VALID", "payment authorization is not yet valid.");
   }
   if (validBefore <= now) {
-    throw new A2mcpX402Error("EXPIRED_AUTHORIZATION", "payment authorization has expired.");
+    throw new A2mcpX402Error("PAYMENT_AUTHORIZATION_EXPIRED", "payment authorization has expired.");
   }
   const maxWindow = payload.accepted.maxTimeoutSeconds ?? 300;
   if (validBefore > now + maxWindow + 30) {
-    throw new A2mcpX402Error("INVALID_PAYMENT", "authorization exceeds the challenge validity window.");
+    throw new A2mcpX402Error("PAYMENT_PAYLOAD_INVALID", "authorization exceeds the challenge validity window.");
   }
   return authorization;
 }
@@ -349,19 +429,146 @@ export interface X402Broker {
   settlementStatus?(transaction: string): Promise<SettleData>;
 }
 
+export function signFacilitatorRequest(input: {
+  method: "GET" | "POST";
+  path: string;
+  timestamp: string;
+  body?: JsonRecord;
+  secretKey: string;
+}): { bodyText: string; signature: string } {
+  const bodyText = input.body ? JSON.stringify(input.body) : "";
+  return {
+    bodyText,
+    signature: createHmac("sha256", input.secretKey)
+      .update(`${input.timestamp}${input.method}${input.path}${bodyText}`)
+      .digest("base64"),
+  };
+}
+
+function facilitatorPhase(path: string): FacilitatorDiagnostic["phase"] {
+  if (path.includes("/verify")) return "verify";
+  if (path.includes("/settle/status")) return "settlement_status";
+  return "settle";
+}
+
+function paymentAttemptId(body?: JsonRecord): string {
+  const payload = body?.paymentPayload;
+  return `payatt_${createHash("sha256").update(JSON.stringify(payload ?? body ?? {})).digest("hex").slice(0, 20)}`;
+}
+
+function brokerErrorCode(input: {
+  phase: FacilitatorDiagnostic["phase"];
+  httpStatus: number;
+  okxCode?: string;
+  message?: string | null;
+}): string {
+  const message = `${input.okxCode ?? ""} ${input.message ?? ""}`.toLowerCase();
+  if (input.httpStatus === 401 || input.httpStatus === 403 || /(api.?key|passphrase|timestamp|access.?sign|credential|unauthori)/.test(message)) {
+    return "FACILITATOR_AUTH_ERROR";
+  }
+  if (input.httpStatus >= 500 || input.httpStatus === 429) return "FACILITATOR_HTTP_ERROR";
+  if (/signature/.test(message)) return "PAYMENT_SIGNATURE_INVALID";
+  if (/expir|validbefore|validity/.test(message)) return "PAYMENT_AUTHORIZATION_EXPIRED";
+  if (/network|chain/.test(message)) return "PAYMENT_NETWORK_MISMATCH";
+  if (/asset|token/.test(message)) return "PAYMENT_ASSET_MISMATCH";
+  if (/amount|value/.test(message)) return "PAYMENT_AMOUNT_MISMATCH";
+  if (/recipient|payto|pay to|authorization\.to/.test(message)) return "PAYMENT_RECIPIENT_MISMATCH";
+  if (/payload|format|parameter|invalid json/.test(message)) return "PAYMENT_PAYLOAD_INVALID";
+  if (/requirement|mismatch|accepted/.test(message)) return "PAYMENT_REQUIREMENTS_MISMATCH";
+  if (input.httpStatus < 200 || input.httpStatus >= 300) return "FACILITATOR_HTTP_ERROR";
+  return input.phase === "verify" ? "PAYMENT_VERIFICATION_REJECTED" : "PAYMENT_SETTLEMENT_REJECTED";
+}
+
+function diagnosticContext(body: JsonRecord | undefined): Pick<FacilitatorDiagnostic,
+  "x402Version" | "scheme" | "network" | "asset" | "amount" | "recipient" | "validAfter" | "validBefore" | "requestShape"
+> {
+  const paymentPayload = body?.paymentPayload as X402PaymentPayloadV2 | undefined;
+  const requirements = body?.paymentRequirements as JsonRecord | undefined;
+  const accepted = paymentPayload?.accepted;
+  const authorization = paymentPayload?.payload?.authorization;
+  const resourceUrl = paymentPayload?.resource?.url;
+  const redactedShape: JsonRecord | undefined = paymentPayload && requirements ? {
+    x402Version: body?.x402Version,
+    paymentPayload: {
+      x402Version: paymentPayload.x402Version,
+      resource: { url: resourceUrl },
+      accepted: {
+        scheme: accepted?.scheme,
+        network: accepted?.network,
+        asset: accepted?.asset,
+        amount: accepted?.amount,
+        payTo: redactAddress(accepted?.payTo),
+      },
+      payload: {
+        signature: "[redacted]",
+        authorization: authorization ? {
+          from: redactAddress(authorization.from),
+          to: redactAddress(authorization.to),
+          value: authorization.value,
+          validAfter: authorization.validAfter,
+          validBefore: authorization.validBefore,
+          nonce: "[redacted]",
+        } : undefined,
+        permit2Authorization: (paymentPayload.payload as unknown as JsonRecord).permit2Authorization == null
+          ? undefined
+          : "[present-redacted]",
+      },
+    },
+    paymentRequirements: {
+      scheme: requirements.scheme,
+      network: requirements.network,
+      asset: requirements.asset,
+      amount: requirements.amount,
+      payTo: redactAddress(requirements.payTo),
+    },
+  } : undefined;
+  return {
+    x402Version: typeof body?.x402Version === "number" ? body.x402Version : undefined,
+    scheme: typeof requirements?.scheme === "string" ? requirements.scheme : accepted?.scheme,
+    network: typeof requirements?.network === "string" ? requirements.network : accepted?.network,
+    asset: typeof requirements?.asset === "string" ? requirements.asset : accepted?.asset,
+    amount: typeof requirements?.amount === "string" ? requirements.amount : accepted?.amount,
+    recipient: redactAddress(typeof requirements?.payTo === "string" ? requirements.payTo : accepted?.payTo),
+    validAfter: authorization?.validAfter,
+    validBefore: authorization?.validBefore,
+    requestShape: redactedShape,
+  };
+}
+
+interface OkxX402BrokerOptions {
+  now?: () => Date;
+  correlationId?: () => string;
+  diagnosticSink?: FacilitatorDiagnosticSink;
+}
+
 export class OkxX402Broker implements X402Broker {
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly env: NodeJS.ProcessEnv = process.env
+    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly options: OkxX402BrokerOptions = {}
   ) {}
 
   private async request<T>(method: "GET" | "POST", path: string, body?: JsonRecord): Promise<T> {
     const config = facilitatorConfig(this.env);
-    const timestamp = new Date().toISOString();
-    const bodyText = body ? JSON.stringify(body) : "";
-    const signature = createHmac("sha256", config.secretKey)
-      .update(`${timestamp}${method}${path}${bodyText}`)
-      .digest("base64");
+    const redact = (value: unknown) => safeBrokerText(value, [config.apiKey, config.secretKey, config.passphrase]);
+    const timestamp = (this.options.now?.() ?? new Date()).toISOString();
+    const correlationId = this.options.correlationId?.() ?? `x402_${randomUUID()}`;
+    const phase = facilitatorPhase(path);
+    const attemptId = paymentAttemptId(body);
+    const signed = signFacilitatorRequest({ method, path, timestamp, body, secretKey: config.secretKey });
+    const emit = (fields: Partial<FacilitatorDiagnostic>) => {
+      const diagnostic: FacilitatorDiagnostic = {
+        event: "repodiet.x402.facilitator",
+        phase,
+        correlationId,
+        paymentAttemptId: attemptId,
+        timestamp,
+        path,
+        ...diagnosticContext(body),
+        ...fields,
+      };
+      (this.options.diagnosticSink ?? defaultDiagnosticSink)(diagnostic);
+    };
     let response: Response;
     try {
       response = await this.fetchImpl(`${config.baseUrl}${path}`, {
@@ -369,27 +576,93 @@ export class OkxX402Broker implements X402Broker {
         headers: {
           "Content-Type": "application/json",
           "OK-ACCESS-KEY": config.apiKey,
-          "OK-ACCESS-SIGN": signature,
+          "OK-ACCESS-SIGN": signed.signature,
           "OK-ACCESS-PASSPHRASE": config.passphrase,
           "OK-ACCESS-TIMESTAMP": timestamp,
         },
-        body: bodyText || undefined,
+        body: signed.bodyText || undefined,
         signal: AbortSignal.timeout(30_000),
       });
     } catch {
-      throw new A2mcpX402Error("FACILITATOR_UNAVAILABLE", "OKX payment service is unavailable.", true);
+      emit({ okxMessage: "transport unavailable" });
+      throw new A2mcpX402Error(
+        "FACILITATOR_HTTP_ERROR",
+        `OKX payment service is unavailable. Reference: ${correlationId}.`,
+        true,
+        correlationId
+      );
     }
     let envelope: OkxEnvelope<T>;
     try {
       envelope = (await response.json()) as OkxEnvelope<T>;
     } catch {
-      throw new A2mcpX402Error("FACILITATOR_ERROR", "OKX payment service returned an invalid response.", true);
-    }
-    if (!response.ok || envelope.code !== "0" || !envelope.data) {
+      emit({ httpStatus: response.status, okxMessage: "non-JSON response" });
       throw new A2mcpX402Error(
-        "FACILITATOR_REJECTED",
-        "OKX payment service rejected the request.",
-        response.status >= 500
+        "FACILITATOR_HTTP_ERROR",
+        `OKX payment service returned an invalid response. Reference: ${correlationId}.`,
+        true,
+        correlationId
+      );
+    }
+    const data = envelope.data as VerifyData & SettleData | undefined;
+    emit({
+      httpStatus: response.status,
+      okxCode: redact(envelope.code) ?? undefined,
+      okxMessage: redact(envelope.msg) ?? undefined,
+      isValid: data?.isValid,
+      invalidReason: redact(data?.invalidReason),
+      invalidMessage: redact(data?.invalidMessage),
+      payer: redactAddress(data?.payer),
+      settlementSuccess: data?.success,
+      settlementStatus: redact(data?.status) ?? undefined,
+      settlementErrorReason: redact(data?.errorReason),
+      settlementErrorMessage: redact(data?.errorMessage),
+    });
+    if (!response.ok || envelope.code !== "0" || !envelope.data) {
+      const code = brokerErrorCode({
+        phase,
+        httpStatus: response.status,
+        okxCode: envelope.code,
+        message: envelope.msg,
+      });
+      throw new A2mcpX402Error(
+        code,
+        `OKX payment service rejected the request. Reference: ${correlationId}.`,
+        response.status >= 500 || response.status === 429,
+        correlationId
+      );
+    }
+    if (phase === "verify" && data?.isValid !== true) {
+      const code = brokerErrorCode({
+        phase,
+        httpStatus: response.status,
+        okxCode: envelope.code,
+        message: `${data?.invalidReason ?? ""} ${data?.invalidMessage ?? ""}`,
+      });
+      throw new A2mcpX402Error(
+        code,
+        `Payment verification was rejected. Reference: ${correlationId}.`,
+        false,
+        correlationId
+      );
+    }
+    if (
+      phase !== "verify" &&
+      data?.success !== true &&
+      data?.status !== "timeout" &&
+      data?.status !== "pending"
+    ) {
+      const code = brokerErrorCode({
+        phase,
+        httpStatus: response.status,
+        okxCode: envelope.code,
+        message: `${data?.errorReason ?? ""} ${data?.errorMessage ?? ""}`,
+      });
+      throw new A2mcpX402Error(
+        code,
+        `Payment settlement was rejected. Reference: ${correlationId}.`,
+        false,
+        correlationId
       );
     }
     return envelope.data;
@@ -423,7 +696,11 @@ async function waitForConfirmedSettlement(
   initial: SettleData
 ): Promise<SettleData> {
   if (initial.success === true && initial.status === "success") return initial;
-  if (initial.success !== true || initial.status !== "timeout" || !initial.transaction || !broker.settlementStatus) {
+  if (
+    (initial.status !== "timeout" && initial.status !== "pending") ||
+    !initial.transaction ||
+    !broker.settlementStatus
+  ) {
     return initial;
   }
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -500,7 +777,11 @@ export async function verifyAndSettleA2mcpPayment(input: {
     const verified = await broker.verify(input.payload, requirements);
     if (verified.isValid !== true) {
       throw new A2mcpX402Error(
-        "INVALID_PAYMENT",
+        brokerErrorCode({
+          phase: "verify",
+          httpStatus: 200,
+          message: `${verified.invalidReason ?? ""} ${verified.invalidMessage ?? ""}`,
+        }),
         "Payment verification failed."
       );
     }
@@ -519,7 +800,11 @@ export async function verifyAndSettleA2mcpPayment(input: {
       settled.network !== MAINNET_NETWORK
     ) {
       throw new A2mcpX402Error(
-        "SETTLEMENT_FAILED",
+        brokerErrorCode({
+          phase: "settle",
+          httpStatus: 200,
+          message: `${settled.errorReason ?? ""} ${settled.errorMessage ?? ""}`,
+        }),
         "Payment settlement was not confirmed.",
         settled.status === "timeout"
       );
