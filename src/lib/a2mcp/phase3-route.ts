@@ -330,8 +330,11 @@ export async function runPhase3ToolRoute(
     if (paid) {
       Object.assign(response, { service: tool });
     }
+    // Cache-Control: no-store prevents intermediary caches from serving stale
+    // paid responses or returning a cached result to a different buyer.
     return NextResponse.json(response, {
       status: task.status === "failed" ? 422 : 200,
+      headers: paid ? { "Cache-Control": "no-store" } : undefined,
     });
   } catch (err) {
     if (err instanceof PaymentRequiredError) {
