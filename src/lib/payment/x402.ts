@@ -1,5 +1,7 @@
 import { X402_ASSET, X402_NETWORK, X402_RECIPIENT } from "./constants";
 import { checkEntitlement } from "@/lib/entitlement/service";
+import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
+import { getValidatedX402Config } from "@/lib/payment/x402-config-validation";
 
 export { X402_NETWORK, X402_ASSET, X402_RECIPIENT };
 export const XLAYER = X402_NETWORK;
@@ -19,6 +21,15 @@ export function paymentRequiredBody(
   amountMicro: string,
   quoteId?: string
 ) {
+  const productionConfig =
+    process.env.VERCEL_ENV === "production" ||
+    (process.env.NODE_ENV === "production" && process.env.REQUIRE_REAL_X402 === "1")
+      ? getValidatedX402Config(
+          () => getCanonicalOkxIdentity().sellerWallet,
+          () => resourceUrl
+        )
+      : null;
+
   return {
     x402Version: 2,
     error: "payment required",
@@ -31,11 +42,11 @@ export function paymentRequiredBody(
     accepts: [
       {
         scheme: "exact",
-        network: X402_NETWORK,
+        network: productionConfig?.network ?? X402_NETWORK,
         amount: amountMicro,
-        payTo: X402_RECIPIENT,
+        payTo: productionConfig?.payTo ?? X402_RECIPIENT,
         maxTimeoutSeconds: 300,
-        asset: X402_ASSET,
+        asset: productionConfig?.asset ?? X402_ASSET,
         // Per x402 v2 spec: name must be "USD₮0" for the X Layer USD₮0 token.
         extra: {
           name: "USD₮0",
