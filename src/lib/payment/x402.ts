@@ -22,7 +22,11 @@ export function paymentRequiredBody(
   return {
     x402Version: 2,
     error: "payment required",
-    resource: { url: resourceUrl, mimeType: "application/json" },
+    resource: {
+      url: resourceUrl,
+      description: "RepoDiet repository quick triage",
+      mimeType: "application/json",
+    },
     quoteId,
     accepts: [
       {
@@ -32,14 +36,10 @@ export function paymentRequiredBody(
         payTo: X402_RECIPIENT,
         maxTimeoutSeconds: 300,
         asset: X402_ASSET,
+        // Per x402 v2 spec: name must be "USD₮0" for the X Layer USD₮0 token.
         extra: {
+          name: "USD₮0",
           version: "1",
-          symbol: "USDT",
-          name: "USDT",
-          currency: "USDT",
-          transferMethod: "eip3009",
-          service: "RepoDiet",
-          quoteId,
         },
       },
     ],
