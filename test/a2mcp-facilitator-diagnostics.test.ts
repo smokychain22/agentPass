@@ -132,6 +132,76 @@ async function main() {
     });
   });
 
+  await test("verify accepts object and single-entry array data envelopes", async () => {
+    for (const data of [
+      { isValid: true, payer: BUYER },
+      [{ isValid: true, payer: BUYER }],
+    ]) {
+      const broker = new OkxX402Broker(
+        (async () => new Response(JSON.stringify({ code: "0", msg: "", data }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })) as typeof fetch,
+        ENV,
+        { diagnosticSink: () => undefined }
+      );
+      assert.equal((await broker.verify(payment(), requirements())).isValid, true);
+    }
+  });
+
+  await test("numeric code zero is normalized without weakening verification", async () => {
+    const broker = new OkxX402Broker(
+      (async () => new Response(JSON.stringify({ code: 0, msg: "", data: [{ isValid: true, payer: BUYER }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as typeof fetch,
+      ENV,
+      { diagnosticSink: () => undefined }
+    );
+    assert.equal((await broker.verify(payment(), requirements())).isValid, true);
+  });
+
+  await test("absent data or isValid is an unrecognized response, not a rejection", async () => {
+    for (const body of [
+      { code: "0", msg: "" },
+      { code: "0", msg: "", data: {} },
+      { code: "0", msg: "", data: [] },
+    ]) {
+      const broker = new OkxX402Broker(
+        (async () => new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })) as typeof fetch,
+        ENV,
+        { diagnosticSink: () => undefined }
+      );
+      await expectCode(
+        () => broker.verify(payment(), requirements()),
+        "FACILITATOR_RESPONSE_SHAPE_UNRECOGNIZED"
+      );
+    }
+  });
+
+  await test("safe rejection details are preserved from the envelope level", async () => {
+    const diagnostics: FacilitatorDiagnostic[] = [];
+    const broker = new OkxX402Broker(
+      (async () => new Response(JSON.stringify({
+        code: "0",
+        msg: "",
+        data: [{ isValid: false, payer: BUYER }],
+        invalidReason: "invalid_signature",
+        invalidMessage: "Authorization rejected",
+      }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch,
+      ENV,
+      { diagnosticSink: (entry) => diagnostics.push(entry) }
+    );
+    await expectCode(() => broker.verify(payment(), requirements()), "PAYMENT_SIGNATURE_INVALID");
+    assert.equal(diagnostics[0]?.invalidReason, "invalid_signature");
+    assert.equal(diagnostics[0]?.invalidMessage, "Authorization rejected");
+    assert.equal(diagnostics[0]?.responseShape?.dataType, "array");
+    assert.equal(diagnostics[0]?.responseShape?.isValidPresent, true);
+  });
+
   await test("settle uses the current route", async () => {
     let capturedUrl = "";
     const fetchImpl = (async (url: string | URL | Request) => {

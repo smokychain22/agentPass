@@ -68,12 +68,6 @@ interface AuthorizationRecord {
   settlement?: X402SettlementEvidence;
 }
 
-interface OkxEnvelope<T> {
-  code?: string;
-  msg?: string;
-  data?: T;
-}
-
 export interface VerifyData {
   isValid?: boolean;
   invalidReason?: string | null;
@@ -132,6 +126,62 @@ export interface FacilitatorDiagnostic {
   validAfter?: string;
   validBefore?: string;
   requestShape?: JsonRecord;
+  responseShape?: JsonRecord;
+}
+
+function jsonRecord(value: unknown): JsonRecord | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : undefined;
+}
+
+function normalizeFacilitatorEnvelope<T>(value: unknown): {
+  code?: string;
+  msg?: string;
+  data?: T;
+  responseShape: JsonRecord;
+} {
+  const envelope = jsonRecord(value);
+  const rawData = envelope?.data;
+  const dataArray = Array.isArray(rawData) ? rawData : undefined;
+  const selected = dataArray ? dataArray[0] : rawData;
+  const selectedRecord = jsonRecord(selected);
+  const normalizedData = selectedRecord ? { ...selectedRecord } : undefined;
+
+  // Some facilitator envelopes expose safe rejection details beside `data`.
+  // Preserve them without treating their absence as an explicit rejection.
+  if (normalizedData) {
+    for (const field of ["invalidReason", "invalidMessage"] as const) {
+      if (normalizedData[field] == null && typeof envelope?.[field] === "string") {
+        normalizedData[field] = envelope[field];
+      }
+    }
+  }
+
+  return {
+    code: typeof envelope?.code === "string" || typeof envelope?.code === "number"
+      ? String(envelope.code)
+      : undefined,
+    msg: typeof envelope?.msg === "string" ? envelope.msg : undefined,
+    data: normalizedData as T | undefined,
+    responseShape: {
+      envelopeType: envelope ? "object" : Array.isArray(value) ? "array" : typeof value,
+      codeType: typeof envelope?.code,
+      dataType: dataArray ? "array" : rawData === null ? "null" : typeof rawData,
+      dataLength: dataArray?.length,
+      selectedDataType: selected === null ? "null" : typeof selected,
+      isValidPresent: selectedRecord ? Object.prototype.hasOwnProperty.call(selectedRecord, "isValid") : false,
+      isValidType: typeof selectedRecord?.isValid,
+      invalidReasonPresent: Boolean(
+        (selectedRecord && Object.prototype.hasOwnProperty.call(selectedRecord, "invalidReason")) ||
+        (envelope && Object.prototype.hasOwnProperty.call(envelope, "invalidReason"))
+      ),
+      invalidMessagePresent: Boolean(
+        (selectedRecord && Object.prototype.hasOwnProperty.call(selectedRecord, "invalidMessage")) ||
+        (envelope && Object.prototype.hasOwnProperty.call(envelope, "invalidMessage"))
+      ),
+    },
+  };
 }
 
 export type FacilitatorDiagnosticSink = (diagnostic: FacilitatorDiagnostic) => void;
@@ -676,9 +726,9 @@ export class OkxX402Broker implements X402Broker {
         correlationId
       );
     }
-    let envelope: OkxEnvelope<T>;
+    let envelope: ReturnType<typeof normalizeFacilitatorEnvelope<T>>;
     try {
-      envelope = (await response.json()) as OkxEnvelope<T>;
+      envelope = normalizeFacilitatorEnvelope<T>(await response.json());
     } catch {
       emit({ httpStatus: response.status, okxMessage: "non-JSON response" });
       throw new A2mcpX402Error(
@@ -701,8 +751,9 @@ export class OkxX402Broker implements X402Broker {
       settlementStatus: redact(data?.status) ?? undefined,
       settlementErrorReason: redact(data?.errorReason),
       settlementErrorMessage: redact(data?.errorMessage),
+      responseShape: envelope.responseShape,
     });
-    if (!response.ok || envelope.code !== "0" || !envelope.data) {
+    if (!response.ok || envelope.code !== "0") {
       const code = brokerErrorCode({
         phase,
         httpStatus: response.status,
@@ -713,6 +764,22 @@ export class OkxX402Broker implements X402Broker {
         code,
         `OKX payment service rejected the request. Reference: ${correlationId}.`,
         response.status >= 500 || response.status === 429,
+        correlationId
+      );
+    }
+    if (phase === "verify" && typeof data?.isValid !== "boolean") {
+      throw new A2mcpX402Error(
+        "FACILITATOR_RESPONSE_SHAPE_UNRECOGNIZED",
+        `OKX payment service returned an unrecognized verification response. Reference: ${correlationId}.`,
+        false,
+        correlationId
+      );
+    }
+    if (!envelope.data) {
+      throw new A2mcpX402Error(
+        "FACILITATOR_RESPONSE_SHAPE_UNRECOGNIZED",
+        `OKX payment service returned an unrecognized response. Reference: ${correlationId}.`,
+        false,
         correlationId
       );
     }
