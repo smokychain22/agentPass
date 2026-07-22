@@ -152,6 +152,30 @@ async function run() {
       }),
       "https://skillswap-git-cursor-a2a-dispatch-reliability-8b2b-skillswap7.vercel.app"
     );
+    // Stale sibling Preview REPODIET_PUBLIC_API_BASE_URL must not win over this branch host.
+    assert.equal(
+      publicApiBaseUrl({
+        VERCEL_ENV: "preview",
+        VERCEL_BRANCH_URL: "skillswap-git-current-branch-skillswap7.vercel.app",
+        VERCEL_URL: "skillswap-xyz-skillswap7.vercel.app",
+        REPODIET_PUBLIC_API_BASE_URL:
+          "https://skillswap-git-cursor-a2a-dispatch-reliability-8b2b-skillswap7.vercel.app",
+      }),
+      "https://skillswap-git-current-branch-skillswap7.vercel.app"
+    );
+  });
+
+  await test("Production rejects stale Preview REPODIET_PUBLIC_API_BASE_URL", async () => {
+    const { publicApiBaseUrl } = await import("../src/lib/deep-scan/dispatch-queued-job");
+    assert.equal(
+      publicApiBaseUrl({
+        VERCEL_ENV: "production",
+        REPODIET_PUBLIC_API_BASE_URL:
+          "https://skillswap-git-cursor-a2a-dispatch-reliability-8b2b-skillswap7.vercel.app",
+        NEXT_PUBLIC_APP_URL: "https://skillswap-virid-kappa.vercel.app",
+      }),
+      "https://skillswap-virid-kappa.vercel.app"
+    );
   });
 
   await test("needsDispatchRecovery after grace for undispatched jobs", () => {
