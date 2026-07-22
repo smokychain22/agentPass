@@ -1001,17 +1001,24 @@ export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskR
     }
   }
 
-  // After reconcile, paid cleanup tasks need a bound quote before fund/execution.
+  // After reconcile (or expired/failed payment), paid cleanup needs a fresh bound quote.
   if (
-    (existing.status === "quote_required" || existing.status === "awaiting_payment") &&
-    !existing.input.quoteId &&
-    requiresPayment(existing.type)
+    requiresPayment(existing.type) &&
+    (existing.status === "quote_required" ||
+      existing.status === "awaiting_payment" ||
+      existing.status === "payment_failed")
   ) {
-    try {
-      return await generateA2AQuoteForTask(existing.id);
-    } catch (err) {
-      console.error("[repodiet-a2a] quote generation failed", taskId, err);
-      return existing;
+    const needsQuote =
+      !existing.input.quoteId ||
+      existing.status === "payment_failed" ||
+      existing.status === "quote_required";
+    if (needsQuote) {
+      try {
+        return await generateA2AQuoteForTask(existing.id);
+      } catch (err) {
+        console.error("[repodiet-a2a] quote generation failed", taskId, err);
+        return existing;
+      }
     }
   }
 

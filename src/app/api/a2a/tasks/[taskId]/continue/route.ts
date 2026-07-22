@@ -41,11 +41,11 @@ export async function POST(
 
     if (
       requiresPayment(task.type) &&
-      (task.status === "quote_required" || !task.input.quoteId) &&
-      task.status !== "awaiting_payment"
+      (task.status === "payment_failed" ||
+        task.status === "quote_required" ||
+        (task.status === "awaiting_payment" && !task.input.quoteId) ||
+        !task.input.quoteId)
     ) {
-      task = await generateA2AQuoteForTask(taskId);
-    } else if (requiresPayment(task.type) && task.status === "quote_required" && !task.input.quoteId) {
       task = await generateA2AQuoteForTask(taskId);
     }
 
