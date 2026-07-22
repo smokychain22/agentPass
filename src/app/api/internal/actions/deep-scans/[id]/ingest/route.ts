@@ -260,6 +260,19 @@ export async function POST(
       body.failureMessage || body.detail || "GitHub Actions analysis failed.",
       { terminal: body.terminal !== false && body.stage !== "FAILED_RETRYABLE" }
     );
+    // Advance parent A2A task on terminal/retryable child failure.
+    if (job.request.a2aTaskId) {
+      try {
+        const { reconcileParentTaskFromScan } = await import(
+          "@/lib/a2a/reconcile-parent-from-scan"
+        );
+        await reconcileParentTaskFromScan(job.request.a2aTaskId, jobId, {
+          actor: "ingest_callback",
+        });
+      } catch (err) {
+        console.error("[deep-scan-ingest] parent reconcile on failure failed", jobId, err);
+      }
+    }
     return NextResponse.json({ ok: true, failed: true, stage: failed?.stage, jobId });
   }
 
@@ -338,13 +351,19 @@ export async function POST(
     claimToken: undefined,
     progressTokenHash: undefined,
     leaseExpiresAt: undefined,
+    // Invalidate any previously exposed dispatch nonce/token.
+    dispatchNonce: undefined,
+    dispatchNonceUsedAt: new Date().toISOString(),
     timingBreakdown,
-    resultSummary: body.resultSummary ?? {
-      findings: body.findings.summary,
-      workerMode: "github_actions_on_demand",
-      resultDigest: digest,
-      timingBreakdown,
-    },
+    resultSummary: scrubDispatchSecretsFromSummary(
+      body.resultSummary ?? {
+        findings: body.findings.summary,
+        workerMode: "github_actions_on_demand",
+        resultDigest: digest,
+        timingBreakdown,
+      },
+      job.resultSummary
+    ),
   });
 
   await touchMarketplaceHealth({
@@ -352,6 +371,20 @@ export async function POST(
     activeWorkflowRuns: 0,
     lastSuccessfulWorkerRun: new Date().toISOString(),
   });
+
+  // Primary completion path: advance parent A2A task from child READY.
+  if (job.request.a2aTaskId) {
+    try {
+      const { reconcileParentTaskFromScan } = await import(
+        "@/lib/a2a/reconcile-parent-from-scan"
+      );
+      await reconcileParentTaskFromScan(job.request.a2aTaskId, jobId, {
+        actor: "ingest_callback",
+      });
+    } catch (err) {
+      console.error("[deep-scan-ingest] parent reconcile failed", jobId, err);
+    }
+  }
 
   return NextResponse.json({
     ok: true,
@@ -362,6 +395,28 @@ export async function POST(
     graphId: body.graph?.id,
     resultDigest: digest,
   });
+}
+
+function scrubDispatchSecretsFromSummary(
+  incoming: Record<string, unknown>,
+  previous?: Record<string, unknown>
+): Record<string, unknown> {
+  const prevDispatch = (previous?.dispatch ?? {}) as Record<string, unknown>;
+  const nextDispatch = (incoming.dispatch ?? prevDispatch) as Record<string, unknown>;
+  const { dispatchToken: _t, dispatchNonce: _n, ...safeDispatch } = {
+    ...nextDispatch,
+    dispatchToken: undefined,
+    dispatchNonce: undefined,
+  };
+  return {
+    ...incoming,
+    dispatch: {
+      ...safeDispatch,
+      dispatchToken: undefined,
+      dispatchNonce: undefined,
+      tokenInvalidatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 function assertWorkflowIdentity(

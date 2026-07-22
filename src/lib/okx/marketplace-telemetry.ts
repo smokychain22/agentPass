@@ -22,6 +22,7 @@ export type MarketplaceTelemetryEvent =
   | "a2a_acknowledgement_sent"
   | "a2a_task_queued"
   | "a2a_task_delivered"
+  | "a2a_parent_reconciled_from_scan"
   | "deep_scan_queued"
   | "deep_scan_ready";
 
@@ -246,27 +247,34 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
   const queueReady = existing.deepScanQueueReady !== false;
 
   // On-demand: empty queue may be ready without an active worker.
-  // Non-empty queue requires a workflow run, lease, or recent successful dispatch within grace.
+  // Non-empty queue requires a confirmed workflow run, worker lease, or executable path.
   let workerCapacityReady = true;
   const degradedReasons: string[] = [];
-  if (queueDepth > 0 || activeJobs > 0) {
-    if (jobsWithWorkflowOrLease === 0 && undispatchedActive > 0) {
-      workerCapacityReady = false;
+  const backlogWithoutExecutor =
+    (queueDepth > 0 || activeJobs > 0) && jobsWithWorkflowOrLease === 0;
+
+  if (backlogWithoutExecutor) {
+    workerCapacityReady = false;
+    degradedReasons.push(
+      `queued_tasks_have_no_executable_worker: queueDepth=${queueDepth} activeJobs=${activeJobs} activeWorkflowRuns=0`
+    );
+    if (undispatchedActive > 0) {
       degradedReasons.push(
         `${undispatchedActive} active jobs have no workflow run or worker lease`
       );
-      if (oldestUndispatchedAgeSec != null) {
-        degradedReasons.push(
-          `oldest undispatched job is ${oldestUndispatchedAgeSec} seconds old`
-        );
-      }
+    }
+    if (oldestUndispatchedAgeSec != null) {
+      degradedReasons.push(
+        `oldest undispatched job is ${oldestUndispatchedAgeSec} seconds old`
+      );
     }
   }
 
   const workflowReady =
-    undispatchedActive === 0 ||
-    (jobsWithWorkflowOrLease > 0 && undispatchedActive === 0) ||
-    (queueDepth === 0 && activeJobs === 0);
+    !backlogWithoutExecutor &&
+    (undispatchedActive === 0 ||
+      (jobsWithWorkflowOrLease > 0 && undispatchedActive === 0) ||
+      (queueDepth === 0 && activeJobs === 0));
 
   if (!dispatcherReady) {
     degradedReasons.push(probe.message ?? "Actions dispatcher not ready");
@@ -275,21 +283,24 @@ export async function getMarketplaceHealthSnapshot(): Promise<MarketplaceHealthS
     degradedReasons.push("GitHub App delivery not ready");
   }
 
-  // workerReady = can start capacity when needed OR currently has capacity for backlog
+  // Fail closed: never report workerReady when jobs are queued but nothing can execute them.
   const workerReady =
-    (queueDepth === 0 && activeJobs === 0 && (dispatcherReady || workerHeartbeatReady)) ||
-    (workerCapacityReady && (dispatcherReady || workerHeartbeatReady || jobsWithWorkflowOrLease > 0));
+    !backlogWithoutExecutor &&
+    ((queueDepth === 0 && activeJobs === 0 && (dispatcherReady || workerHeartbeatReady)) ||
+      (workerCapacityReady &&
+        (dispatcherReady || workerHeartbeatReady || jobsWithWorkflowOrLease > 0)));
 
   const a2aRuntimeReady =
     a2aIntakeReady &&
     dispatcherReady &&
     queueReady &&
     workerCapacityReady &&
+    !backlogWithoutExecutor &&
     deliveryReadiness.githubAppReady &&
     deliveryReadiness.receiptSignerReady;
 
   if (!a2aRuntimeReady && a2aIntakeReady && !workerCapacityReady) {
-    // already have capacity reasons
+    // capacity reasons already recorded
   } else if (!a2aRuntimeReady && !a2aIntakeReady) {
     degradedReasons.push("A2A intake acknowledgement not ready");
   }

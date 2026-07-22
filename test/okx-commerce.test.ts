@@ -84,7 +84,11 @@ async function run() {
 
   await test("OKX health response includes hybrid architecture", async () => {
     const health = await buildOkxHealthResponse();
-    assert.equal(health.ok, true);
+    // ok tracks overallReady (fail-closed). Architecture/services always present.
+    assert.equal(typeof health.ok, "boolean");
+    assert.equal(typeof health.overallReady, "boolean");
+    assert.equal(typeof health.workerReady, "boolean");
+    assert.equal(typeof health.a2aRuntimeReady, "boolean");
     assert.equal(health.architecture.a2mcp, "fixed-price x402 per call");
     assert.match(health.architecture.doubleChargePolicy, /never pays A2MCP/i);
     assert.deepEqual(

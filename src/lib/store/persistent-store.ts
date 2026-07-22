@@ -36,7 +36,11 @@ export type PersistentCollection =
   | "green_pr_receipts"
   | "repository_graphs"
   | "deep_scan_jobs"
-  | "actions_dispatch";
+  | "actions_dispatch"
+  | "a2a_task_audit_events"
+  | "a2a_task_audit_index"
+  | "a2mcp_payment_executions"
+  | "a2mcp_payment_identity";
 
 export type ArtifactCollection = "artifacts";
 
@@ -74,6 +78,10 @@ export interface DurableDb {
   repository_graphs: Record<string, unknown>;
   deep_scan_jobs: Record<string, unknown>;
   actions_dispatch: Record<string, unknown>;
+  a2a_task_audit_events: Record<string, unknown>;
+  a2a_task_audit_index: Record<string, unknown>;
+  a2mcp_payment_executions: Record<string, unknown>;
+  a2mcp_payment_identity: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -110,6 +118,10 @@ const DEFAULT_DB: DurableDb = {
   repository_graphs: {},
   deep_scan_jobs: {},
   actions_dispatch: {},
+  a2a_task_audit_events: {},
+  a2a_task_audit_index: {},
+  a2mcp_payment_executions: {},
+  a2mcp_payment_identity: {},
 };
 
 let redisClient: Redis | null = null;
@@ -180,6 +192,10 @@ function loadLocalDb(): DurableDb {
       repository_graphs: parsed.repository_graphs ?? {},
       deep_scan_jobs: parsed.deep_scan_jobs ?? {},
       actions_dispatch: parsed.actions_dispatch ?? {},
+      a2a_task_audit_events: parsed.a2a_task_audit_events ?? {},
+      a2a_task_audit_index: parsed.a2a_task_audit_index ?? {},
+      a2mcp_payment_executions: parsed.a2mcp_payment_executions ?? {},
+      a2mcp_payment_identity: parsed.a2mcp_payment_identity ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);

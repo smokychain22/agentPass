@@ -141,6 +141,14 @@ export interface A2ATaskResult {
   dispatchAttempt?: number;
   workflowRunId?: string;
   workflowRunUrl?: string;
+  /** Monotonic parent result version for optimistic concurrency during reconcile. */
+  stateVersion?: number;
+  /** Last observed child deep-scan stage (public). */
+  childScanStage?: string;
+  /** ISO timestamp of last parent←child reconciliation. */
+  reconciledFromScanAt?: string;
+  /** True when analysis_failed is recoverable (FAILED_RETRYABLE child). */
+  recoverable?: boolean;
   findings?: Record<string, unknown>;
   changes?: {
     changedFiles: string[];
