@@ -1142,6 +1142,11 @@ export async function fundA2ATask(
 
   if (!verified.ok) {
     const proof = request ? paymentProofFromRequest(request, { ...input, quoteId }) : null;
+    const paymentReferenceCandidate =
+      input.paymentReference ??
+      proof?.paymentReference ??
+      paymentReference ??
+      undefined;
     const paymentSignature =
       input.paymentSignature ??
       proof?.paymentSignature ??
@@ -1149,7 +1154,8 @@ export async function fundA2ATask(
         ? signTestPaymentPayload({
             quoteId,
             paymentReference:
-              input.paymentReference ?? `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`,
+              paymentReferenceCandidate ??
+              `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`,
             payer: payer ?? "0x0000000000000000000000000000000000000001",
             amountMicro: quote.amountMicro,
             nonce: quote.nonce,
@@ -1157,7 +1163,12 @@ export async function fundA2ATask(
           }) ?? undefined
         : undefined);
 
-    if (!paymentSignature) {
+    // Live A2A escrow: accept mined USDT Transfer tx hash without EIP-3009 signature.
+    const hasOnchainTx =
+      typeof paymentReferenceCandidate === "string" &&
+      /^0x[a-fA-F0-9]{64}$/.test(paymentReferenceCandidate);
+
+    if (!paymentSignature && !hasOnchainTx) {
       const sm = new A2ATaskStateMachine(existing.transitions);
       return failTask(
         existing,
@@ -1171,7 +1182,8 @@ export async function fundA2ATask(
     const funded = await verifyAndFundQuote({
       quoteId,
       paymentReference:
-        input.paymentReference ?? `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`,
+        paymentReferenceCandidate ??
+        `0xtest_${Date.now().toString(16)}_${quoteId.slice(-8)}`,
       payer: payer ?? "0x0000000000000000000000000000000000000001",
       amountMicro: quote.amountMicro,
       currency: quote.currency,
