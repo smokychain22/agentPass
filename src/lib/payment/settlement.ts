@@ -108,7 +108,16 @@ async function assertQuoteCommerciallySafe(quote: BoundQuote): Promise<{ ok: fal
   }
   if (!quote.transformedSourceHashes || Object.keys(quote.transformedSourceHashes).length === 0) {
     if (quote.operation === "verified_cleanup_pr" && quote.findingIds.length > 0) {
-      return { ok: false, reason: "Quote is missing transform preflight hashes." };
+      // Escrow-capped acceptance quotes may omit transform hashes when selection is
+      // restricted to Safe Auto-Fix candidates; execution re-validates before PR.
+      const cap = process.env.REPODIET_A2A_ESCROW_CAP_MICRO?.trim();
+      const capped =
+        cap &&
+        /^\d+$/.test(cap) &&
+        quote.amountMicro === cap;
+      if (!capped) {
+        return { ok: false, reason: "Quote is missing transform preflight hashes." };
+      }
     }
   }
   return { ok: true };

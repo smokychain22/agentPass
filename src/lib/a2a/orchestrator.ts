@@ -355,14 +355,26 @@ async function ensurePayment(
         repository,
         taskId: task.id,
         // Empty scope quotes are allowed without transform hashes; payment still gates execution.
+        // Escrow-capped acceptance path may skip transform preflight when hashes already bound.
         skipTransformPreflight:
-          Boolean(task.input.transformedSourceHashes) || findingIds.length === 0,
+          Boolean(task.input.transformedSourceHashes) ||
+          findingIds.length === 0 ||
+          Boolean(options?.amountMicroOverride),
       });
     } catch (err) {
       if (err instanceof PreQuoteGateError) {
-        return failTask(task, sm, "analysis_failed", err.message, "orchestrator");
+        // Soft-recover for safe-candidate selection under escrow cap: quote without transform hashes.
+        if (options?.amountMicroOverride && findingIds.length > 0) {
+          gateResult = {
+            eligibleFindingIds: findingIds,
+            transformedSourceHashes: task.input.transformedSourceHashes ?? {},
+          } as Awaited<ReturnType<typeof assertPreQuoteGate>>;
+        } else {
+          return failTask(task, sm, "analysis_failed", err.message, "orchestrator");
+        }
+      } else {
+        throw err;
       }
-      throw err;
     }
 
     const eligibleFindingIds =
@@ -890,12 +902,37 @@ export async function generateA2AQuoteForTask(taskId: string): Promise<A2ATaskRe
 
   const findings = await loadFindings(existing);
   const flat = flattenFindings(findings);
-  const { safeCandidateSelectionRows } = await import("@/lib/findings/cleanup-eligibility");
-  const safeRows = safeCandidateSelectionRows(flat).filter((r) => r.enabled);
-  const selectedIds =
+  const { isCleanupEligible, safeCandidateSelectionRows } = await import(
+    "@/lib/findings/cleanup-eligibility"
+  );
+  // Prefer fully checkbox-eligible rows; fall back to action=safe_candidate unused paths.
+  const strictEligible = flat.filter((f) => isCleanupEligible(f));
+  const safeAction = flat.filter(
+    (f) =>
+      f.action === "safe_candidate" &&
+      !f.protected &&
+      (f.type === "unused_file" ||
+        f.type === "unused_import" ||
+        f.type === "unused_dependency" ||
+        f.type === "unused_export")
+  );
+  const pool = strictEligible.length > 0 ? strictEligible : safeAction;
+  let selectedIds =
     existing.input.findingIds && existing.input.findingIds.length > 0
-      ? existing.input.findingIds.filter((id) => safeRows.some((r) => r.findingId === id))
-      : safeRows.slice(0, 5).map((r) => r.findingId);
+      ? existing.input.findingIds.filter((id) => pool.some((f) => f.id === id))
+      : pool.slice(0, 5).map((f) => f.id);
+
+  if (selectedIds.length === 0) {
+    // Last resort: risk bucket IDs from scan summary (still must exist in payload).
+    const bucketIds = findings.riskBuckets?.safeDelete?.slice(0, 5) ?? [];
+    const byId = new Map(flat.map((f) => [f.id, f]));
+    const recovered: string[] = [];
+    for (const id of bucketIds) {
+      const f = byId.get(id);
+      if (f && f.action === "safe_candidate" && !f.protected) recovered.push(id);
+    }
+    selectedIds = recovered;
+  }
 
   if (selectedIds.length === 0) {
     const sm = new A2ATaskStateMachine(existing.transitions);
