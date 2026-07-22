@@ -326,7 +326,8 @@ async function runAnalysisPhase(
 async function ensurePayment(
   task: A2ATaskRecord,
   sm: A2ATaskStateMachine,
-  findings: FindingsPayload
+  findings: FindingsPayload,
+  options?: { amountMicroOverride?: string }
 ): Promise<A2ATaskRecord> {
   if (!requiresPayment(task.type)) {
     sm.emit("funded", "orchestrator", "No payment required.");
@@ -371,6 +372,11 @@ async function ensurePayment(
         ? gateResult.transformedSourceHashes
         : task.input.transformedSourceHashes;
 
+    const cap = process.env.REPODIET_A2A_ESCROW_CAP_MICRO?.trim();
+    const amountMicroOverride =
+      options?.amountMicroOverride ??
+      (cap && /^\d+$/.test(cap) ? cap : undefined);
+
     sm.emit("quote_required", "orchestrator");
     const quote = await createQuoteForOperation({
       repository,
@@ -381,6 +387,7 @@ async function ensurePayment(
       sourceFileCount: findings.summary.totalFindings,
       scanId: task.input.scanId ?? findings.scanId,
       transformedSourceHashes,
+      amountMicroOverride,
     });
     task = await syncTask(task, sm, {
       quoteId: quote.quoteId,
@@ -860,6 +867,69 @@ export async function submitA2ATask(
   return runA2ATaskPipeline(task, sm, type);
 }
 
+/**
+ * After deep-scan reconcile lands on quote_required without a bound quote,
+ * create the exact cleanup quote (safe candidates only) and move to awaiting_payment.
+ * Caps escrow at REPODIET_A2A_ESCROW_CAP_MICRO when set (production acceptance: 30000 = 0.03 USD₮0).
+ */
+export async function generateA2AQuoteForTask(taskId: string): Promise<A2ATaskRecord> {
+  const existing = await getA2ATask(taskId);
+  if (!existing) throw new Error("Task not found.");
+
+  if (existing.input.quoteId && existing.status === "awaiting_payment") {
+    return existing;
+  }
+  if (
+    existing.status !== "quote_required" &&
+    existing.status !== "awaiting_payment" &&
+    existing.status !== "analyzing" &&
+    existing.status !== "fetching_repository"
+  ) {
+    throw new Error(`Cannot generate quote for status=${existing.status}`);
+  }
+
+  const findings = await loadFindings(existing);
+  const flat = flattenFindings(findings);
+  const { safeCandidateSelectionRows } = await import("@/lib/findings/cleanup-eligibility");
+  const safeRows = safeCandidateSelectionRows(flat).filter((r) => r.enabled);
+  const selectedIds =
+    existing.input.findingIds && existing.input.findingIds.length > 0
+      ? existing.input.findingIds.filter((id) => safeRows.some((r) => r.findingId === id))
+      : safeRows.slice(0, 5).map((r) => r.findingId);
+
+  if (selectedIds.length === 0) {
+    const sm = new A2ATaskStateMachine(existing.transitions);
+    return failTask(
+      existing,
+      sm,
+      "analysis_failed",
+      "No evidence-backed Safe Auto-Fix candidates available for automated cleanup PR.",
+      "orchestrator"
+    );
+  }
+
+  const sm = new A2ATaskStateMachine(existing.transitions);
+  let task: A2ATaskRecord = {
+    ...existing,
+    input: {
+      ...existing.input,
+      findingIds: selectedIds,
+      scanId: existing.input.scanId ?? findings.scanId,
+      commitSha: existing.input.commitSha ?? findings.repo.commitSha,
+    },
+    scanId: existing.scanId ?? findings.scanId,
+  };
+  await saveA2ATask(task);
+
+  // Cap authorized A2A escrow (remaining master-authority budget: 0.03 USD₮0).
+  const capMicro = process.env.REPODIET_A2A_ESCROW_CAP_MICRO?.trim();
+  const amountMicroOverride =
+    capMicro && /^\d+$/.test(capMicro) ? capMicro : "30000";
+
+  task = await ensurePayment(task, sm, findings, { amountMicroOverride });
+  return task ?? existing;
+}
+
 export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskRecord | undefined> {
   let existing = await getA2ATask(taskId);
   if (!existing) return undefined;
@@ -874,6 +944,20 @@ export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskR
       existing = await reconcileParentTaskIfNeeded(existing, "reconciler");
     } catch (err) {
       console.error("[repodiet-a2a] continue reconcile failed", taskId, err);
+    }
+  }
+
+  // After reconcile, paid cleanup tasks need a bound quote before fund/execution.
+  if (
+    (existing.status === "quote_required" || existing.status === "awaiting_payment") &&
+    !existing.input.quoteId &&
+    requiresPayment(existing.type)
+  ) {
+    try {
+      return await generateA2AQuoteForTask(existing.id);
+    } catch (err) {
+      console.error("[repodiet-a2a] quote generation failed", taskId, err);
+      return existing;
     }
   }
 
