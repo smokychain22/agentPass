@@ -889,11 +889,21 @@ export async function generateA2AQuoteForTask(taskId: string): Promise<A2ATaskRe
   if (!existing) throw new Error("Task not found.");
 
   if (existing.input.quoteId && existing.status === "awaiting_payment") {
-    return existing;
+    // If quote still exists and is unexpired, reuse; otherwise regenerate below.
+    try {
+      const { getBoundQuote } = await import("@/lib/payment/payment-store");
+      const q = await getBoundQuote(existing.input.quoteId);
+      if (q && (!q.expiresAt || Date.parse(q.expiresAt) > Date.now() + 60_000)) {
+        return existing;
+      }
+    } catch {
+      // fall through to regenerate
+    }
   }
   if (
     existing.status !== "quote_required" &&
     existing.status !== "awaiting_payment" &&
+    existing.status !== "payment_failed" &&
     existing.status !== "analyzing" &&
     existing.status !== "fetching_repository"
   ) {
@@ -946,10 +956,17 @@ export async function generateA2AQuoteForTask(taskId: string): Promise<A2ATaskRe
   }
 
   const sm = new A2ATaskStateMachine(existing.transitions);
+  // Clear expired/failed quote binding so ensurePayment creates a fresh quote.
   let task: A2ATaskRecord = {
     ...existing,
+    status:
+      existing.status === "payment_failed" ? "quote_required" : existing.status,
+    error: undefined,
+    quoteId: undefined,
     input: {
       ...existing.input,
+      quoteId: undefined,
+      paymentReference: undefined,
       findingIds: selectedIds,
       scanId: existing.input.scanId ?? findings.scanId,
       commitSha: existing.input.commitSha ?? findings.repo.commitSha,
