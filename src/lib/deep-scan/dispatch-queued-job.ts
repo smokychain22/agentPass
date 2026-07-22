@@ -153,33 +153,75 @@ export function isAlreadyActivelyDispatched(job: DeepScanJob): boolean {
   return ACTIVE_DISPATCH_STAGES.has(job.stage) && Boolean(job.dispatchedAt);
 }
 
+const PRODUCTION_PUBLIC_ORIGIN = "https://skillswap-virid-kappa.vercel.app";
+
+function stripHost(value: string | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const raw = value.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return raw.split("/")[0]?.toLowerCase() || undefined;
+}
+
+/** True when a hostname is a Vercel Preview deployment, not the production alias. */
+export function isPreviewDeploymentHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase();
+  // Production custom alias
+  if (h === "skillswap-virid-kappa.vercel.app") return false;
+  // Preview branch hosts: skillswap-git-*-skillswap7.vercel.app or skillswap-<hash>-skillswap7.vercel.app
+  if (h.includes("-git-") && h.endsWith(".vercel.app")) return true;
+  if (/^skillswap-[a-z0-9]+-skillswap7\.vercel\.app$/i.test(h) && !h.includes("virid")) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Public HTTPS origin that GitHub Actions workers must call back to.
  * On Preview, NEVER fall through to NEXT_PUBLIC_APP_URL when that points at
  * production — otherwise claim/analyze/complete mutate the wrong deployment
  * and leave Preview jobs stuck in INVENTORY.
+ *
+ * On Production, NEVER accept a Preview hostname in REPODIET_PUBLIC_API_BASE_URL
+ * (stale env left from branch work) — workers would claim against a deployment
+ * that does not own the durable job ("Deep-scan job not found").
  */
 export function publicApiBaseUrl(
   env: Record<string, string | undefined> = process.env
 ): string {
   if (env.VERCEL_ENV === "preview") {
+    const branchHost = stripHost(env.VERCEL_BRANCH_URL);
+    const deployHost = stripHost(env.VERCEL_URL);
     const explicit = env.REPODIET_PUBLIC_API_BASE_URL?.trim();
-    if (explicit) return explicit.replace(/\/$/, "");
-    const branchHost = env.VERCEL_BRANCH_URL?.trim();
-    if (branchHost) {
-      return `https://${branchHost.replace(/^https?:\/\//, "")}`.replace(/\/$/, "");
+    if (explicit) {
+      const explicitHost = stripHost(explicit);
+      const allowed = [branchHost, deployHost].filter(Boolean) as string[];
+      // Only accept explicit base when it matches this Preview deployment host.
+      if (explicitHost && allowed.includes(explicitHost)) {
+        return `https://${explicitHost}`.replace(/\/$/, "");
+      }
+      // Stale sibling Preview base — fall through to this deployment's hosts.
     }
-    const deployHost = env.VERCEL_URL?.trim();
-    if (deployHost) {
-      return `https://${deployHost.replace(/^https?:\/\//, "")}`.replace(/\/$/, "");
-    }
+    if (branchHost) return `https://${branchHost}`.replace(/\/$/, "");
+    if (deployHost) return `https://${deployHost}`.replace(/\/$/, "");
   }
-  return (
-    env.REPODIET_PUBLIC_API_BASE_URL?.trim() ||
-    env.NEXT_PUBLIC_APP_URL?.trim() ||
-    (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : "") ||
-    "https://skillswap-virid-kappa.vercel.app"
-  ).replace(/\/$/, "");
+
+  const candidates = [
+    env.REPODIET_PUBLIC_API_BASE_URL?.trim(),
+    env.REPODIET_APP_URL?.trim(),
+    env.NEXT_PUBLIC_APP_URL?.trim(),
+    env.VERCEL_URL ? `https://${env.VERCEL_URL}` : undefined,
+    PRODUCTION_PUBLIC_ORIGIN,
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const host = stripHost(raw);
+    // Production (and non-preview local) must not send workers to a Preview host.
+    if (env.VERCEL_ENV === "production" && isPreviewDeploymentHost(host)) {
+      continue;
+    }
+    if (host) return `https://${host}`.replace(/\/$/, "");
+  }
+  return PRODUCTION_PUBLIC_ORIGIN;
 }
 
 function dispatchEnvironment(): "production" | "preview" {
