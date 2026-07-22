@@ -39,12 +39,67 @@ function address(value: string | undefined, fallback: string): string {
 }
 
 export function resolvePaymentMode(env: NodeJS.ProcessEnv = process.env): PaymentMode {
+  // Prefer REPODIET_PAYMENT_ENV (testnet|production) then REPODIET_PAYMENT_MODE (testnet|mainnet).
+  const envAlias = (env.REPODIET_PAYMENT_ENV || "").trim().toLowerCase();
+  if (envAlias === "testnet") return "testnet";
+  if (envAlias === "production" || envAlias === "mainnet") return "mainnet";
   const explicit = (env.REPODIET_PAYMENT_MODE || "").trim().toLowerCase();
   if (explicit === "testnet" || explicit === "mainnet") return explicit;
   // Legacy aliases — do not invent a mode from VERCEL_ENV alone.
   if ((env.REPODIET_X402_NETWORK || "").trim() === TESTNET_NETWORK) return "testnet";
   if ((env.REPODIET_X402_NETWORK || "").trim() === MAINNET_NETWORK) return "mainnet";
   return "unset";
+}
+
+/** Fail closed when production payment configuration is incomplete or mixed. */
+export function assertProductionPaymentConfig(env: NodeJS.ProcessEnv = process.env): PaymentEnvironment {
+  const fail = (message: string): never => {
+    const err = new Error(message);
+    (err as Error & { code: string }).code = "PRODUCTION_PAYMENT_CONFIG_REQUIRED";
+    throw err;
+  };
+
+  const modeHint = (env.REPODIET_PAYMENT_ENV || env.REPODIET_PAYMENT_MODE || "").trim().toLowerCase();
+  if (modeHint === "testnet") {
+    fail(
+      "PRODUCTION_PAYMENT_CONFIG_REQUIRED: set REPODIET_PAYMENT_ENV=production (or REPODIET_PAYMENT_MODE=mainnet)."
+    );
+  }
+
+  const payeeRaw = (
+    env.OKX_AGENTIC_WALLET_ADDRESS ||
+    env.PAY_TO_ADDRESS ||
+    env.REPODIET_PAY_TO ||
+    ""
+  ).trim();
+  if (!payeeRaw || !/^0x[a-fA-F0-9]{40}$/.test(payeeRaw)) {
+    fail(
+      "PRODUCTION_PAYMENT_CONFIG_REQUIRED: valid payee wallet (OKX_AGENTIC_WALLET_ADDRESS / PAY_TO_ADDRESS) required."
+    );
+  }
+
+  let pe: PaymentEnvironment;
+  try {
+    pe = getPaymentEnvironment(env);
+  } catch (err) {
+    fail(
+      `PRODUCTION_PAYMENT_CONFIG_REQUIRED: ${err instanceof Error ? err.message : String(err)}`
+    );
+    // fail() never returns; satisfy control-flow analysis
+    throw err;
+  }
+
+  if (pe.mainnetBlocked) {
+    const err = new Error(pe.blockReason || "PRODUCTION_PAYMENT_CONFIG_INVALID");
+    (err as Error & { code: string }).code = "PRODUCTION_PAYMENT_CONFIG_INVALID";
+    throw err;
+  }
+  if (pe.network !== MAINNET_NETWORK || pe.asset !== MAINNET_USDT) {
+    fail(
+      `PRODUCTION_PAYMENT_CONFIG_REQUIRED: expected ${MAINNET_NETWORK} / ${MAINNET_USDT}, got ${pe.network} / ${pe.asset}.`
+    );
+  }
+  return pe;
 }
 
 export function getPaymentEnvironment(env: NodeJS.ProcessEnv = process.env): PaymentEnvironment {

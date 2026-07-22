@@ -861,8 +861,22 @@ export async function submitA2ATask(
 }
 
 export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskRecord | undefined> {
-  const existing = await getA2ATask(taskId);
+  let existing = await getA2ATask(taskId);
   if (!existing) return undefined;
+
+  // Repair path: if a linked child deep-scan is already terminal, advance the parent
+  // even when status is past submitted/queued (historical stranded DISPATCHED parents).
+  if (existing.result.deepScanJobId || existing.result.queueJobId) {
+    try {
+      const { reconcileParentTaskIfNeeded } = await import(
+        "@/lib/a2a/reconcile-parent-from-scan"
+      );
+      existing = await reconcileParentTaskIfNeeded(existing, "reconciler");
+    } catch (err) {
+      console.error("[repodiet-a2a] continue reconcile failed", taskId, err);
+    }
+  }
+
   if (!["submitted", "queued"].includes(existing.status)) return existing;
   const sm = new A2ATaskStateMachine(existing.transitions);
   return runA2ATaskPipeline(existing, sm, existing.type);

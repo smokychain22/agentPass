@@ -16,12 +16,44 @@ export async function buildOkxHealthResponse() {
     marketplace.workerHeartbeatAgeMs == null
       ? null
       : Math.max(0, Math.floor(marketplace.workerHeartbeatAgeMs / 1000));
+
+  const queueDepth = marketplace.queueDepth ?? 0;
+  const activeJobs = marketplace.activeJobs ?? 0;
+  const activeWorkers = marketplace.activeWorkers ?? 0;
+  const activeWorkflowRuns = marketplace.activeWorkflowRuns ?? 0;
+  const backlogWithoutExecutor =
+    (queueDepth > 0 || activeJobs > 0) && activeWorkers === 0 && activeWorkflowRuns === 0;
+
+  const degradedReasons = [
+    ...(marketplace.degradedReasons ?? []),
+    ...(backlogWithoutExecutor
+      ? [
+          `queued_tasks_have_no_executable_worker: queueDepth=${queueDepth} activeJobs=${activeJobs} activeWorkers=0 activeWorkflowRuns=0`,
+        ]
+      : []),
+  ];
+
+  // Fail closed: never advertise worker/runtime readiness when backlog cannot execute.
+  const workerReady = Boolean(marketplace.workerReady) && !backlogWithoutExecutor;
+  const a2aRuntimeReady = Boolean(marketplace.a2aRuntimeReady) && !backlogWithoutExecutor;
+  const workerCapacityReady =
+    marketplace.workerCapacityReady !== false && !backlogWithoutExecutor;
+  const workflowReady = marketplace.workflowReady !== false && !backlogWithoutExecutor;
+  const overallReady =
+    workerReady &&
+    a2aRuntimeReady &&
+    workerCapacityReady &&
+    workflowReady &&
+    degradedReasons.length === 0;
+
   return {
-    ok: true,
+    ok: overallReady,
     service: "RepoDiet OKX Commerce Gateway",
     operator: buildOperatorProfile(),
     entitlementMode: resolveEntitlementMode(),
     a2mcpPaidMode: isOkxPaidMode(),
+    overallReady,
+    executionPathAvailable: !backlogWithoutExecutor && workerReady,
     paymentEnvironment: {
       environment: paymentEnv.environment,
       paymentMode: paymentEnv.paymentMode,
@@ -49,16 +81,16 @@ export async function buildOkxHealthResponse() {
       alertAgentCannotAnswer: agentRuntime.alertAgentCannotAnswer,
       lastSeenAt: agentRuntime.lastSeenAt,
     },
-    silentTimeoutPossible: false,
+    silentTimeoutPossible: backlogWithoutExecutor,
     immediateTaskAcknowledgment: true,
     configurationReady: Boolean(marketplace.configurationReady),
     queueReady: Boolean(marketplace.queueReady ?? marketplace.deepScanQueueReady),
-    workerCapacityReady: marketplace.workerCapacityReady !== false,
-    workflowReady: marketplace.workflowReady !== false,
-    a2aRuntimeReady: Boolean(marketplace.a2aRuntimeReady),
-    degradedReasons: marketplace.degradedReasons ?? [],
+    workerCapacityReady,
+    workflowReady,
+    a2aRuntimeReady,
+    degradedReasons,
     // Public redacted readiness contract (overrides raw marketplace fields).
-    workerReady: marketplace.workerReady,
+    workerReady,
     workerHeartbeatAgeSeconds: heartbeatAgeSeconds,
     workerHeartbeatAgeMs: marketplace.workerHeartbeatAgeMs,
     activeWorkers: marketplace.activeWorkers,
