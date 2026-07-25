@@ -2,12 +2,12 @@ import { REPODIET_PRODUCTION_FALLBACK_URL } from "@/lib/app/production-url";
 
 /** Canonical public HTTPS origin for x402 resource URLs and receipts. */
 export function canonicalAppOrigin(): string {
-  const explicit = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
   if (explicit) return explicit;
   if (process.env.VERCEL_ENV === "production") {
     return REPODIET_PRODUCTION_FALLBACK_URL;
   }
-  const vercel = process.env.VERCEL_URL?.replace(/\/$/, "");
+  const vercel = process.env.VERCEL_URL?.trim().replace(/\/$/, "");
   if (vercel) return vercel.startsWith("http") ? vercel : `https://${vercel}`;
   return "";
 }
