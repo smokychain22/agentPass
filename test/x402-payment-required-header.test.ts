@@ -75,6 +75,20 @@ async function main() {
     "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
   );
 
+  await test("canonical resource URL trims secret-store whitespace", () => {
+    withEnv(
+      {
+        NEXT_PUBLIC_APP_URL: " https://skillswap-virid-kappa.vercel.app\n",
+      },
+      () => {
+        assert.equal(
+          canonicalResourceUrl(QUICK_TRIAGE_RESOURCE_PATH),
+          "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
+        );
+      }
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // 1. Unpaid valid request returns HTTP 402
   // ---------------------------------------------------------------------------
