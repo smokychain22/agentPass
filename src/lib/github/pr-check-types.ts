@@ -102,6 +102,15 @@ export interface PrDeliveryMonitorRecord {
   sourceCommitSha: string;
   patchCommitSha: string;
   branch: string;
+  changedFiles: Array<{
+    path: string;
+    status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+    previousPath?: string;
+    additions: number;
+    deletions: number;
+    changes: number;
+    blobSha: string;
+  }>;
   deliveryState:
     | "monitoring_checks"
     | "checks_passed"

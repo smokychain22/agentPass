@@ -229,6 +229,11 @@ export async function inspectPullRequestChecks(input: {
   });
   const client = new GitHubClient(token);
   const pr = await client.getPullRequest(input.owner, input.repo, input.prNumber);
+  const changedFiles = await client.listPullRequestFiles(
+    input.owner,
+    input.repo,
+    input.prNumber
+  );
   const requiredContexts = await client.getBranchRequiredCheckContexts(
     input.owner,
     input.repo,
@@ -361,6 +366,7 @@ export async function inspectPullRequestChecks(input: {
     sourceCommitSha: input.sourceCommitSha ?? existing?.sourceCommitSha ?? pr.baseSha,
     patchCommitSha: input.patchCommitSha ?? existing?.patchCommitSha ?? pr.headSha,
     branch: pr.headRef,
+    changedFiles,
     deliveryState,
     checks,
     diagnoses,

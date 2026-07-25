@@ -10,6 +10,8 @@ import {
   isPendingRequiredCheck,
 } from "../src/lib/workflow/check-baseline-comparison";
 import { detectVercelProjects } from "../src/lib/vercel/deployment-diagnostics";
+import { validateCurrentPullRequestScope } from "../src/lib/github/monitor-pr-delivery";
+import type { A2ATaskRecord } from "../src/lib/a2a/types";
 
 function test(name: string, fn: () => void) {
   try {
@@ -42,6 +44,7 @@ function monitorRecord(overrides: Partial<PrDeliveryMonitorRecord>): PrDeliveryM
     sourceCommitSha: "def",
     patchCommitSha: "abc",
     branch: "repodiet/cleanup",
+    changedFiles: [],
     deliveryState: "monitoring_checks",
     checks: [],
     diagnoses: [],
@@ -80,7 +83,7 @@ test("one required check fails → delivery blocked", () => {
   });
   const receipt = buildDeliveryReceiptChecks(record);
   assert.equal(receipt.deliveryReady, false);
-  assert.equal(isPendingRequiredCheck(record.checks[1]!), true);
+  assert.equal(isPendingRequiredCheck(record.checks[1]!), false);
 });
 
 test("optional check fails does not block when not required", () => {
@@ -236,6 +239,94 @@ test("aggregate cleanup caused respects comparisons", () => {
   );
   assert.equal(caused, false);
   assert.equal(isFailedConclusion("failure"), true);
+});
+
+test("current PR evidence accepts the exact pinned deletion scope", () => {
+  const task: A2ATaskRecord = {
+    id: "task_scope",
+    type: "repository.cleanup_pr",
+    status: "delivery_submitted",
+    repository: {
+      owner: "acme",
+      name: "demo",
+      branch: "main",
+      commitSha: "base",
+    },
+    input: {
+      repoUrl: "https://github.com/acme/demo",
+      findingIds: ["finding-1"],
+    },
+    approval: {
+      summary: "Delete one file",
+      repository: "acme/demo",
+      branch: "repodiet/cleanup",
+      changes: [{ path: "scripts/unused.mjs", action: "modify" }],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+    result: {
+      changes: {
+        changedFiles: ["scripts/unused.mjs"],
+        unifiedDiff:
+          "diff --git a/scripts/unused.mjs b/scripts/unused.mjs\n" +
+          "deleted file mode 100644\n--- a/scripts/unused.mjs\n+++ /dev/null\n",
+      },
+    },
+    transitions: [],
+    limitations: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const current = monitorRecord({
+    baseSha: "base",
+    headSha: "head",
+    changedFiles: [{
+      path: "scripts/unused.mjs",
+      status: "removed",
+      additions: 0,
+      deletions: 4,
+      changes: 4,
+      blobSha: "0".repeat(40),
+    }],
+  });
+  assert.equal(validateCurrentPullRequestScope(task, current), undefined);
+
+  const unexpected = monitorRecord({
+    ...current,
+    changedFiles: [
+      ...current.changedFiles,
+      {
+        path: "src/unapproved.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        changes: 2,
+        blobSha: "1".repeat(40),
+      },
+    ],
+  });
+  assert.match(
+    validateCurrentPullRequestScope(task, unexpected) ?? "",
+    /pull_request_scope_mismatch/
+  );
+
+  assert.match(
+    validateCurrentPullRequestScope(task, {
+      ...current,
+      baseSha: "different-base",
+    }) ?? "",
+    /pull_request_base_changed/
+  );
+
+  assert.match(
+    validateCurrentPullRequestScope(task, {
+      ...current,
+      changedFiles: current.changedFiles.map((file) => ({
+        ...file,
+        status: "modified",
+      })),
+    }) ?? "",
+    /pull_request_operation_mismatch/
+  );
 });
 
 console.log("pr-check-monitor: all passed");

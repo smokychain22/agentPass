@@ -13,6 +13,8 @@ export interface ExecutionReceipt {
   quoteId?: string;
   timestamp: string;
   pullRequestUrl?: string;
+  patchCommitSha?: string;
+  changedPaths?: string[];
 }
 
 export interface SignedReceiptV1 {
@@ -27,6 +29,8 @@ export interface SignedReceiptV1 {
   patchHash: string;
   verificationHash: string;
   pullRequestUrl?: string;
+  patchCommitSha?: string;
+  changedPaths?: string[];
   status: "completed" | "verified" | "partial" | "failed";
   timestamp: string;
 }
@@ -48,7 +52,7 @@ function legacyCanonical(receipt: ExecutionReceipt): string {
 }
 
 function v1Canonical(receipt: SignedReceiptV1): string {
-  return JSON.stringify({
+  const canonical: Record<string, unknown> = {
     version: receipt.version,
     operator: receipt.operator,
     taskId: receipt.taskId,
@@ -62,7 +66,10 @@ function v1Canonical(receipt: SignedReceiptV1): string {
     pullRequestUrl: receipt.pullRequestUrl ?? null,
     status: receipt.status,
     timestamp: receipt.timestamp,
-  });
+  };
+  if (receipt.patchCommitSha) canonical.patchCommitSha = receipt.patchCommitSha;
+  if (receipt.changedPaths) canonical.changedPaths = [...receipt.changedPaths].sort();
+  return JSON.stringify(canonical);
 }
 
 export function toSignedReceiptV1(receipt: ExecutionReceipt): SignedReceiptV1 {
@@ -85,6 +92,8 @@ export function toSignedReceiptV1(receipt: ExecutionReceipt): SignedReceiptV1 {
           ? "partial"
           : "failed",
     timestamp: receipt.timestamp,
+    patchCommitSha: receipt.patchCommitSha,
+    changedPaths: receipt.changedPaths ? [...receipt.changedPaths].sort() : undefined,
   };
 }
 
