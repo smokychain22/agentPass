@@ -1022,6 +1022,10 @@ export async function continueA2ATaskExecution(taskId: string): Promise<A2ATaskR
     }
   }
 
+  if (isApprovedDeliveryRetryEligible(existing)) {
+    return approveA2ATask(taskId, true);
+  }
+
   if (!["submitted", "queued"].includes(existing.status)) return existing;
   const sm = new A2ATaskStateMachine(existing.transitions);
   return runA2ATaskPipeline(existing, sm, existing.type);
@@ -1334,10 +1338,26 @@ export async function fundA2ATask(
   return executeChanges(task, sm, findings);
 }
 
+export function isApprovedDeliveryRetryEligible(task: A2ATaskRecord): boolean {
+  if (task.status !== "delivery_failed") return false;
+
+  const previouslyApproved = task.transitions.some(
+    (transition) => transition.status === "creating_pull_request"
+  );
+  const funded = task.transitions.some((transition) => transition.status === "funded");
+  const verified = task.result.verification?.status === "verified";
+  const hasPreparedPatch = Boolean(
+    task.result.changes?.patchKitId ?? task.result.changes?.patchId
+  );
+
+  return Boolean(task.approval && previouslyApproved && funded && verified && hasPreparedPatch);
+}
+
 export async function approveA2ATask(taskId: string, approved: boolean): Promise<A2ATaskRecord> {
   const task = await getA2ATask(taskId);
   if (!task) throw new Error("Task not found.");
-  if (task.status !== "awaiting_approval") {
+  const retryingApprovedDelivery = isApprovedDeliveryRetryEligible(task);
+  if (task.status !== "awaiting_approval" && !retryingApprovedDelivery) {
     if (
       task.result.pullRequest?.url ||
       [
