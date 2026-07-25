@@ -1422,6 +1422,7 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
         typeof task.result.greenPrExecution?.branchName === "string"
           ? task.result.greenPrExecution.branchName
           : task.approval?.branch ?? `repodiet/cleanup-${task.id}`,
+      approvedPaths: task.approval?.changes.map((change) => change.path),
     });
 
     current = await syncTask(current, sm, {

@@ -85,6 +85,7 @@ export async function createCleanupPullRequest(input: {
   githubToken?: string;
   sessionKey?: string;
   cleanupBranch?: string;
+  approvedPaths?: string[];
 }) {
   return createCleanupPr(input);
 }

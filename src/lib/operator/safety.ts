@@ -60,3 +60,16 @@ export function filterOperatorSafeDeletes(paths: string[]): string[] {
   }
   return safe.sort();
 }
+
+/**
+ * Final gate for a delete that was explicitly approved after deterministic
+ * patch generation and repository validation. Approval widens the path policy,
+ * but never permits protected routes, configuration, secrets, assets, or CI.
+ */
+export function isApprovedValidatedDeletePath(filePath: string): boolean {
+  const path = normalizePath(filePath);
+  if (!path) return false;
+  if (isDoNotTouchPath(path) || isRouteLikePath(path)) return false;
+  if (matchesAny(path, EXTRA_BLOCKED)) return false;
+  return true;
+}
