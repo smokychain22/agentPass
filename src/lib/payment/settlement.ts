@@ -23,7 +23,10 @@ import type { BoundQuote, EntitlementContext, PaymentProof, PaymentVerificationR
 import { X402_ASSET, X402_CURRENCY, X402_NETWORK, X402_RECIPIENT } from "./constants";
 import { applyFailurePolicy, type FailureScenario } from "./failure-policy";
 import { isA2aTestPriceQuote } from "./a2a-test-price";
-import { verifyOnchainUsdtTransfer } from "./onchain-usdt";
+import {
+  isTransferTimestampWithinQuoteWindow,
+  verifyOnchainUsdtTransfer,
+} from "./onchain-usdt";
 import { isLikelyTxHash } from "@/lib/wallet/erc20-transfer";
 import {
   isKnownBaselineInvalidCommit,
@@ -163,6 +166,32 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
   await persistQuoteLifecycle(proof.quoteId, "payment_submitted");
   await persistQuoteLifecycle(proof.quoteId, "payment_verifying");
 
+  let recoveredExpiredOnchainPayment = false;
+  let bindingValidationTimeMs: number | undefined;
+  const quoteExpiredNow = new Date(quote.expiresAt).getTime() < Date.now();
+  if (quoteExpiredNow && isLikelyTxHash(proof.paymentReference)) {
+    const onchain = await verifyOnchainUsdtTransfer({
+      txHash: proof.paymentReference,
+      payer: proof.payer,
+      recipient: quote.recipient,
+      amountMicro: quote.amountMicro,
+      tokenAddress: quote.asset || X402_ASSET,
+      network: quote.network,
+    });
+    if (
+      onchain.ok &&
+      onchain.blockTimestampMs !== undefined &&
+      isTransferTimestampWithinQuoteWindow({
+        blockTimestampMs: onchain.blockTimestampMs,
+        quoteCreatedAt: quote.createdAt,
+        quoteExpiresAt: quote.expiresAt,
+      })
+    ) {
+      recoveredExpiredOnchainPayment = true;
+      bindingValidationTimeMs = onchain.blockTimestampMs;
+    }
+  }
+
   const binding = validateQuoteBinding(quote, {
     repository: quote.repository,
     branch: quote.branch,
@@ -172,6 +201,7 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     scanId: quote.scanId,
     transformedSourceHashes: quote.transformedSourceHashes,
     contractDigest: quote.contractDigest,
+    validationTimeMs: bindingValidationTimeMs,
   });
   if (!binding.ok) {
     const scenario = binding.status === "expired" ? "expired" : "invalid_payment";
@@ -228,7 +258,9 @@ export async function verifyAndFundQuote(proof: PaymentProof): Promise<PaymentVe
     proof.paymentSignature = buildTestPaymentSignature(proof, quote);
   }
 
-  const verification = await verifyLiveOrTestPayment(proof, quote);
+  const verification = recoveredExpiredOnchainPayment
+    ? { ok: true }
+    : await verifyLiveOrTestPayment(proof, quote);
   if (!verification.ok) {
     await persistQuoteLifecycle(proof.quoteId, "invalid_payment");
     return {

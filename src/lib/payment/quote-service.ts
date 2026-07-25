@@ -206,9 +206,19 @@ export function validateQuoteBinding(
     resourceUrl?: string;
     requestMethod?: string;
     requestPayloadHash?: string;
+    /** Use the verified on-chain payment time when recovering a late proof submission. */
+    validationTimeMs?: number;
   }
 ): { ok: boolean; reason?: string; status?: BoundQuote["lifecycleStatus"] } {
-  if (new Date(quote.expiresAt).getTime() < Date.now()) {
+  const paymentAlreadyVerified =
+    quote.paymentStatus === "verified" &&
+    (quote.status === "funded" ||
+      quote.status === "consumed" ||
+      quote.lifecycleStatus === "funded" ||
+      quote.lifecycleStatus === "execution_started" ||
+      quote.lifecycleStatus === "completed");
+  const validationTimeMs = context.validationTimeMs ?? Date.now();
+  if (!paymentAlreadyVerified && new Date(quote.expiresAt).getTime() < validationTimeMs) {
     return { ok: false, reason: "Quote expired.", status: "expired" };
   }
   if (quote.status === "consumed" && quote.completedReceiptId) {

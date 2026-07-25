@@ -21,6 +21,7 @@ export interface OnchainUsdtVerificationResult {
   reason?: string;
   txHash?: string;
   blockNumber?: string;
+  blockTimestampMs?: number;
   from?: string;
   to?: string;
   amountMicro?: string;
@@ -142,14 +143,60 @@ export async function verifyOnchainUsdtTransfer(
     };
   }
 
+  let blockTimestampMs: number | undefined;
+  if (receipt.blockNumber) {
+    try {
+      const block = await rpcCall<{ timestamp?: string } | null>(
+        rpcUrl,
+        "eth_getBlockByNumber",
+        [receipt.blockNumber, false]
+      );
+      if (block?.timestamp) {
+        blockTimestampMs = Number(BigInt(block.timestamp) * BigInt(1000));
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        reason:
+          err instanceof Error
+            ? `Unable to verify payment block time: ${err.message}`
+            : "Unable to verify payment block time.",
+      };
+    }
+  }
+
   return {
     ok: true,
     txHash: input.txHash.toLowerCase(),
     blockNumber: receipt.blockNumber,
+    blockTimestampMs,
     from: payer,
     to: recipient,
     amountMicro: input.amountMicro,
   };
+}
+
+const PAYMENT_BLOCK_CLOCK_SKEW_MS = 30_000;
+
+/**
+ * A transaction submitted after a quote expires is recoverable only when its
+ * independently verified block time falls inside that original quote window.
+ * The small lower-bound allowance covers block timestamp granularity and clock
+ * skew. The transaction hash remains single-use through the payment store.
+ */
+export function isTransferTimestampWithinQuoteWindow(input: {
+  blockTimestampMs: number;
+  quoteCreatedAt: string;
+  quoteExpiresAt: string;
+}): boolean {
+  if (!Number.isFinite(input.blockTimestampMs)) return false;
+  const createdAtMs = Date.parse(input.quoteCreatedAt);
+  const expiresAtMs = Date.parse(input.quoteExpiresAt);
+  if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs)) return false;
+  return (
+    input.blockTimestampMs >= createdAtMs - PAYMENT_BLOCK_CLOCK_SKEW_MS &&
+    input.blockTimestampMs <= expiresAtMs
+  );
 }
 
 /** Match Transfer logs against expected fields — used by unit tests without RPC. */
