@@ -29,6 +29,7 @@ export interface CreateCleanupPrInput {
   demo?: boolean;
   sessionKey?: string;
   cleanupBranch?: string;
+  approvedPaths?: string[];
 }
 
 const ARTIFACT_PATHS = {
@@ -223,7 +224,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const validatedEdits = patchKit.validatedEdits ?? [];
   const deliveryOps =
     mode === "safe_only"
-      ? resolveValidatedDeliveryOps(patchKit, validatedEdits)
+      ? resolveValidatedDeliveryOps(patchKit, validatedEdits, input.approvedPaths)
       : { contentEdits: [], deletePaths: [], skippedDeletePaths: [] };
   const plannedDeletes = deliveryOps.deletePaths.length;
   const plannedEdits = deliveryOps.contentEdits.length;
@@ -237,6 +238,16 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
       "No validated cleanup changes to apply. Generate repairs in Quick Cleanup first, or use report_only mode for an audit PR.",
+      422
+    );
+  }
+
+  if (mode === "safe_only" && plannedEdits === 0 && plannedDeletes === 0) {
+    throw new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      deliveryOps.skippedDeletePaths.length > 0
+        ? `No approved cleanup operation passed the final delivery safety gate. Blocked paths: ${deliveryOps.skippedDeletePaths.join(", ")}`
+        : "No approved cleanup operation passed the final delivery safety gate.",
       422
     );
   }
@@ -361,15 +372,17 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     });
   }
 
-  for (const artifact of artifactEntries) {
-    await client.upsertFile(
-      parsed.owner,
-      parsed.repo,
-      artifact.path,
-      cleanupBranch,
-      artifact.content,
-      artifact.message
-    );
+  if (mode === "report_only") {
+    for (const artifact of artifactEntries) {
+      await client.upsertFile(
+        parsed.owner,
+        parsed.repo,
+        artifact.path,
+        cleanupBranch,
+        artifact.content,
+        artifact.message
+      );
+    }
   }
 
   if (mode === "safe_only") {
@@ -402,6 +415,13 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   }
 
   const editedPaths = deliveryOps.contentEdits.map((e) => e.path);
+  if (mode === "safe_only" && editedPaths.length === 0 && deletedPathsApplied.length === 0) {
+    throw new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      "No approved cleanup operation was applied. RepoDiet did not create an artifacts-only pull request.",
+      422
+    );
+  }
   const deliveredPathSet = new Set(
     [...editedPaths, ...deletedPathsApplied].map((filePath) =>
       filePath.replace(/\\/g, "/").replace(/^\.\//, "")

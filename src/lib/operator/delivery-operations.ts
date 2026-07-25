@@ -1,5 +1,8 @@
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
-import { filterOperatorSafeDeletes } from "./safety";
+import {
+  filterOperatorSafeDeletes,
+  isApprovedValidatedDeletePath,
+} from "./safety";
 
 export interface ValidatedDeliveryOps {
   contentEdits: Array<{ path: string; content: string; baselineContentHash?: string }>;
@@ -14,7 +17,8 @@ function uniquePaths(paths: string[]): string[] {
 /** Authoritative delete paths from patch-kit outputs (never upsert empty content). */
 export function resolveValidatedDeliveryOps(
   patchKit: PatchKitPayload,
-  validatedEdits: Array<{ path: string; content: string; baselineContentHash?: string }> = []
+  validatedEdits: Array<{ path: string; content: string; baselineContentHash?: string }> = [],
+  approvedPaths: string[] = []
 ): ValidatedDeliveryOps {
   const fromOps =
     patchKit.changeOperations?.filter((op) => op.type === "delete").map((op) => op.filePath) ?? [];
@@ -22,7 +26,13 @@ export function resolveValidatedDeliveryOps(
   const fromEmptyEdits = validatedEdits.filter((e) => e.content === "").map((e) => e.path);
 
   const candidateDeletes = uniquePaths([...fromSummary, ...fromOps, ...fromEmptyEdits]);
-  const deletePaths = filterOperatorSafeDeletes(candidateDeletes);
+  const approved = new Set(uniquePaths(approvedPaths));
+  const deletePaths = uniquePaths([
+    ...filterOperatorSafeDeletes(candidateDeletes),
+    ...candidateDeletes.filter(
+      (path) => approved.has(path) && isApprovedValidatedDeletePath(path)
+    ),
+  ]).sort();
   const allowed = new Set(deletePaths);
   const skippedDeletePaths = candidateDeletes.filter((p) => !allowed.has(p));
 

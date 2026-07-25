@@ -56,4 +56,48 @@ test("blocks non-archive delete paths at operator gate", () => {
   assert.equal(ops.skippedDeletePaths.length, 1);
 });
 
+test("allows an explicitly approved validated script deletion", () => {
+  const patchKit = {
+    ...basePatchKit,
+    summary: { deletedPaths: ["scripts/test-unused.mjs"] },
+    changeOperations: [
+      {
+        ...basePatchKit.changeOperations![0],
+        filePath: "scripts/test-unused.mjs",
+      },
+    ],
+  } as unknown as PatchKitPayload;
+
+  const ops = resolveValidatedDeliveryOps(
+    patchKit,
+    [{ path: "scripts/test-unused.mjs", content: "" }],
+    ["scripts/test-unused.mjs"]
+  );
+
+  assert.deepEqual(ops.deletePaths, ["scripts/test-unused.mjs"]);
+  assert.deepEqual(ops.skippedDeletePaths, []);
+});
+
+test("explicit approval cannot bypass protected configuration paths", () => {
+  const patchKit = {
+    ...basePatchKit,
+    summary: { deletedPaths: ["package.json"] },
+    changeOperations: [
+      {
+        ...basePatchKit.changeOperations![0],
+        filePath: "package.json",
+      },
+    ],
+  } as unknown as PatchKitPayload;
+
+  const ops = resolveValidatedDeliveryOps(
+    patchKit,
+    [{ path: "package.json", content: "" }],
+    ["package.json"]
+  );
+
+  assert.deepEqual(ops.deletePaths, []);
+  assert.deepEqual(ops.skippedDeletePaths, ["package.json"]);
+});
+
 console.log("delivery-operations: all passed");
