@@ -27,6 +27,7 @@ import {
   logMarketplaceTelemetry,
   touchMarketplaceHealth,
 } from "@/lib/okx/marketplace-telemetry";
+import { touchAgentRuntimeHealth } from "@/lib/a2a/agent-runtime-health";
 
 export interface Phase3RouteOptions {
   paid?: boolean;
@@ -364,6 +365,10 @@ export async function runPhase3ToolRoute(
   } catch (err) {
     if (err instanceof PaymentRequiredError) {
       logMarketplaceTelemetry("a2mcp_402_issued", { tool, taskId, quoteId: err.quoteId });
+      await touchAgentRuntimeHealth({
+        agentOnline: true,
+        a2mcpEndpointHealthy: true,
+      }).catch(() => undefined);
       return paymentRequiredJsonResponse(err.body, 402);
     }
     if (err instanceof EntitlementDeniedError) {
