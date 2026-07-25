@@ -3,7 +3,7 @@ import {
   assertQuickTriageSummaryInvariants,
   buildQuickTriageResult,
 } from "@/lib/a2mcp/quick-triage-response";
-import { runBoundedQuickTriageScan } from "@/lib/a2mcp/quick-triage-bounded";
+import { runBoundedQuickTriageScan, type QuickTriageCoverage } from "@/lib/a2mcp/quick-triage-bounded";
 import { getAgentTask, type AgentTaskRecord } from "@/lib/a2mcp/task-store";
 import type { FindingsPayload } from "@/lib/findings/types";
 
@@ -16,12 +16,7 @@ async function completeQuickTriageTask(
     totalMs?: number;
     mode?: string;
     status?: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
-    coverage?: {
-      mode: string;
-      filesInspected: number;
-      maximumFiles: number;
-      limitations: string[];
-    };
+    coverage?: QuickTriageCoverage;
     recommendedNextAction?: string;
   }
 ): Promise<AgentTaskRecord> {

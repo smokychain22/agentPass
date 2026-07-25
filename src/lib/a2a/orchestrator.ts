@@ -34,7 +34,7 @@ import {
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import type { FindingsPayload } from "@/lib/findings/types";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
-import { A2ATaskStateMachine } from "./task-state-machine";
+import { A2ATaskStateMachine, isTerminalA2AStatus } from "./task-state-machine";
 import {
   buildInitialTask,
   getA2ATask,
@@ -1488,29 +1488,19 @@ export async function rejectUnsafeSelectionA2ATask(
   return finalized;
 }
 
-const A2A_TERMINAL_STATUSES = new Set([
-  "completed",
-  "rejected",
-  "cancelled",
-  "disputed",
-  "unsupported",
-  "payment_failed",
-  "analysis_failed",
-  "verification_failed",
-  "delivery_failed",
-  "checks_failed",
-  "expired",
-  "escrow_released",
-  "buyer_accepted",
-]);
-
 export function formatA2ATaskResponse(task: A2ATaskRecord) {
   const hasRepository = Boolean(task.repository?.url || task.input.repoUrl);
   const commercialOperation =
     task.type === "repository.cleanup_pr" || task.type === "repository.verified_cleanup"
       ? OKX_A2A_PUBLIC_OPERATION
       : mapTaskTypeToOperation(task.type);
-  const terminal = A2A_TERMINAL_STATUSES.has(task.status);
+  // Derived from the state machine's actual outgoing edges — not a hand-maintained
+  // list — so a status can never be reported terminal while /continue can still
+  // recover it (e.g. payment_failed, analysis_failed, expired quotes).
+  // escrow_released is treated as done for callers even though the record still
+  // auto-advances to completed as pure bookkeeping — there is nothing left for
+  // a buyer/seller to act on once escrow has released.
+  const terminal = isTerminalA2AStatus(task.status) || task.status === "escrow_released";
   const currentPhase =
     task.status === "awaiting_payment" || task.status === "quote_required"
       ? "commercial_negotiation"
@@ -1553,7 +1543,9 @@ export function formatA2ATaskResponse(task: A2ATaskRecord) {
       ? task.status === "completed" || task.status === "escrow_released"
         ? "DONE"
         : "INSPECT_FAILURE"
-      : "POLL_TASK_STATUS",
+      : A2A_FAILURE_STATUSES.includes(task.status)
+        ? "RETRY_CONTINUE"
+        : "POLL_TASK_STATUS",
     purchaseChannel: task.input.purchaseChannel ?? "okx_marketplace",
     repository: task.repository,
     scanId: task.scanId,

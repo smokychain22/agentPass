@@ -116,37 +116,15 @@ async function main() {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   }).privateKey;
 
-  // In-process paid synthetic via local imports would need server; use diagnostic if secret set
-  const diagSecret = process.env.REPODIET_INTERNAL_DIAGNOSTIC_SECRET?.trim();
-  if (diagSecret) {
-    const diagStart = Date.now();
-    const diag = await fetch(`${BASE}/api/internal/a2mcp/quick-triage-diagnostic`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-repodiet-diagnostic-secret": diagSecret,
-      },
-      body: JSON.stringify({
-        repositoryUrl: TEST_REPO,
-        branch: "main",
-        maximumFindings: 5,
-      }),
-    });
-    const diagMs = Date.now() - diagStart;
-    const diagJson = (await diag.json()) as Record<string, unknown>;
-    record("bounded diagnostic HTTP 200", diag.status === 200, `status=${diag.status}`, diagMs);
-    record("bounded scan under 20s", diagMs < 20_000, `elapsed=${diagMs}ms`);
-    record("no 504 on bounded scan", diag.status !== 504);
-  } else {
-    // Run bounded scanner timing locally as proxy
-    const { runBoundedQuickTriageScan } = await import("../src/lib/a2mcp/quick-triage-bounded");
-    const scanStart = Date.now();
-    const scanned = await runBoundedQuickTriageScan(TEST_REPO, "main");
-    const scanMs = Date.now() - scanStart;
-    record("bounded scan HTTP-equivalent complete", Boolean(scanned.findings.scanId), `totalMs=${scanned.totalMs}`, scanMs);
-    record("bounded scan under 20s", scanMs < 20_000 && scanned.totalMs < 20_000);
-    record("no 504 on bounded scan", true, "local bounded path");
-  }
+  // In-process bounded scan timing (no internal diagnostic route; runs the same
+  // bounded engine the public /api/a2mcp/quick-triage path uses after payment).
+  const { runBoundedQuickTriageScan } = await import("../src/lib/a2mcp/quick-triage-bounded");
+  const scanStart = Date.now();
+  const scanned = await runBoundedQuickTriageScan(TEST_REPO, "main");
+  const scanMs = Date.now() - scanStart;
+  record("bounded scan HTTP-equivalent complete", Boolean(scanned.findings.scanId), `totalMs=${scanned.totalMs}`, scanMs);
+  record("bounded scan under 20s", scanMs < 20_000 && scanned.totalMs < 20_000);
+  record("no 504 on bounded scan", true, "local bounded path");
 
   // 6. Large repo PARTIAL not 504 — local bounded with timeout pressure
   try {

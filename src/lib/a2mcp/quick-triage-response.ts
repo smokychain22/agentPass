@@ -2,6 +2,7 @@ import { flattenFindings } from "@/lib/findings/client";
 import { sortFindingsByPriority } from "@/lib/findings/evidence-gate";
 import { computeCanonicalStats } from "@/lib/findings/stats";
 import type { Finding, FindingsPayload } from "@/lib/findings/types";
+import type { QuickTriageCoverage } from "@/lib/a2mcp/quick-triage-bounded";
 
 export interface QuickTriageFinding {
   id: string;
@@ -18,12 +19,7 @@ export interface QuickTriageFinding {
 
 export interface QuickTriageResult {
   status?: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
-  coverage?: {
-    mode: string;
-    filesInspected: number;
-    maximumFiles: number;
-    limitations: string[];
-  };
+  coverage?: QuickTriageCoverage;
   recommendedNextAction?: string;
   scanId: string;
   summary: {

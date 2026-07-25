@@ -121,7 +121,6 @@ async function run() {
 
   const routes = [
     "src/app/api/okx/a2a/intake/route.ts",
-    "src/app/api/internal/a2mcp/recover-incident-payment/route.ts",
     "src/lib/payment/quote-repair.ts",
     "src/lib/okx/marketplace-telemetry.ts",
   ];

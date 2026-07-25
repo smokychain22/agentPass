@@ -72,6 +72,16 @@ export function canTransition(from: A2ATaskStatus, to: A2ATaskStatus): boolean {
   return allowed.includes(to);
 }
 
+/**
+ * True when a status has zero valid outgoing transitions in the state machine —
+ * the single source of truth for whether a task is genuinely done vs still
+ * recoverable (e.g. payment_failed / analysis_failed can still advance, so
+ * they must never be reported as terminal to callers).
+ */
+export function isTerminalA2AStatus(status: A2ATaskStatus): boolean {
+  return (ALLOWED[status]?.length ?? 0) === 0;
+}
+
 export class A2ATaskStateMachine {
   readonly transitions: A2ATaskTransition[] = [];
   private strict: boolean;

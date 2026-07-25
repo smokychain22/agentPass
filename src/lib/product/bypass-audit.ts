@@ -60,12 +60,6 @@ export const PRODUCTION_BYPASS_AUDIT: ProductionBypassAuditEntry[] = [
     productionEffect: "must_remain_neutral",
   },
   {
-    pattern: "applyMeridianBaselineRepair",
-    locations: ["src/lib/github/repository-repair.ts", "src/app/api/github/repository-repair/route.ts"],
-    classification: "owner_tooling",
-    productionEffect: "owner_tool_not_marketplace",
-  },
-  {
     pattern: "REPODIET_OWNER_BUYER_WALLET",
     locations: ["src/lib/wallet/owner-buyer-wallet.ts", "src/lib/workflow/payment-ui.ts"],
     classification: "demo_explicit",

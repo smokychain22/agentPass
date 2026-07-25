@@ -1,5 +1,21 @@
 import type { Finding } from "@/lib/findings/types";
 import type { RequestedActionType } from "./types";
+import { isCleanupEligible, riskBucketOf } from "@/lib/findings/cleanup-eligibility";
+
+export type FindingStatusLabel =
+  | "Safe to fix"
+  | "Needs your review"
+  | "RepoDiet will not change this automatically"
+  | "Unsupported";
+
+/** Canonical, understandable status shown in the Findings Results view. */
+export function outcomeStatusLabel(finding: Finding): FindingStatusLabel {
+  const bucket = riskBucketOf(finding);
+  if (bucket === "PROTECTED") return "RepoDiet will not change this automatically";
+  if (bucket === "REVIEW") return "Needs your review";
+  // bucket === "SAFE"
+  return isCleanupEligible(finding) ? "Safe to fix" : "Unsupported";
+}
 
 /**
  * Infer the recommended operation from finding evidence.
