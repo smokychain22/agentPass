@@ -13,12 +13,13 @@ import {
 import { QuotePaymentPanel } from "@/components/quote-payment-panel";
 import dynamic from "next/dynamic";
 import { pathFromId } from "@/lib/user-directed/path-identity";
-import {
-  DEFAULT_PRODUCT_MODE,
-  WORKBENCH_STAGES,
-  type ProductMode,
-  type WorkbenchStage,
-} from "@/lib/user-directed/product-modes";
+import { type WorkbenchStage } from "@/lib/user-directed/product-modes";
+import { FindingsAccordion } from "@/components/app/findings/findings-accordion";
+import { RepositoryCoveragePanel } from "@/components/app/findings/repository-coverage-panel";
+import { RepositoryMap } from "@/components/app/findings/repository-map";
+import { AnalyzerSourcesPanel } from "@/components/app/findings/analyzer-sources-panel";
+import { ProjectRootPanel } from "@/components/app/findings/project-root-panel";
+import { outcomeStatusLabel } from "@/lib/user-directed/recommended-action";
 import {
   allowsDirectWebsitePayment,
   resolveSessionSource,
@@ -26,7 +27,7 @@ import {
 } from "@/lib/user-directed/session-source";
 import { buildScanOutcomeSummary } from "@/lib/user-directed/scan-outcome-summary";
 import { flattenFindingsPayload } from "@/lib/findings/selection";
-import { riskBucketOf, isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
+import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
 import { buildGuidedReviewPrompt } from "@/lib/user-directed/guided-review";
 import {
   outcomeLabelForFinding,
@@ -104,7 +105,11 @@ export function UserDirectedWorkbench({
   const [stage, setStage] = useState<WorkbenchStage>(
     initialStage ?? stageFromLegacyTab(initialTab)
   );
-  const [mode, setMode] = useState<ProductMode>(DEFAULT_PRODUCT_MODE);
+  const [resultsView, setResultsView] = useState<"results" | "technical">("results");
+  const [resultsFilter, setResultsFilter] = useState("");
+  const [resultsStatusFilter, setResultsStatusFilter] = useState<
+    "all" | "safe" | "review" | "protected" | "unsupported"
+  >("all");
   const [nodes, setNodes] = useState<RepositoryPathNode[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
@@ -160,13 +165,6 @@ export function UserDirectedWorkbench({
     () => (findings ? flattenFindingsPayload(findings) : []),
     [findings]
   );
-  const reviewFindings = useMemo(
-    () =>
-      flatFindings.filter(
-        (f) => riskBucketOf(f) === "REVIEW" && !isCleanupEligible(f)
-      ),
-    [flatFindings]
-  );
   const eligibleFindings = useMemo(
     () =>
       flatFindings.filter(
@@ -174,6 +172,31 @@ export function UserDirectedWorkbench({
       ),
     [flatFindings, excludedFindingIds]
   );
+
+  const allStatusFindings = useMemo(
+    () => flatFindings.map((f) => ({ finding: f, status: outcomeStatusLabel(f) })),
+    [flatFindings]
+  );
+
+  const filteredResults = useMemo(() => {
+    const q = resultsFilter.trim().toLowerCase();
+    const statusMap: Record<typeof resultsStatusFilter, string | null> = {
+      all: null,
+      safe: "Safe to fix",
+      review: "Needs your review",
+      protected: "RepoDiet will not change this automatically",
+      unsupported: "Unsupported",
+    };
+    const wantedStatus = statusMap[resultsStatusFilter];
+    return allStatusFindings.filter(({ finding, status }) => {
+      if (wantedStatus && status !== wantedStatus) return false;
+      if (!q) return true;
+      return (
+        finding.title.toLowerCase().includes(q) ||
+        finding.files.some((f) => f.toLowerCase().includes(q))
+      );
+    });
+  }, [allStatusFindings, resultsFilter, resultsStatusFilter]);
 
   const executablePlan = plans.find((p) => p.executable && p.normalizedPatchHash);
 
@@ -460,7 +483,7 @@ export function UserDirectedWorkbench({
 
   function requestEditPlan(plan: TransformationPlan) {
     setSelectedPathIds(plan.selectedRepositoryPaths.map((p) => `path_${p}`));
-    setMode("ADVANCED");
+    setResultsView("technical");
     void analyzeScope({
       actionType: "EDIT",
       userInstruction: "Request edit plan from review-first finding",
@@ -490,27 +513,13 @@ export function UserDirectedWorkbench({
 
   return (
     <div className="space-y-4" data-user-directed-workbench data-session-source={sessionSource}>
-      <nav
-        className="flex flex-wrap gap-1 rounded-md border border-border/40 bg-card/20 p-1"
-        aria-label="Product workflow stages"
-        data-stage-count="4"
-      >
-        {WORKBENCH_STAGES.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setStage(t.id)}
-            className={`rounded px-3 py-1.5 text-sm ${
-              stage === t.id
-                ? "bg-electric/15 text-electric"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            aria-current={stage === t.id ? "page" : undefined}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      {/*
+       * No internal Review/Plan/Pay/Delivery tab bar here — the outer app
+       * workflow (Connect Repository → Review Findings → Create Cleanup PR →
+       * Review & Accept) already provides that navigation via the sidebar and
+       * workflow rail. `stage` still advances the single continuous flow
+       * forward as the user takes explicit actions below.
+       */}
 
       {okxOnlyPayment ? (
         <p className="rounded-md border border-border/40 bg-card/20 px-3 py-2 text-xs text-muted-foreground">
@@ -522,23 +531,28 @@ export function UserDirectedWorkbench({
       ) : null}
 
       {stage === "review" ? (
-        <section className="space-y-4" aria-label="Review">
-          <div className="flex flex-wrap gap-2">
+        <section className="space-y-4" aria-label="Review Findings">
+          <div
+            className="flex gap-1 rounded-md border border-border/40 bg-card/20 p-1"
+            role="tablist"
+            aria-label="Findings view"
+          >
             {(
               [
-                ["AUTOMATIC_CLEANUP", "Automatic Cleanup"],
-                ["GUIDED_REVIEW", "Guided Review"],
-                ["ADVANCED", "Advanced"],
+                ["results", "Results"],
+                ["technical", "Technical details"],
               ] as const
             ).map(([id, label]) => (
               <button
                 key={id}
                 type="button"
-                onClick={() => setMode(id)}
-                className={`rounded-md border px-3 py-1.5 text-xs ${
-                  mode === id
-                    ? "border-electric/50 bg-electric/10 text-electric"
-                    : "border-border/50 text-muted-foreground"
+                role="tab"
+                aria-selected={resultsView === id}
+                onClick={() => setResultsView(id)}
+                className={`rounded px-3 py-1.5 text-sm ${
+                  resultsView === id
+                    ? "bg-electric/15 text-electric"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {label}
@@ -546,64 +560,171 @@ export function UserDirectedWorkbench({
             ))}
           </div>
 
-          {mode === "AUTOMATIC_CLEANUP" ? (
-            <section className="space-y-4 rounded-md border border-border/50 bg-card/30 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                Automatic Cleanup
-              </p>
-              <h2 className="text-lg font-semibold">RepoDiet found</h2>
-              <ul className="grid gap-2 text-sm sm:grid-cols-2">
-                <li>{outcome.safeRemovals} files safe to remove</li>
-                <li>{outcome.duplicateConsolidations} duplicate group to consolidate</li>
-                <li>{outcome.referencesToUpdate} references requiring updates</li>
-                <li>{outcome.itemsNeedingDecision} items needing your decision</li>
-                <li>{outcome.protectedPaths} protected paths untouched</li>
-              </ul>
-              <div className="rounded-md border border-border/40 bg-background/40 p-3 text-sm">
-                <p className="font-medium">Estimated result</p>
-                <p className="mt-1 text-muted-foreground">
-                  {outcome.predictedFilesChanged} files changed · {outcome.predictedLinesRemoved}{" "}
-                  lines removed · No protected files touched
+          {resultsView === "results" ? (
+            <div className="space-y-4" role="tabpanel">
+              <div className="rounded-md border border-border/50 bg-card/30 p-4 text-sm">
+                <p className="font-mono text-xs text-muted-foreground">
+                  {repository || "—"}
+                  {session.branch ? ` · branch: ${session.branch}` : ""}
+                  {pinnedCommit ? ` · commit: ${pinnedCommit.slice(0, 12)}` : ""}
                 </p>
+                <p className="mt-2 font-medium">
+                  {findings ? "Scan complete" : "Awaiting scan results"}
+                  {findings?.scanCoverageWarning ? " — partial coverage" : ""}
+                </p>
+                <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+                  <li>{outcome.safeRemovals} safe to fix</li>
+                  <li>{outcome.itemsNeedingDecision} needing your review</li>
+                  <li>{outcome.protectedPaths} protected, untouched</li>
+                  <li>{allStatusFindings.filter((r) => r.status === "Unsupported").length} unsupported</li>
+                  <li>{flatFindings.length} total findings</li>
+                  <li>
+                    Estimated impact: {outcome.predictedFilesChanged} files changed ·{" "}
+                    {outcome.predictedLinesRemoved} lines removed
+                  </li>
+                </ul>
+                {findings?.scanCoverageWarning ? (
+                  <p className="mt-2 text-xs text-amber-400">{findings.scanCoverageWarning}</p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="search"
+                  value={resultsFilter}
+                  onChange={(e) => setResultsFilter(e.target.value)}
+                  placeholder="Search findings by file or title…"
+                  className="min-w-[220px] flex-1 rounded-md border border-border/50 bg-background/40 px-3 py-1.5 text-sm"
+                />
+                <select
+                  value={resultsStatusFilter}
+                  onChange={(e) =>
+                    setResultsStatusFilter(e.target.value as typeof resultsStatusFilter)
+                  }
+                  className="rounded-md border border-border/50 bg-background/40 px-2 py-1.5 text-sm"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="safe">Safe to fix</option>
+                  <option value="review">Needs your review</option>
+                  <option value="protected">RepoDiet will not change this automatically</option>
+                  <option value="unsupported">Unsupported</option>
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/40 bg-card/20 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">
+                  {eligibleFindings.length} selected for cleanup
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded border border-border/50 px-2 py-1 text-xs"
+                    onClick={() => setExcludedFindingIds([])}
+                  >
+                    Select all safe
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-border/50 px-2 py-1 text-xs"
+                    onClick={() =>
+                      setExcludedFindingIds(
+                        flatFindings
+                          .filter((f) => isCleanupEligible(f))
+                          .map((f) => f.id)
+                      )
+                    }
+                  >
+                    Clear selection
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2">
-                {eligibleFindings.slice(0, 12).map((f) => {
-                  const action = recommendedActionForFinding(f);
-                  const included = !excludedFindingIds.includes(f.id);
-                  return (
-                    <article
-                      key={f.id}
-                      className="rounded-md border border-border/40 bg-background/30 p-3 text-sm"
-                    >
-                      <p className="font-medium">{outcomeLabelForFinding(f)}</p>
-                      <p className="mt-0.5">
-                        <code className="text-xs">{f.files[0] ?? f.title}</code>
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Result: {resultLabelForAction(action, f.files.length || 1)}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className="rounded border border-border/50 px-2 py-1 text-xs"
-                          onClick={() => toggleExclude(f.id)}
-                        >
-                          {included ? "Exclude from cleanup" : "Include in cleanup"}
-                        </button>
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer">View evidence</summary>
-                          <ul className="mt-1 list-disc pl-4">
-                            {(f.evidence.signals ?? []).slice(0, 6).map((s) => (
-                              <li key={s}>{s}</li>
-                            ))}
-                          </ul>
-                        </details>
-                      </div>
-                    </article>
-                  );
-                })}
+                {filteredResults.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No findings match the current filter.</p>
+                ) : (
+                  filteredResults.slice(0, 50).map(({ finding: f, status }) => {
+                    const action = recommendedActionForFinding(f);
+                    const included = !excludedFindingIds.includes(f.id);
+                    const guided = status === "Needs your review" ? buildGuidedReviewPrompt(f) : null;
+                    return (
+                      <article
+                        key={f.id}
+                        className="space-y-2 rounded-md border border-border/40 bg-background/30 p-3 text-sm"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="font-medium">{outcomeLabelForFinding(f)}</p>
+                          <span
+                            className={`shrink-0 rounded px-2 py-0.5 text-xs ${
+                              status === "Safe to fix"
+                                ? "bg-signal/15 text-signal"
+                                : status === "Needs your review"
+                                  ? "bg-amber-400/15 text-amber-400"
+                                  : "bg-muted-foreground/15 text-muted-foreground"
+                            }`}
+                          >
+                            {status}
+                          </span>
+                        </div>
+                        <p>
+                          <code className="text-xs">{f.files.join(", ") || f.title}</code>
+                        </p>
+                        <p className="text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
+                        {status === "Safe to fix" ? (
+                          <p className="text-xs text-muted-foreground">
+                            Proposed: {resultLabelForAction(action, f.files.length || 1)}
+                          </p>
+                        ) : null}
+                        <div className="flex flex-wrap gap-2">
+                          {status === "Safe to fix" ? (
+                            <button
+                              type="button"
+                              className="rounded border border-border/50 px-2 py-1 text-xs"
+                              onClick={() => toggleExclude(f.id)}
+                            >
+                              {included ? "Exclude from cleanup" : "Include in cleanup"}
+                            </button>
+                          ) : null}
+                          {guided ? (
+                            <>
+                              {guided.choices.map((c) => (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  className="rounded border border-border/50 px-2 py-1 text-xs"
+                                  onClick={() => {
+                                    if (c.id === "yes_keep") {
+                                      void analyzeScope({
+                                        actionType: "KEEP",
+                                        userInstruction: `Keep ${guided.path} intentionally`,
+                                      });
+                                    } else if (c.id === "no_verify_deletion") {
+                                      setSelectedPathIds((f.files ?? []).map((p) => `path_${p}`));
+                                      void analyzeScope({
+                                        actionType: "INSPECT",
+                                        userInstruction: `Verify deletion for ${guided.path}`,
+                                      });
+                                    }
+                                  }}
+                                >
+                                  {c.label}
+                                </button>
+                              ))}
+                            </>
+                          ) : null}
+                          <details className="text-xs text-muted-foreground">
+                            <summary className="cursor-pointer">Evidence</summary>
+                            <ul className="mt-1 list-disc pl-4">
+                              {(f.evidence.signals ?? []).slice(0, 6).map((s) => (
+                                <li key={s}>{s}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        </div>
+                      </article>
+                    );
+                  })
+                )}
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -613,97 +734,54 @@ export function UserDirectedWorkbench({
                   disabled={analyzing || !scanId}
                   onClick={() => void prepareAutomaticPlan()}
                 >
-                  {analyzing ? "Preparing…" : "Prepare cleanup plan"}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-                  onClick={() => setMode("GUIDED_REVIEW")}
-                >
-                  Review uncertain items
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-                  onClick={() => setMode("ADVANCED")}
-                >
-                  Advanced repository explorer
+                  {analyzing ? "Preparing…" : "Create cleanup plan"}
                 </button>
               </div>
               {previewError ? <p className="text-sm text-destructive">{previewError}</p> : null}
-            </section>
-          ) : null}
-
-          {mode === "GUIDED_REVIEW" ? (
-            <section className="space-y-4 rounded-md border border-border/50 bg-card/30 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Guided Review</p>
-              <h2 className="text-lg font-semibold">Items needing your decision</h2>
-              {reviewFindings.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No uncertain findings — you can prepare the automatic cleanup plan.
-                </p>
-              ) : (
-                reviewFindings.slice(0, 20).map((f) => {
-                  const prompt = buildGuidedReviewPrompt(f);
-                  return (
-                    <article
-                      key={f.id}
-                      className="space-y-2 rounded-md border border-border/40 bg-background/30 p-3 text-sm"
-                    >
-                      <p className="font-medium">{prompt.question}</p>
-                      {prompt.blockerDetail ? (
-                        <p className="text-xs text-muted-foreground">{prompt.blockerDetail}</p>
-                      ) : null}
-                      <div className="flex flex-wrap gap-2">
-                        {prompt.choices.map((c) => (
-                          <button
-                            key={c.id}
-                            type="button"
-                            className="rounded border border-border/50 px-2 py-1 text-xs"
-                            onClick={() => {
-                              if (c.id === "yes_keep") {
-                                void analyzeScope({
-                                  actionType: "KEEP",
-                                  userInstruction: `Keep ${prompt.path} intentionally`,
-                                });
-                              } else if (c.id === "no_verify_deletion") {
-                                setSelectedPathIds(
-                                  (f.files ?? []).map((p) => `path_${p}`)
-                                );
-                                void analyzeScope({
-                                  actionType: "INSPECT",
-                                  userInstruction: `Verify deletion for ${prompt.path}`,
-                                });
-                              }
-                            }}
-                          >
-                            {c.label}
-                          </button>
-                        ))}
+            </div>
+          ) : (
+            <div className="space-y-4" role="tabpanel">
+              {findings ? (
+                <>
+                  <FindingsAccordion title="Coverage" defaultOpen summary="What RepoDiet actually inspected">
+                    <RepositoryCoveragePanel coverage={findings.universalCoverage} />
+                  </FindingsAccordion>
+                  <FindingsAccordion title="Repository explorer">
+                    <RepositoryExplorer
+                      nodes={nodes}
+                      selectedPathIds={selectedPathIds}
+                      onSelectionChange={onSelectionChange}
+                      loading={inventoryLoading}
+                      error={inventoryError}
+                    />
+                  </FindingsAccordion>
+                  <FindingsAccordion title="Scan activity" summary="Analyzer sources and detector execution">
+                    <AnalyzerSourcesPanel payload={findings} />
+                  </FindingsAccordion>
+                  <FindingsAccordion title="Repository map">
+                    <RepositoryMap findings={flatFindings} />
+                  </FindingsAccordion>
+                  <FindingsAccordion title="Project roots">
+                    <ProjectRootPanel payload={findings} />
+                  </FindingsAccordion>
+                  <FindingsAccordion title="Scan and repository identifiers">
+                    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                      <div>
+                        <dt className="text-muted-foreground">Scan ID</dt>
+                        <dd className="font-mono">{findings.scanId}</dd>
                       </div>
-                    </article>
-                  );
-                })
+                      <div>
+                        <dt className="text-muted-foreground">Exact commit</dt>
+                        <dd className="font-mono">{findings.repo.commitSha}</dd>
+                      </div>
+                    </dl>
+                  </FindingsAccordion>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Technical details become available once a scan has produced findings.
+                </p>
               )}
-              <button
-                type="button"
-                className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-                onClick={() => setMode("AUTOMATIC_CLEANUP")}
-              >
-                Back to Automatic Cleanup
-              </button>
-            </section>
-          ) : null}
-
-          {mode === "ADVANCED" ? (
-            <div className="space-y-4">
-              <RepositoryExplorer
-                nodes={nodes}
-                selectedPathIds={selectedPathIds}
-                onSelectionChange={onSelectionChange}
-                loading={inventoryLoading}
-                error={inventoryError}
-              />
               <SelectedWorkPanel
                 repository={repository}
                 pinnedCommit={pinnedCommit}
@@ -718,7 +796,7 @@ export function UserDirectedWorkbench({
                 findings={flatFindings}
               />
             </div>
-          ) : null}
+          )}
         </section>
       ) : null}
 
