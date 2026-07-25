@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { useSearchParams } from "next/navigation";
 import { useAppSession } from "@/components/app/app-session";
 import { RepositoryExplorer } from "@/components/repository-explorer";
-import { SelectedWorkPanel } from "@/components/selected-work-panel";
 import { ChangePlanPanel } from "@/components/change-plan-panel";
 import {
   PatchPreviewPanel,
@@ -19,7 +18,13 @@ import { RepositoryCoveragePanel } from "@/components/app/findings/repository-co
 import { RepositoryMap } from "@/components/app/findings/repository-map";
 import { AnalyzerSourcesPanel } from "@/components/app/findings/analyzer-sources-panel";
 import { ProjectRootPanel } from "@/components/app/findings/project-root-panel";
+import { ScanCoveragePanel } from "@/components/app/scan/scan-coverage-panel";
 import { outcomeStatusLabel } from "@/lib/user-directed/recommended-action";
+import {
+  deriveScanFindingsState,
+  scanFindingsStateLabel,
+  scanFindingsStateHasCounters,
+} from "@/lib/findings/scan-state";
 import {
   allowsDirectWebsitePayment,
   resolveSessionSource,
@@ -87,6 +92,10 @@ export function UserDirectedWorkbench({
     setA2aTask,
     setScopeReviewed,
     a2aTask,
+    findingsAnalysisPhase,
+    findingsAnalysisProgress,
+    findingsAnalysisError,
+    retryFindingsAnalysis,
   } = useAppSession();
 
   const sessionSource: SessionSource = useMemo(
@@ -161,6 +170,16 @@ export function UserDirectedWorkbench({
   );
 
   const outcome = useMemo(() => buildScanOutcomeSummary(findings), [findings]);
+  const scanState = useMemo(
+    () =>
+      deriveScanFindingsState({
+        scanComplete: session.scanComplete,
+        findings,
+        findingsAnalysisPhase,
+        findingsAnalysisError,
+      }),
+    [session.scanComplete, findings, findingsAnalysisPhase, findingsAnalysisError]
+  );
   const flatFindings = useMemo(
     () => (findings ? flattenFindingsPayload(findings) : []),
     [findings]
@@ -568,24 +587,58 @@ export function UserDirectedWorkbench({
                   {session.branch ? ` · branch: ${session.branch}` : ""}
                   {pinnedCommit ? ` · commit: ${pinnedCommit.slice(0, 12)}` : ""}
                 </p>
-                <p className="mt-2 font-medium">
-                  {findings ? "Scan complete" : "Awaiting scan results"}
-                  {findings?.scanCoverageWarning ? " — partial coverage" : ""}
-                </p>
-                <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
-                  <li>{outcome.safeRemovals} safe to fix</li>
-                  <li>{outcome.itemsNeedingDecision} needing your review</li>
-                  <li>{outcome.protectedPaths} protected, untouched</li>
-                  <li>{allStatusFindings.filter((r) => r.status === "Unsupported").length} unsupported</li>
-                  <li>{flatFindings.length} total findings</li>
-                  <li>
-                    Estimated impact: {outcome.predictedFilesChanged} files changed ·{" "}
-                    {outcome.predictedLinesRemoved} lines removed
-                  </li>
-                </ul>
-                {findings?.scanCoverageWarning ? (
-                  <p className="mt-2 text-xs text-amber-400">{findings.scanCoverageWarning}</p>
-                ) : null}
+                <p className="mt-2 font-medium">{scanFindingsStateLabel(scanState)}</p>
+
+                {scanFindingsStateHasCounters(scanState) ? (
+                  <>
+                    <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+                      <li>{outcome.safeRemovals} safe to fix</li>
+                      <li>{outcome.itemsNeedingDecision} needing your review</li>
+                      <li>{outcome.protectedPaths} protected, untouched</li>
+                      <li>{allStatusFindings.filter((r) => r.status === "Unsupported").length} unsupported</li>
+                      <li>{flatFindings.length} total findings</li>
+                      <li>
+                        Estimated impact: {outcome.predictedFilesChanged} files changed ·{" "}
+                        {outcome.predictedLinesRemoved} lines removed
+                      </li>
+                    </ul>
+                    {findings?.scanCoverageWarning ? (
+                      <p className="mt-2 text-xs text-amber-400">{findings.scanCoverageWarning}</p>
+                    ) : null}
+                  </>
+                ) : scanState === "failed" || scanState === "unavailable" ? (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-xs text-destructive">
+                      {findingsAnalysisError?.message ?? "Findings analysis could not complete."}
+                    </p>
+                    {scanState === "failed" ? (
+                      <button
+                        type="button"
+                        className="rounded border border-border/50 px-2 py-1 text-xs"
+                        onClick={retryFindingsAnalysis}
+                      >
+                        Retry analysis
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    <p>
+                      Files discovered:{" "}
+                      {findingsAnalysisProgress?.totalUnits ??
+                        session.scanResult?.summary?.totalFiles ??
+                        "—"}
+                    </p>
+                    <p>
+                      Files classified / analysed so far:{" "}
+                      {findingsAnalysisProgress?.completedUnits ?? "—"}
+                    </p>
+                    <p>
+                      Current phase:{" "}
+                      {findingsAnalysisProgress?.stage ?? scanFindingsStateLabel(scanState)}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -741,60 +794,109 @@ export function UserDirectedWorkbench({
             </div>
           ) : (
             <div className="space-y-4" role="tabpanel">
-              {findings ? (
-                <>
-                  <FindingsAccordion title="Coverage" defaultOpen summary="What RepoDiet actually inspected">
-                    <RepositoryCoveragePanel coverage={findings.universalCoverage} />
-                  </FindingsAccordion>
-                  <FindingsAccordion title="Repository explorer">
-                    <RepositoryExplorer
-                      nodes={nodes}
-                      selectedPathIds={selectedPathIds}
-                      onSelectionChange={onSelectionChange}
-                      loading={inventoryLoading}
-                      error={inventoryError}
-                    />
-                  </FindingsAccordion>
-                  <FindingsAccordion title="Scan activity" summary="Analyzer sources and detector execution">
-                    <AnalyzerSourcesPanel payload={findings} />
-                  </FindingsAccordion>
-                  <FindingsAccordion title="Repository map">
-                    <RepositoryMap findings={flatFindings} />
-                  </FindingsAccordion>
-                  <FindingsAccordion title="Project roots">
-                    <ProjectRootPanel payload={findings} />
-                  </FindingsAccordion>
-                  <FindingsAccordion title="Scan and repository identifiers">
-                    <dl className="grid gap-2 text-xs sm:grid-cols-2">
-                      <div>
-                        <dt className="text-muted-foreground">Scan ID</dt>
-                        <dd className="font-mono">{findings.scanId}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Exact commit</dt>
-                        <dd className="font-mono">{findings.repo.commitSha}</dd>
-                      </div>
-                    </dl>
-                  </FindingsAccordion>
-                </>
+              {/*
+               * Technical details is proof of analysis, not a second
+               * cleanup-selection workflow — it works as soon as a valid
+               * structure scan exists, independent of whether findings
+               * analysis has finished or found anything.
+               */}
+              {session.scanResult ? (
+                <FindingsAccordion title="Repository metadata" defaultOpen>
+                  <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                    <div>
+                      <dt className="text-muted-foreground">Repository</dt>
+                      <dd className="font-mono">{repository || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Branch / ref</dt>
+                      <dd className="font-mono">{session.scanResult.repo.branch}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Exact commit</dt>
+                      <dd className="font-mono">{pinnedCommit || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Scan ID</dt>
+                      <dd className="font-mono">{findings?.scanId ?? scanId ?? "—"}</dd>
+                    </div>
+                  </dl>
+                </FindingsAccordion>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Technical details become available once a scan has produced findings.
+                  Technical details become available once a structure scan has resolved a
+                  repository and commit.
                 </p>
               )}
-              <SelectedWorkPanel
-                repository={repository}
-                pinnedCommit={pinnedCommit}
-                selectedPathIds={selectedPathIds}
-                selectedPaths={selectedPaths}
-                selectedFindingIds={selectedFindingIds}
-                analyzing={analyzing}
-                plans={plans}
-                onAnalyze={analyzeScope}
-                onClearSelection={() => onSelectionChange([])}
-                progressiveDisclosure
-                findings={flatFindings}
-              />
+
+              {session.scanResult ? (
+                <FindingsAccordion title="Scan coverage" summary="What RepoDiet actually inspected">
+                  {findings ? (
+                    <RepositoryCoveragePanel coverage={findings.universalCoverage} />
+                  ) : (
+                    <ScanCoveragePanel
+                      scan={session.scanResult}
+                      manifest={session.scanResult.intelligenceManifest}
+                    />
+                  )}
+                </FindingsAccordion>
+              ) : null}
+
+              {session.scanResult ? (
+                <FindingsAccordion title="Repository explorer">
+                  <RepositoryExplorer
+                    nodes={nodes}
+                    selectedPathIds={selectedPathIds}
+                    onSelectionChange={onSelectionChange}
+                    loading={inventoryLoading}
+                    error={inventoryError}
+                  />
+                </FindingsAccordion>
+              ) : null}
+
+              {session.scanResult ? (
+                <FindingsAccordion title="Scan activity" summary="Analyzer sources and detector execution">
+                  {findings ? (
+                    <AnalyzerSourcesPanel payload={findings} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      {scanState === "failed" || scanState === "unavailable"
+                        ? "Findings analysis did not complete — no analyzer activity to show."
+                        : "Findings analyzers are still running — activity will appear here as they complete."}
+                    </p>
+                  )}
+                </FindingsAccordion>
+              ) : null}
+
+              {findings ? (
+                <FindingsAccordion title="Repository map">
+                  <RepositoryMap findings={flatFindings} />
+                </FindingsAccordion>
+              ) : null}
+
+              {session.scanResult ? (
+                <FindingsAccordion title="Project roots and framework evidence">
+                  {findings ? (
+                    <ProjectRootPanel payload={findings} />
+                  ) : session.scanResult.repositoryModel ? (
+                    <div className="space-y-2 text-sm">
+                      <p>
+                        Primary root:{" "}
+                        <span className="font-mono">
+                          {session.scanResult.repositoryModel.primaryProjectRoot}
+                        </span>
+                        {session.scanResult.repositoryModel.monorepoTool
+                          ? ` · ${session.scanResult.repositoryModel.monorepoTool} monorepo`
+                          : ""}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Framework: {session.scanResult.framework.name}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No project root data yet.</p>
+                  )}
+                </FindingsAccordion>
+              ) : null}
             </div>
           )}
         </section>

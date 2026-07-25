@@ -41,6 +41,18 @@ import {
   isRepositoryConnected,
   type ScanLifecyclePhase,
 } from "@/lib/workflow/step-states";
+import {
+  loadPersistedAnalysisJob,
+  clearPersistedAnalysisJob,
+  runFindingsAnalysis,
+  type FindingsPhase,
+  type FindingsJobAccepted,
+  type FindingsJobProgress,
+} from "@/lib/findings/client";
+import {
+  analysisError,
+  type AnalysisErrorContract,
+} from "@/lib/findings/analysis-errors";
 
 function defaultSafeSelectedIds(payload: FindingsPayload): string[] {
   return flattenFindingsPayload(payload)
@@ -71,6 +83,12 @@ interface AppSessionContextValue {
   inspectionSelectedFindingIds: string[];
   scopeReviewed: boolean;
   hydrating: boolean;
+  /** Session-wide, authoritative findings-analysis progress — see runFindingsForCurrentScan. */
+  findingsAnalysisPhase: FindingsPhase;
+  findingsAnalysisAccepted: FindingsJobAccepted | null;
+  findingsAnalysisProgress: FindingsJobProgress | null;
+  findingsAnalysisError: AnalysisErrorContract | null;
+  retryFindingsAnalysis: () => void;
   setScanComplete: (repoUrl: string, branch: string, result: ScanPayload) => void;
   setScanPhase: (phase: ScanLifecyclePhase) => void;
   setSelectedProjectRoot: (projectRoot: string) => void;
@@ -159,6 +177,20 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   >([]);
   const [scopeReviewed, setScopeReviewedState] = useState(false);
   const [hydrating, setHydrating] = useState(true);
+
+  // Single authoritative findings-analysis trigger for the whole session — the
+  // one place that decides "a completed scan needs findings analysis" so no
+  // page has to remember to click a separate Run Findings action, and no two
+  // pages can race to start two analyses for the same scan.
+  const [findingsAnalysisPhase, setFindingsAnalysisPhase] = useState<FindingsPhase>("idle");
+  const [findingsAnalysisAccepted, setFindingsAnalysisAccepted] =
+    useState<FindingsJobAccepted | null>(null);
+  const [findingsAnalysisProgress, setFindingsAnalysisProgress] =
+    useState<FindingsJobProgress | null>(null);
+  const [findingsAnalysisError, setFindingsAnalysisError] =
+    useState<AnalysisErrorContract | null>(null);
+  const findingsInFlightRef = useRef(false);
+  const findingsAttemptedScanRef = useRef<string | null>(null);
 
   /** Backward-compatible alias — cleanup selection only. */
   const selectedFindingIds = cleanupSelectedFindingIds;
@@ -417,6 +449,90 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Single authoritative findings run for the current scan — reused by the
+  // auto-trigger effect below and available for an explicit retry after failure.
+  const runFindingsForCurrentScan = useCallback(async () => {
+    const structureScanId = session.scanRecordId ?? session.scanResult?.id;
+    if (!session.scanComplete || !session.repoUrl || !structureScanId) return;
+    if (findingsInFlightRef.current) return;
+    findingsInFlightRef.current = true;
+    findingsAttemptedScanRef.current = structureScanId;
+    setFindingsAnalysisError(null);
+    setFindingsAnalysisPhase("queued");
+
+    try {
+      const result = await runFindingsAnalysis(
+        session.repoUrl,
+        session.branch || undefined,
+        setFindingsAnalysisPhase,
+        structureScanId,
+        session.selectedProjectRoot,
+        {
+          sourceCommit: session.scanResult?.repo.commitSha,
+          onAccepted: setFindingsAnalysisAccepted,
+          onProgress: setFindingsAnalysisProgress,
+        }
+      );
+      setFindingsState(result);
+      setFindingsAnalysisPhase("ready");
+    } catch (err) {
+      const contract: AnalysisErrorContract =
+        err && typeof err === "object" && "code" in err && "requestId" in err
+          ? (err as AnalysisErrorContract)
+          : analysisError({
+              code: "INTERNAL_ERROR",
+              message: err instanceof Error ? err.message : "Findings analysis failed.",
+              retryable: true,
+              requestId: "unknown",
+              requiredAction: "RETRY",
+              structureScanId,
+            });
+      setFindingsAnalysisPhase("failed");
+      setFindingsAnalysisError(contract);
+    } finally {
+      findingsInFlightRef.current = false;
+    }
+  }, [session, setFindingsState]);
+
+  const retryFindingsAnalysis = useCallback(() => {
+    findingsAttemptedScanRef.current = null;
+    setFindingsAnalysisPhase("idle");
+    setFindingsAnalysisError(null);
+    void runFindingsForCurrentScan();
+  }, [runFindingsForCurrentScan]);
+
+  // The one place that decides a completed scan needs findings analysis.
+  // Fires once per scan: right after a fresh structure scan, on resume of a
+  // durable in-flight job across a refresh, and on direct navigation to a
+  // completed scan that never got findings. Never re-triggers for a scan that
+  // already has bound findings, and never re-attempts the same failed scan
+  // without an explicit retry.
+  useEffect(() => {
+    if (hydrating) return;
+    const structureScanId = session.scanRecordId ?? session.scanResult?.id;
+    if (!session.scanComplete || !session.repoUrl || !structureScanId) return;
+    if (findings && findings.scanId === structureScanId) return;
+    if (findingsInFlightRef.current) return;
+    if (findingsAttemptedScanRef.current === structureScanId && findingsAnalysisPhase === "failed") {
+      return;
+    }
+    if (findingsAttemptedScanRef.current !== structureScanId) {
+      findingsAttemptedScanRef.current = null;
+      setFindingsAnalysisPhase("idle");
+      setFindingsAnalysisError(null);
+    }
+    void runFindingsForCurrentScan();
+  }, [
+    hydrating,
+    session.scanComplete,
+    session.repoUrl,
+    session.scanRecordId,
+    session.scanResult?.id,
+    findings,
+    findingsAnalysisPhase,
+    runFindingsForCurrentScan,
+  ]);
+
   const setScanComplete = useCallback(
     (repoUrl: string, branch: string, result: ScanPayload) => {
       const needsSelection = result.repositoryModel?.needsProjectRootSelection ?? false;
@@ -443,6 +559,13 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       setCleanupSelectedFindingIdsState([]);
       setReviewSelectedFindingIdsState([]);
       setInspectionSelectedFindingIdsState([]);
+      // A fresh structure scan is a new authoritative scan — any findings
+      // progress belongs to a previous scan/commit and must not linger.
+      findingsAttemptedScanRef.current = null;
+      setFindingsAnalysisPhase("idle");
+      setFindingsAnalysisAccepted(null);
+      setFindingsAnalysisProgress(null);
+      setFindingsAnalysisError(null);
       persist(nextSession, null, [], null, undefined, false, [], []);
     },
     []
@@ -875,6 +998,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     setCleanupSelectedFindingIdsState([]);
     setReviewSelectedFindingIdsState([]);
     setInspectionSelectedFindingIdsState([]);
+    findingsAttemptedScanRef.current = null;
+    setFindingsAnalysisPhase("idle");
+    setFindingsAnalysisAccepted(null);
+    setFindingsAnalysisProgress(null);
+    setFindingsAnalysisError(null);
+    clearPersistedAnalysisJob();
     clearPersistedSession();
   }, []);
 
@@ -890,6 +1019,11 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       inspectionSelectedFindingIds,
       scopeReviewed,
       hydrating,
+      findingsAnalysisPhase,
+      findingsAnalysisAccepted,
+      findingsAnalysisProgress,
+      findingsAnalysisError,
+      retryFindingsAnalysis,
       setScanComplete,
       setScanPhase,
       setSelectedProjectRoot,
@@ -919,6 +1053,11 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       inspectionSelectedFindingIds,
       scopeReviewed,
       hydrating,
+      findingsAnalysisPhase,
+      findingsAnalysisAccepted,
+      findingsAnalysisProgress,
+      findingsAnalysisError,
+      retryFindingsAnalysis,
       setScanComplete,
       setScanPhase,
       setSelectedProjectRoot,

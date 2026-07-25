@@ -7,10 +7,7 @@ import { ArrowRight, Github, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Panel } from "@/components/design-system/panel";
-import { MetricCard } from "@/components/design-system/metric-card";
-import { RiskBadge } from "@/components/design-system/risk-badge";
 import type { ScanPayload } from "@/lib/scanner/run-scan";
 import { DEMO_NOTICE } from "@/lib/demo/constants";
 import {
@@ -27,8 +24,7 @@ import { ErrorState, classifyScanError } from "@/components/app/ui/error-state";
 import { ScanEmptyIllustration } from "@/components/app/ui/scan-empty-illustration";
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { ProjectRootSelectionPanel } from "@/components/app/scan/project-root-selection-panel";
-import { AnalysisLineageBanner } from "@/components/app/analysis-lineage-banner";
-import { ScanCoveragePanel } from "@/components/app/scan/scan-coverage-panel";
+import { FINDINGS_STEPS } from "@/lib/findings/client";
 
 const LOADING_PHASES: ScanPhase[] = [
   "validating",
@@ -52,8 +48,17 @@ function phaseIndex(phase: ScanPhase | "idle"): number {
 export function ScanTab() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { session, setScanComplete, setScanPhase, setSelectedProjectRoot, resetSession } =
-    useAppSession();
+  const {
+    session,
+    findings,
+    setScanComplete,
+    setScanPhase,
+    setSelectedProjectRoot,
+    resetSession,
+    findingsAnalysisPhase,
+    findingsAnalysisProgress,
+    findingsAnalysisError,
+  } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   // Blank form until the user pastes/types a URL or starts a demo — do not hydrate from prior session.
   const [repoUrl, setRepoUrl] = useState("");
@@ -98,10 +103,7 @@ export function ScanTab() {
         setResult(data);
         setBranch(data.repo.branch || branch.trim() || "");
         setScanComplete(target, data.repo.branch || branch.trim(), data);
-        show("success", "Scan complete — review findings next");
-        if (isDemo) {
-          router.push("/app?tab=findings&demo=true");
-        }
+        show("success", "Repository connected — analysing findings…");
       } catch (err) {
         setPhase("failed");
         setScanPhase("failed");
@@ -125,10 +127,27 @@ export function ScanTab() {
     }
   }, [searchParams, startScan]);
 
+  const findingsAutoNavigated = useRef(false);
+  useEffect(() => {
+    if (findingsAutoNavigated.current || !result) return;
+    // One authoritative pipeline: once findings analysis reaches a terminal
+    // state (ready with a real payload, or a genuine failure), automatically
+    // advance to Review Findings — no separate "Run Findings" click.
+    if (findings || findingsAnalysisPhase === "failed") {
+      findingsAutoNavigated.current = true;
+      router.push(isDemoMode ? "/app?tab=findings&demo=true" : "/app?tab=findings");
+    }
+  }, [findings, findingsAnalysisPhase, result, router, isDemoMode]);
+
   // Only show results from a scan started on this page visit — never from silent session restore.
   const displayResult = result;
   const currentStep = phaseIndex(phase as ScanPhase);
   const showIdle = !isLoading && phase !== "failed" && !result;
+  const isAnalysingFindings =
+    Boolean(result) &&
+    !findings &&
+    findingsAnalysisPhase !== "idle" &&
+    findingsAnalysisPhase !== "failed";
   const showSuccess = phase === "complete" && Boolean(result);
   const previousScanLabel =
     !result &&
@@ -172,8 +191,8 @@ export function ScanTab() {
 
       <WorkspaceSection
         label="Repository connection"
-        title="Scan a public repository"
-        description="RepoDiet downloads your public GitHub repository archive (read-only), pins the branch commit, and maps structure before findings analysis."
+        title="Connect a public repository"
+        description="RepoDiet resolves the exact commit, inventories the repository, and runs findings analysis automatically as one workflow."
       />
 
       <Panel variant="elevated" padding="lg">
@@ -227,29 +246,15 @@ export function ScanTab() {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>Scan mode</Label>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="cyan">Structure scan</Badge>
-              <Badge variant="neutral" className="gap-1.5 opacity-70" title="Full analyzer pass runs on the Findings step">
-                Findings analyzers on next step
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              This step indexes the repository. Knip, jscpd, and Madge run on Findings; Quick Cleanup
-              applies fixes and opens a cleanup PR.
-            </p>
-          </div>
-
           <div className="flex flex-wrap gap-3 pt-1">
             <Button type="submit" disabled={isLoading || !repoUrl.trim()} size="lg">
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
-                  Scanning…
+                  Analyzing…
                 </>
               ) : (
-                "Scan Repository"
+                "Analyze repository"
               )}
             </Button>
             {isDemoMode ? (
@@ -262,17 +267,7 @@ export function ScanTab() {
               >
                 Exit Example / Analyze My Repository
               </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="secondary"
-                size="lg"
-                onClick={() => void startScan(DEMO_REPO, true)}
-                disabled={isLoading}
-              >
-                Try Demo Repository
-              </Button>
-            )}
+            ) : null}
           </div>
         </form>
       </Panel>
@@ -314,80 +309,6 @@ export function ScanTab() {
 
       {showSuccess && displayResult && (
         <div className="space-y-4">
-          <Panel variant="safe" padding="md">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-signal">Scan complete</p>
-                <p className="mt-1 font-mono text-xs text-muted-foreground">
-                  {displayResult.repo.owner}/{displayResult.repo.name} · {displayResult.repo.branch}
-                  {displayResult.repo.commitSha ? (
-                    <> · <span title="Commit SHA">{displayResult.repo.commitSha.slice(0, 7)}</span></>
-                  ) : null}
-                </p>
-                {typeof displayResult.summary?.totalFiles === "number" && (
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {displayResult.summary.totalFiles.toLocaleString()} files inventoried
-                    {typeof displayResult.summary.totalFolders === "number"
-                      ? ` · ${displayResult.summary.totalFolders.toLocaleString()} top-level folders`
-                      : ""}
-                  </p>
-                )}
-                {session.scanRecordId && (
-                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-                    Scan ID: {session.scanRecordId}
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {session.projectRootConfirmed ? (
-                  <Button asChild>
-                    <Link href="/app?tab=findings">
-                      Run Findings
-                      <ArrowRight className="h-4 w-4" aria-hidden />
-                    </Link>
-                  </Button>
-                ) : (
-                  <Button disabled title="Select an application root below">
-                    Run Findings
-                  </Button>
-                )}
-                <Button variant="secondary" onClick={startFresh}>
-                  Run Another Scan
-                </Button>
-              </div>
-            </div>
-          </Panel>
-
-          <AnalysisLineageBanner scan={displayResult} />
-
-          <ScanCoveragePanel
-            scan={displayResult}
-            manifest={displayResult.intelligenceManifest}
-          />
-
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard label="Framework" value={displayResult.framework.name} accent="cyan" />
-            <MetricCard
-              label="Package manager"
-              value={displayResult.packageManager.toUpperCase()}
-              accent="neutral"
-            />
-            <MetricCard
-              label="Files indexed"
-              value={displayResult.summary.totalFiles.toLocaleString()}
-              accent="neutral"
-            />
-            <MetricCard
-              label="Supported JS/TS source"
-              value={(
-                displayResult.scanCoverage?.contract?.supportedSourceFiles ??
-                displayResult.scanCoverage?.filesAnalyzable ??
-                0
-              ).toLocaleString()}
-              accent="neutral"
-            />
-          </div>
-
           {displayResult.repositoryModel?.needsProjectRootSelection && (
             <ProjectRootSelectionPanel
               scan={displayResult}
@@ -398,108 +319,70 @@ export function ScanTab() {
             />
           )}
 
-          {displayResult.repositoryModel && (
-            <Panel variant="elevated" padding="md">
-              <p className="ds-label mb-3">Project roots</p>
-              <p className="mb-3 text-sm text-muted-foreground">
-                Primary root:{" "}
-                <span className="font-mono text-foreground">
-                  {displayResult.repositoryModel.primaryProjectRoot}
-                </span>
-                {displayResult.repositoryModel.monorepoTool
-                  ? ` · ${displayResult.repositoryModel.monorepoTool} monorepo`
-                  : ""}
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-border/40 text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="py-2 pr-4">Root</th>
-                      <th className="py-2 pr-4">Framework</th>
-                      <th className="py-2 pr-4">Role</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displayResult.repositoryModel.projects.map((p) => {
-                      const project = p as {
-                        projectRoot?: string;
-                        framework?: string;
-                        role?: string;
-                      };
-                      return (
-                        <tr key={String(project.projectRoot)} className="border-b border-border/20">
-                          <td className="py-2 pr-4 font-mono text-xs">{project.projectRoot || "."}</td>
-                          <td className="py-2 pr-4">{project.framework ?? "unknown"}</td>
-                          <td className="py-2 pr-4">{project.role ?? "unknown"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+          <Panel variant="safe" padding="md">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-signal">
+                  {isAnalysingFindings ? "Analysing repository findings" : "Analysis complete"}
+                </p>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">
+                  {displayResult.repo.owner}/{displayResult.repo.name} · {displayResult.repo.branch}
+                  {displayResult.repo.commitSha ? (
+                    <> · <span title="Commit SHA">{displayResult.repo.commitSha.slice(0, 7)}</span></>
+                  ) : null}
+                </p>
+                <ul className="mt-2 grid gap-1 font-mono text-xs text-muted-foreground sm:grid-cols-2">
+                  <li>
+                    Files discovered: {displayResult.scanCoverage?.filesDiscovered ?? displayResult.summary.totalFiles}
+                  </li>
+                  <li>
+                    Supported files analysed:{" "}
+                    {displayResult.scanCoverage?.contract?.supportedSourceFiles ??
+                      displayResult.scanCoverage?.filesAnalyzable ??
+                      0}
+                  </li>
+                  <li>Skipped files: {displayResult.scanCoverage?.filesExcluded ?? 0}</li>
+                  <li>
+                    Findings:{" "}
+                    {findings
+                      ? findings.summary.totalFindings
+                      : isAnalysingFindings
+                        ? `${findingsAnalysisProgress?.completedUnits ?? 0} so far…`
+                        : findingsAnalysisError
+                          ? "analysis failed"
+                          : "—"}
+                  </li>
+                </ul>
+                {displayResult.warnings.length > 0 && (
+                  <p className="mt-2 text-xs text-amber-400">{displayResult.warnings.join(" · ")}</p>
+                )}
               </div>
-            </Panel>
-          )}
+              <div className="flex flex-wrap gap-2">
+                <Button asChild disabled={!session.projectRootConfirmed}>
+                  <Link href="/app?tab=findings">
+                    Open Results
+                    <ArrowRight className="h-4 w-4" aria-hidden />
+                  </Link>
+                </Button>
+                <Button variant="secondary" onClick={startFresh}>
+                  Analyze another repository
+                </Button>
+              </div>
+            </div>
+          </Panel>
 
-          {displayResult.warnings.length > 0 && (
-            <FeedbackBanner
-              variant="warning"
-              message={displayResult.warnings.join(" · ")}
-              dismissible={false}
+          {isAnalysingFindings && (
+            <LoadingProgress
+              title="Findings analysis"
+              steps={FINDINGS_STEPS.filter((s) => s.phase !== "ready").map((s) => ({
+                id: s.phase,
+                label: s.label,
+              }))}
+              currentIndex={FINDINGS_STEPS.findIndex((s) => s.phase === findingsAnalysisPhase)}
             />
           )}
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <ScanDetailPanel title="Repository summary">
-              <dl className="space-y-2 text-sm">
-                <DetailRow label="Top-level folders" value={displayResult.summary.totalFolders.toLocaleString()} />
-                <DetailRow label="Total size" value={`${displayResult.summary.totalSizeKb.toLocaleString()} KB`} />
-                <DetailRow label="Config files" value={String(displayResult.configFiles.length)} />
-                <DetailRow
-                  label="Protected paths"
-                  value={String(displayResult.repositoryModel?.protectedFileCount ?? "—")}
-                />
-                {displayResult.repo.commitSha && (
-                  <DetailRow label="Commit SHA" value={displayResult.repo.commitSha} />
-                )}
-              </dl>
-            </ScanDetailPanel>
-            <ScanDetailPanel title="Framework detection">
-              <div className="space-y-2">
-                <DetailRow label="Framework" value={displayResult.framework.name} />
-                <p className="text-xs text-muted-foreground">Detected from deterministic signals:</p>
-                <ul className="space-y-1 font-mono text-xs text-muted-foreground">
-                  {displayResult.framework.signals.map((s) => (
-                    <li key={s}>✓ {s}</li>
-                  ))}
-                </ul>
-              </div>
-            </ScanDetailPanel>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <RiskBadge level="cyan">Structure mapped</RiskBadge>
-            <RiskBadge level="safe">No changes during scan</RiskBadge>
-          </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function ScanDetailPanel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Panel variant="elevated" padding="md">
-      <p className="ds-label mb-3">{title}</p>
-      {children}
-    </Panel>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-4">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-mono text-foreground">{value}</dd>
     </div>
   );
 }
