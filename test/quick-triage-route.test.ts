@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { POST } from "../src/app/api/a2mcp/quick-triage/route";
 import { buildQuickTriageResult } from "../src/lib/a2mcp/quick-triage-response";
 import type { Finding } from "../src/lib/findings/types";
+import {
+  getAgentRuntimeHealth,
+  touchAgentRuntimeHealth,
+} from "../src/lib/a2a/agent-runtime-health";
+import { runPhase3ToolRoute } from "../src/lib/a2mcp/phase3-route";
 
 function test(name: string, fn: () => Promise<void>) {
   return fn()
@@ -58,6 +63,39 @@ async function run() {
     const json = (await res.json()) as { error?: { code?: string } };
     assert.equal(res.status, 400);
     assert.equal(json.error?.code, "INVALID_INPUT");
+  });
+
+  await test("a valid payment-required response records A2MCP reachability", async () => {
+    const previousRequireRealX402 = process.env.REQUIRE_REAL_X402;
+    const previousAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    process.env.REQUIRE_REAL_X402 = "1";
+    process.env.NEXT_PUBLIC_APP_URL = "https://skillswap-virid-kappa.vercel.app";
+    try {
+      await touchAgentRuntimeHealth({ a2mcpEndpointHealthy: false });
+      const response = await runPhase3ToolRoute(
+        "analyze_repository",
+        new Request("https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repoUrl: "https://github.com/acme/example",
+            branch: "main",
+            commitSha: "a".repeat(40),
+          }),
+        }),
+        async () => {
+          throw new Error("handler must not run before payment");
+        }
+      );
+      assert.equal(response.status, 402);
+      const health = await getAgentRuntimeHealth();
+      assert.equal(health.a2mcpEndpointHealthy, true);
+    } finally {
+      if (previousRequireRealX402 === undefined) delete process.env.REQUIRE_REAL_X402;
+      else process.env.REQUIRE_REAL_X402 = previousRequireRealX402;
+      if (previousAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = previousAppUrl;
+    }
   });
 
   for (const limit of [1, 5, 10] as const) {
