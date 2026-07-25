@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { formatA2ATaskResponse } from "../src/lib/a2a/orchestrator";
+import {
+  formatA2ATaskResponse,
+  isApprovedDeliveryRetryEligible,
+} from "../src/lib/a2a/orchestrator";
 import { isTerminalA2AStatus } from "../src/lib/a2a/task-state-machine";
 import type { A2ATaskRecord, A2ATaskStatus } from "../src/lib/a2a/types";
 
@@ -46,6 +49,49 @@ async function run() {
   test("verification_failed and delivery_failed are recoverable, not terminal", () => {
     assert.equal(formatA2ATaskResponse(taskWithStatus("verification_failed")).terminal, false);
     assert.equal(formatA2ATaskResponse(taskWithStatus("delivery_failed")).terminal, false);
+  });
+
+  test("delivery retry requires prior funding, approval, verification, and a prepared patch", () => {
+    const eligible = taskWithStatus("delivery_failed");
+    eligible.approval = {
+      summary: "Approved cleanup scope",
+      repository: "smokychain22/repodiet-e2e-test",
+      branch: "repodiet/cleanup-task_honesty_test",
+      changes: [],
+      unifiedDiff: "",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    eligible.result = {
+      verification: { status: "verified", checks: [] },
+      changes: {
+        changedFiles: ["unused.ts"],
+        unifiedDiff: "diff --git a/unused.ts b/unused.ts",
+        patchKitId: "patchkit_retry",
+      },
+    };
+    eligible.transitions = [
+      { status: "funded", at: new Date().toISOString(), role: "orchestrator" },
+      {
+        status: "creating_pull_request",
+        at: new Date().toISOString(),
+        role: "github_delivery_worker",
+      },
+      {
+        status: "delivery_failed",
+        at: new Date().toISOString(),
+        role: "github_delivery_worker",
+      },
+    ];
+
+    assert.equal(isApprovedDeliveryRetryEligible(eligible), true);
+
+    const unpaid = structuredClone(eligible);
+    unpaid.transitions = unpaid.transitions.filter((transition) => transition.status !== "funded");
+    assert.equal(isApprovedDeliveryRetryEligible(unpaid), false);
+
+    const unverified = structuredClone(eligible);
+    unverified.result.verification = { status: "failed", checks: [] };
+    assert.equal(isApprovedDeliveryRetryEligible(unverified), false);
   });
 
   test("checks_failed is recoverable, not terminal", () => {
