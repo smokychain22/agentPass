@@ -89,8 +89,7 @@ export function isTerminalCheck(check: PrCheckRecord): boolean {
 
 export function isPendingRequiredCheck(check: PrCheckRecord): boolean {
   if (!check.required) return false;
-  if (!isTerminalCheck(check)) return true;
-  return isFailedConclusion(check.conclusion);
+  return !isTerminalCheck(check);
 }
 
 export function aggregateCleanupCaused(

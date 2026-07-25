@@ -23,6 +23,16 @@ export interface GitHubRepoMeta {
   defaultBranch: string;
 }
 
+export interface GitHubPullRequestFile {
+  path: string;
+  status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+  previousPath?: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  blobSha: string;
+}
+
 export class GitHubClient {
   constructor(private readonly token: string) {}
 
@@ -301,6 +311,40 @@ export class GitHubClient {
       baseRef: pr.base.ref,
       state: pr.state,
     };
+  }
+
+  async listPullRequestFiles(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<GitHubPullRequestFile[]> {
+    const files: GitHubPullRequestFile[] = [];
+    for (let page = 1; page <= 30; page += 1) {
+      const batch = await this.request<
+        Array<{
+          filename: string;
+          status: GitHubPullRequestFile["status"];
+          previous_filename?: string;
+          additions: number;
+          deletions: number;
+          changes: number;
+          sha: string;
+        }>
+      >(`/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`);
+      files.push(
+        ...batch.map((file) => ({
+          path: file.filename,
+          status: file.status,
+          previousPath: file.previous_filename,
+          additions: file.additions,
+          deletions: file.deletions,
+          changes: file.changes,
+          blobSha: file.sha,
+        }))
+      );
+      if (batch.length < 100) break;
+    }
+    return files;
   }
 
   async listCommitCheckRuns(

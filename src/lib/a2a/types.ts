@@ -169,6 +169,7 @@ export interface A2ATaskResult {
     number?: number;
     title?: string;
     branch?: string;
+    headCommit?: string;
   };
   receipt?: Record<string, unknown>;
   guard?: Record<string, unknown>;

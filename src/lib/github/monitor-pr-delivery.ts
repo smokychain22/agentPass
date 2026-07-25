@@ -7,7 +7,12 @@ import {
   inspectPullRequestChecks,
 } from "@/lib/github/pr-check-monitor";
 import type { PrDeliveryMonitorRecord } from "@/lib/github/pr-check-types";
-import { signExecutionReceipt, type ExecutionReceipt } from "@/lib/operator/sign-receipt";
+import {
+  hashPatchContent,
+  hashVerification,
+  signExecutionReceipt,
+  type ExecutionReceipt,
+} from "@/lib/operator/sign-receipt";
 import {
   canonicalDigest,
   assertSigningIdentitySeparation,
@@ -25,6 +30,57 @@ import {
   type IndependentVerificationInput,
 } from "@/lib/green-pr";
 import { getBoundQuote, getPaymentByQuoteId } from "@/lib/payment/payment-store";
+
+function normalizedPaths(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.replace(/\\/g, "/").replace(/^\.\//, "")))]
+    .filter(Boolean)
+    .sort();
+}
+
+function plannedDeletePaths(unifiedDiff?: string): string[] {
+  if (!unifiedDiff) return [];
+  const deleted: string[] = [];
+  for (const block of unifiedDiff.split(/^diff --git /m).slice(1)) {
+    if (!/^a\/.+ b\/.+/m.test(block) || !/^deleted file mode /m.test(block)) continue;
+    const match = block.match(/^a\/(.+?) b\/.+$/m);
+    if (match?.[1]) deleted.push(match[1]);
+  }
+  return normalizedPaths(deleted);
+}
+
+export function validateCurrentPullRequestScope(
+  task: A2ATaskRecord,
+  monitor: PrDeliveryMonitorRecord
+): string | undefined {
+  const pinnedCommit = task.repository.commitSha ?? task.input.commitSha;
+  if (pinnedCommit && monitor.baseSha !== pinnedCommit) {
+    return `pull_request_base_changed: expected ${pinnedCommit}, received ${monitor.baseSha}`;
+  }
+
+  const expectedPaths = normalizedPaths(
+    task.approval?.changes.map((change) => change.path) ??
+      task.result.changes?.changedFiles ??
+      []
+  );
+  const actualPaths = normalizedPaths(monitor.changedFiles.map((file) => file.path));
+  if (actualPaths.length === 0) return "pull_request_has_no_changes";
+  if (
+    expectedPaths.length === 0 ||
+    expectedPaths.length !== actualPaths.length ||
+    expectedPaths.some((path, index) => path !== actualPaths[index])
+  ) {
+    return `pull_request_scope_mismatch: expected [${expectedPaths.join(", ")}], received [${actualPaths.join(", ")}]`;
+  }
+
+  const expectedDeletes = plannedDeletePaths(task.result.changes?.unifiedDiff);
+  for (const path of expectedDeletes) {
+    const file = monitor.changedFiles.find((entry) => entry.path === path);
+    if (file?.status !== "removed") {
+      return `pull_request_operation_mismatch: expected ${path} to be removed`;
+    }
+  }
+  return undefined;
+}
 
 function phaseCommandResults(
   phase: unknown,
@@ -260,26 +316,70 @@ export async function monitorTaskPullRequestDelivery(input: {
   });
 
   const receiptChecks = buildDeliveryReceiptChecks(monitor);
+  const scopeError = validateCurrentPullRequestScope(current, monitor);
+  const changedPaths = normalizedPaths(monitor.changedFiles.map((file) => file.path));
+  const patchEvidence = {
+    baseSha: monitor.baseSha,
+    headSha: monitor.headSha,
+    files: [...monitor.changedFiles]
+      .map((file) => ({
+        path: file.path,
+        status: file.status,
+        previousPath: file.previousPath,
+        additions: file.additions,
+        deletions: file.deletions,
+        changes: file.changes,
+        blobSha: file.blobSha,
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  };
+  const effectiveDeliveryReady = monitor.deliveryReady && !scopeError;
+  const effectiveReceiptChecks = scopeError
+    ? {
+        ...receiptChecks,
+        deliveryReady: false,
+        deliveryStatus: "owner_action_required" as const,
+        unresolvedOwnerActions: [
+          ...receiptChecks.unresolvedOwnerActions,
+          scopeError,
+        ],
+      }
+    : receiptChecks;
   const signed = signExecutionReceipt({
     taskId: input.task.id,
     repository: `${input.task.repository.owner}/${input.task.repository.name}`,
     commitSha: input.task.repository.commitSha ?? monitor.sourceCommitSha,
     findingIds: input.task.input.findingIds ?? [],
-    patchHash: "sha256:pr",
-    verificationHash: "sha256:pr-checks",
-    status: monitor.deliveryReady ? "verified" : "failed",
+    patchHash: hashPatchContent(JSON.stringify(patchEvidence)),
+    verificationHash: hashVerification({
+      headSha: monitor.headSha,
+      checks: effectiveReceiptChecks,
+    }),
+    status: effectiveDeliveryReady ? "verified" : "failed",
     quoteId: input.task.input.quoteId,
     paymentReference: input.task.input.paymentReference,
     timestamp: new Date().toISOString(),
     pullRequestUrl: input.prUrl,
+    patchCommitSha: monitor.headSha,
+    changedPaths,
   } satisfies ExecutionReceipt);
 
   const receipt = {
     ...signed.signedReceipt,
     signature: signed.signature,
     signedBy: signed.signedBy,
-    deliveryReady: receiptChecks.deliveryReady,
-    prDelivery: receiptChecks,
+    deliveryReady: effectiveDeliveryReady,
+    prDelivery: effectiveReceiptChecks,
+    scopeValidation: {
+      satisfied: !scopeError,
+      error: scopeError,
+      expectedPaths: normalizedPaths(
+        current.approval?.changes.map((change) => change.path) ??
+          current.result.changes?.changedFiles ??
+          []
+      ),
+      changedPaths,
+    },
   };
 
   let result = {
@@ -289,13 +389,45 @@ export async function monitorTaskPullRequestDelivery(input: {
       number: input.prNumber,
       branch: input.branch,
       title: current.result.pullRequest?.title,
+      headCommit: monitor.headSha,
     },
     receipt: contractedDelivery
       ? { status: "pending_green_pr_attestation" }
       : receipt as Record<string, unknown>,
     prDelivery: monitor as unknown as Record<string, unknown>,
     attestation: current.result.attestation,
+    maintenanceOutcome: {
+      kind: "bounded_repository_cleanup" as const,
+      headline: `${changedPaths.length} bounded repository change${changedPaths.length === 1 ? "" : "s"} delivered for review`,
+      sourceCommit: monitor.sourceCommitSha,
+      canonicalizations: [],
+      changedPaths,
+      editedPaths: monitor.changedFiles
+        .filter((file) => file.status === "modified" || file.status === "renamed")
+        .map((file) => file.path)
+        .sort(),
+      deletedPaths: monitor.changedFiles
+        .filter((file) => file.status === "removed")
+        .map((file) => file.path)
+        .sort(),
+      addedPaths: monitor.changedFiles
+        .filter((file) => file.status === "added" || file.status === "copied")
+        .map((file) => file.path)
+        .sort(),
+      verificationStatus: effectiveDeliveryReady ? "verified" : "blocked",
+      deliveryState: "delivered" as const,
+      evidenceStatement:
+        "Derived from the current GitHub pull request head and its exact changed-file set; no architecture-level claim is made.",
+    },
   };
+
+  if (scopeError) {
+    return syncDeliveryTask(current, sm, "owner_action_required", {
+      result,
+      error: scopeError,
+      completedAt: undefined,
+    });
+  }
 
   if (monitor.deliveryReady) {
     if (contractedDelivery) {
@@ -327,6 +459,7 @@ export async function monitorTaskPullRequestDelivery(input: {
       result,
       transitions: sm.cloneTransitions(),
       updatedAt: new Date().toISOString(),
+      error: undefined,
       // Not terminal — buyer must inspect, accept, then escrow releases.
       completedAt: undefined,
     };
@@ -362,6 +495,21 @@ export async function monitorTaskPullRequestDelivery(input: {
     result,
     error,
     completedAt: new Date().toISOString(),
+  });
+}
+
+export async function reconcileTaskPullRequestDelivery(
+  task: A2ATaskRecord
+): Promise<A2ATaskRecord> {
+  const pullRequest = task.result.pullRequest;
+  if (!pullRequest?.url || !pullRequest.number || !pullRequest.branch) {
+    throw new Error("pull_request_delivery_evidence_missing");
+  }
+  return monitorTaskPullRequestDelivery({
+    task,
+    prNumber: pullRequest.number,
+    prUrl: pullRequest.url,
+    branch: pullRequest.branch,
   });
 }
 

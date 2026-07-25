@@ -32,7 +32,13 @@ export async function submitA2aDeliveryEvidence(taskId: string): Promise<A2ATask
     throw new Error("Direct-site delivery does not use OKX marketplace settlement.");
   }
 
-  if (task.status === "delivery_submitted" || task.status === "buyer_accepted") {
+  if (task.status === "delivery_submitted") {
+    const { reconcileTaskPullRequestDelivery } = await import(
+      "@/lib/github/monitor-pr-delivery"
+    );
+    return reconcileTaskPullRequestDelivery(task);
+  }
+  if (task.status === "buyer_accepted") {
     return task;
   }
   if (task.status === "escrow_released" || task.status === "completed") {
@@ -45,7 +51,7 @@ export async function submitA2aDeliveryEvidence(taskId: string): Promise<A2ATask
   }
 
   const order = await getOkxOrderByA2aTask(taskId);
-  const deliveryId = newDeliveryId();
+  const deliveryId = task.result.settlement?.deliveryId ?? newDeliveryId();
   const identity = getCanonicalOkxIdentity();
   const payload = {
     protocol: "A2A",
@@ -123,7 +129,13 @@ export async function acceptA2aDeliveryByBuyer(
   if (task.status === "buyer_accepted" || task.status === "escrow_released" || task.status === "completed") {
     return task;
   }
-  if (task.status === "delivery_ready") {
+  if (
+    task.status === "delivery_ready" ||
+    (
+      task.status === "delivery_submitted" &&
+      task.input.purchaseChannel === "okx_marketplace"
+    )
+  ) {
     await submitA2aDeliveryEvidence(taskId);
   }
   const current = (await getA2ATask(taskId))!;
@@ -136,6 +148,29 @@ export async function acceptA2aDeliveryByBuyer(
   if (!input.buyerWallet?.trim()) throw new Error("buyer_wallet_required");
   const buyerWallet = input.buyerWallet.trim().toLowerCase();
   const order = await getOkxOrderByA2aTask(taskId);
+  if (current.input.purchaseChannel === "okx_marketplace" && !order?.escrowReference) {
+    throw new Error("okx_escrow_order_required_for_buyer_acceptance");
+  }
+  if (
+    current.input.purchaseChannel === "okx_marketplace" &&
+    !input.okxAcceptanceReference?.trim()
+  ) {
+    throw new Error("okx_acceptance_reference_required");
+  }
+  const receipt = current.result.receipt;
+  const receiptHead =
+    receipt && typeof receipt.patchCommitSha === "string"
+      ? receipt.patchCommitSha
+      : undefined;
+  if (
+    current.input.purchaseChannel === "okx_marketplace" &&
+    (
+      current.result.pullRequest?.headCommit !== receiptHead ||
+      receipt?.deliveryReady !== true
+    )
+  ) {
+    throw new Error("current_pull_request_evidence_required_before_acceptance");
+  }
   if (order) {
     await updateOkxOrder(order.orderId, { status: "buyer_accepted", payer: buyerWallet });
   }
@@ -193,6 +228,9 @@ export async function recordA2aEscrowRelease(
   const identity = getCanonicalOkxIdentity();
   const sellerWallet = (input.sellerWallet ?? identity.sellerWallet).toLowerCase();
   const order = await getOkxOrderByA2aTask(taskId);
+  if (task.input.purchaseChannel === "okx_marketplace" && !order?.escrowReference) {
+    throw new Error("okx_escrow_order_required_for_release");
+  }
   if (order) {
     await updateOkxOrder(order.orderId, { status: "escrow_released" });
   }
