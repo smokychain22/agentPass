@@ -98,6 +98,47 @@ Known limitation, stated plainly: this runtime provides infrastructure-level con
 `okx-ai` watch-core protocol. Messages queue as unread todos and drain on the next watch session;
 nothing is lost while this runtime is the only thing running.
 
+**This limitation was investigated on 2026-07-27 to determine whether it could be closed with
+officially supported tooling. It cannot, and the statement above is retained rather than removed —
+see "Autonomous responder investigation" below.**
+
+## Autonomous responder investigation (2026-07-27) — external blocker, not a gap we can code around
+
+Investigated whether a headless (no interactive AI session) worker could answer inbound A2A
+messages using only the officially documented `onchainos` / `okx-a2a` tooling, without creating any
+new task (a hard constraint for this investigation):
+
+1. **`okx-a2a session send` / `xmtp-send`** both require `--job-id` (or a `--session-key` derived
+   from one). There is no standalone command to message an agent, or to watch for messages,
+   outside an existing on-chain task/job context. `okx-a2a task requests` (read-only) confirms
+   real pending inbound conversations exist on other jobs, but those belong to other counterparties
+   and were not used as a test harness.
+2. **`onchainos agent next-action`** — the mechanism `src/lib/okx-runtime/provider-worker.ts`
+   already calls for ASP-side system events — returns a natural-language *playbook* for an LLM to
+   interpret and act on (confirmed directly from its own `--help` text and from the `okx-ai`
+   watch-core protocol, which is explicit that item dispatch is "purely mechanical" for an LLM to
+   execute, not something the CLI executes itself).
+3. **`okx-a2a ai exec`** — the only documented mechanism for generating an automated reply —
+   requires `--provider <codex|claude|hermes>`: it spawns an AI CLI session to produce the
+   response. There is no deterministic, AI-free code path in the officially supported tooling for
+   answering an inbound A2A message.
+
+**Conclusion**: the officially documented OKX tooling has no mechanism for a headless process to
+answer an inbound A2A message without invoking an AI provider — whether that is an interactive
+Claude Code / Codex session or `okx-a2a ai exec` spawning one non-interactively. This is reported
+as an **external blocker**, not a defect in RepoDiet's own code. An OKX support question has been
+prepared asking how ASPs are expected to remain responsive to inbound task/negotiation messages
+without an interactive AI session in the loop. Agent 9636's listing remains under review
+(`approvalRemark: "AI quality review suggested pass"` as of 2026-07-27) — this finding does not
+change that status; no reactivation or resubmission was performed.
+
+**Practical mitigation already in place**: RepoDiet's own HTTP-level `/api/a2a/tasks` intake (the
+same endpoint OKX's own reviewer probes pre-listing) already answers discovery and informational
+queries deterministically and instantly — see "Official Agent-channel response testing" above and
+the `isInformationalQuery` fix. The gap is specifically in the genuine XMTP/task-watch channel for
+messages arriving *after* a task exists, which requires the AI-in-the-loop mechanism described
+above.
+
 ## Operator receipt key reconciliation
 
 `GET /api/okx/trust-root` previously reported `fingerprintMatchesPinned: false` — the deployed
