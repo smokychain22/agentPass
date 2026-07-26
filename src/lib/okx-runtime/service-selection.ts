@@ -4,6 +4,8 @@ export const REPODIET_OKX_SERVICES = {
     serviceId: "32947",
     serviceType: "A2A",
     operation: "create_cleanup_pr",
+    sellerWallet: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    communicationAddress: "0x185d96f1ccbae299263e789349028ef9569f9d22",
   },
   a2mcp: {
     agentId: "5283",

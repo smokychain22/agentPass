@@ -22,7 +22,7 @@ export async function GET() {
     service: "RepoDiet OKX Agent Runtime",
     agent,
     marketplace: {
-      a2aRuntimeReady: marketplace.a2aRuntimeReady,
+      a2aRuntimeReady: okx.a2aRuntimeReady,
       a2aInitialResponseReady: marketplace.a2aInitialResponseReady,
       a2mcpQuickTriageReady: marketplace.a2mcpQuickTriageReady,
       queueDepth: marketplace.queueDepth,
@@ -30,8 +30,9 @@ export async function GET() {
       deliveryWorkerHealthy: agent.deliveryWorkerHealthy,
     },
     lifecycleStates: OKX_MARKETPLACE_LIFECYCLE_STATES,
-    silentTimeoutPossible: false,
-    immediateAcknowledgment: true,
+    silentTimeoutPossible: !agent.agentOnline,
+    immediateAcknowledgment:
+      marketplace.a2aInitialResponseReady === true && agent.agentOnline,
     durableTaskRecovery: true,
     alert: agent.alertAgentCannotAnswer
       ? {

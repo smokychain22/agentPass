@@ -26,6 +26,11 @@ export async function buildOkxHealthResponse() {
 
   const degradedReasons = [
     ...(marketplace.degradedReasons ?? []),
+    ...(!agentRuntime.agentOnline
+      ? [
+          `official_a2a_seller_runtime_unavailable: heartbeatStatus=${agentRuntime.heartbeatStatus}`,
+        ]
+      : []),
     ...(backlogWithoutExecutor
       ? [
           `queued_tasks_have_no_executable_worker: queueDepth=${queueDepth} activeJobs=${activeJobs} activeWorkers=0 activeWorkflowRuns=0`,
@@ -35,7 +40,13 @@ export async function buildOkxHealthResponse() {
 
   // Fail closed: never advertise worker/runtime readiness when backlog cannot execute.
   const workerReady = Boolean(marketplace.workerReady) && !backlogWithoutExecutor;
-  const a2aRuntimeReady = Boolean(marketplace.a2aRuntimeReady) && !backlogWithoutExecutor;
+  const a2aRuntimeReady =
+    Boolean(marketplace.a2aRuntimeReady) &&
+    agentRuntime.agentOnline &&
+    agentRuntime.onchainOsAuthenticated &&
+    agentRuntime.officialWatchActive &&
+    agentRuntime.xmtpClientReady &&
+    !backlogWithoutExecutor;
   const workerCapacityReady =
     marketplace.workerCapacityReady !== false && !backlogWithoutExecutor;
   const workflowReady = marketplace.workflowReady !== false && !backlogWithoutExecutor;
@@ -69,6 +80,16 @@ export async function buildOkxHealthResponse() {
     agentRuntime: {
       agentOnline: agentRuntime.agentOnline,
       onchainOsAuthenticated: agentRuntime.onchainOsAuthenticated,
+      officialWatchActive: agentRuntime.officialWatchActive,
+      xmtpClientReady: agentRuntime.xmtpClientReady,
+      aspAgentId: agentRuntime.aspAgentId,
+      a2aServiceId: agentRuntime.a2aServiceId,
+      sellerWallet: agentRuntime.sellerWallet,
+      registeredCommunicationAddress: agentRuntime.registeredCommunicationAddress,
+      recoveredSignerAddress: agentRuntime.recoveredSignerAddress,
+      identityVerifiedAt: agentRuntime.identityVerifiedAt,
+      heartbeatExpiresAt: agentRuntime.heartbeatExpiresAt,
+      heartbeatStatus: agentRuntime.heartbeatStatus,
       lastTaskReceivedAt: agentRuntime.lastTaskReceivedAt,
       lastAcknowledgementAt: agentRuntime.lastAcknowledgementAt,
       queueDepth: agentRuntime.queueDepth,
@@ -81,8 +102,9 @@ export async function buildOkxHealthResponse() {
       alertAgentCannotAnswer: agentRuntime.alertAgentCannotAnswer,
       lastSeenAt: agentRuntime.lastSeenAt,
     },
-    silentTimeoutPossible: backlogWithoutExecutor,
-    immediateTaskAcknowledgment: true,
+    silentTimeoutPossible: !agentRuntime.agentOnline || backlogWithoutExecutor,
+    immediateTaskAcknowledgment:
+      marketplace.a2aInitialResponseReady === true && agentRuntime.agentOnline,
     configurationReady: Boolean(marketplace.configurationReady),
     queueReady: Boolean(marketplace.queueReady ?? marketplace.deepScanQueueReady),
     workerCapacityReady,

@@ -52,7 +52,7 @@ export async function POST(request: Request) {
         requestId,
         durationMs: Date.now() - started,
       });
-      await touchMarketplaceHealth({ a2aInitialResponseReady: true, a2aRuntimeReady: true });
+      await touchMarketplaceHealth({ a2aInitialResponseReady: true });
       return NextResponse.json({
         success: true,
         ...intake,
