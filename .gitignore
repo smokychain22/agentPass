@@ -2,6 +2,7 @@ node_modules/
 .npm-cache/
 data/
 .repodiet-runtime/
+.repodiet-okx-runtimes/
 repos/
 .env
 *.log

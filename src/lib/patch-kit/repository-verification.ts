@@ -118,7 +118,7 @@ async function runVerificationScript(
 ): Promise<ExecaReturnValue> {
   const env = verificationEnv(rootDir, name);
   const primary = runScriptCommand(pm, name);
-  let result = await execa(primary[0], primary.slice(1), {
+  const result = await execa(primary[0], primary.slice(1), {
     cwd: rootDir,
     timeout: COMMAND_TIMEOUT_MS,
     reject: false,

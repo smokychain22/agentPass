@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       );
     }
 
-    let findings = body.scanId ? await getStoredFindings(body.scanId) : null;
+    const findings = body.scanId ? await getStoredFindings(body.scanId) : null;
     const flat = findings ? flattenFindings(findings) : [];
 
     // Expand finding IDs into paths when paths omitted.
