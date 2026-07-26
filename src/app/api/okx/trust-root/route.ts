@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   OPERATOR_SIGNATURE_ALGORITHM,
+  deriveOperatorPublicKeyPem,
   operatorTrustRootSource,
   publishOperatorTrustRoot,
   publicKeyFingerprint,
@@ -40,6 +41,10 @@ export async function GET() {
   }
 
   const fingerprint = publicKeyFingerprint(publicKeyPem);
+  const privateDerivedPem = deriveOperatorPublicKeyPem();
+  const privateKeyDerivedFingerprint = privateDerivedPem
+    ? publicKeyFingerprint(privateDerivedPem)
+    : null;
   return NextResponse.json({
     success: true,
     configured: true,
@@ -49,6 +54,11 @@ export async function GET() {
     fingerprint,
     pinnedFingerprint: PINNED_OPERATOR_PUBLIC_KEY_FINGERPRINT,
     fingerprintMatchesPinned: fingerprint === PINNED_OPERATOR_PUBLIC_KEY_FINGERPRINT,
+    // Diagnostic only — a fingerprint, never key material. Reconciles which key the
+    // deployed REPODIET_OPERATOR_PRIVATE_KEY actually corresponds to.
+    privateKeyDerivedFingerprint,
+    privateKeyFingerprintMatchesDeployedPublic: privateKeyDerivedFingerprint === fingerprint,
+    privateKeyFingerprintMatchesPinned: privateKeyDerivedFingerprint === PINNED_OPERATOR_PUBLIC_KEY_FINGERPRINT,
     trustRootUsesPrivateDerivation: trustRootUsesPrivateDerivation(),
     publicKeyPem,
     pinnedPublicKeyPem: PINNED_OPERATOR_PUBLIC_KEY_PEM,
