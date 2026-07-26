@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runPhase3ToolRoute } from "@/lib/a2mcp/phase3-route";
 import { executeQuickTriage } from "@/lib/a2mcp/quick-triage-engine";
+import { ToolExecutionError } from "@/lib/a2mcp/errors";
 import { buildToolErrorResponse } from "@/lib/a2mcp/tool-contract";
 import { createTaskId } from "@/lib/a2mcp/task-store";
 import {
@@ -29,8 +30,10 @@ export async function POST(request: Request) {
   const taskId = createTaskId();
 
   let body: Record<string, unknown>;
+  let rawBody: string;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    rawBody = await request.text();
+    body = JSON.parse(rawBody) as Record<string, unknown>;
   } catch {
     return NextResponse.json(
       buildToolErrorResponse(
@@ -51,7 +54,7 @@ export async function POST(request: Request) {
     const forwardedRequest = new Request(request.url, {
       method: "POST",
       headers: request.headers,
-      body: JSON.stringify(body),
+      body: rawBody,
     });
     // Preserve the existing paid A2MCP listing/service and its 0.03 USDT rail.
     return runPhase3ToolRoute(
@@ -101,49 +104,49 @@ export async function POST(request: Request) {
     );
   }
 
-  let repositoryTarget: Awaited<ReturnType<typeof normalizeRepositoryTarget>>;
-  try {
-    repositoryTarget = await normalizeRepositoryTarget({
-      repositoryUrl,
-      branch,
-      resolveRemote: true,
-    });
-  } catch {
-    return NextResponse.json(
-      buildToolErrorResponse(
-        "analyze_repository",
-        taskId,
-        "UNSUPPORTED_REPOSITORY",
-        "The public GitHub repository or requested branch could not be resolved to a commit."
-      ),
-      { status: 422 }
-    );
-  }
-
-  const forwardedBody = {
-    repoUrl: repositoryUrl,
-    repositoryUrl,
-    branch: repositoryTarget.branch,
-    commitSha: repositoryTarget.sourceCommit,
-    maximumFindings: Math.floor(maximumFindings),
-    source: "quick_triage",
-    operation: "analyze_repository",
-    quoteId: typeof body.quoteId === "string" ? body.quoteId : undefined,
-    paymentReference:
-      typeof body.paymentReference === "string" ? body.paymentReference : undefined,
-    payer: typeof body.payer === "string" ? body.payer : undefined,
-    idempotencyKey:
-      typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
-  };
-
   const forwardedRequest = new Request(request.url, {
     method: "POST",
     headers: request.headers,
-    body: JSON.stringify(forwardedBody),
+    body: rawBody,
   });
 
-  return runPhase3ToolRoute("analyze_repository", forwardedRequest, executeQuickTriage, {
-    timeoutMs: undefined, // use QUICK_TRIAGE_TIMEOUT_MS via tool name
-  });
+  return runPhase3ToolRoute(
+    "analyze_repository",
+    forwardedRequest,
+    async (paidBody, paidTaskId) => {
+      const paidRecord = paidBody as Record<string, unknown>;
+      let repositoryTarget: Awaited<ReturnType<typeof normalizeRepositoryTarget>>;
+      try {
+        repositoryTarget = await normalizeRepositoryTarget({
+          repositoryUrl,
+          branch,
+          resolveRemote: true,
+        });
+      } catch {
+        throw new ToolExecutionError(
+          "REPO_NOT_FOUND",
+          "The public GitHub repository or requested branch could not be resolved to a commit.",
+          422
+        );
+      }
+
+      return executeQuickTriage(
+        {
+          ...paidRecord,
+          repoUrl: repositoryUrl,
+          repositoryUrl,
+          branch: repositoryTarget.branch,
+          commitSha: repositoryTarget.sourceCommit,
+          maximumFindings: Math.floor(maximumFindings),
+          source: "quick_triage",
+          operation: "analyze_repository",
+        },
+        paidTaskId
+      );
+    },
+    {
+      timeoutMs: undefined, // use QUICK_TRIAGE_TIMEOUT_MS via tool name
+    }
+  );
 }
 

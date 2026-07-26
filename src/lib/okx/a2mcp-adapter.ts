@@ -30,7 +30,12 @@ export async function resolveBindingFromBody(
       : undefined;
   const scanId = typeof body.scanId === "string" ? body.scanId.trim() : undefined;
   const taskId = typeof body.taskId === "string" ? body.taskId.trim() : undefined;
-  const repoUrl = typeof body.repoUrl === "string" ? body.repoUrl.trim() : undefined;
+  const repoUrl =
+    typeof body.repoUrl === "string"
+      ? body.repoUrl.trim()
+      : typeof body.repositoryUrl === "string"
+        ? body.repositoryUrl.trim()
+        : undefined;
   const branch = typeof body.branch === "string" ? body.branch.trim() : "main";
   const attestationId =
     typeof body.attestationId === "string" ? body.attestationId.trim() : undefined;
