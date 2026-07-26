@@ -129,7 +129,7 @@ export function buildAgentCard() {
       trustRoot: `${baseUrl}/api/okx/trust-root`,
       verifyReceipt: `${baseUrl}/api/okx/receipts/{receiptId}`,
       manifest: `${baseUrl}/api/tools/manifest`,
-      health: `${baseUrl}/api/tools/health`,
+      health: `${baseUrl}/api/okx/health`,
       maintenanceContractSchema: `${baseUrl}/schemas/repodiet.contract.v1.schema.json`,
     },
     a2aLifecycle: [

@@ -313,7 +313,7 @@ export function buildServiceManifest() {
       okxGateway: `${baseUrl}/api/okx/health`,
       betaOpenAccess: process.env.REPODIET_OKX_A2MCP_PAID !== "1",
     },
-    healthEndpoint: `${baseUrl}/api/tools/health`,
+    healthEndpoint: `${baseUrl}/api/okx/health`,
     supportUrl: `${baseUrl}/docs`,
     privacy: {
       publicReposOnly: true,

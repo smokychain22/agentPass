@@ -57,6 +57,7 @@ async function run() {
     assert.equal(card.services.a2a.defaultReferencePrice, "1 USD₮0");
     assert.equal(card.services.a2mcp.operation, "analyze_repository");
     assert.equal(card.services.a2mcp.price, "0.03 USD₮0 per call");
+    assert.equal(new URL(card.endpoints.health).pathname, "/api/okx/health");
 
     const manifest = buildServiceManifest();
     assert.equal(manifest.pricing.a2aVerifiedCleanupPr.operation, "create_cleanup_pr");
@@ -64,6 +65,7 @@ async function run() {
     assert.equal(manifest.pricing.a2aVerifiedCleanupPr.defaultReferenceUsdT0, 1);
     assert.equal(manifest.pricing.a2mcpQuickTriage.operation, "analyze_repository");
     assert.equal(manifest.pricing.a2mcpQuickTriage.priceUsdT0, 0.03);
+    assert.equal(new URL(manifest.healthEndpoint).pathname, "/api/okx/health");
   });
 
   await test("analyze_repository price follows pricing module", () => {
