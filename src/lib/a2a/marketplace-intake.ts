@@ -17,6 +17,16 @@ const DISCOVERY_PATTERNS = [
   /create\s+a\s+repository\s+cleanup\s+task/i,
 ];
 
+/** Conversational status/capability questions — not a hire-intent trigger, no scope demanded. */
+const INFORMATIONAL_PATTERNS = [
+  /\bis\s+repodiet\s+online\b/i,
+  /\bis\s+agent\s*(id\s*)?9636\s+online\b/i,
+  /what\s+does\s+repodiet(\s+quick\s*triage)?\s+do/i,
+  /what\s+is\s+repodiet(\s+quick\s*triage)?/i,
+  /can\s+repodiet\s+create\s+a\s+(cleanup\s+)?pull\s+request/i,
+  /does\s+repodiet\s+(support|create|open|deliver)\s+(a\s+)?(cleanup\s+)?pull\s+request/i,
+];
+
 export function extractUserMessage(body: Record<string, unknown>): string | undefined {
   const candidates = [
     body.message,
@@ -36,6 +46,13 @@ export function isMarketplaceDiscoveryMessage(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   return DISCOVERY_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+/** Conversational status/capability question — answer informatively, don't demand scope. */
+export function isInformationalQuery(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return INFORMATIONAL_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 /** Extract a GitHub repository URL from free-form reviewer / marketplace text. */
@@ -120,6 +137,63 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
     permittedActions: ["record_provider_response"],
     multiTenant: true,
     repositoryAllowlist: false,
+    scanStarted: false,
+  };
+}
+
+/** Answers a conversational status/capability question without demanding repository scope. */
+export function buildInformationalResponse(requestId: string) {
+  const baseUrl = getServerBaseUrl();
+  const identity = getCanonicalOkxIdentity();
+
+  return {
+    ok: true,
+    terminal: true,
+    status: "AVAILABLE",
+    acknowledged: true,
+    immediateAcknowledgement: true,
+    aspAgentId: String(identity.aspAgentId),
+    a2aServiceId: String(identity.a2aServiceId),
+    a2mcpServiceId: String(identity.a2mcpServiceId),
+    service: "RepoDiet — Verified Repository Cleanup",
+    message:
+      "RepoDiet (Agent 9636) is online.\n\n" +
+      "A2MCP Quick Triage (service 37347, analyze_repository) — read-only repository diagnosis via x402 pay-per-call (0.03 USD₮0). Returns prioritized findings; makes no changes.\n\n" +
+      "A2A Verified Cleanup PR (service 37348, create_cleanup_pr) — tested GitHub PR delivery: negotiated scope, escrow, evidence-backed cleanup on an isolated branch, buyer acceptance, then release. Yes, RepoDiet can create a cleanup pull request through this service.\n\n" +
+      "To start either one, share a repository URL and the scope you have in mind.",
+    services: {
+      a2mcp: {
+        serviceId: String(identity.a2mcpServiceId),
+        operation: "analyze_repository",
+        description: "Read-only repository diagnosis via x402 pay-per-call.",
+        priceLabel: "0.03 USD₮0",
+        endpoint: `${baseUrl}/api/a2mcp/quick-triage`,
+      },
+      a2a: {
+        serviceId: String(identity.a2aServiceId),
+        operation: "create_cleanup_pr",
+        description: "Tested GitHub pull-request delivery: negotiated scope, escrow, buyer acceptance, release.",
+        priceLabel: "negotiated (default 1 USD₮0)",
+      },
+    },
+    nextAction: "PROVIDE_REPOSITORY_SCOPE_IF_INTERESTED",
+    sessionSource: "OKX_A2A",
+    paymentChannel: "okx_escrow_only",
+    directWebsitePaymentHidden: true,
+    requestId,
+    retryable: false,
+    paymentRequired: false,
+    paymentAlreadySettled: false,
+    taskPolicy: {
+      availabilityOnly: true,
+      startWork: false,
+      fundEscrow: false,
+      repositoryScan: false,
+      createBranch: false,
+      createPullRequest: false,
+      paymentAuthorised: false,
+    },
+    permittedActions: ["record_provider_response"],
     scanStarted: false,
   };
 }

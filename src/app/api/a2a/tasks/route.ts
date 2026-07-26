@@ -6,8 +6,10 @@ import {
 } from "@/lib/a2a/orchestrator";
 import type { A2ATaskType } from "@/lib/a2a/types";
 import {
+  buildInformationalResponse,
   buildMarketplaceIntakeResponse,
   extractUserMessage,
+  isInformationalQuery,
   isMarketplaceDiscoveryMessage,
   resolveIntakeRepositoryUrl,
 } from "@/lib/a2a/marketplace-intake";
@@ -56,6 +58,24 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         ...intake,
+        responseTimeMs: Date.now() - started,
+      });
+    }
+
+    // Conversational status/capability question ("is it online", "what does X do") —
+    // answer informatively instead of rejecting as an unmapped task type.
+    if (message && isInformationalQuery(message) && !repoUrl) {
+      logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
+      const info = buildInformationalResponse(requestId);
+      await recordTaskAcknowledged({ queueDepth: 0 });
+      logMarketplaceTelemetry("a2a_acknowledgement_sent", {
+        requestId,
+        durationMs: Date.now() - started,
+      });
+      await touchMarketplaceHealth({ a2aInitialResponseReady: true });
+      return NextResponse.json({
+        success: true,
+        ...info,
         responseTimeMs: Date.now() - started,
       });
     }
