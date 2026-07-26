@@ -27,6 +27,11 @@ function run() {
   assert.equal(sellerEnv.REPODIET_OKX_AGENT_ID, "5283");
   assert.notEqual(buyerEnv.HOME, sellerEnv.HOME);
   assert.notEqual(buyerEnv.ONCHAINOS_HOME, sellerEnv.ONCHAINOS_HOME);
+  assert.notEqual(buyerEnv.OKX_AGENT_TASK_HOME, sellerEnv.OKX_AGENT_TASK_HOME);
+  assert.equal(
+    sellerEnv.OKX_AGENT_TASK_HOME,
+    path.join(seller.home, ".okx-agent-task")
+  );
 
   const sellerStore = new DurableEventStore(
     seller.eventStore,

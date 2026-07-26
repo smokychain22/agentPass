@@ -108,10 +108,15 @@ export async function buildProductionReadinessResponse() {
     },
     {
       id: "a2a_marketplace_intake",
-      ready: marketplace.a2aInitialResponseReady === true,
+      ready:
+        marketplace.a2aInitialResponseReady === true &&
+        agent.agentOnline &&
+        agent.onchainOsAuthenticated &&
+        agent.officialWatchActive &&
+        agent.xmtpClientReady,
       requiredForProduction: true,
       source: "runtime",
-      detail: "A2A discovery acknowledgement path marked ready.",
+      detail: `httpIntake=${marketplace.a2aInitialResponseReady === true}; sellerAgent=${agent.aspAgentId ?? "unverified"}; service=${agent.a2aServiceId ?? "unverified"}; heartbeat=${agent.heartbeatStatus}; watch=${agent.officialWatchActive}; xmtp=${agent.xmtpClientReady}`,
     },
     {
       id: "github_app",
@@ -191,6 +196,7 @@ export async function buildProductionReadinessResponse() {
     realX402 &&
     delivery.githubAppReady &&
     marketplace.a2aInitialResponseReady &&
+    agent.agentOnline &&
     (evidence.lastSuccessfulPaidA2mcpAt || marketplace.a2mcpLastSuccessfulPaidCall)
   ) {
     verdict = "CONTROLLED_BETA";
@@ -200,7 +206,7 @@ export async function buildProductionReadinessResponse() {
     ok: allRequiredReady,
     ready: allRequiredReady,
     verdict,
-    silentTimeoutPossible: false,
+    silentTimeoutPossible: !agent.agentOnline,
     freeBetaAllowedInProduction: false,
     unsignedReceiptAcceptedInProduction: false,
     missingTokenPrCountedAsSuccess: false,
@@ -230,6 +236,14 @@ export async function buildProductionReadinessResponse() {
     },
     agentRuntime: {
       agentOnline: agent.agentOnline,
+      onchainOsAuthenticated: agent.onchainOsAuthenticated,
+      officialWatchActive: agent.officialWatchActive,
+      xmtpClientReady: agent.xmtpClientReady,
+      aspAgentId: agent.aspAgentId,
+      a2aServiceId: agent.a2aServiceId,
+      sellerWallet: agent.sellerWallet,
+      heartbeatStatus: agent.heartbeatStatus,
+      heartbeatExpiresAt: agent.heartbeatExpiresAt,
       alertAgentCannotAnswer: agent.alertAgentCannotAnswer,
       lastTaskReceivedAt: agent.lastTaskReceivedAt,
       lastAcknowledgementAt: agent.lastAcknowledgementAt,

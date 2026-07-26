@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   buildIsolatedRuntimeEnv,
@@ -12,8 +13,15 @@ import {
   writePid,
 } from "../src/lib/okx-runtime/runtime-layout";
 
+const platformDataDirectory =
+  process.env.LOCALAPPDATA?.trim() ||
+  process.env.XDG_DATA_HOME?.trim() ||
+  (process.platform === "win32"
+    ? path.join(os.homedir(), "AppData", "Local")
+    : path.join(os.homedir(), ".local", "share"));
 const baseDirectory = path.resolve(
-  process.env.REPODIET_OKX_RUNTIME_ROOT || ".repodiet-okx-runtimes"
+  process.env.REPODIET_OKX_RUNTIME_ROOT ||
+    path.join(platformDataDirectory, "RepoDiet", "okx-runtimes")
 );
 
 function commandFor(role: OkxRuntimeRole): string[] {

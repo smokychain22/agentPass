@@ -68,6 +68,7 @@ export function buildIsolatedRuntimeEnv(
     XDG_CONFIG_HOME: paths.config,
     XDG_DATA_HOME: paths.data,
     ONCHAINOS_HOME: path.join(paths.home, ".onchainos"),
+    OKX_AGENT_TASK_HOME: path.join(paths.home, ".okx-agent-task"),
     REPODIET_OKX_RUNTIME_ROLE: identity.role,
     REPODIET_OKX_AGENT_ID: identity.agentId,
     REPODIET_OKX_WALLET_ADDRESS: identity.walletAddress,

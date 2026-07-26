@@ -366,7 +366,6 @@ export async function runPhase3ToolRoute(
     if (err instanceof PaymentRequiredError) {
       logMarketplaceTelemetry("a2mcp_402_issued", { tool, taskId, quoteId: err.quoteId });
       await touchAgentRuntimeHealth({
-        agentOnline: true,
         a2mcpEndpointHealthy: true,
       }).catch(() => undefined);
       return paymentRequiredJsonResponse(err.body, 402);
