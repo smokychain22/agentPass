@@ -90,7 +90,7 @@ export const A2A_SERVICES: Record<A2aServiceId, OkxServiceDefinition> = {
     operation: "verified_cleanup_pr",
     label: "Deep Cleanup Review (legacy alias)",
     description:
-      "Legacy A2A alias — public OKX listing uses Verified Cleanup PR (32947) with negotiated pricing.",
+      "Legacy A2A alias — public OKX listing uses Verified Cleanup PR (37348) with negotiated pricing.",
     amountMicro: "1000000",
     priceLabel: "negotiated (default 1 USD₮0)",
     readOnly: false,
@@ -131,7 +131,7 @@ export function isPaidA2mcpService(serviceId: string): boolean {
 
 export function listOkxServices() {
   // Keep legacy definitions available to internal adapters while exposing only
-  // the two services that are actually registered against ASP 5283.
+  // the two services that are actually registered against ASP 9636.
   return [
     A2MCP_SERVICES.analyze_repository,
     {

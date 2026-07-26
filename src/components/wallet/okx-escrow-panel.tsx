@@ -36,7 +36,7 @@ interface OkxEscrowPanelProps {
 }
 
 /**
- * Fix & PR payment gate — OKX A2A escrow (service 32947) only.
+ * Fix & PR payment gate — OKX A2A escrow (service 37348) only.
  * Never sends USDT directly to RepoDiet’s wallet.
  */
 export function OkxEscrowPanel({

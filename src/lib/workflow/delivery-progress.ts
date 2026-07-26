@@ -104,7 +104,7 @@ export function deliveryProgressSteps(task: WorkflowA2ATask | null): DeliveryPro
   const released = status === "escrow_released" || status === "completed";
 
   const steps: Array<{ id: string; label: string; done: boolean }> = [
-    { id: "authorize", label: "Authorize RepoDiet A2A service 32947", done: Boolean(task) },
+    { id: "authorize", label: "Authorize RepoDiet A2A service 37348", done: Boolean(task) },
     { id: "escrow", label: "Fund OKX escrow", done: escrowFunded },
     { id: "cleanup", label: "Cleanup running", done: cleanupDone || verifyDone || prReady },
     { id: "verify", label: "Verification running", done: verifyDone || prReady },

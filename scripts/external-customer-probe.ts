@@ -76,9 +76,9 @@ async function main() {
     a2mcp,
   };
   if (!/RepoDiet/i.test(String(card.name ?? ""))) fail(ev, "agent-card missing RepoDiet");
-  if (asp !== "5283") fail(ev, `ASP expected 5283 got ${asp}`);
-  if (a2a !== "32947") fail(ev, `A2A expected 32947 got ${a2a}`);
-  if (a2mcp !== "32948") fail(ev, `A2MCP expected 32948 got ${a2mcp}`);
+  if (asp !== "9636") fail(ev, `ASP expected 9636 got ${asp}`);
+  if (a2a !== "37348") fail(ev, `A2A expected 37348 got ${a2a}`);
+  if (a2mcp !== "37347") fail(ev, `A2MCP expected 37347 got ${a2mcp}`);
 
   // 2. Health
   const healthRes = await fetch(`${BASE}/api/okx/health`);

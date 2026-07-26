@@ -648,7 +648,7 @@ export function FixPrA2AFlow({
             <li>Isolated branch</li>
             <li>Bounded changes to selected scope only</li>
             <li>Verification before pull request</li>
-            <li>Signed delivery receipt (ASP 5283)</li>
+            <li>Signed delivery receipt (ASP 9636)</li>
           </ul>
         </div>
 

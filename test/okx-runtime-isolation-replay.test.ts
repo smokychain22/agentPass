@@ -24,7 +24,7 @@ function run() {
   const buyerEnv = buildIsolatedRuntimeEnv(process.env, buyer, OKX_RUNTIME_IDENTITIES.buyer);
   const sellerEnv = buildIsolatedRuntimeEnv(process.env, seller, OKX_RUNTIME_IDENTITIES.seller);
   assert.equal(buyerEnv.REPODIET_OKX_AGENT_ID, "5295");
-  assert.equal(sellerEnv.REPODIET_OKX_AGENT_ID, "5283");
+  assert.equal(sellerEnv.REPODIET_OKX_AGENT_ID, "9636");
   assert.notEqual(buyerEnv.HOME, sellerEnv.HOME);
   assert.notEqual(buyerEnv.ONCHAINOS_HOME, sellerEnv.ONCHAINOS_HOME);
   assert.notEqual(buyerEnv.OKX_AGENT_TASK_HOME, sellerEnv.OKX_AGENT_TASK_HOME);

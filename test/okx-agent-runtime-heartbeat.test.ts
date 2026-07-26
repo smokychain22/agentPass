@@ -16,11 +16,11 @@ const secret = "repodiet-heartbeat-test-secret-1234567890";
 
 function verifiedInput() {
   return {
-    aspAgentId: "5283",
-    a2aServiceId: "32947",
-    sellerWallet: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
-    registeredCommunicationAddress: "0x185d96f1ccbae299263e789349028ef9569f9d22",
-    recoveredSignerAddress: "0x185d96f1ccbae299263e789349028ef9569f9d22",
+    aspAgentId: "9636",
+    a2aServiceId: "37348",
+    sellerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    registeredCommunicationAddress: "0x00dbdbb36b71ace0e1fc517056f376f977d8256e",
+    recoveredSignerAddress: "0x00dbdbb36b71ace0e1fc517056f376f977d8256e",
     onchainOsAuthenticated: true as const,
     officialWatchActive: true as const,
     xmtpClientReady: true as const,

@@ -65,9 +65,9 @@ export async function POST(request: Request) {
             {
               success: false,
               error:
-                "Fix & PR uses OKX A2A escrow (service 32947). Fund escrow via POST /api/okx/a2a/tasks/{taskId}/fund-escrow — do not send USDT directly to RepoDiet.",
+                "Fix & PR uses OKX A2A escrow (service 37348). Fund escrow via POST /api/okx/a2a/tasks/{taskId}/fund-escrow — do not send USDT directly to RepoDiet.",
               paymentModel: "escrow",
-              serviceId: "32947",
+              serviceId: "37348",
             },
             { status: 422 }
           );

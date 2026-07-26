@@ -21,9 +21,9 @@ async function run() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: "I would like to use the services of agent ID 5283",
-        agentId: "5283",
-        serviceId: "32947",
+        message: "I would like to use the services of agent ID 9636",
+        agentId: "9636",
+        serviceId: "37348",
         serviceType: "A2A",
       }),
     })
@@ -47,9 +47,9 @@ async function run() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: "I would like to use the services of agent ID 5283",
-        agentId: "5283",
-        serviceId: "32948",
+        message: "I would like to use the services of agent ID 9636",
+        agentId: "9636",
+        serviceId: "37347",
         serviceType: "A2MCP",
       }),
     })

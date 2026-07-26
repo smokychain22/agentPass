@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     requirePinnedService({
       protocol: "a2a",
-      agentId: String(body.agentId ?? "5283"),
+      agentId: String(body.agentId ?? "9636"),
       serviceId: body.serviceId,
       serviceType: body.serviceType ?? "A2A",
     });

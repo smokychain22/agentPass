@@ -122,7 +122,7 @@ export function getPaymentEnvironment(env: NodeJS.ProcessEnv = process.env): Pay
 
   const sellerWallet = address(
     env.OKX_AGENTIC_WALLET_ADDRESS || env.PAY_TO_ADDRESS || env.REPODIET_PAY_TO,
-    "0x1339724ada3adf04bb7a8ccc6498216214bbdf90"
+    "0xaa895234c3fc31c40018eef975db6ac79bf87f1a"
   );
   const buyerWallet = address(
     env.NEXT_PUBLIC_REPODIET_OWNER_BUYER_WALLET,

@@ -28,7 +28,7 @@ export const maxDuration = 300;
 
 const okxIdentity = getCanonicalOkxIdentity();
 
-/** Create scoped OKX A2A cleanup task (service 32947) with escrow quote. */
+/** Create scoped OKX A2A cleanup task (service 37348) with escrow quote. */
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {

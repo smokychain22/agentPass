@@ -269,7 +269,7 @@ export function buildServiceManifest() {
     pricing: {
       a2mcpQuickTriage: {
         protocol: "A2MCP",
-        serviceId: "32948",
+        serviceId: "37347",
         operation: "analyze_repository",
         priceUsdT0: 0.03,
         priceLabel: "0.03 USD₮0",
@@ -278,7 +278,7 @@ export function buildServiceManifest() {
       },
       a2aVerifiedCleanupPr: {
         protocol: "A2A",
-        serviceId: "32947",
+        serviceId: "37348",
         operation: "create_cleanup_pr",
         pricing: "negotiated",
         defaultReferenceUsdT0: 1,

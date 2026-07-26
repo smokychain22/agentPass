@@ -402,7 +402,7 @@ export function PatchKitTab() {
       <WorkspaceSection
         label="Paid cleanup delivery"
         title="Fix & PR"
-        description="Authorize A2A service 32947 to apply selected safe changes, verify them, and open an isolated cleanup pull request."
+        description="Authorize A2A service 37348 to apply selected safe changes, verify them, and open an isolated cleanup pull request."
       />
 
       {findings && <AnalysisLineageBanner scan={session.scanResult} findings={findings} />}

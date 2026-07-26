@@ -33,7 +33,7 @@ async function main() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      message: "I would like to use the services of agent ID 5283",
+      message: "I would like to use the services of agent ID 9636",
     }),
   });
   const discoveryMs = Date.now() - t0;

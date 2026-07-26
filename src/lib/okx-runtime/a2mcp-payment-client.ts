@@ -13,7 +13,7 @@ export interface CanonicalA2mcpRequest {
   bodyDigest: string;
   resource: string;
   operation: "analyze_repository";
-  serviceId: "32948";
+  serviceId: "37347";
 }
 
 export interface X402AcceptedTerms {
@@ -146,7 +146,7 @@ export function selectProductionTerms(
       candidate.network === "eip155:196" &&
       candidate.asset.toLowerCase() === "0x779ded0c9e1022225f8e0630b35a9b54be713736" &&
       candidate.amount === "30000" &&
-      candidate.payTo.toLowerCase() === "0x1339724ada3adf04bb7a8ccc6498216214bbdf90"
+      candidate.payTo.toLowerCase() === "0xaa895234c3fc31c40018eef975db6ac79bf87f1a"
   );
   if (!accepted) throw new Error("canonical_payment_terms_missing");
   return accepted;

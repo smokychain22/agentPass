@@ -29,7 +29,7 @@ const CHALLENGE: X402Challenge = {
       network: "eip155:196",
       asset: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
       amount: "30000",
-      payTo: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+      payTo: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     },
   ],
 };

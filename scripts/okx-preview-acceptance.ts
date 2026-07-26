@@ -9,7 +9,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { createHash } from "node:crypto";
 
 const BASE = process.env.REPODIET_PREVIEW_URL || "http://localhost:3010";
-const REVIEWER_PROMPT = "I would like to use the services of agent ID 5283";
+const REVIEWER_PROMPT = "I would like to use the services of agent ID 9636";
 const TEST_REPO = "https://github.com/velz-cmd/repodiet-e2e-test";
 const LARGE_REPO = "https://github.com/vercel/next.js";
 
@@ -76,7 +76,7 @@ async function main() {
   const intakeText = JSON.stringify(intakeJson);
   record("reviewer prompt HTTP 200", intake.status === 200, `status=${intake.status}`, intakeMs);
   record("reviewer prompt under 10s", intakeMs < 10_000, `elapsed=${intakeMs}ms`);
-  record("reviewer identifies ASP 5283", String(intakeJson.aspAgentId) === "5283");
+  record("reviewer identifies ASP 9636", String(intakeJson.aspAgentId) === "9636");
   record("reviewer asks scope questions", Array.isArray(intakeJson.scopeQuestions) && (intakeJson.scopeQuestions as unknown[]).length >= 5);
   record("no secrets in intake response", !hasSecretLeak(intakeText));
 
@@ -166,7 +166,7 @@ async function main() {
     amountMicro: "30000",
     currency: "USDT",
     network: "eip155:196",
-    recipient: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    recipient: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     asset: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     nonce: "preview-nonce",
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -226,7 +226,7 @@ async function main() {
     quoteId,
     paymentReference: "0x" + "cc".repeat(32),
     buyer: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
-    seller: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    seller: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     amountMicro: "30000",
     token: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     network: "eip155:196",

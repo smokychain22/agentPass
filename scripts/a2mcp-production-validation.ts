@@ -90,7 +90,7 @@ async function main() {
       );
       record(
         "C payTo seller",
-        challenge.payTo === "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+        challenge.payTo === "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
         `got=${challenge.payTo}`
       );
     } else {

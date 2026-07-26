@@ -7,7 +7,7 @@ import { resolveOkxAgentUrl } from "@/lib/wallet/okx-agent-url";
 import { getCanonicalOkxIdentityPublic } from "@/lib/okx/identity-public";
 
 /**
- * Fix & PR uses OKX A2A escrow only (service 32947).
+ * Fix & PR uses OKX A2A escrow only (service 37348).
  * Direct-site wallet transfer is no longer offered.
  */
 export function CustomerPathSelector() {

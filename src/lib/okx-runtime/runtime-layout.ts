@@ -5,7 +5,7 @@ export type OkxRuntimeRole = "buyer" | "seller";
 
 export interface OkxRuntimeIdentity {
   role: OkxRuntimeRole;
-  agentId: "5295" | "5283";
+  agentId: "5295" | "9636";
   walletAddress: string;
 }
 
@@ -17,8 +17,8 @@ export const OKX_RUNTIME_IDENTITIES: Record<OkxRuntimeRole, OkxRuntimeIdentity> 
   },
   seller: {
     role: "seller",
-    agentId: "5283",
-    walletAddress: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    agentId: "9636",
+    walletAddress: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
   },
 };
 

@@ -36,9 +36,9 @@ export async function POST(request: Request) {
   }
 
   const message = extractUserMessage(body) ?? "";
-  const suppliedAgentId = String(body.aspAgentId ?? body.agentId ?? "5283");
+  const suppliedAgentId = String(body.aspAgentId ?? body.agentId ?? "9636");
   const suppliedServiceId =
-    body.serviceId === undefined ? "32947" : String(body.serviceId);
+    body.serviceId === undefined ? "37348" : String(body.serviceId);
   const suppliedServiceType =
     body.serviceType === undefined ? "A2A" : String(body.serviceType);
   try {
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
       {
         code: "INTAKE_REQUIRED",
         message:
-          "Send a marketplace service request (for example: I would like to use the services of agent ID 5283).",
+          "Send a marketplace service request (for example: I would like to use the services of agent ID 9636).",
         retryable: true,
         paymentRequired: false,
         paymentAlreadySettled: false,

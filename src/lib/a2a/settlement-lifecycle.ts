@@ -55,7 +55,7 @@ export async function submitA2aDeliveryEvidence(taskId: string): Promise<A2ATask
   const identity = getCanonicalOkxIdentity();
   const payload = {
     protocol: "A2A",
-    serviceId: "32947",
+    serviceId: "37348",
     operation: "create_cleanup_pr",
     repository: `${task.repository.owner}/${task.repository.name}`,
     branch: task.repository.branch,

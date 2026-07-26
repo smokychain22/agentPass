@@ -11,7 +11,7 @@ async function run() {
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "RepoDiet runtime space "));
   const unicode = "RepoDiet ✓ 文件";
-  const quoted = 'service="32947" value with spaces';
+  const quoted = 'service="37348" value with spaces';
   const success = await runProcess(
     process.execPath,
     ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", unicode, quoted],
@@ -41,8 +41,8 @@ async function run() {
   const eventFile = path.join(root, "seller", "events.json");
   const store = new DurableEventStore(
     eventFile,
-    "5283",
-    "0x1339724ada3adf04bb7a8ccc6498216214bbdf90"
+    "9636",
+    "0xaa895234c3fc31c40018eef975db6ac79bf87f1a"
   );
   let calls = 0;
   const event = {
@@ -50,11 +50,11 @@ async function run() {
     event: "job_created",
     jobId: "0xjob",
     cursor: "cursor-1",
-    payload: { title: unicode, serviceId: "32947" },
+    payload: { title: unicode, serviceId: "37348" },
   };
   const first = await acknowledgeProviderEvent(event, {
     executable: "onchainos",
-    agentId: "5283",
+    agentId: "9636",
     store,
     runner: async (_exe, args) => {
       calls += 1;
@@ -64,10 +64,10 @@ async function run() {
         "--role",
         "asp",
         "--agentId",
-        "5283",
+        "9636",
       ]);
       assert.equal(args[6], "--message");
-      assert.equal(JSON.parse(args[7]).serviceId, "32947");
+      assert.equal(JSON.parse(args[7]).serviceId, "37348");
       return {
         ok: true,
         exitCode: 0,
@@ -86,7 +86,7 @@ async function run() {
     { ...event, eventId: "event-2" },
     {
       executable: "onchainos",
-      agentId: "5283",
+      agentId: "9636",
       store,
       runner: async () => {
         throw new Error("duplicate must not execute");

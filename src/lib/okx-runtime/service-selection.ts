@@ -1,15 +1,15 @@
 export const REPODIET_OKX_SERVICES = {
   a2a: {
-    agentId: "5283",
-    serviceId: "32947",
+    agentId: "9636",
+    serviceId: "37348",
     serviceType: "A2A",
     operation: "create_cleanup_pr",
-    sellerWallet: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
-    communicationAddress: "0x185d96f1ccbae299263e789349028ef9569f9d22",
+    sellerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    communicationAddress: "0x00dbdbb36b71ace0e1fc517056f376f977d8256e",
   },
   a2mcp: {
-    agentId: "5283",
-    serviceId: "32948",
+    agentId: "9636",
+    serviceId: "37347",
     serviceType: "A2MCP",
     operation: "analyze_repository",
   },

@@ -421,7 +421,7 @@ export function PaymentAuthorizationPanel({
           transfer on-chain before changing any files.
         </p>
         <p className="mt-2 text-xs">
-          For Fix &amp; PR delivery use OKX A2A escrow (service 32947). This panel is not the
+          For Fix &amp; PR delivery use OKX A2A escrow (service 37348). This panel is not the
           Fix &amp; PR payment rail.
         </p>
       </div>

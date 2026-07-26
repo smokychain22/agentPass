@@ -32,7 +32,7 @@ const SAFETY_POLICY = [
 
 const SUBMISSION_CHECKLIST = [
   "Canonical production origin: https://skillswap-virid-kappa.vercel.app",
-  "ASP Agent ID 5283 · A2A 32947 · A2MCP 32948",
+  "ASP Agent ID 9636 · A2A 37348 · A2MCP 37347",
   "GET /api/tools/health returns ok: true",
   "GET /api/tools/manifest returns the two-service pricing model",
   "GET /.well-known/agent-card.json distinguishes A2MCP x402 vs A2A escrow",
@@ -75,7 +75,7 @@ export function OkxPageContent() {
         </Link>
 
         <Badge variant="electric" className="mb-4 font-mono text-[10px] uppercase tracking-wider">
-          OKX.AI ASP 5283 · Two live services
+          OKX.AI ASP 9636 · Two live services
         </Badge>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">RepoDiet on OKX.AI</h1>
         <p className="mt-4 max-w-2xl text-muted-foreground leading-relaxed">
@@ -121,7 +121,7 @@ export function OkxPageContent() {
               <CardTitle className="text-sm">ASP identity</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              Agent ID <span className="font-mono text-foreground">5283</span>
+              Agent ID <span className="font-mono text-foreground">9636</span>
             </CardContent>
           </Card>
           <Card className="border-border/80 bg-card/50">
@@ -130,7 +130,7 @@ export function OkxPageContent() {
               <CardTitle className="text-sm">A2MCP Quick Triage</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              Service <span className="font-mono text-foreground">32948</span> · v{A2MCP_VERSION}
+              Service <span className="font-mono text-foreground">37347</span> · v{A2MCP_VERSION}
             </CardContent>
           </Card>
           <Card className="border-border/80 bg-card/50">
@@ -139,7 +139,7 @@ export function OkxPageContent() {
               <CardTitle className="text-sm">A2A Cleanup PR</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              Service <span className="font-mono text-foreground">32947</span>
+              Service <span className="font-mono text-foreground">37348</span>
             </CardContent>
           </Card>
         </div>
@@ -321,7 +321,7 @@ export function OkxPageContent() {
           </ul>
           <p className="mt-4 text-xs text-muted-foreground">
             Public OKX agent page link is intentionally unset until{" "}
-            <span className="font-mono">https://www.okx.ai/agents/5283</span> loads. Do not advertise
+            <span className="font-mono">https://www.okx.ai/agents/9636</span> loads. Do not advertise
             that route yet.
           </p>
         </section>

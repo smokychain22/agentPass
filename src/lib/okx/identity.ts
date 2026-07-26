@@ -2,10 +2,10 @@ import { getPaymentEnvironment } from "@/lib/payment/payment-environment";
 
 const DEFAULT_IDENTITY = {
   appUrl: "https://skillswap-virid-kappa.vercel.app",
-  aspAgentId: 5283,
-  a2aServiceId: 32947,
-  a2mcpServiceId: 32948,
-  sellerWallet: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+  aspAgentId: 9636,
+  a2aServiceId: 37348,
+  a2mcpServiceId: 37347,
+  sellerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
   buyerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
   network: "eip155:196",
   settlementAsset: "0x779ded0c9e1022225f8e0630b35a9b54be713736",

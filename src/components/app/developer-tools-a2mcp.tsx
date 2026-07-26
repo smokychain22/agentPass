@@ -33,8 +33,8 @@ export function DeveloperToolsA2Mcp() {
     <Panel variant="elevated" padding="md" className="border-border/60">
       <p className="ds-label mb-2">Use RepoDiet from another agent</p>
       <p className="mb-3 text-sm text-muted-foreground">
-        A2MCP Quick Triage (service 32948) is read-only external triage — not part of the in-app
-        cleanup payment flow. Full browser cleanup uses A2A service 32947 only.
+        A2MCP Quick Triage (service 37347) is read-only external triage — not part of the in-app
+        cleanup payment flow. Full browser cleanup uses A2A service 37348 only.
       </p>
       <dl className="grid gap-2 text-sm">
         <div className="flex justify-between gap-4">
@@ -49,7 +49,7 @@ export function DeveloperToolsA2Mcp() {
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Service</dt>
-          <dd className="font-mono">32948</dd>
+          <dd className="font-mono">37347</dd>
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Price</dt>
