@@ -9,6 +9,7 @@ import {
   logMarketplaceTelemetry,
   touchMarketplaceHealth,
 } from "@/lib/okx/marketplace-telemetry";
+import { requirePinnedService } from "@/lib/okx-runtime/service-selection";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -35,10 +36,36 @@ export async function POST(request: Request) {
   }
 
   const message = extractUserMessage(body) ?? "";
+  const suppliedAgentId = String(body.aspAgentId ?? body.agentId ?? "5283");
+  const suppliedServiceId =
+    body.serviceId === undefined ? "32947" : String(body.serviceId);
+  const suppliedServiceType =
+    body.serviceType === undefined ? "A2A" : String(body.serviceType);
+  try {
+    requirePinnedService({
+      protocol: "a2a",
+      agentId: suppliedAgentId,
+      serviceId: suppliedServiceId,
+      serviceType: suppliedServiceType,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        code: "INCOMPATIBLE_SERVICE_BINDING",
+        message: error instanceof Error ? error.message : "Invalid A2A service binding.",
+        retryable: false,
+        paymentRequired: false,
+        paymentAlreadySettled: false,
+        requestId,
+      },
+      { status: 422 }
+    );
+  }
   logMarketplaceTelemetry("a2a_message_received", {
     requestId,
     hasMessage: Boolean(message),
-    aspAgentId: body.aspAgentId ?? body.agentId,
+    aspAgentId: suppliedAgentId,
+    serviceId: suppliedServiceId,
   });
 
   if (!message || !isMarketplaceDiscoveryMessage(message)) {

@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  let resolved = await resolveFlowRecord(stateToken, sessionKey);
+  const resolved = await resolveFlowRecord(stateToken, sessionKey);
 
   if (!resolved.ok) {
     const pending = await readPendingInstallCookie();

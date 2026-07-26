@@ -297,7 +297,7 @@ export async function monitorTaskPullRequestDelivery(input: {
   installationId?: number;
 }): Promise<A2ATaskRecord> {
   const sm = new A2ATaskStateMachine(input.task.transitions);
-  let current = await syncDeliveryTask(input.task, sm, "monitoring_checks");
+  const current = await syncDeliveryTask(input.task, sm, "monitoring_checks");
   const contractedDelivery = Boolean(
     input.task.input.contractId || input.task.input.contractDigest
   );

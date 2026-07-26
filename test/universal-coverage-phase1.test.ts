@@ -201,7 +201,10 @@ await test("symlink_is_accounted_for_without_unsafe_follow", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "repodiet-symlink-"));
   try {
     await fs.writeFile(path.join(root, "target.txt"), "hi");
-    await fs.symlink("target.txt", path.join(root, "link.txt"));
+    // Git may check out symlinks as ordinary files on Windows when the process
+    // lacks CreateSymbolicLink permission. The pinned tree mode remains the
+    // authoritative signal and must prevent target traversal in either form.
+    await fs.writeFile(path.join(root, "link.txt"), "target.txt");
     const reconciled = await reconcileGitTreeWithWorktree({
       entries: [
         treeEntry({ path: "target.txt", sha }),

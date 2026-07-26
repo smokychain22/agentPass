@@ -92,7 +92,7 @@ export async function executeGuardDeltaRun(input: {
     throw new Error("Guard subscription expired.");
   }
 
-  let run = newGuardRun({
+  const run = newGuardRun({
     subscriptionId: input.subscription.id,
     repository: input.subscription.repository,
     branch: input.subscription.branch,

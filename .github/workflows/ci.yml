@@ -33,6 +33,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Noninteractive lint
+        run: npm run lint
+
       - name: Unit and contract tests
         run: npm test
 
@@ -71,3 +74,5 @@ jobs:
         run: npx tsx test/preview-dry-run.test.ts
       - name: Production-grade fail-closed gates
         run: npx tsx test/production-grade-fail-closed.test.ts
+      - name: OKX runtime isolation, policy, replay, and payment client
+        run: npm run test:okx-runtime

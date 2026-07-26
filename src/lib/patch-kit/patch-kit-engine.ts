@@ -661,7 +661,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const generatedChanges = changeOperations.length;
     const changedPaths = changeOperations.map((op) => op.filePath);
-    let mergedPatch =
+    const mergedPatch =
       patchBundle.patch && patchBundle.patch !== EMPTY_CLEANUP_PATCH
         ? ensurePatchTrailingNewline(patchBundle.patch)
         : EMPTY_CLEANUP_PATCH;
