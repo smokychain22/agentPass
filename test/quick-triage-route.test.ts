@@ -98,6 +98,47 @@ async function run() {
     }
   });
 
+  await test("unpaid discovery returns 402 before remote repository resolution", async () => {
+    const previousRequireRealX402 = process.env.REQUIRE_REAL_X402;
+    const previousPaid = process.env.REPODIET_OKX_A2MCP_PAID;
+    const previousAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    process.env.REQUIRE_REAL_X402 = "1";
+    process.env.REPODIET_OKX_A2MCP_PAID = "1";
+    process.env.NEXT_PUBLIC_APP_URL = "https://skillswap-virid-kappa.vercel.app";
+    try {
+      const response = await POST(
+        new Request("https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repositoryUrl: "https://github.com/repodiet-probe/does-not-exist",
+            branch: "main",
+            maximumFindings: 5,
+            operation: "analyze_repository",
+          }),
+        })
+      );
+      assert.equal(response.status, 402);
+      assert.ok(response.headers.get("PAYMENT-REQUIRED"));
+      const challenge = (await response.json()) as {
+        resource?: { url?: string };
+        accepts?: Array<Record<string, unknown>>;
+      };
+      assert.equal(
+        challenge.resource?.url,
+        "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage"
+      );
+      assert.ok(Array.isArray(challenge.accepts) && challenge.accepts.length > 0);
+    } finally {
+      if (previousRequireRealX402 === undefined) delete process.env.REQUIRE_REAL_X402;
+      else process.env.REQUIRE_REAL_X402 = previousRequireRealX402;
+      if (previousPaid === undefined) delete process.env.REPODIET_OKX_A2MCP_PAID;
+      else process.env.REPODIET_OKX_A2MCP_PAID = previousPaid;
+      if (previousAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = previousAppUrl;
+    }
+  });
+
   for (const limit of [1, 5, 10] as const) {
     await test(`contract enforces maximumFindings=${limit}`, async () => {
       const findings: Finding[] = Array.from({ length: 40 }, (_, i) => ({
