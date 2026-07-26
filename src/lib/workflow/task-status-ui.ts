@@ -110,7 +110,7 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
     return "Payment was accepted, but RepoDiet could not verify cleanup changes for the selected scope. Try fewer safe findings or re-run eligibility preflight before paying again.";
   }
   if (task.status === "payment_failed") {
-    return "OKX escrow funding was not accepted. Authorize service 32947 again, fund escrow, then retry with the escrow reference.";
+    return "OKX escrow funding was not accepted. Authorize service 37348 again, fund escrow, then retry with the escrow reference.";
   }
   if (task.status === "disputed") {
     return "This delivery is in OKX dispute / arbitration. Continue resolution in OKX.AI — RepoDiet will not invent an escrow outcome.";

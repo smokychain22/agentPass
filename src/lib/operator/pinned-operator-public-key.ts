@@ -5,7 +5,7 @@
  * Fingerprint (SHA-256 over exact PEM UTF-8 including trailing newline):
  *   sha256:d495f62bd74d136390322df4a042db4250cd27c594992b55f321201a16aba662
  *
- * Corresponds to ASP / operatorAgentId 5283 signing key for receipt_OkwZLE67jSCT.
+ * Corresponds to ASP / operatorAgentId 9636 signing key (legacy receipt_OkwZLE67jSCT was issued under ASP 5283).
  */
 export const PINNED_OPERATOR_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwMOEiUs2V2CpJc4Z5To3
@@ -21,4 +21,4 @@ ZpRV7EMMtflyJhuqajLDwxMZwKBRC3KBMwPAceYtkCbFxHL2N2pHuGJGCs3/fFVt
 export const PINNED_OPERATOR_PUBLIC_KEY_FINGERPRINT =
   "sha256:d495f62bd74d136390322df4a042db4250cd27c594992b55f321201a16aba662";
 
-export const PINNED_OPERATOR_AGENT_ID = "5283";
+export const PINNED_OPERATOR_AGENT_ID = "9636";

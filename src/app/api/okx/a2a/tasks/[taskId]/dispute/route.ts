@@ -23,7 +23,7 @@ export async function POST(
       status: task.status,
       settlement: task.result.settlement,
       task: formatA2ATaskResponse(task),
-      nextStep: "Continue dispute resolution in OKX.AI arbitration for A2A service 32947.",
+      nextStep: "Continue dispute resolution in OKX.AI arbitration for A2A service 37348.",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Dispute failed.";

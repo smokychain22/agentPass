@@ -12,7 +12,7 @@ const BUYER = (
 const SELLER = (
   process.env.OKX_AGENTIC_WALLET_ADDRESS ||
   process.env.PAY_TO_ADDRESS ||
-  "0x1339724ada3adf04bb7a8ccc6498216214bbdf90"
+  "0xaa895234c3fc31c40018eef975db6ac79bf87f1a"
 ).toLowerCase();
 
 const TESTNET_USDT = "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c";

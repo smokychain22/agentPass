@@ -44,12 +44,12 @@ function run() {
 
   const expected = {
     jobId: "job-a",
-    serviceId: "32947",
+    serviceId: "37348",
     operation: "create_cleanup_pr",
     network: "eip155:196",
     asset: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     amountAtomic: "200000",
-    recipient: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    recipient: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     idempotencyKey: "approve-job-a-200000",
   };
   const approval: PaymentApproval = { ...expected, approvedAt: new Date().toISOString() };
@@ -63,15 +63,15 @@ function run() {
     /payment_approval_mismatch/
   );
   assert.throws(
-    () => assertExactPaymentApproval(approval, { ...expected, serviceId: "32948" }),
+    () => assertExactPaymentApproval(approval, { ...expected, serviceId: "37347" }),
     /payment_approval_mismatch/
   );
 
   assert.equal(
     requirePinnedService({
       protocol: "a2a",
-      agentId: "5283",
-      serviceId: "32947",
+      agentId: "9636",
+      serviceId: "37348",
       serviceType: "A2A",
     }).operation,
     "create_cleanup_pr"
@@ -79,8 +79,8 @@ function run() {
   assert.equal(
     requirePinnedService({
       protocol: "a2mcp",
-      agentId: "5283",
-      serviceId: "32948",
+      agentId: "9636",
+      serviceId: "37347",
       serviceType: "A2MCP",
     }).operation,
     "analyze_repository"
@@ -89,7 +89,7 @@ function run() {
     () =>
       requirePinnedService({
         protocol: "a2a",
-        agentId: "5283",
+        agentId: "9636",
         serviceType: "A2A",
       }),
     /service_id_required/
@@ -98,8 +98,8 @@ function run() {
     () =>
       requirePinnedService({
         protocol: "a2a",
-        agentId: "5283",
-        serviceId: "32948",
+        agentId: "9636",
+        serviceId: "37347",
         serviceType: "A2MCP",
       }),
     /service_id_mismatch/

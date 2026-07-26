@@ -54,16 +54,16 @@ app.get("/api/catalog", (_req, res) => {
   ok(res, {
     name: "RepoDiet",
     description:
-      "OKX ASP 5283 — A2MCP Quick Triage (analyze_repository, 0.03 USD₮0 via x402) and A2A Verified Cleanup PR (create_cleanup_pr, negotiated / default 1 USD₮0 escrow).",
+      "OKX ASP 9636 — A2MCP Quick Triage (analyze_repository, 0.03 USD₮0 via x402) and A2A Verified Cleanup PR (create_cleanup_pr, negotiated / default 1 USD₮0 escrow).",
     a2mcp: {
-      serviceId: "32948",
+      serviceId: "37347",
       operation: "analyze_repository",
       price: "0.03 USD₮0",
       settlement: "live x402 on X Layer",
       description: "Bounded repository triage returning up to five prioritized findings.",
     },
     a2a: {
-      serviceId: "32947",
+      serviceId: "37348",
       operation: "create_cleanup_pr",
       price: "negotiated",
       defaultReference: "1 USD₮0",

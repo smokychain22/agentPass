@@ -40,10 +40,10 @@ function task(partial: Partial<WorkflowA2ATask> & Pick<WorkflowA2ATask, "status"
 async function run() {
   console.log("okx-a2a-escrow-rails tests");
 
-  await test("public identity exposes A2A 32947", () => {
+  await test("public identity exposes A2A 37348", () => {
     const id = getCanonicalOkxIdentityPublic();
-    assert.equal(id.a2aServiceId, 32947);
-    assert.equal(id.aspAgentId, 5283);
+    assert.equal(id.a2aServiceId, 37348);
+    assert.equal(id.aspAgentId, 9636);
   });
 
   await test("workflow quotes default to escrow payment model", () => {

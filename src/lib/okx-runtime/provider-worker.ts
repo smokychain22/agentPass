@@ -23,7 +23,7 @@ function semanticEventKey(event: ProviderSystemEvent): string {
   return createHash("sha256")
     .update(
       JSON.stringify({
-        agentId: "5283",
+        agentId: "9636",
         event: event.event,
         jobId: event.jobId,
         payload: event.payload,
@@ -36,7 +36,7 @@ export async function acknowledgeProviderEvent(
   event: ProviderSystemEvent,
   options: ProviderWorkerOptions
 ): Promise<ProcessRunResult & { duplicate: boolean; latencyMs: number }> {
-  if (options.agentId !== "5283") throw new Error("seller_agent_identity_mismatch");
+  if (options.agentId !== "9636") throw new Error("seller_agent_identity_mismatch");
   const started = Date.now();
   const semanticKey = semanticEventKey(event);
   const claim = options.store.begin({

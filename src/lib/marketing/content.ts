@@ -11,10 +11,10 @@ export const TRUST_POINTS = [
 export const TRUST_LINE = TRUST_POINTS.join(" · ");
 
 export const FOOTER_OKX_COPY =
-  "RepoDiet on OKX.AI: A2MCP Quick Triage (x402) and A2A Verified Cleanup PR (escrow). ASP 5283 · production https://skillswap-virid-kappa.vercel.app";
+  "RepoDiet on OKX.AI: A2MCP Quick Triage (x402) and A2A Verified Cleanup PR (escrow). ASP 9636 · production https://skillswap-virid-kappa.vercel.app";
 
 export const A2MCP_READINESS_COPY =
-  "A2MCP Quick Triage (service 32948, analyze_repository) is live at 0.03 USD₮0 via x402 on X Layer. A2A Verified Cleanup PR (service 32947, create_cleanup_pr) uses negotiated task terms, escrow, and buyer acceptance — not x402 for every paid task.";
+  "A2MCP Quick Triage (service 37347, analyze_repository) is live at 0.03 USD₮0 via x402 on X Layer. A2A Verified Cleanup PR (service 37348, create_cleanup_pr) uses negotiated task terms, escrow, and buyer acceptance — not x402 for every paid task.";
 
 export const DEMO_TERMINAL_LINES = buildDemoTerminalLines();
 export const DEMO_SCAN_STATS = getDemoScanStats();
@@ -420,7 +420,7 @@ export const PRICING_SECTION = {
   description:
     "A2MCP Quick Triage is standardized pay-per-call via x402. A2A Verified Cleanup PR is customized delivery via negotiated task terms, escrow, and buyer acceptance.",
   note:
-    "Canonical production origin: https://skillswap-virid-kappa.vercel.app · ASP 5283 · A2MCP 32948 · A2A 32947. Settlement is live on X Layer for A2MCP; A2A uses escrow and buyer release — not a flat x402 rail for every task.",
+    "Canonical production origin: https://skillswap-virid-kappa.vercel.app · ASP 9636 · A2MCP 37347 · A2A 37348. Settlement is live on X Layer for A2MCP; A2A uses escrow and buyer release — not a flat x402 rail for every task.",
 };
 
 export const CLEANUP_PR_PRICING_NOTE =
@@ -478,7 +478,7 @@ export const PRICING_TIERS = [
     features: [
       "Protocol: A2MCP",
       "Operation: analyze_repository",
-      "Service ID: 32948",
+      "Service ID: 37347",
       "Settlement: live x402 on X Layer",
       "Up to five prioritized findings",
       "Signed operator receipt after successful delivery",
@@ -495,7 +495,7 @@ export const PRICING_TIERS = [
     features: [
       "Protocol: A2A",
       "Operation: create_cleanup_pr",
-      "Service ID: 32947",
+      "Service ID: 37348",
       "Settlement: task agreement → escrow → delivery → buyer acceptance → release",
       "Isolated cleanup branch (never pushes to main)",
       "Default reference: 1 USD₮0",
@@ -507,10 +507,10 @@ export const PRICING_TIERS = [
 ];
 
 export const OKX_DEMO_FLOW = [
-  "Hire ASP 5283 on OKX.AI once the public listing is live",
-  "A2MCP Quick Triage (32948): pay 0.03 USD₮0 via x402 for bounded analyze_repository",
+  "Hire ASP 9636 on OKX.AI once the public listing is live",
+  "A2MCP Quick Triage (37347): pay 0.03 USD₮0 via x402 for bounded analyze_repository",
   "Inspect prioritized findings and signed receipt",
-  "A2A Verified Cleanup PR (32947): negotiate scope, fund escrow, accept delivery",
+  "A2A Verified Cleanup PR (37348): negotiate scope, fund escrow, accept delivery",
   "Receive a review-ready GitHub cleanup PR — never an auto-merge to main",
 ];
 
@@ -518,7 +518,7 @@ export const OKX_A2MCP_SERVICE = {
   name: "RepoDiet Quick Triage",
   protocol: "A2MCP",
   operation: "analyze_repository",
-  serviceId: "32948",
+  serviceId: "37347",
   price: "0.03 USD₮0 per call",
   settlement: "live x402 on X Layer",
   description:
@@ -529,7 +529,7 @@ export const OKX_A2A_SERVICE = {
   name: "RepoDiet Verified Cleanup PR",
   protocol: "A2A",
   operation: "create_cleanup_pr",
-  serviceId: "32947",
+  serviceId: "37348",
   price: "negotiated",
   defaultReferencePrice: "1 USD₮0",
   settlement: "A2A task agreement, escrow, delivery, buyer acceptance and release",
@@ -551,7 +551,7 @@ export const OKX_JUDGE_PITCH = {
     "The first canonicalization job is intentionally provable: byte-identical implementations are rewired to one retained file. Near-duplicate semantic merging remains review-only.",
   ],
   agentUtility:
-    "A2MCP Quick Triage (analyze_repository, service 32948) lets an agent inspect a repository before hiring. A2A Verified Cleanup PR (create_cleanup_pr, service 32947) negotiates the actual job through escrow and buyer acceptance. The agent pays for a delivered repository change, not another report.",
+    "A2MCP Quick Triage (analyze_repository, service 37347) lets an agent inspect a repository before hiring. A2A Verified Cleanup PR (create_cleanup_pr, service 37348) negotiates the actual job through escrow and buyer acceptance. The agent pays for a delivered repository change, not another report.",
   demoProof: [
     "Buyer hires RepoDiet for an exact repository scope and pinned source commit",
     "Three byte-identical implementations become one canonical implementation with importers rewired",

@@ -245,7 +245,7 @@ export function VerifyTab() {
             )}
             <div>
               <dt className="text-muted-foreground">Payment route</dt>
-              <dd>OKX A2A escrow (service 32947)</dd>
+              <dd>OKX A2A escrow (service 37348)</dd>
             </div>
             {typeof receipt.receiptId === "string" && (
               <div>

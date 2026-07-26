@@ -23,7 +23,7 @@ const ARTIFACT =
   "/opt/cursor/artifacts/okx-testnet-stage1-canary.json";
 
 const REVIEWER_PROMPT_1 =
-  "I would like to create a repository cleanup task using Agent ID 5283.";
+  "I would like to create a repository cleanup task using Agent ID 9636.";
 const REVIEWER_PROMPT_2 = [
   "Repository:",
   REPO,
@@ -207,12 +207,12 @@ async function main() {
     baseUrl: BASE,
     startedAt: new Date().toISOString(),
     buyerPublicAddress: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
-    sellerPublicAddress: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    sellerPublicAddress: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     buyerRoleEmail: "officialsmokychain@gmail.com",
-    sellerRoleEmail: "abdullahlp114@gmail.com",
-    agentId: "5283",
-    a2aServiceId: "32947",
-    a2mcpServiceId: "32948",
+    sellerRoleEmail: "officialsmokychain@gmail.com",
+    agentId: "9636",
+    a2aServiceId: "37348",
+    a2mcpServiceId: "37347",
   };
 
   // Agent card + health

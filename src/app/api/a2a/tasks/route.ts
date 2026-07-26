@@ -73,7 +73,7 @@ export async function POST(request: Request) {
           error: "Invalid task type.",
           acknowledged: true,
           message:
-            "RepoDiet received your message but could not map it to a cleanup task type. Include the word task and Agent ID 5283, or provide type + repoUrl.",
+            "RepoDiet received your message but could not map it to a cleanup task type. Include the word task and Agent ID 9636, or provide type + repoUrl.",
           code: "INVALID_TASK_TYPE",
           retryable: true,
           requestId,

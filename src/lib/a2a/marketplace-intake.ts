@@ -8,9 +8,9 @@ import {
 } from "@/lib/a2a/okx-marketplace-lifecycle";
 
 const DISCOVERY_PATTERNS = [
-  /agent\s*(id\s*)?5283/i,
+  /agent\s*(id\s*)?9636/i,
   /use the services of agent/i,
-  /hire\s+agent\s*5283/i,
+  /hire\s+agent\s*9636/i,
   /repodiet.*service/i,
   /verified\s+repository\s+cleanup/i,
   /repository\s+cleanup\s+task/i,

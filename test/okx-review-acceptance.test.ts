@@ -33,7 +33,7 @@ function misConsumedQuote(overrides: Partial<BoundQuote> = {}): BoundQuote {
     amountMicro: "30000",
     currency: "USDT",
     network: "eip155:196",
-    recipient: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
+    recipient: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
     asset: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     nonce: "nonce",
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -103,14 +103,14 @@ async function run() {
   });
   assert.equal(entitlement.ok, true, "mis-consumed quote must retry without new payment");
 
-  const reviewerPrompt = "I would like to use the services of agent ID 5283";
+  const reviewerPrompt = "I would like to use the services of agent ID 9636";
   assert.equal(isMarketplaceDiscoveryMessage(reviewerPrompt), true);
   assert.equal(
     extractUserMessage({ message: reviewerPrompt }),
     reviewerPrompt
   );
   const intake = buildMarketplaceIntakeResponse("req_test");
-  assert.equal(intake.aspAgentId, "5283");
+  assert.equal(intake.aspAgentId, "9636");
   assert.ok(intake.scopeQuestions.length >= 5);
   assert.match(intake.message, /verified pull request/i);
   assert.equal(intake.nextAction, "PROVIDE_REPOSITORY_SCOPE");

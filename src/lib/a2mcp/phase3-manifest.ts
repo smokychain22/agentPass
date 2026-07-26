@@ -60,7 +60,7 @@ export const PHASE3_TOOL_ENTRIES: ToolManifestEntry[] = [
     endpoint: "/api/tools/analyze_repository",
     method: "POST",
     description:
-      "A2MCP Quick Triage — bounded repository triage returning up to five prioritized findings. Live paid listing: 0.03 USD₮0 per call via x402 on X Layer (service 32948).",
+      "A2MCP Quick Triage — bounded repository triage returning up to five prioritized findings. Live paid listing: 0.03 USD₮0 per call via x402 on X Layer (service 37347).",
     inputSchema: {
       ...repoRefInput,
       properties: {
@@ -229,7 +229,7 @@ export const PHASE3_TOOL_ENTRIES: ToolManifestEntry[] = [
     endpoint: "/api/tools/create_cleanup_pr",
     method: "POST",
     description:
-      "A2A Verified Cleanup PR delivery primitive (operation create_cleanup_pr). Not an A2MCP x402 pay-per-call listing — public settlement is negotiated A2A escrow with buyer acceptance (service 32947, default reference 1 USD₮0).",
+      "A2A Verified Cleanup PR delivery primitive (operation create_cleanup_pr). Not an A2MCP x402 pay-per-call listing — public settlement is negotiated A2A escrow with buyer acceptance (service 37348, default reference 1 USD₮0).",
     inputSchema: {
       type: "object",
       required: ["repoUrl"],

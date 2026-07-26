@@ -151,14 +151,14 @@
         "expiry"
       ],
       "properties": {
-        "aspId": { "const": 5283 },
-        "serviceId": { "const": 32947 },
+        "aspId": { "const": 9636 },
+        "serviceId": { "const": 37348 },
         "quoteId": { "type": "string", "minLength": 1, "maxLength": 200 },
         "amount": { "type": "string", "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]{1,18})?|0\\.(?=[0-9]{1,18}$)(?=[0-9]*[1-9])[0-9]+)$" },
         "asset": { "const": "0x779ded0c9e1022225f8e0630b35a9b54be713736" },
         "network": { "const": "eip155:196" },
         "payer": { "$ref": "#/$defs/ethereumAddress" },
-        "recipient": { "const": "0x1339724ada3adf04bb7a8ccc6498216214bbdf90" },
+        "recipient": { "const": "0xaa895234c3fc31c40018eef975db6ac79bf87f1a" },
         "expiry": { "type": "string", "format": "date-time" }
       }
     },

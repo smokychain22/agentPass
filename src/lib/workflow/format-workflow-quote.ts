@@ -28,7 +28,7 @@ export function formatWorkflowQuote(
       operation: quote.operation,
       amountMicro: quote.amountMicro,
     }),
-    // Fix & PR uses OKX A2A escrow (service 32947). A2MCP x402 may still use direct.
+    // Fix & PR uses OKX A2A escrow (service 37348). A2MCP x402 may still use direct.
     paymentModel: options?.paymentModel ?? "escrow",
     assetContract: quote.asset,
     chainId: Number.isFinite(chainId) ? chainId : 196,

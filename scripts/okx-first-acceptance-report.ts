@@ -15,7 +15,7 @@ import {
 } from "../src/lib/a2a/agent-runtime-health";
 
 async function main() {
-  const msg = "I want to create a repository cleanup task using Agent ID 5283.";
+  const msg = "I want to create a repository cleanup task using Agent ID 9636.";
   const lines: string[] = [];
   lines.push("=== A2A TEST TRANSCRIPT ===");
   lines.push(`USER: ${msg}`);
