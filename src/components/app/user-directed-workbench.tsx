@@ -123,7 +123,6 @@ export function UserDirectedWorkbench({
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
   const [plans, setPlans] = useState<TransformationPlan[]>([]);
-  const [excludedFindingIds, setExcludedFindingIds] = useState<string[]>([]);
   const [decisions, setDecisions] = useState<Record<string, FindingDecisionRecord>>({});
   const [decisionPending, setDecisionPending] = useState<Record<string, boolean>>({});
   const [decisionErrors, setDecisionErrors] = useState<Record<string, string>>({});
@@ -377,13 +376,10 @@ export function UserDirectedWorkbench({
       .then((data: { ok?: boolean; decisions?: FindingDecisionRecord[] }) => {
         if (cancelled || !data.ok || !data.decisions) return;
         const byId: Record<string, FindingDecisionRecord> = {};
-        const excluded: string[] = [];
         for (const d of data.decisions) {
           byId[d.findingId] = d;
-          if (d.decision === "excluded" || d.decision === "kept") excluded.push(d.findingId);
         }
         setDecisions(byId);
-        setExcludedFindingIds((prev) => Array.from(new Set([...prev, ...excluded])));
       })
       .catch(() => undefined);
     return () => {
@@ -694,12 +690,6 @@ export function UserDirectedWorkbench({
     setDecisionPending((prev) => ({ ...prev, [finding.id]: false }));
     setPlanStatus(null); // any approved plan may no longer reflect the new decision set
 
-    if (action.decision === "excluded" || action.decision === "kept") {
-      setExcludedFindingIds((prev) => Array.from(new Set([...prev, finding.id])));
-    } else if (action.decision === "selected") {
-      setExcludedFindingIds((prev) => prev.filter((id) => id !== finding.id));
-    }
-
     if (finding.type === "duplicate_code" && action.canonicalFile) {
       setSelectedPathIds((finding.files ?? []).map((p) => `path_${p}`));
       void analyzeScope({
@@ -727,7 +717,6 @@ export function UserDirectedWorkbench({
       delete next[findingId];
       return next;
     });
-    setExcludedFindingIds((prev) => prev.filter((id) => id !== findingId));
     setPlanStatus(null);
   }
 
