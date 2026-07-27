@@ -27,27 +27,30 @@ test("real completed scan: select fixes, sticky bar persists across refresh, dra
   await page.getByPlaceholder("https://github.com/owner/repository").fill(REPO_URL);
   await page.getByRole("button", { name: "Analyze repository" }).click();
 
-  // Real structure scan + real findings analysis (GitHub Actions worker) —
-  // wait for the real "Open Results" to appear once genuinely persisted.
-  await expect(page.getByRole("link", { name: /Open Results/i })).toBeVisible({
-    timeout: 4 * 60_000,
-  });
-  await page.getByRole("link", { name: /Open Results/i }).click();
-
-  await expect(page.getByRole("heading", { name: /results/i }).first()).toBeVisible({
-    timeout: 15_000,
-  }).catch(() => undefined); // heading text may vary; not load-bearing for the rest of the test
+  // Real structure scan + real findings analysis (GitHub Actions worker).
+  // The app auto-navigates to ?tab=findings the instant findings are
+  // genuinely persisted — it can win the race against "Open Results"
+  // ever rendering, so wait for either signal.
+  await Promise.race([
+    page.waitForURL(/tab=findings/, { timeout: 4 * 60_000 }),
+    page
+      .getByRole("link", { name: /Open Results/i })
+      .waitFor({ state: "visible", timeout: 4 * 60_000 })
+      .then(() => page.getByRole("link", { name: /Open Results/i }).click()),
+  ]);
+  await page.waitForURL(/tab=findings/, { timeout: 30_000 });
 
   // No sticky bar yet — nothing selected.
   await expect(page.getByText(/^\d+ fix(es)? selected/i)).toHaveCount(0);
 
-  // Select the first available "Recommended fix" primary action.
-  const firstPrimaryButton = page
+  // Select a genuine "Recommended fix" — never the uncertain-finding
+  // "Remove this file anyway" override, which requires its own confirmation.
+  const recommendedArticle = page
     .locator("article")
-    .locator('button:has-text("Remove")')
+    .filter({ hasText: "Recommended fix" })
     .first();
-  await expect(firstPrimaryButton).toBeVisible({ timeout: 15_000 });
-  await firstPrimaryButton.click();
+  await expect(recommendedArticle).toBeVisible({ timeout: 15_000 });
+  await recommendedArticle.getByRole("button", { name: "Remove this file", exact: true }).click();
 
   // Sticky bar appears with count 1.
   await expect(page.getByText(/^1 fix selected/i)).toBeVisible({ timeout: 10_000 });
