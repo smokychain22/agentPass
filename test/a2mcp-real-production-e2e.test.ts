@@ -17,10 +17,22 @@ import {
   decodePaymentSignatureHeader,
   paymentRequirementsFromQuote,
   validatePaymentPayloadForRequest,
-  verifyAndSettleA2mcpPayment,
+  verifyAndSettleA2mcpPayment as verifyAndSettleA2mcpPaymentUnion,
   type X402Broker,
   type X402PaymentPayloadV2,
+  type X402SettlementEvidence,
 } from "../src/lib/payment/a2mcp-x402-production";
+
+/** Test helper: these fixtures always exercise the paid-settlement path, never sampling. */
+async function verifyAndSettleA2mcpPayment(
+  ...args: Parameters<typeof verifyAndSettleA2mcpPaymentUnion>
+): Promise<X402SettlementEvidence> {
+  const result = await verifyAndSettleA2mcpPaymentUnion(...args);
+  if ("sampling" in result) {
+    throw new Error("test fixture unexpectedly produced a sampling result");
+  }
+  return result;
+}
 import { generateKeyPairSync } from "node:crypto";
 import { MAINNET_NETWORK, MAINNET_USDT } from "../src/lib/payment/payment-environment";
 import { paymentRequiredBody } from "../src/lib/payment/x402";

@@ -59,13 +59,34 @@ export interface X402SettlementEvidence {
   paymentResponseHeader: string;
 }
 
+/**
+ * OKX AI Agent Marketplace User Agreement §7.7 (Sampling as a condition of
+ * listing): a Sampling Call returns a settlement response carrying an
+ * OKX-defined `sampling: true` field and reports payment as unsettled.
+ * This type exists only at the trusted facilitator-settlement boundary
+ * (`SettleData`, populated exclusively from the signed OKX `/settle`
+ * response in `OkxX402Broker.request`) — it is never derived from caller
+ * request bodies, query parameters, or headers.
+ */
+export interface X402SamplingResult {
+  sampling: true;
+  amount: string;
+}
+
+export function isX402SamplingResult(
+  value: X402SettlementEvidence | X402SamplingResult
+): value is X402SamplingResult {
+  return (value as X402SamplingResult).sampling === true;
+}
+
 interface AuthorizationRecord {
   quoteId: string;
   requestHash: string;
   credentialDigest: string;
-  state: "verifying" | "settled";
+  state: "verifying" | "settled" | "sampled";
   expiresAt: string;
   settlement?: X402SettlementEvidence;
+  sampling?: X402SamplingResult;
 }
 
 export interface VerifyData {
@@ -83,6 +104,8 @@ export interface SettleData {
   transaction?: string;
   network?: string;
   status?: string;
+  /** OKX AI Agent Marketplace User Agreement §7.7 Sampling Call marker. Only meaningful when read from the authenticated facilitator response (see X402SamplingResult doc). */
+  sampling?: boolean;
 }
 
 export class A2mcpX402Error extends Error {
@@ -117,6 +140,8 @@ export interface FacilitatorDiagnostic {
   settlementStatus?: string;
   settlementErrorReason?: string | null;
   settlementErrorMessage?: string | null;
+  /** Internal-only telemetry (never returned to the caller). See X402SamplingResult. */
+  samplingDetected?: boolean;
   x402Version?: number;
   scheme?: string;
   network?: string;
@@ -751,6 +776,7 @@ export class OkxX402Broker implements X402Broker {
       settlementStatus: redact(data?.status) ?? undefined,
       settlementErrorReason: redact(data?.errorReason),
       settlementErrorMessage: redact(data?.errorMessage),
+      samplingDetected: data?.sampling === true,
       responseShape: envelope.responseShape,
     });
     if (!response.ok || envelope.code !== "0") {
@@ -801,7 +827,8 @@ export class OkxX402Broker implements X402Broker {
       phase !== "verify" &&
       data?.success !== true &&
       data?.status !== "timeout" &&
-      data?.status !== "pending"
+      data?.status !== "pending" &&
+      data?.sampling !== true
     ) {
       const code = brokerErrorCode({
         phase,
@@ -868,7 +895,7 @@ export async function verifyAndSettleA2mcpPayment(input: {
   binding: CommerceBinding;
   broker?: X402Broker;
   nowSeconds?: number;
-}): Promise<X402SettlementEvidence> {
+}): Promise<X402SettlementEvidence | X402SamplingResult> {
   if (
     (process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production") &&
     !isRedisPersistenceEnabled()
@@ -896,6 +923,19 @@ export async function verifyAndSettleA2mcpPayment(input: {
         credentialDigest: digest,
       });
       return existing.settlement;
+    }
+    throw new A2mcpX402Error("REPLAYED_AUTHORIZATION", "Payment authorization was already used.");
+  }
+  if (existing?.state === "sampled" && existing.sampling) {
+    if (
+      existing.quoteId === input.quote.quoteId &&
+      existing.requestHash === input.binding.requestHash &&
+      existing.credentialDigest === digest
+    ) {
+      // Identical replay of an authenticated Sampling Call — return the same
+      // (never-settled, never-revenue) result again. No re-verification, no
+      // second facilitator call, no re-execution triggered by this function.
+      return existing.sampling;
     }
     throw new A2mcpX402Error("REPLAYED_AUTHORIZATION", "Payment authorization was already used.");
   }
@@ -944,6 +984,27 @@ export async function verifyAndSettleA2mcpPayment(input: {
       broker,
       await broker.settle(input.payload, requirements)
     );
+
+    // OKX AI Agent Marketplace User Agreement §7.7: an authenticated Sampling
+    // Call reports `sampling: true` on the settlement response and payment as
+    // unsettled. Detected only here, from the trusted facilitator boundary —
+    // never from caller-supplied data. Do not reject for missing settlement;
+    // execute the bounded service, never settle later, never record revenue,
+    // preserve idempotency via a distinct durable state, log only internally.
+    if (settled.sampling === true) {
+      const samplingResult: X402SamplingResult = {
+        sampling: true,
+        amount: input.quote.amountMicro,
+      };
+      await setDurableRecord("payment_entitlements", key, {
+        ...reservation,
+        state: "sampled",
+        sampling: samplingResult,
+      } satisfies AuthorizationRecord);
+      settlementConfirmed = true;
+      return samplingResult;
+    }
+
     if (
       settled.success !== true ||
       settled.status !== "success" ||

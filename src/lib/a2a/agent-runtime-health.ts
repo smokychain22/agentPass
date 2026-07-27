@@ -26,6 +26,15 @@ export interface AgentRuntimeHealth {
   alertAgentCannotAnswer: boolean;
   lastSeenAt: string;
   updatedAt: string;
+  /** Durable Windows Task Scheduler runtime process, reported by each heartbeat tick. */
+  workerPid: number | null;
+  /** Count of duplicate-instance starts the runtime's own lock file has refused. */
+  duplicateWorkerAttemptCount: number;
+  /** Count of inbound reviewer/marketplace requests received (POST /api/a2a/tasks). */
+  reviewerRequestCount: number;
+  lastReviewerRequestAt: string | null;
+  lastReviewerResponseAt: string | null;
+  lastReviewerResponseLatencyMs: number | null;
 }
 
 const HEALTH_KEY = "agent_runtime_health";
@@ -55,6 +64,12 @@ function defaultHealth(): AgentRuntimeHealth {
     alertAgentCannotAnswer: true,
     lastSeenAt: durableNow(),
     updatedAt: durableNow(),
+    workerPid: null,
+    duplicateWorkerAttemptCount: 0,
+    reviewerRequestCount: 0,
+    lastReviewerRequestAt: null,
+    lastReviewerResponseAt: null,
+    lastReviewerResponseLatencyMs: null,
   };
 }
 
@@ -136,6 +151,10 @@ type AgentRuntimeObservationPatch = Partial<
     | "modelProviderAvailable"
     | "a2mcpEndpointHealthy"
     | "deliveryWorkerHealthy"
+    | "reviewerRequestCount"
+    | "lastReviewerRequestAt"
+    | "lastReviewerResponseAt"
+    | "lastReviewerResponseLatencyMs"
   >
 >;
 
@@ -162,6 +181,9 @@ export interface VerifiedAgentRuntimeHeartbeat {
   officialWatchActive: true;
   xmtpClientReady: true;
   ttlSeconds?: number;
+  /** Reported by the durable Task Scheduler runtime for observability only — never trusted for identity. */
+  workerPid?: number;
+  duplicateWorkerAttemptCount?: number;
 }
 
 export async function recordVerifiedAgentRuntimeHeartbeat(
@@ -198,24 +220,34 @@ export async function recordVerifiedAgentRuntimeHeartbeat(
     alertAgentCannotAnswer: false,
     lastSeenAt: now,
     updatedAt: now,
+    workerPid: input.workerPid ?? existing.workerPid,
+    duplicateWorkerAttemptCount: input.duplicateWorkerAttemptCount ?? existing.duplicateWorkerAttemptCount,
   };
   await setDurableRecord("marketplace_deliveries", HEALTH_KEY, updated);
   return deriveAgentRuntimeHealth(updated);
 }
 
 export async function recordInboundTaskReceived(): Promise<void> {
+  const now = durableNow();
+  const existing = await getStoredAgentRuntimeHealth();
   await touchAgentRuntimeHealth({
-    lastTaskReceivedAt: durableNow(),
+    lastTaskReceivedAt: now,
+    lastReviewerRequestAt: now,
+    reviewerRequestCount: (existing.reviewerRequestCount ?? 0) + 1,
   });
 }
 
 export async function recordTaskAcknowledged(input?: {
   queueDepth?: number;
   lifecycle?: OkxMarketplaceLifecycleState;
+  responseLatencyMs?: number;
 }): Promise<void> {
+  const now = durableNow();
   await touchAgentRuntimeHealth({
-    lastAcknowledgementAt: durableNow(),
+    lastAcknowledgementAt: now,
     queueDepth: input?.queueDepth ?? 0,
     oldestUnacknowledgedTaskAgeSeconds: 0,
+    lastReviewerResponseAt: now,
+    lastReviewerResponseLatencyMs: input?.responseLatencyMs ?? null,
   });
 }

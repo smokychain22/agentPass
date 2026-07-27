@@ -121,12 +121,20 @@ export async function runPhase3ToolRoute(
         taskId,
         binding,
       });
-      gateQuoteId = gate.quote?.quoteId ?? quoteId;
-      paymentResponseHeader = gate.paymentResponseHeader;
-      paymentReference = gate.paymentReference;
-      executionRequestDigest = gate.requestHash ?? executionRequestDigest;
-      // Prefer authorized quote commercial digest for receipt binding.
-      requestHash = gate.quote?.requestHash ?? gate.requestHash;
+      if (gate.samplingAuthenticated) {
+        // Authenticated OKX Sampling Call (§7.7): execute the bounded service
+        // below, but never treat this like a paid quote — no gateQuoteId, no
+        // payment headers, no revenue recording, no later settlement.
+        // Internal-only signal; never surfaced in the public response body.
+        logMarketplaceTelemetry("a2mcp_sampling_authenticated", { taskId, tool });
+      } else {
+        gateQuoteId = gate.quote?.quoteId ?? quoteId;
+        paymentResponseHeader = gate.paymentResponseHeader;
+        paymentReference = gate.paymentReference;
+        executionRequestDigest = gate.requestHash ?? executionRequestDigest;
+        // Prefer authorized quote commercial digest for receipt binding.
+        requestHash = gate.quote?.requestHash ?? gate.requestHash;
+      }
       logMarketplaceTelemetry("a2mcp_payment_verified", {
         quoteId: gateQuoteId,
         executionState: gate.quote?.executionState,
