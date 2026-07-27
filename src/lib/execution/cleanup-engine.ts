@@ -86,6 +86,7 @@ export async function createCleanupPullRequest(input: {
   sessionKey?: string;
   cleanupBranch?: string;
   approvedPaths?: string[];
+  existingPrNumber?: number;
 }) {
   return createCleanupPr(input);
 }
