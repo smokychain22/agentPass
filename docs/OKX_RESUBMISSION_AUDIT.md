@@ -98,11 +98,75 @@ Known limitation, stated plainly: this runtime provides infrastructure-level con
 `okx-ai` watch-core protocol. Messages queue as unread todos and drain on the next watch session;
 nothing is lost while this runtime is the only thing running.
 
-**This limitation was investigated on 2026-07-27 to determine whether it could be closed with
-officially supported tooling. It cannot, and the statement above is retained rather than removed —
-see "Autonomous responder investigation" below.**
+**Update (2026-07-27, later same day): this was re-investigated at the source-code level and the
+statement above was too pessimistic.** RepoDiet's own code CAN answer inbound A2A messages
+deterministically, with no AI provider in the loop, for safe pre-work message categories — see
+"Autonomous responder — corrected finding" below. The earlier conclusion conflated "the mechanism
+that *generates* a reply" (which is AI-oriented) with "the mechanism that *transmits* a reply"
+(which is not).
 
-## Autonomous responder investigation (2026-07-27) — external blocker, not a gap we can code around
+## Autonomous responder — corrected finding (2026-07-27)
+
+The initial investigation (documented above, first pass) concluded a headless responder was
+impossible because `onchainos agent next-action` returns an LLM playbook and `okx-a2a ai exec` is
+the only documented auto-reply mechanism. That reasoning stopped one layer too shallow. Direct
+inspection of the installed `@okxweb3/a2a-node` package (`dist/cli.js`, ~4MB bundled source) shows:
+
+- **Inbound**: `okx-a2a user watch --json` — a long-poll CLI call, JSON in/out, no AI provider
+  involved. It surfaces items across all agents under the account, keyed by `sessionKey` (e.g.
+  `my:9636:to:<peer>` identifies Agent 9636 as the seller side of an exchange). A plain script can
+  classify `item.userContent` deterministically without an LLM.
+- **Outbound**: `okx-a2a xmtp-send --job-id <id> --to-agent-id <id> --message <text> --json` — its
+  own top-level description is *"Queue an XMTP message through the running daemon"* (source line
+  101055). It takes **no `--provider` parameter**. The daemon signs the message via
+  `onchainos agent xmtp-sign --key-uuid <keyUuid>` (source line 88095: `` `[onchainos-signer]
+  executing: onchainos agent xmtp-sign --key-uuid ${keyUuid} --message <...>` ``) — the agent's own
+  wallet-derived key, then transmits via the real XMTP SDK's `#conversation.send()` (source lines
+  69932 / 85275-85287). No AI provider anywhere in this path.
+- `okx-a2a session send` (a different command) explicitly describes itself as *"Queue a **local AI
+  session** message dispatch"* (source line 96849) — an internal relay into a locally-attached AI
+  process's input, not the genuine outbound wire transport. It was deliberately **not** used.
+- `okx-a2a ai exec` / `ai resume` are the only commands in the entire bundle that accept
+  `--provider codex|claude|hermes`, and tracing their implementation confirms they spawn (or manage
+  login/install for) an actual Claude Code or Codex CLI process (source lines ~98505-98555 install
+  `@anthropic-ai/claude-code` / manage `codex auth login`). This is a genuinely separate, optional
+  layer for *generating* response text — not required for transport.
+
+**Answering the four framing questions directly:**
+
+| | Answer |
+|---|---|
+| A. Does the official watcher expose inbound events RepoDiet can parse directly? | **Yes** — `okx-a2a user watch --json`. |
+| B. Can RepoDiet invoke the official send workflow programmatically without `ai exec`? | **Yes** — `okx-a2a xmtp-send`, no `--provider` flag exists on it. |
+| C. Is `ai exec` only an optional convenience wrapper? | **Yes**, confirmed by source. |
+| D. Does the tooling require a named CLI provider to send any response? | **No** — signing goes through `onchainos agent xmtp-sign` (wallet key), not an AI provider. |
+
+**Implementation**: `scripts/okx-runtime/repodiet-a2a-responder.ts` — watches via `okx-a2a user
+watch --json`, classifies inbound `decision_request` items using the same deterministic patterns
+already proven in the HTTP path (`isMarketplaceDiscoveryMessage` / `isInformationalQuery` from
+`src/lib/a2a/marketplace-intake.ts`), and for safe pre-work categories (availability, capability,
+price, repository/scope requests) claims the todo and replies via `okx-a2a xmtp-send` with a fixed
+template — never via `ai exec`, `session send`, or any AI provider. Anything that doesn't match a
+known safe pattern, or isn't a seller-side (`my:9636:to:*`) exchange, is left unclaimed and pending
+for interactive review — payment, escrow, delivery-acceptance, arbitration, and registration actions
+are never auto-approved. `npm run typecheck` / `lint` / `build` all pass with this script added.
+
+**Live proof — blocked, honestly reported, not worked around.** Generating a genuine inbound event
+to prove the full watch→classify→reply→record loop requires an active job. Attempting to create one
+(same pattern as the two earlier controlled test jobs) now fails consistently with a **new** error:
+`"Wallet API error (code=1001): designated provider does not offer serviceId: 37348"` — different
+from, and more restrictive than, anything seen earlier today (the same command succeeded twice
+earlier in this session). `asp-match --provider-agent-id 9636` still never surfaces the A2A service
+either, unchanged. The most likely explanation is that Agent 9636's active review process has
+locked new task designations against it while under review — a platform-side state change, not a
+bug in this responder or in RepoDiet's own code. No task was force-created past this rejection, and
+no attempt was made to route around it. The responder is implemented, typechecked, and its
+transport mechanism is proven correct at the source level, but end-to-end live behavior (items 5-7
+of the requested test plan: genuine watch-detects-event, kill/watchdog-recovery-with-live-traffic,
+exactly-one-active-watcher-under-real-load) remains unverified pending either the review concluding
+or OKX clarifying whether designation is expected to work mid-review.
+
+## Autonomous responder investigation — first pass (2026-07-27, superseded above)
 
 Investigated whether a headless (no interactive AI session) worker could answer inbound A2A
 messages using only the officially documented `onchainos` / `okx-a2a` tooling, without creating any
