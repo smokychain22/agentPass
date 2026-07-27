@@ -22,6 +22,16 @@ const DO_NOT_TOUCH_PATTERNS: RegExp[] = [
   /(^|\/)postcss\.config\.(mjs|cjs|js|ts)$/,
   /(^|\/)tailwind\.config\.(mjs|cjs|js|ts)$/,
   /(^|\/)instrumentation\.(ts|js)$/,
+  // Generated / framework-managed / vendored — RepoDiet has no supported
+  // transformation of the authoritative source, so these must never be
+  // offered as a direct-edit or direct-remove cleanup candidate.
+  /(^|\/)next-env\.d\.ts$/,
+  /\.generated\.(ts|tsx|js|jsx|json)$/,
+  /(^|\/)generated\//i,
+  /(^|\/)vendored?\//i,
+  /(^|\/)migrations?\//i,
+  /(^|\/)\.github\/workflows\//i,
+  /(^|\/)\.github\/actions\//i,
 ];
 
 const SAFE_CANDIDATE_PATTERNS: RegExp[] = [

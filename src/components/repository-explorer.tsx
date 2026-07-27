@@ -13,6 +13,13 @@ type Props = {
   onSelectionChange: (pathIds: string[]) => void;
   loading?: boolean;
   error?: string | null;
+  /**
+   * Technical Details is read-only by default: search/filter only, no
+   * checkboxes or selection controls. Selecting a path here never affected
+   * the real cleanup plan, so the controls must not exist rather than
+   * imply they do something they don't.
+   */
+  readOnly?: boolean;
 };
 
 export function RepositoryExplorer({
@@ -21,6 +28,7 @@ export function RepositoryExplorer({
   onSelectionChange,
   loading,
   error,
+  readOnly = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [language, setLanguage] = useState("");
@@ -105,19 +113,24 @@ export function RepositoryExplorer({
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Repository Explorer
           </p>
-          <h2 className="mt-1 text-lg font-semibold text-foreground">Select any tracked path</h2>
+          <h2 className="mt-1 text-lg font-semibold text-foreground">
+            {readOnly ? "Browse tracked paths" : "Select any tracked path"}
+          </h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Select any repository path, then choose what you want RepoDiet to inspect or change.
-            Selection does not authorize cleanup — only a verified transformation plan can execute.
+            {readOnly
+              ? "Search and filter the repository's tracked files. This view is informational only — it never adds anything to the cleanup plan."
+              : "Select any repository path, then choose what you want RepoDiet to inspect or change. Selection does not authorize cleanup — only a verified transformation plan can execute."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="rounded border border-border/50 px-2 py-1 text-muted-foreground">
             {blobs.length} tracked files
           </span>
-          <span className="rounded border border-border/50 px-2 py-1 text-muted-foreground">
-            {selectedPathIds.length} selected
-          </span>
+          {!readOnly ? (
+            <span className="rounded border border-border/50 px-2 py-1 text-muted-foreground">
+              {selectedPathIds.length} selected
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -177,37 +190,39 @@ export function RepositoryExplorer({
         </label>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="rounded-md border border-border/50 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
-          onClick={selectAllFiltered}
-        >
-          Select filtered
-        </button>
-        {folder ? (
+      {!readOnly ? (
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             className="rounded-md border border-border/50 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
-            onClick={() => selectFolder(folder)}
+            onClick={selectAllFiltered}
           >
-            Select folder contents
+            Select filtered
           </button>
-        ) : null}
-        <button
-          type="button"
-          className="rounded-md border border-border/50 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
-          onClick={() => onSelectionChange([])}
-        >
-          Clear selection
-        </button>
-      </div>
+          {folder ? (
+            <button
+              type="button"
+              className="rounded-md border border-border/50 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+              onClick={() => selectFolder(folder)}
+            >
+              Select folder contents
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="rounded-md border border-border/50 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+            onClick={() => onSelectionChange([])}
+          >
+            Clear selection
+          </button>
+        </div>
+      ) : null}
 
       <div className="max-h-[28rem] overflow-auto rounded-md border border-border/40">
         <table className="w-full text-left text-xs">
           <thead className="sticky top-0 bg-card/95 text-muted-foreground">
             <tr>
-              <th className="px-2 py-2 font-medium">Select</th>
+              {!readOnly ? <th className="px-2 py-2 font-medium">Select</th> : null}
               <th className="px-2 py-2 font-medium">Path</th>
               <th className="px-2 py-2 font-medium">Indicators</th>
               <th className="px-2 py-2 font-medium">Refs</th>
@@ -217,14 +232,16 @@ export function RepositoryExplorer({
           <tbody>
             {filtered.slice(0, 400).map((node) => (
               <tr key={node.pathId} className="border-t border-border/30" data-path-id={node.pathId}>
-                <td className="px-2 py-1.5">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(node.pathId)}
-                    onChange={() => toggle(node.pathId)}
-                    aria-label={`Select ${node.path}`}
-                  />
-                </td>
+                {!readOnly ? (
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(node.pathId)}
+                      onChange={() => toggle(node.pathId)}
+                      aria-label={`Select ${node.path}`}
+                    />
+                  </td>
+                ) : null}
                 <td className="px-2 py-1.5">
                   <code className="break-all text-[11px] text-foreground">{node.path}</code>
                 </td>

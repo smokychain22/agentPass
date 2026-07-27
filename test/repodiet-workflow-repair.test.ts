@@ -231,13 +231,12 @@ function testDuplicateActions() {
     type: "duplicate_code",
     files: ["src/components/StatusCard.tsx", "src/components/StatusCardCopy.tsx"],
   });
-  const actions = buildFindingCardActions(f, "Safe to fix");
+  const actions = buildFindingCardActions(f, "Recommended fix");
   const labels = actions.map((a) => a.label);
 
-  assert.ok(labels.some((l) => l.includes("Use") && l.includes("remove the copy")));
-  assert.ok(labels.includes("Choose the other file"));
+  assert.ok(labels.some((l) => l.includes("Keep") && l.includes("remove the copy")));
+  assert.ok(labels.includes("Choose StatusCardCopy.tsx instead"));
   assert.ok(labels.includes("Keep both files"));
-  assert.ok(labels.includes("Exclude from this cleanup"));
 
   const primary = actions.find((a) => a.kind === "primary")!;
   assert.equal(primary.canonicalFile, "src/components/StatusCard.tsx");
@@ -250,9 +249,9 @@ function testDuplicateActions() {
 
 function testDependencyActions() {
   const f = finding({ type: "unused_dependency", packageName: "left-pad", files: ["package.json"] });
-  const actions = buildFindingCardActions(f, "Safe to fix");
+  const actions = buildFindingCardActions(f, "Recommended fix");
   const labels = actions.map((a) => a.label);
-  assert.deepEqual(labels, ["Remove dependency", "Keep dependency", "Exclude from cleanup"]);
+  assert.deepEqual(labels, ["Remove dependency", "Leave unchanged"]);
   const remove = actions.find((a) => a.label === "Remove dependency")!;
   assert.equal(remove.decision, "selected");
   assert.deepEqual(remove.filesToRemove, ["package.json"]);
@@ -263,15 +262,15 @@ function testArchiveActions() {
     type: "ai_slop_signal",
     files: ["src/archive/OldDashboard.backup.tsx", "src/unused/confirmed-unused.ts"],
   });
-  const actions = buildFindingCardActions(f, "Safe to fix");
+  const actions = buildFindingCardActions(f, "Recommended fix");
   assert.ok(actions.some((a) => a.label === "Remove backup files" && a.kind === "primary"));
-  assert.ok(actions.some((a) => a.label === "Keep these files"));
-  assert.ok(actions.some((a) => a.label === "Exclude from cleanup"));
+  assert.ok(actions.some((a) => a.label === "Leave unchanged"));
+  assert.ok(actions.some((a) => a.expandsToIndividualFiles));
 }
 
 function testUncertainFindingActions() {
   const f = finding({ files: ["src/plugins/dynamic-loader.ts"] });
-  const actions = buildFindingCardActions(f, "Needs your review");
+  const actions = buildFindingCardActions(f, "Review suggested");
   const labels = actions.map((a) => a.label);
 
   // Never a generic yes/no/not-sure triad, and never a preselected deletion.
@@ -280,19 +279,28 @@ function testUncertainFindingActions() {
   const primary = actions.find((a) => a.kind === "primary")!;
   assert.equal(primary.decision, "kept", "uncertain findings must default to keep, never deletion");
   assert.ok(primary.label.includes("recommended"));
-  assert.ok(labels.some((l) => l.startsWith("Remove") && l.includes("dynamic-loader.ts")));
+  assert.ok(labels.some((l) => l === "Remove this file anyway"));
+  const risky = actions.find((a) => a.label === "Remove this file anyway")!;
+  assert.equal(risky.requiresConfirmation, true, "risky removal must require confirmation");
+  assert.equal(risky.isOverride, true, "risky removal must be marked as a user override");
+}
+
+function testProtectedFindingHasNoCleanupActions() {
+  const f = finding({ type: "unused_file", protected: true });
+  const actions = buildFindingCardActions(f, "Protected");
+  assert.deepEqual(actions, [], "protected findings must render no cleanup-selection actions");
 }
 
 function testNoFakeVerifyActions() {
   // "Verify usage first" / "Verify runtime usage" must never be rendered
   // unless they trigger a real backend verification — RepoDiet does not
   // implement that yet, so no action anywhere may claim to "verify".
-  const cases: Array<[Finding["type"], "Safe to fix" | "Needs your review"]> = [
-    ["unused_file", "Safe to fix"],
-    ["unused_dependency", "Safe to fix"],
-    ["ai_slop_signal", "Safe to fix"],
-    ["duplicate_code", "Safe to fix"],
-    ["unused_file", "Needs your review"],
+  const cases: Array<[Finding["type"], "Recommended fix" | "Review suggested"]> = [
+    ["unused_file", "Recommended fix"],
+    ["unused_dependency", "Recommended fix"],
+    ["ai_slop_signal", "Recommended fix"],
+    ["duplicate_code", "Recommended fix"],
+    ["unused_file", "Review suggested"],
   ];
   for (const [type, status] of cases) {
     const actions = buildFindingCardActions(finding({ type }), status);
@@ -317,7 +325,7 @@ function testEveryActionHasARealConsequenceAndDecision() {
   ];
   for (const type of types) {
     const files = type === "duplicate_code" ? ["a.ts", "b.ts"] : ["a.ts"];
-    const actions = buildFindingCardActions(finding({ type, files }), "Safe to fix");
+    const actions = buildFindingCardActions(finding({ type, files }), "Recommended fix");
     assert.ok(actions.length >= 2, `${type} must expose at least a primary and one alternative action`);
     for (const action of actions) {
       assert.ok(action.consequence.length > 0, `every action must state a real consequence (${action.id})`);
@@ -407,6 +415,7 @@ async function main() {
   testDependencyActions();
   testArchiveActions();
   testUncertainFindingActions();
+  testProtectedFindingHasNoCleanupActions();
   testNoFakeVerifyActions();
   testEveryActionHasARealConsequenceAndDecision();
   testCreateCleanupPrReadiness();
