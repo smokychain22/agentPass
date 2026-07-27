@@ -226,7 +226,9 @@ test.describe("Analyze Repository stage — deterministic mocked states", () => 
 
     await page.getByRole("button", { name: "Analyze another repository" }).click();
 
-    await expect(page.getByPlaceholder("https://github.com/owner/repository")).toHaveValue("");
+    const repoInput = page.getByPlaceholder("https://github.com/owner/repository");
+    await expect(repoInput).toBeVisible({ timeout: 10_000 });
+    await expect(repoInput).toHaveValue("");
     await expect(page.getByRole("button", { name: "Analyze another repository" })).toHaveCount(0);
   });
 });

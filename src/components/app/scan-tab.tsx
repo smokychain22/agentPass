@@ -230,6 +230,11 @@ export function ScanTab() {
     setIsDemoMode(false);
     setScanPhase("idle");
     resetSession();
+    findingsAutoNavigated.current = false;
+    // The auto-navigate effect may have already moved the user to
+    // ?tab=findings/patch/verify — always return to the blank scan form,
+    // never leave them stranded on a now-locked stage.
+    router.push("/app");
   };
 
   return (

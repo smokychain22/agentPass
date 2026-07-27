@@ -82,6 +82,6 @@ test.describe("fresh session — all four stages agree everywhere", () => {
   }) => {
     await page.goto("/app");
     const rail = page.getByRole("navigation", { name: "Workflow progress" });
-    await expect(rail.getByText(/connect repository/i)).toBeVisible();
+    await expect(rail.getByText(/analyze repository/i)).toBeVisible();
   });
 });
