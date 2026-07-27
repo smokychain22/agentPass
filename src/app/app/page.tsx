@@ -110,9 +110,10 @@ function AppWorkspace() {
       return;
     }
     let cancelled = false;
-    void fetch("/api/okx/intake/repository", {
+    void fetch("/api/github/capability", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       body: JSON.stringify({ repositoryUrl: `https://github.com/${repository}` }),
     })
       .then((res) => res.json())

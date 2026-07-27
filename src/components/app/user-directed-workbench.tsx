@@ -424,15 +424,24 @@ export function UserDirectedWorkbench({
     void refreshPlanStatus();
   }, [refreshPlanStatus]);
 
-  // Real, repository-scoped production capability check — never assume
-  // GitHub write access from a generic "session connected" flag.
+  // Real, repository-scoped production capability check against the
+  // authoritative GitHub App installation. Never assume write access from a
+  // callback query parameter, a generic "session connected" flag, or cached
+  // client state. Deliberately NOT the repository-intake route: that answers
+  // as the anonymous read-only tenant (so it can never see an installation)
+  // and queues a deep scan as a side effect.
   useEffect(() => {
     if (!repository) return;
     let cancelled = false;
-    void fetch("/api/okx/intake/repository", {
+    const installParam = Number(searchParams.get("installation_id"));
+    void fetch("/api/github/capability", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repositoryUrl: `https://github.com/${repository}` }),
+      cache: "no-store",
+      body: JSON.stringify({
+        repositoryUrl: `https://github.com/${repository}`,
+        installationId: Number.isFinite(installParam) && installParam > 0 ? installParam : undefined,
+      }),
     })
       .then((res) => res.json())
       .then((data: { ok?: boolean; canCreatePullRequest?: boolean }) => {
@@ -448,7 +457,7 @@ export function UserDirectedWorkbench({
     return () => {
       cancelled = true;
     };
-  }, [repository]);
+  }, [repository, searchParams]);
 
   async function connectGithubForCleanup() {
     if (!repository) return;
