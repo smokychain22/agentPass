@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { durableNow, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
+import { deleteDurableRecord, durableNow, getDurableRecord, setDurableRecord } from "@/lib/store/durable-store";
 
 export type FindingDecisionState =
   | "undecided"
@@ -18,6 +18,9 @@ export interface FindingDecisionRecord {
   canonicalFile?: string;
   filesToRemove?: string[];
   filesToKeep?: string[];
+  referencesToUpdate?: string[];
+  /** True when the user explicitly overrode RepoDiet's own recommendation (e.g. removing an unverified finding anyway). */
+  isOverride?: boolean;
   verificationStatus?: "not_requested" | "requested" | "verified" | "failed";
   decisionTimestamp: string;
 }
@@ -57,6 +60,20 @@ export async function getFindingDecision(
   findingId: string
 ): Promise<FindingDecisionRecord | undefined> {
   return getDurableRecord<FindingDecisionRecord>("finding_decisions", recordKey(scanId, findingId));
+}
+
+/** Removes a single persisted decision (Undo). Idempotent — clearing an already-cleared finding is a no-op. */
+export async function clearFindingDecision(scanId: string, findingId: string): Promise<void> {
+  await deleteDurableRecord("finding_decisions", recordKey(scanId, findingId));
+  const index =
+    (await getDurableRecord<string[]>("finding_decisions", indexKey(scanId))) ?? [];
+  if (index.includes(findingId)) {
+    await setDurableRecord(
+      "finding_decisions",
+      indexKey(scanId),
+      index.filter((id) => id !== findingId)
+    );
+  }
 }
 
 export async function listFindingDecisions(scanId: string): Promise<FindingDecisionRecord[]> {

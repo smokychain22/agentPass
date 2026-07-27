@@ -5,13 +5,20 @@ import type { FindingStatusLabel } from "./recommended-action";
 export interface FindingCardAction {
   id: string;
   label: string;
-  kind: "primary" | "secondary";
+  kind: "primary" | "secondary" | "additional";
   decision: FindingDecisionState;
   canonicalFile?: string;
   filesToRemove?: string[];
   filesToKeep?: string[];
   /** Plain-language statement of exactly what happens if this action is chosen. */
   consequence: string;
+  /** Requires an explicit confirmation dialog before persisting (risky override). */
+  requiresConfirmation?: boolean;
+  confirmationText?: string;
+  /** Expands into one action set per file instead of persisting a decision itself. */
+  expandsToIndividualFiles?: boolean;
+  /** Marks this decision as an explicit override of RepoDiet's own recommendation. */
+  isOverride?: boolean;
 }
 
 function shortName(path: string): string {
@@ -21,8 +28,11 @@ function shortName(path: string): string {
 
 /**
  * One specific action set per finding type/status — never the generic
- * yes/no/not-sure triad. Every action states its exact consequence and maps
- * to a real, persisted decision (see decision-store.ts).
+ * yes/no/not-sure triad. "Leave unchanged" and "Exclude from cleanup" are
+ * never both offered when they'd have the same practical effect. Every
+ * action states its exact consequence and maps to a real, persisted
+ * decision (see decision-store.ts). Protected findings get no
+ * cleanup-selection actions at all.
  */
 export function buildFindingCardActions(
   finding: Finding,
@@ -30,12 +40,16 @@ export function buildFindingCardActions(
 ): FindingCardAction[] {
   const files = finding.files.length > 0 ? finding.files : [finding.title];
 
-  if (status === "Needs your review") {
+  if (status === "Protected") {
+    return [];
+  }
+
+  if (status === "Review suggested") {
     const path = files[0];
     return [
       {
         id: "keep_recommended",
-        label: "Keep this file (recommended)",
+        label: "Leave unchanged — recommended",
         kind: "primary",
         decision: "kept",
         filesToKeep: files,
@@ -43,18 +57,14 @@ export function buildFindingCardActions(
       },
       {
         id: "remove_anyway",
-        label: `Remove ${shortName(path)} anyway`,
+        label: "Remove this file anyway",
         kind: "secondary",
         decision: "selected",
         filesToRemove: files,
+        isOverride: true,
+        requiresConfirmation: true,
+        confirmationText: `RepoDiet's evidence for ${shortName(path)} is incomplete — it could not fully verify this file is unused. Removing it anyway may require updating references, and RepoDiet will run tests to check for breakage. You are overriding RepoDiet's recommendation to leave it unchanged. Continue?`,
         consequence: `${shortName(path)} is added to the cleanup plan for removal, even though RepoDiet could not fully verify it is unused.`,
-      },
-      {
-        id: "exclude",
-        label: "Exclude from cleanup",
-        kind: "secondary",
-        decision: "excluded",
-        consequence: `${shortName(path)} is left out of this cleanup entirely — no change, no further review.`,
       },
     ];
   }
@@ -64,26 +74,13 @@ export function buildFindingCardActions(
     const actions: FindingCardAction[] = [
       {
         id: `use_${first}`,
-        label: `Use ${shortName(first)} and remove the ${rest.length > 1 ? "copies" : "copy"}`,
+        label: `Keep ${shortName(first)} and remove the ${rest.length > 1 ? "copies" : "copy"}`,
         kind: "primary",
         decision: "selected",
         canonicalFile: first,
         filesToRemove: rest,
         consequence: `${shortName(first)} becomes the canonical file. RepoDiet will update references and remove ${rest.map(shortName).join(", ")} after verifying it is safe.`,
       },
-    ];
-    if (files.length === 2) {
-      actions.push({
-        id: `use_${rest[0]}`,
-        label: "Choose the other file",
-        kind: "secondary",
-        decision: "selected",
-        canonicalFile: rest[0],
-        filesToRemove: [first],
-        consequence: `${shortName(rest[0])} becomes the canonical file instead. RepoDiet will update references and remove ${shortName(first)}.`,
-      });
-    }
-    actions.push(
       {
         id: "keep_both",
         label: files.length > 2 ? "Keep all files" : "Keep both files",
@@ -92,14 +89,33 @@ export function buildFindingCardActions(
         filesToKeep: files,
         consequence: "No files are removed. All copies stay exactly as they are.",
       },
-      {
-        id: "exclude",
-        label: "Exclude from this cleanup",
-        kind: "secondary",
-        decision: "excluded",
-        consequence: "This duplicate group is left out of the cleanup plan entirely.",
+    ];
+    if (files.length === 2) {
+      actions.push({
+        id: `use_${rest[0]}`,
+        label: `Choose ${shortName(rest[0])} instead`,
+        kind: "additional",
+        decision: "selected",
+        canonicalFile: rest[0],
+        filesToRemove: [first],
+        consequence: `${shortName(rest[0])} becomes the canonical file instead. RepoDiet will update references and remove ${shortName(first)}.`,
+      });
+    } else {
+      for (const alt of rest) {
+        actions.push({
+          id: `use_${alt}`,
+          label: `Choose ${shortName(alt)} instead`,
+          kind: "additional",
+          decision: "selected",
+          canonicalFile: alt,
+          filesToRemove: files.filter((f) => f !== alt),
+          consequence: `${shortName(alt)} becomes the canonical file instead. RepoDiet will update references and remove ${files
+            .filter((f) => f !== alt)
+            .map(shortName)
+            .join(", ")}.`,
+        });
       }
-    );
+    }
     return actions;
   }
 
@@ -112,29 +128,22 @@ export function buildFindingCardActions(
         kind: "primary",
         decision: "selected",
         filesToRemove: files,
-        consequence: `"${pkg}" is removed from package.json and the lockfile as part of the cleanup plan.`,
+        consequence: `"${pkg}" is removed from package.json and the lockfile as part of the cleanup plan. RepoDiet validates the dependency is genuinely unused and runs tests/build before delivery.`,
       },
       {
         id: "keep_dependency",
-        label: "Keep dependency",
+        label: "Leave unchanged",
         kind: "secondary",
         decision: "kept",
         filesToKeep: files,
         consequence: `"${pkg}" stays in package.json — no change.`,
-      },
-      {
-        id: "exclude",
-        label: "Exclude from cleanup",
-        kind: "secondary",
-        decision: "excluded",
-        consequence: `"${pkg}" is left out of this cleanup entirely.`,
       },
     ];
   }
 
   if (finding.type === "ai_slop_signal") {
     const label = files.length > 1 ? "Remove backup files" : "Remove this file";
-    return [
+    const actions: FindingCardAction[] = [
       {
         id: "remove_files",
         label,
@@ -143,22 +152,26 @@ export function buildFindingCardActions(
         filesToRemove: files,
         consequence: `${files.map(shortName).join(", ")} ${files.length > 1 ? "are" : "is"} removed as part of the cleanup plan.`,
       },
-      {
-        id: "keep_files",
-        label: files.length > 1 ? "Keep these files" : "Keep this file",
-        kind: "secondary",
-        decision: "kept",
-        filesToKeep: files,
-        consequence: "No files are removed — they stay exactly as they are.",
-      },
-      {
-        id: "exclude",
-        label: "Exclude from cleanup",
-        kind: "secondary",
-        decision: "excluded",
-        consequence: "These files are left out of this cleanup entirely.",
-      },
     ];
+    if (files.length > 1) {
+      actions.push({
+        id: "review_individually",
+        label: "Review files individually",
+        kind: "secondary",
+        decision: "undecided",
+        expandsToIndividualFiles: true,
+        consequence: "Decide the fate of each file separately instead of all at once.",
+      });
+    }
+    actions.push({
+      id: "keep_files",
+      label: files.length > 1 ? "Leave unchanged" : "Leave unchanged",
+      kind: files.length > 1 ? "additional" : "secondary",
+      decision: "kept",
+      filesToKeep: files,
+      consequence: "No files are removed — they stay exactly as they are.",
+    });
+    return actions;
   }
 
   // unused_file / unused_export / unused_import / orphan_pattern / default.
@@ -174,18 +187,11 @@ export function buildFindingCardActions(
     },
     {
       id: "keep_files",
-      label: files.length > 1 ? "Keep these files" : "Keep this file",
+      label: "Leave unchanged",
       kind: "secondary",
       decision: "kept",
       filesToKeep: files,
       consequence: "No files are removed — they stay exactly as they are.",
-    },
-    {
-      id: "exclude",
-      label: "Exclude from cleanup",
-      kind: "secondary",
-      decision: "excluded",
-      consequence: "This finding is left out of this cleanup entirely.",
     },
   ];
 }

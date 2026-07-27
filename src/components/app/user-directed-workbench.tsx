@@ -116,7 +116,7 @@ export function UserDirectedWorkbench({
   const [resultsView, setResultsView] = useState<"results" | "technical">("results");
   const [resultsFilter, setResultsFilter] = useState("");
   const [resultsStatusFilter, setResultsStatusFilter] = useState<
-    "all" | "safe" | "review" | "protected" | "unsupported"
+    "all" | "safe" | "review" | "protected"
   >("all");
   const [nodes, setNodes] = useState<RepositoryPathNode[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
@@ -140,6 +140,10 @@ export function UserDirectedWorkbench({
   const [githubConnectError, setGithubConnectError] = useState<string | null>(null);
   const [approvingPlan, setApprovingPlan] = useState(false);
   const [approvePlanError, setApprovePlanError] = useState<string | null>(null);
+  const [expandedIndividualReview, setExpandedIndividualReview] = useState<Record<string, boolean>>({});
+  const [selectedDrawerOpen, setSelectedDrawerOpen] = useState(false);
+  const [batchPending, setBatchPending] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
   const [planSummary, setPlanSummary] = useState<{
     deleteCount: number;
     consolidateCount: number;
@@ -199,12 +203,21 @@ export function UserDirectedWorkbench({
     () => (findings ? flattenFindingsPayload(findings) : []),
     [findings]
   );
-  const eligibleFindings = useMemo(
+  /**
+   * The set the cleanup plan actually gets built from: only findings the
+   * user explicitly selected (real persisted decision), restricted to the
+   * ones RepoDiet can automatically transform. Unselected/kept/excluded
+   * findings never enter this set, no matter how "safe" they are.
+   */
+  const persistedSelectedEligibleFindings = useMemo(
     () =>
       flatFindings.filter(
-        (f) => isCleanupEligible(f) && !excludedFindingIds.includes(f.id)
+        (f) =>
+          isCleanupEligible(f) &&
+          (decisions[f.id]?.decision === "selected" ||
+            decisions[f.id]?.decision === "verified_selected")
       ),
-    [flatFindings, excludedFindingIds]
+    [flatFindings, decisions]
   );
 
   const allStatusFindings = useMemo(
@@ -215,10 +228,34 @@ export function UserDirectedWorkbench({
   const unresolvedRequiredCount = useMemo(
     () =>
       allStatusFindings.filter(
-        ({ finding, status }) => status === "Needs your review" && !decisions[finding.id]
+        ({ finding, status }) => status === "Review suggested" && !decisions[finding.id]
       ).length,
     [allStatusFindings, decisions]
   );
+
+  // Authoritative selected-fixes count — sourced only from persisted
+  // decisions for the active scan/commit, never from client-only checkbox
+  // state or Technical Details path selection. Kept/protected/informational
+  // findings and stale decisions from another scan never count.
+  const persistedSelectedFindings = useMemo(
+    () =>
+      Object.values(decisions).filter(
+        (d) => d.decision === "selected" || d.decision === "verified_selected"
+      ),
+    [decisions]
+  );
+  const persistedSelectedCount = persistedSelectedFindings.length;
+  const persistedOverrideCount = useMemo(
+    () => persistedSelectedFindings.filter((d) => d.isOverride).length,
+    [persistedSelectedFindings]
+  );
+  const persistedFilesAffected = useMemo(() => {
+    const files = new Set<string>();
+    for (const d of persistedSelectedFindings) {
+      for (const f of d.filesToRemove ?? []) files.add(f);
+    }
+    return files.size;
+  }, [persistedSelectedFindings]);
 
   const createCleanupPrReadiness = useMemo(
     () =>
@@ -229,7 +266,7 @@ export function UserDirectedWorkbench({
         findingsError: scanState === "failed" || scanState === "unavailable",
         analyzedCommit: findings?.repo.commitSha ?? null,
         activeCommit: session.scanResult?.repo?.commitSha ?? null,
-        eligibleSelectedCount: eligibleFindings.length,
+        eligibleSelectedCount: persistedSelectedCount,
         unresolvedRequiredCount,
         planApproved: Boolean(planStatus?.approved),
         planCurrent: Boolean(planStatus?.current),
@@ -240,7 +277,7 @@ export function UserDirectedWorkbench({
       scanState,
       findings,
       session.scanResult?.repo?.commitSha,
-      eligibleFindings.length,
+      persistedSelectedCount,
       unresolvedRequiredCount,
       planStatus,
       githubCapability.canCreatePullRequest,
@@ -251,10 +288,9 @@ export function UserDirectedWorkbench({
     const q = resultsFilter.trim().toLowerCase();
     const statusMap: Record<typeof resultsStatusFilter, string | null> = {
       all: null,
-      safe: "Safe to fix",
-      review: "Needs your review",
-      protected: "RepoDiet will not change this automatically",
-      unsupported: "Unsupported",
+      safe: "Recommended fix",
+      review: "Review suggested",
+      protected: "Protected",
     };
     const wantedStatus = statusMap[resultsStatusFilter];
     return allStatusFindings.filter(({ finding, status }) => {
@@ -411,7 +447,7 @@ export function UserDirectedWorkbench({
         body: JSON.stringify({
           scanId,
           pinnedCommit,
-          includeFindingIds: eligibleFindings.map((f) => f.id),
+          includeFindingIds: persistedSelectedEligibleFindings.map((f) => f.id),
         }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
@@ -473,7 +509,7 @@ export function UserDirectedWorkbench({
           scanId,
           repository,
           pinnedCommit,
-          excludeFindingIds: excludedFindingIds,
+          includeFindingIds: persistedSelectedEligibleFindings.map((f) => f.id),
         }),
       });
       const data = (await res.json()) as {
@@ -556,6 +592,18 @@ export function UserDirectedWorkbench({
     if (!scanId) return;
     if (decisionPending[finding.id]) return; // one mutation in flight per finding at a time
 
+    if (action.expandsToIndividualFiles) {
+      setExpandedIndividualReview((prev) => ({ ...prev, [finding.id]: true }));
+      return;
+    }
+
+    if (
+      action.requiresConfirmation &&
+      !window.confirm(action.confirmationText ?? "Are you sure?")
+    ) {
+      return;
+    }
+
     setDecisionPending((prev) => ({ ...prev, [finding.id]: true }));
     setDecisionErrors((prev) => {
       if (!(finding.id in prev)) return prev;
@@ -577,6 +625,7 @@ export function UserDirectedWorkbench({
           canonicalFile: action.canonicalFile,
           filesToRemove: action.filesToRemove,
           filesToKeep: action.filesToKeep,
+          isOverride: action.isOverride,
         }),
       });
       const data = (await res.json()) as {
@@ -623,6 +672,108 @@ export function UserDirectedWorkbench({
         actionType: "INSPECT",
         userInstruction: `Verify deletion for ${finding.files[0] ?? finding.title}`,
       });
+    }
+  }
+
+  async function undoDecision(findingId: string) {
+    if (!scanId) return;
+    await fetch(
+      `/api/user-directed/decisions?scanId=${encodeURIComponent(scanId)}&findingId=${encodeURIComponent(findingId)}`,
+      { method: "DELETE" }
+    ).catch(() => undefined);
+    setDecisions((prev) => {
+      const next = { ...prev };
+      delete next[findingId];
+      return next;
+    });
+    setExcludedFindingIds((prev) => prev.filter((id) => id !== findingId));
+    setPlanStatus(null);
+  }
+
+  /** Real, backend-backed batch mutation — never claims success the server didn't confirm. */
+  async function selectAllRecommended() {
+    if (!scanId) return;
+    const recommendedCount = flatFindings.filter(
+      (f) => isCleanupEligible(f) && !decisions[f.id]
+    ).length;
+    if (recommendedCount === 0) return;
+    if (
+      !window.confirm(
+        `RepoDiet will select ${recommendedCount} recommended fix(es). Protected and uncertain findings will remain unchanged.`
+      )
+    ) {
+      return;
+    }
+    setBatchPending(true);
+    setBatchError(null);
+    try {
+      const res = await fetch("/api/user-directed/decisions/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scanId, action: "select_recommended" }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        outcomes?: Array<{ findingId: string; ok: boolean }>;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Batch selection failed.");
+      // Only reflect findings the server actually confirmed — a partial
+      // failure never gets shown as a full success.
+      const succeededIds = (data.outcomes ?? []).filter((o) => o.ok).map((o) => o.findingId);
+      if (succeededIds.length > 0) {
+        const fresh = await fetch(`/api/user-directed/decisions?scanId=${encodeURIComponent(scanId)}`);
+        const freshData = (await fresh.json()) as { ok?: boolean; decisions?: FindingDecisionRecord[] };
+        if (freshData.ok && freshData.decisions) {
+          const byId: Record<string, FindingDecisionRecord> = {};
+          for (const d of freshData.decisions) byId[d.findingId] = d;
+          setDecisions(byId);
+        }
+      }
+      if (!data.ok) {
+        setBatchError(
+          `${succeededIds.length} of ${data.outcomes?.length ?? 0} selections saved — some failed. Try again for the rest.`
+        );
+      }
+      setPlanStatus(null);
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Batch selection failed.");
+    } finally {
+      setBatchPending(false);
+    }
+  }
+
+  async function clearSelectedFixes() {
+    if (!scanId) return;
+    if (persistedSelectedCount === 0) return;
+    setBatchPending(true);
+    setBatchError(null);
+    try {
+      const res = await fetch("/api/user-directed/decisions/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scanId, action: "clear_selected" }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        outcomes?: Array<{ findingId: string; ok: boolean }>;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Clear selection failed.");
+      const clearedIds = new Set((data.outcomes ?? []).filter((o) => o.ok).map((o) => o.findingId));
+      setDecisions((prev) => {
+        const next = { ...prev };
+        for (const id of clearedIds) delete next[id];
+        return next;
+      });
+      if (!data.ok) {
+        setBatchError("Some selections could not be cleared. Try again.");
+      }
+      setPlanStatus(null); // an approved plan built from the cleared selections is now stale
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Clear selection failed.");
+    } finally {
+      setBatchPending(false);
     }
   }
 
@@ -853,16 +1004,18 @@ export function UserDirectedWorkbench({
                 {scanFindingsStateHasCounters(scanState) ? (
                   <>
                     <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
-                      <li>{outcome.safeRemovals} safe to fix</li>
-                      <li>{outcome.itemsNeedingDecision} needing your review</li>
-                      <li>{outcome.protectedPaths} protected, untouched</li>
-                      <li>{allStatusFindings.filter((r) => r.status === "Unsupported").length} unsupported</li>
-                      <li>{flatFindings.length} total findings</li>
+                      <li>{outcome.safeRemovals} recommended fixes</li>
+                      <li>{outcome.itemsNeedingDecision} optional reviews</li>
+                      <li>{outcome.protectedPaths} protected</li>
+                      <li>{flatFindings.length} findings total</li>
                       <li>
                         Estimated impact: {outcome.predictedFilesChanged} files changed ·{" "}
                         {outcome.predictedLinesRemoved} lines removed
                       </li>
                     </ul>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Unselected findings will remain unchanged.
+                    </p>
                     {findings?.scanCoverageWarning ? (
                       <p className="mt-2 text-xs text-amber-400">{findings.scanCoverageWarning}</p>
                     ) : null}
@@ -918,10 +1071,9 @@ export function UserDirectedWorkbench({
                   className="rounded-md border border-border/50 bg-background/40 px-2 py-1.5 text-sm"
                 >
                   <option value="all">All statuses</option>
-                  <option value="safe">Safe to fix</option>
-                  <option value="review">Needs your review</option>
-                  <option value="protected">RepoDiet will not change this automatically</option>
-                  <option value="unsupported">Unsupported</option>
+                  <option value="safe">Recommended fix</option>
+                  <option value="review">Review suggested</option>
+                  <option value="protected">Protected</option>
                 </select>
               </div>
 
@@ -929,42 +1081,35 @@ export function UserDirectedWorkbench({
                 <span className="text-muted-foreground">
                   {(() => {
                     const decisionValues = Object.values(decisions);
-                    const selectedCount = decisionValues.filter(
-                      (d) => d.decision === "selected" || d.decision === "verified_selected"
-                    ).length;
                     const keptCount = decisionValues.filter(
                       (d) => d.decision === "kept" || d.decision === "verified_kept"
                     ).length;
                     const reviewCount = flatFindings.filter(
-                      (f) => outcomeStatusLabel(f) === "Needs your review" && !decisions[f.id]
+                      (f) => outcomeStatusLabel(f) === "Review suggested" && !decisions[f.id]
                     ).length;
-                    const selected = selectedCount || eligibleFindings.length;
-                    return `${selected} fixes selected · ${keptCount} kept · ${reviewCount} needs review`;
+                    return `${persistedSelectedCount} fixes selected · ${keptCount} kept · ${reviewCount} needs review`;
                   })()}
                 </span>
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    className="rounded border border-border/50 px-2 py-1 text-xs"
-                    onClick={() => setExcludedFindingIds([])}
+                    className="rounded border border-border/50 px-2 py-1 text-xs disabled:opacity-50"
+                    disabled={batchPending}
+                    onClick={() => void selectAllRecommended()}
                   >
-                    Select all safe
+                    Select all recommended fixes
                   </button>
                   <button
                     type="button"
-                    className="rounded border border-border/50 px-2 py-1 text-xs"
-                    onClick={() =>
-                      setExcludedFindingIds(
-                        flatFindings
-                          .filter((f) => isCleanupEligible(f))
-                          .map((f) => f.id)
-                      )
-                    }
+                    className="rounded border border-border/50 px-2 py-1 text-xs disabled:opacity-50"
+                    disabled={batchPending || persistedSelectedCount === 0}
+                    onClick={() => void clearSelectedFixes()}
                   >
-                    Clear selection
+                    Clear selected fixes
                   </button>
                 </div>
               </div>
+              {batchError ? <p className="text-xs text-destructive">{batchError}</p> : null}
 
               <div className="space-y-2">
                 {filteredResults.length === 0 ? (
@@ -973,66 +1118,144 @@ export function UserDirectedWorkbench({
                   filteredResults.slice(0, 50).map(({ finding: f, status }) => {
                     const cardActions = buildFindingCardActions(f, status);
                     const currentDecision = decisions[f.id];
+                    const isSelected =
+                      currentDecision?.decision === "selected" ||
+                      currentDecision?.decision === "verified_selected";
+                    const expandIndividually =
+                      status !== "Protected" && expandedIndividualReview[f.id] && f.files.length > 1;
+
                     return (
                       <article
                         key={f.id}
-                        className="space-y-2 rounded-md border border-border/40 bg-background/30 p-3 text-sm"
+                        className={`space-y-2 rounded-md border p-3 text-sm ${
+                          isSelected
+                            ? "border-signal/60 bg-signal/5 ring-1 ring-signal/40"
+                            : "border-border/40 bg-background/30"
+                        }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
-                          <p className="font-medium">{outcomeLabelForFinding(f)}</p>
+                          <p className="font-medium">
+                            {isSelected ? "✓ " : ""}
+                            {outcomeLabelForFinding(f)}
+                          </p>
                           <span
                             className={`shrink-0 rounded px-2 py-0.5 text-xs ${
-                              status === "Safe to fix"
+                              status === "Recommended fix"
                                 ? "bg-signal/15 text-signal"
-                                : status === "Needs your review"
+                                : status === "Review suggested"
                                   ? "bg-amber-400/15 text-amber-400"
                                   : "bg-muted-foreground/15 text-muted-foreground"
                             }`}
                           >
-                            {status === "Needs your review" ? "Needs your decision" : status}
+                            {status === "Review suggested" ? "Needs your decision" : status}
                           </span>
                         </div>
                         <p>
                           <code className="text-xs">{f.files.join(", ") || f.title}</code>
                         </p>
                         <p className="text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
-                        {decisionPending[f.id] ? (
-                          <p className="text-xs text-muted-foreground">Saving…</p>
-                        ) : decisionErrors[f.id] ? (
-                          <p className="text-xs text-destructive">{decisionErrors[f.id]}</p>
-                        ) : currentDecision ? (
-                          <p className="text-xs font-medium text-signal">
-                            Decision saved:{" "}
-                            {cardActions.find((a) => a.decision === currentDecision.decision)?.label ??
-                              currentDecision.decision}
+
+                        {status === "Protected" ? (
+                          <p className="text-xs font-medium text-muted-foreground">
+                            RepoDiet will leave this file unchanged.
                           </p>
-                        ) : null}
-                        <div className="flex flex-wrap gap-2">
-                          {cardActions.map((a) => (
-                            <button
-                              key={a.id}
-                              type="button"
-                              disabled={Boolean(decisionPending[f.id])}
-                              className={`rounded border px-2 py-1 text-xs disabled:opacity-50 ${
-                                a.kind === "primary"
-                                  ? "border-electric/60 bg-electric/10 font-medium"
-                                  : "border-border/50"
-                              } ${currentDecision?.decision === a.decision ? "ring-1 ring-signal" : ""}`}
-                              title={a.consequence}
-                              onClick={() => void recordDecision(f, a)}
-                            >
-                              {a.label}
-                            </button>
-                          ))}
-                          <details className="text-xs text-muted-foreground">
-                            <summary className="cursor-pointer">View evidence</summary>
-                            <ul className="mt-1 list-disc pl-4">
-                              {(f.evidence.signals ?? []).slice(0, 6).map((s) => (
-                                <li key={s}>{s}</li>
-                              ))}
-                            </ul>
-                          </details>
-                        </div>
+                        ) : (
+                          <>
+                            {decisionPending[f.id] ? (
+                              <p className="text-xs text-muted-foreground">Saving decision…</p>
+                            ) : decisionErrors[f.id] ? (
+                              <p className="text-xs text-destructive">{decisionErrors[f.id]}</p>
+                            ) : currentDecision ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-xs font-medium text-signal">
+                                  Selected:{" "}
+                                  {currentDecision.canonicalFile
+                                    ? `Keep ${currentDecision.canonicalFile.split("/").pop()}, remove ${(
+                                        currentDecision.filesToRemove ?? []
+                                      )
+                                        .map((p) => p.split("/").pop())
+                                        .join(", ")}`
+                                    : currentDecision.filesToRemove?.length
+                                      ? `Remove ${currentDecision.filesToRemove.map((p) => p.split("/").pop()).join(", ")}`
+                                      : `Keep ${f.files.map((p) => p.split("/").pop()).join(", ")}`}
+                                </p>
+                                {currentDecision.isOverride ? (
+                                  <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] text-amber-400">
+                                    user override
+                                  </span>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="text-xs text-muted-foreground underline"
+                                  onClick={() => void undoDecision(f.id)}
+                                >
+                                  Undo
+                                </button>
+                              </div>
+                            ) : null}
+                            {expandIndividually ? (
+                              <div className="space-y-2 border-l-2 border-border/40 pl-3">
+                                {f.files.map((path) => {
+                                  const singleFileFinding: Finding = { ...f, files: [path] };
+                                  const singleActions = buildFindingCardActions(singleFileFinding, status);
+                                  return (
+                                    <div key={path} className="space-y-1">
+                                      <code className="text-xs">{path}</code>
+                                      <div className="flex flex-wrap gap-2">
+                                        {singleActions
+                                          .filter((a) => !a.expandsToIndividualFiles)
+                                          .map((a) => (
+                                            <button
+                                              key={a.id}
+                                              type="button"
+                                              disabled={Boolean(decisionPending[f.id])}
+                                              className="rounded border border-border/50 px-2 py-1 text-xs disabled:opacity-50"
+                                              title={a.consequence}
+                                              onClick={() => void recordDecision(singleFileFinding, a)}
+                                            >
+                                              {a.label}
+                                            </button>
+                                          ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                {cardActions.map((a) => (
+                                  <button
+                                    key={a.id}
+                                    type="button"
+                                    disabled={Boolean(decisionPending[f.id])}
+                                    className={`rounded border px-2 py-1 text-xs disabled:opacity-50 ${
+                                      a.kind === "primary"
+                                        ? "border-electric/60 bg-electric/10 font-medium"
+                                        : a.kind === "additional"
+                                          ? "border-border/30 text-muted-foreground"
+                                          : "border-border/50"
+                                    } ${currentDecision?.decision === a.decision ? "ring-1 ring-signal" : ""}`}
+                                    title={a.consequence}
+                                    onClick={() => void recordDecision(f, a)}
+                                  >
+                                    {currentDecision?.decision === a.decision && a.kind === "primary"
+                                      ? "Selected"
+                                      : a.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer">View evidence</summary>
+                          <ul className="mt-1 list-disc pl-4">
+                            {(f.evidence.signals ?? []).slice(0, 6).map((s) => (
+                              <li key={s}>{s}</li>
+                            ))}
+                          </ul>
+                        </details>
                       </article>
                     );
                   })
@@ -1043,7 +1266,12 @@ export function UserDirectedWorkbench({
                 <button
                   type="button"
                   className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-                  disabled={analyzing || !scanId}
+                  disabled={analyzing || !scanId || persistedSelectedEligibleFindings.length < 1}
+                  title={
+                    persistedSelectedEligibleFindings.length < 1
+                      ? "Select at least one fix above first."
+                      : undefined
+                  }
                   onClick={() => void prepareAutomaticPlan()}
                 >
                   {analyzing ? "Preparing…" : "Create cleanup plan"}
@@ -1108,6 +1336,7 @@ export function UserDirectedWorkbench({
                     onSelectionChange={onSelectionChange}
                     loading={inventoryLoading}
                     error={inventoryError}
+                    readOnly
                   />
                 </FindingsAccordion>
               ) : null}
@@ -1176,7 +1405,7 @@ export function UserDirectedWorkbench({
               </div>
               <div>
                 <dt className="text-muted-foreground">Selected fixes</dt>
-                <dd>{eligibleFindings.length}</dd>
+                <dd>{persistedSelectedEligibleFindings.length}</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Excluded / kept</dt>
@@ -1212,7 +1441,7 @@ export function UserDirectedWorkbench({
                     approvingPlan ||
                     !planSummary ||
                     unresolvedRequiredCount > 0 ||
-                    eligibleFindings.length < 1
+                    persistedSelectedEligibleFindings.length < 1
                   }
                   onClick={() => void approveCleanupPlan()}
                 >
@@ -1325,7 +1554,7 @@ export function UserDirectedWorkbench({
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Selected cleanup</dt>
-                  <dd>{eligibleFindings.length} fix(es)</dd>
+                  <dd>{persistedSelectedEligibleFindings.length} fix(es)</dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Deliverable</dt>
@@ -1421,6 +1650,102 @@ export function UserDirectedWorkbench({
       ) : null}
 
       {stage === "delivery" ? <VerifyTab /> : null}
+
+      {stage === "review" && persistedSelectedCount > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/95 px-4 py-3 shadow-lg backdrop-blur sm:px-6">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
+            <div className="text-sm">
+              <p className="font-medium">
+                {persistedSelectedCount} fix{persistedSelectedCount === 1 ? "" : "es"} selected
+                {persistedFilesAffected > 0
+                  ? ` · ${persistedFilesAffected} file${persistedFilesAffected === 1 ? "" : "s"} affected`
+                  : ""}
+              </p>
+              {persistedOverrideCount > 0 ? (
+                <p className="text-xs text-amber-400">
+                  {persistedOverrideCount} risky override{persistedOverrideCount === 1 ? "" : "s"} selected
+                </p>
+              ) : null}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                onClick={() => setSelectedDrawerOpen(true)}
+              >
+                View selected fixes
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                disabled={analyzing}
+                onClick={() => void prepareAutomaticPlan()}
+              >
+                {analyzing ? "Preparing…" : `Review cleanup plan (${persistedSelectedCount})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedDrawerOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/40"
+          onClick={() => setSelectedDrawerOpen(false)}
+        >
+          <div
+            className="h-full w-full max-w-md overflow-y-auto bg-background p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <h2 className="text-lg font-medium">Selected fixes</h2>
+              <button
+                type="button"
+                className="text-sm text-muted-foreground"
+                onClick={() => setSelectedDrawerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <ul className="mt-4 space-y-3">
+              {persistedSelectedFindings.length === 0 ? (
+                <li className="text-sm text-muted-foreground">No fixes selected yet.</li>
+              ) : (
+                persistedSelectedFindings.map((d) => {
+                  const finding = flatFindings.find((f) => f.id === d.findingId);
+                  return (
+                    <li key={d.findingId} className="rounded-md border border-border/40 p-3 text-sm">
+                      <p className="font-medium">
+                        {finding ? outcomeLabelForFinding(finding) : d.findingId}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {d.canonicalFile
+                          ? `Keep ${d.canonicalFile} · remove ${(d.filesToRemove ?? []).join(", ")}`
+                          : (d.filesToRemove ?? []).join(", ") || "—"}
+                      </p>
+                      {finding ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Safety: {outcomeStatusLabel(finding)}
+                        </p>
+                      ) : null}
+                      {d.isOverride ? (
+                        <p className="mt-1 text-xs text-amber-400">User override of RepoDiet&apos;s recommendation</p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="mt-2 text-xs text-muted-foreground underline"
+                        onClick={() => void undoDecision(d.findingId)}
+                      >
+                        Undo
+                      </button>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

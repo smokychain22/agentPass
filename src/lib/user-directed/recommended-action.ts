@@ -2,19 +2,24 @@ import type { Finding } from "@/lib/findings/types";
 import type { RequestedActionType } from "./types";
 import { isCleanupEligible, riskBucketOf } from "@/lib/findings/cleanup-eligibility";
 
-export type FindingStatusLabel =
-  | "Safe to fix"
-  | "Needs your review"
-  | "RepoDiet will not change this automatically"
-  | "Unsupported";
+/**
+ * Every finding is exactly one of these four categories:
+ * - "Recommended fix": real evidence + a supported transformation exists.
+ * - "Review suggested": a possible issue RepoDiet leaves unchanged unless
+ *   the user explicitly chooses otherwise (includes SAFE-bucket findings
+ *   RepoDiet cannot yet act on automatically — never silently dropped).
+ * - "Protected": RepoDiet must not modify the file directly.
+ * - "Informational": repository information with no cleanup action.
+ */
+export type FindingStatusLabel = "Recommended fix" | "Review suggested" | "Protected" | "Informational";
 
 /** Canonical, understandable status shown in the Findings Results view. */
 export function outcomeStatusLabel(finding: Finding): FindingStatusLabel {
   const bucket = riskBucketOf(finding);
-  if (bucket === "PROTECTED") return "RepoDiet will not change this automatically";
-  if (bucket === "REVIEW") return "Needs your review";
+  if (bucket === "PROTECTED") return "Protected";
+  if (bucket === "REVIEW") return "Review suggested";
   // bucket === "SAFE"
-  return isCleanupEligible(finding) ? "Safe to fix" : "Unsupported";
+  return isCleanupEligible(finding) ? "Recommended fix" : "Review suggested";
 }
 
 /**

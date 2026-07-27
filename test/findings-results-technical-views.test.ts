@@ -40,48 +40,44 @@ function finding(overrides: Partial<Finding>): Finding {
 async function run() {
   console.log("Findings Results/Technical details views");
 
-  test("safe_candidate + preflight-passed finding is Safe to fix", () => {
+  test("safe_candidate + preflight-passed finding is Recommended fix", () => {
     const f = finding({
       action: "safe_candidate",
       evidence: { summary: "s", signals: ["classification=actionable_candidate"] },
     });
-    assert.equal(outcomeStatusLabel(f), "Safe to fix");
+    assert.equal(outcomeStatusLabel(f), "Recommended fix");
   });
 
-  test("safe_candidate without a passing transformer preflight is Unsupported, not silently dropped", () => {
+  test("safe_candidate without a passing transformer preflight is Review suggested, not silently dropped", () => {
     const f = finding({
       action: "safe_candidate",
       evidence: { summary: "s", signals: [] },
     });
-    assert.equal(outcomeStatusLabel(f), "Unsupported");
+    assert.equal(outcomeStatusLabel(f), "Review suggested");
   });
 
   test("review_first finding needs your review", () => {
     const f = finding({ action: "review_first" });
-    assert.equal(outcomeStatusLabel(f), "Needs your review");
+    assert.equal(outcomeStatusLabel(f), "Review suggested");
   });
 
   test("protected finding is never claimed as an automatic change", () => {
     const f = finding({ action: "do_not_touch", protected: true });
-    assert.equal(outcomeStatusLabel(f), "RepoDiet will not change this automatically");
+    assert.equal(outcomeStatusLabel(f), "Protected");
   });
 
-  test("status labels are exactly the four canonical strings", () => {
+  test("status labels are exactly one of the four canonical categories", () => {
     const labels = new Set([
       outcomeStatusLabel(finding({ action: "safe_candidate", evidence: { summary: "s", signals: ["classification=actionable_candidate"] } })),
       outcomeStatusLabel(finding({ action: "safe_candidate", evidence: { summary: "s", signals: [] } })),
       outcomeStatusLabel(finding({ action: "review_first" })),
       outcomeStatusLabel(finding({ action: "do_not_touch", protected: true })),
     ]);
-    assert.deepEqual(
-      [...labels].sort(),
-      [
-        "Needs your review",
-        "RepoDiet will not change this automatically",
-        "Safe to fix",
-        "Unsupported",
-      ].sort()
-    );
+    const allowed = new Set(["Recommended fix", "Review suggested", "Protected", "Informational"]);
+    for (const label of labels) {
+      assert.ok(allowed.has(label), `"${label}" must be one of the four canonical categories`);
+    }
+    assert.deepEqual([...labels].sort(), ["Protected", "Recommended fix", "Review suggested"].sort());
   });
 
   test("Findings review UI exposes only Results and Technical details as primary views", async () => {
