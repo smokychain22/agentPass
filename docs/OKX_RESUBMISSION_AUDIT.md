@@ -2,6 +2,104 @@
 
 Last verified: 2026-07-27
 
+## Command 2 — Quick Triage engine hardening and a real, paid canary
+
+### Objective
+
+Verify the real A2MCP Quick Triage analysis engine (`analyze_repository`,
+service 37347) produces genuinely useful, repository-specific findings —
+not generic checklist output — before any real payment, per the strict
+Phase 11 rejection criteria (no fabricated findings, no vague AI prose,
+real file evidence, prioritization, actionable next steps).
+
+### Finding: paid response was dropping real evidence the engine already computed
+
+`src/lib/a2mcp/quick-triage-engine.ts` genuinely runs deterministic checks
+(knip import-graph fallback, jscpd, madge, AI-slop heuristics) against the
+real repository contents via `runBoundedQuickTriageScan()`. Confirmed by
+direct dry run against `velz-cmd/repodiet-e2e-test`: real files named
+(`src/archive/OldDashboard.backup.tsx`, `left-pad` in `package.json`,
+`next-env.d.ts`), not placeholder text.
+
+However, the internal `Finding` type (`src/lib/findings/types.ts`) already
+computes richer per-finding data — `reason`, `confidenceReason`,
+`evidence.signals` — that the paid-facing `QuickTriageFinding` shape
+(`src/lib/a2mcp/quick-triage-response.ts`) silently discarded, keeping only
+`id/type/title/action/confidence/severity/files/evidenceSummary`. None of
+the fields a paying buyer needs to act on a finding existed: no
+explanation, no user impact, no recommended fix, no effort estimate, no
+`safeForAutomaticCleanup`/`eligibleForA2AService37348` flags.
+
+### Fix
+
+Extended `toQuickTriageFinding()` to surface the real internal evidence
+(`confidenceReason`, `evidence.signals`, `reason` as `explanation`) plus
+deterministic, finding-type-keyed templates for `userImpact` and
+`recommendedFix` that reference the actual files/package names from the
+scan (no fabricated per-repo claims — the template is fixed per finding
+type, the file/package data inside it is always real). Added a categorical
+`estimatedEffort` (`trivial`/`small`/`moderate`) derived from file count and
+risk bucket, and exposed `safeForAutomaticCleanup` /
+`eligibleForA2AService37348` directly from the existing `action` bucket
+rather than inventing a new signal. `finding.lines` wired through
+(currently unpopulated upstream for the bounded scan path — not
+fabricated).
+
+PR #87, merged to `main` (`9e50f14`), deployed to production
+(`dpl_7V2NCEmat6h3ECQ6JvQkBTQptg4g`, verified the `skillswap-virid-kappa.vercel.app`
+alias resolved to that exact deployment before any paid test).
+
+### Preflight verification (all free, before any payment)
+
+- `npx tsc --noEmit` clean.
+- 14 relevant test suites passing unmodified against the new schema:
+  `quick-triage-response`, `quick-triage-route`, `quick-triage-bounded`,
+  `quick-triage-coverage-truthfulness`, `a2mcp-sampling` (7 fixtures,
+  authentic + spoofed sampling), `a2mcp-paid-path-fixture`,
+  `a2mcp-real-production-e2e`, `a2mcp-quote-lifecycle`,
+  `a2mcp-digest-layers`, `a2mcp-facilitator-diagnostics`,
+  `okx-review-acceptance`, `okx-commerce`, `x402-payment-required-header`,
+  `phase3-a2mcp`.
+- Live unpaid `POST /api/a2mcp/quick-triage` against production returned a
+  real HTTP 402 x402 challenge (quote, nonce, request/binding hashes,
+  0.03 USD₮0, mainnet) — confirms the paid gate is enforced against the
+  deployed fix and no payment fires without one.
+- Idempotency, replay, and sampling behavior (§7.7) re-confirmed unchanged
+  by this fix (all pre-existing suites above passed without modification).
+
+### Controlled canary — real, on-chain, approved by user
+
+User approved exactly: *"Approve one controlled 0.03 USD₮0 A2MCP payment
+from User Agent 5295 to RepoDiet service 37347 for
+velz-cmd/repodiet-e2e-test?"* — approved 2026-07-27.
+
+Executed via `onchainos payment quote` (two-phase probe, persisted
+`paymentId`) then `onchainos payment pay --payment-id ... --yes` (signs via
+TEE from the currently selected wallet, which holds both Agent 5295 buyer
+and Agent 9636 ASP identities on the same address — this is an intentional
+self-owned canary, not a third-party charge).
+
+- First `payment pay` attempt (params not re-supplied on the `pay` call)
+  failed merchant-side with HTTP 400 (`Request body must be valid JSON`)
+  and returned `txHash: null` — **no funds moved**; the CLI's two-phase
+  replay does not automatically carry the `quote` step's `--param` values
+  into the `pay` call, they must be passed again.
+- Retry with `--param` re-supplied succeeded:
+  - Transaction: `0xd39c51080c824401833e5735bd78818800a1d3cea1aa0d993e6fefd5a8431f60`
+    (X Layer mainnet, `eip155:196`, exact scheme, EIP-3009)
+  - Quote `quote_Bngf3ocuPVmC`, receipt `receipt_UL0GaFece-XP`,
+    task `task_32e345e1e1eb4e`, scan `scan_w0IfnZiIQpZs`
+  - Result: `status: "completed"`, 3 of 20 findings returned, each with
+    real file paths, explanation, user impact, recommended fix, and
+    `eligibleForA2AService37348` — evaluated against Phase 11's rejection
+    criteria and passes (concrete evidence, no generic prose).
+
+### Not yet done / explicitly deferred
+
+No changes made to Agent 9636's marketplace listing status, no new
+Agent/service/task created beyond the one approved canary payment. Command
+3 not started — awaiting explicit approval per standing instruction.
+
 ## Command 1 (this pass) — availability, request routing, and OKX sampling (§7.7)
 
 ### Root cause of the timeout rejection
