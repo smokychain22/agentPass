@@ -9,10 +9,77 @@ import {
   isGreenPrVerificationOperation,
 } from "@/lib/a2mcp/green-pr-verification";
 import { normalizeRepositoryTarget } from "@/lib/repository/repository-target";
+import { getCanonicalOkxIdentityPublic } from "@/lib/okx/identity-public";
+import { getAnalyzeRepositoryPrice } from "@/lib/payment/analyze-repository-price";
+import { A2MCP_SERVICES } from "@/lib/okx/services";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 25;
+
+/**
+ * Liveness / capability descriptor for the registered A2MCP endpoint.
+ *
+ * DEFENSIVE COMPATIBILITY HARDENING — NOT a proven fix for any specific
+ * review failure. Official A2MCP validation is an unpaid POST returning
+ * HTTP 402, and that path was already healthy and correctly bound. We have
+ * no evidence that any reviewer probe required GET or HEAD.
+ *
+ * What is true: this route previously exported only POST, so a plain
+ * GET/HEAD received Next.js's default 405 with an empty body. Answering
+ * generic reachability probes with a real 200 costs nothing and removes
+ * one plausible source of ambiguity, so it is worth having regardless.
+ *
+ * It deliberately performs NO billable work: no repository is fetched, no
+ * scan runs, no quote is minted, no revenue is recorded, and no x402
+ * challenge is issued. Paid execution remains exclusively on POST.
+ */
+function buildServiceDescriptor() {
+  const identity = getCanonicalOkxIdentityPublic();
+  const price = getAnalyzeRepositoryPrice();
+  const definition = A2MCP_SERVICES.analyze_repository;
+
+  return {
+    ok: true,
+    status: "online" as const,
+    service: "RepoDiet Quick Triage",
+    serviceType: "A2MCP" as const,
+    agentId: String(identity.aspAgentId),
+    serviceId: String(identity.a2mcpServiceId),
+    operation: definition.operation,
+    description: definition.description,
+    readOnly: definition.readOnly,
+    price: {
+      amountMicro: price.amountMicro,
+      label: price.priceLabel.replace(/USDT/g, "USD₮0"),
+      currency: "USDT",
+    },
+    invocation: {
+      method: "POST" as const,
+      contentType: "application/json",
+      requiredFields: ["repositoryUrl"],
+      paymentProtocol: "x402",
+      note: "An unpaid POST returns HTTP 402 with an x402 payment challenge. GET and HEAD are liveness probes only and never trigger payment or execution.",
+    },
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+/** Reachability probe — always fast, never billable. */
+export async function GET() {
+  return NextResponse.json(buildServiceDescriptor(), {
+    status: 200,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+/** Reachability probe (no body) — always fast, never billable. */
+export async function HEAD() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
 
 function isValidPublicGitHubRepository(url: string): boolean {
   try {

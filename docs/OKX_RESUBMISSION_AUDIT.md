@@ -527,3 +527,120 @@ Confirmed live: `a2aRuntimeReady:true`, `degradedReasons:[]`, `agentOnline:true`
 5. Complete one fresh 0.03 USD₮0 A2MCP canary and prove identical replay causes no second
    settlement or scan.
 6. Resubmit ASP 9636 with this evidence attached.
+
+---
+
+## Final audit pass — availability architecture (2026-07-27)
+
+### Live listing status at time of audit
+
+`onchainos agent service-list --agent-id 9636` reported `approvalStatus: 6`
+(`get-my-agents` → `approvalDisplayStatus: 5`, "Listing rejected").
+
+Exact rejection text, preserved verbatim:
+
+> We were unable to reach your Agent's service endpoint during testing. This
+> may be because the service hasn't been deployed, has gone offline, or
+> there's an issue with the network configuration.
+>
+> Please follow these steps to make changes:
+> 1. Check your service's deployment status and make sure the endpoint is accessible.
+> 2. Re-verify that your service is working, then resubmit.
+
+Registered services:
+
+| Service | Type | Registered endpoint |
+|---|---|---|
+| 37347 | A2MCP | `https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage` |
+| 37348 | A2A | `null` — expected; A2A does not use the callable HTTP endpoint model |
+
+**The root cause of the rejection has not been positively identified.** The
+sections below separate what was proven from what was inferred.
+
+### A2MCP 37347 — paid path verified healthy, no defect found
+
+Official A2MCP validation is an unpaid `POST` returning HTTP 402 with a
+correctly bound x402 challenge. Measured against production:
+
+```
+POST /api/a2mcp/quick-triage -> 402  (0.552s)  valid, correctly bound challenge
+```
+
+This path was healthy before and after this audit. No defect was found in it.
+
+### GET/HEAD 200 — defensive hardening, explicitly NOT a claimed root cause
+
+The route previously exported only `POST`, so `GET`/`HEAD` returned Next.js's
+default 405 with an empty body:
+
+```
+GET  /api/a2mcp/quick-triage -> 405  (2.078s)   [before]
+HEAD /api/a2mcp/quick-triage -> 405  (0.470s)   [before]
+```
+
+`GET`/`HEAD` now return a static 200 service descriptor. This is **defensive
+compatibility hardening for generic reachability probes**. It is deliberately
+**not** claimed as the confirmed cause of the review timeout: official A2MCP
+guidance validates via unpaid POST, and no evidence was obtained showing a
+reviewer probe required GET or HEAD. The change is cheap, removes one
+plausible ambiguity, and performs no billable work — no repository fetch, no
+scan, no quote, no revenue, no x402 challenge. Covered by
+`test/a2mcp-endpoint-liveness.test.ts` (7 tests).
+
+### A2A 37348 — confirmed production availability defect
+
+Two independent problems were confirmed by direct inspection.
+
+**1. The listener runs only on a developer workstation.**
+
+| PID | Process |
+|---|---|
+| 27180, 22840 | `@okxweb3/a2a-node/dist/cli.js run` |
+| 34736, 28572 | `tsx scripts/okx-seller-heartbeat-daemon.ts` |
+
+The heartbeat posts every 60s with a 90s TTL, so
+`agentRuntime.heartbeatStatus: "fresh"` on `/api/okx/health` attests only that
+that workstation is currently awake. Within 90 seconds of it sleeping,
+disconnecting, or shutting down, Agent 9636 stops answering A2A traffic. This
+is consistent with the "**has gone offline**" clause of the rejection, though
+it does not by itself prove that is what the reviewer hit.
+
+**2. The vendor daemon delegates task processing to a local AI CLI.**
+
+`@okxweb3/a2a-node`'s own README states:
+
+> Background task processing runs the local Codex or Claude CLI.
+
+and, on auth failure, instructs the operator to run `codex login` or
+`claude login` "from the terminal environment where `okx-a2a` runs".
+
+This means the current A2A responder is, architecturally:
+
+```
+OKX → XMTP → @okxweb3/a2a-node (workstation) → local Codex/Claude CLI → response
+```
+
+That is the prohibited `OKX user → Claude or Codex acting as RepoDiet`
+topology, and it is **not liftable to a container as-is**: the AI provider it
+shells out to requires an interactive terminal login.
+
+### Consequence
+
+Relocating the existing daemon to an always-on host would not resolve this.
+It would relocate the Claude/Codex dependency, not remove it, and the
+container could not complete the required interactive provider login.
+
+Correct remediation requires RepoDiet to own a deterministic A2A responder
+that consumes the official task primitives directly instead of delegating
+reasoning to an AI CLI.
+
+**Open blocker:** both `onchainos` and `okx-a2a` authenticate via browser
+social login backed by a machine-bound credential store
+(`~/.onchainos/keyring.enc` alongside a 64-byte `machine-identity`). No
+documented non-interactive/server authentication method was found. Per
+operator instruction, no undocumented method was invented and no local
+keyring was copied.
+
+### Status
+
+No listing mutation, reactivation, or resubmission was performed.
