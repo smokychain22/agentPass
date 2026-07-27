@@ -9,7 +9,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     scanId?: string;
     pinnedCommit?: string;
-    includedFindingIds?: string[];
+    includeFindingIds?: string[];
   };
 
   if (!body.scanId || !body.pinnedCommit) {
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const plan = await approvePlan({
       scanId: body.scanId,
       pinnedCommit: body.pinnedCommit,
-      includedFindingIds: body.includedFindingIds ?? [],
+      includedFindingIds: body.includeFindingIds ?? [],
     });
     return NextResponse.json({ ok: true, plan });
   } catch (err) {
