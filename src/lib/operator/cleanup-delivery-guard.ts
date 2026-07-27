@@ -15,6 +15,8 @@ export interface CleanupDeliveryContextResult {
   liveBaseSha: string;
   openRepodietPullRequests: number;
   existingRepodietBranches: number;
+  /** True when the base branch moved since scan but RepoDiet safely continued without a re-scan (see Part 12C). */
+  baseAutoRecovered: boolean;
 }
 
 function commitShaMatches(scanSha: string, liveSha: string): boolean {
@@ -30,12 +32,46 @@ export async function assertCleanupDeliveryContext(input: {
   baseBranch: string;
   scanCommitSha?: string;
   validatedEdits: CleanupDeliveryEdit[];
+  /** Delete targets for this delivery, if any — presence disqualifies auto-recovery (see below). */
+  deletePaths?: string[];
 }): Promise<CleanupDeliveryContextResult> {
   const warnings: string[] = [];
   const liveBaseSha = await input.client.getBranchSha(input.owner, input.repo, input.baseBranch);
+  let baseAutoRecovered = false;
 
-  if (input.scanCommitSha?.trim()) {
-    if (!commitShaMatches(input.scanCommitSha, liveBaseSha)) {
+  if (input.scanCommitSha?.trim() && !commitShaMatches(input.scanCommitSha, liveBaseSha)) {
+    // Bounded, safe auto-recovery (Part 12C): the base branch moved, but
+    // this delivery only edits files (never deletes — a moved base cannot
+    // be safely trusted for a delete without re-confirming the file still
+    // exists in the same state, which is out of scope here) and every
+    // approved edit's baseline content is byte-identical on the new
+    // commit. In that case it is safe to continue on the current base
+    // without a fresh scan or another payment. Any other case — a
+    // deletion is involved, there are no edits to check, or any edit's
+    // content actually changed — still hard-fails exactly as before.
+    const hasDeletes = (input.deletePaths?.length ?? 0) > 0;
+    const canAttemptAutoRecovery = !hasDeletes && input.validatedEdits.length > 0;
+    const allEditsUnchanged = canAttemptAutoRecovery
+      ? await Promise.all(
+          input.validatedEdits.map(async (edit) => {
+            if (!edit.baselineContentHash) return false;
+            const remote = await input.client.getFileContent(
+              input.owner,
+              input.repo,
+              edit.path,
+              input.baseBranch
+            );
+            return hashSource(remote ?? "") === edit.baselineContentHash;
+          })
+        )
+      : [];
+
+    if (canAttemptAutoRecovery && allEditsUnchanged.length > 0 && allEditsUnchanged.every(Boolean)) {
+      baseAutoRecovered = true;
+      warnings.push(
+        `The base branch moved since this scan (scanned ${input.scanCommitSha.slice(0, 12)}…, live ${liveBaseSha.slice(0, 12)}…), but every approved file is unchanged on the new commit — RepoDiet continued on the current base without requiring a new scan or payment.`
+      );
+    } else {
       throw new ToolExecutionError(
         "PATCH_GENERATION_FAILED",
         `Repository moved since scan (scanned ${input.scanCommitSha.slice(0, 12)}…, live ${liveBaseSha.slice(0, 12)}…). Re-scan on the current ${input.baseBranch} commit before creating a cleanup PR.`,
@@ -104,5 +140,6 @@ export async function assertCleanupDeliveryContext(input: {
     liveBaseSha,
     openRepodietPullRequests,
     existingRepodietBranches,
+    baseAutoRecovered,
   };
 }

@@ -195,6 +195,14 @@ export interface A2ATaskResult {
     disputeOpenedAt?: string;
     disputeReason?: string;
   };
+  /** Command 3E, Part 12E/12F — audit trail for a delivery repair/replacement decision, if any. */
+  prRepair?: {
+    action: "create_new_branch_and_pr" | "reuse_existing_branch_and_pr" | "replacement_required";
+    reason: string;
+    originalPrNumber?: number;
+  };
+  /** Command 3E, Part 12C — true when the base branch moved since scan but RepoDiet safely continued without a re-scan/re-charge. */
+  baseAutoRecovered?: boolean;
 }
 
 export interface A2ATaskWorkflowMeta {

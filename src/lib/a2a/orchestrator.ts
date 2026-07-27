@@ -1423,12 +1423,18 @@ export async function approveA2ATask(taskId: string, approved: boolean): Promise
           ? task.result.greenPrExecution.branchName
           : task.approval?.branch ?? `repodiet/cleanup-${task.id}`,
       approvedPaths: task.approval?.changes.map((change) => change.path),
+      // Only set on a real retry (task.result.pullRequest exists from a
+      // prior attempt) — enables same-PR repair / replacement-PR rules
+      // (Part 12E/12F) instead of always creating a fresh PR.
+      existingPrNumber: task.result.pullRequest?.number,
     });
 
     current = await syncTask(current, sm, {
       result: {
         ...current.result,
         maintenanceOutcome: pr.data.actionSummary.maintenanceOutcome,
+        prRepair: pr.data.repair,
+        baseAutoRecovered: pr.data.baseAutoRecovered || current.result.baseAutoRecovered,
       },
     });
 

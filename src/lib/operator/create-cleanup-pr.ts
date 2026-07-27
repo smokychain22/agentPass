@@ -11,6 +11,7 @@ import { withRefreshedVerificationGates } from "@/lib/patch-kit/refresh-verifica
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
 import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
+import { resolvePrRepairStrategy, type PrRepairResolution } from "./pr-repair";
 import { resolveValidatedDeliveryOps } from "./delivery-operations";
 import {
   buildMaintenanceOutcome,
@@ -30,6 +31,8 @@ export interface CreateCleanupPrInput {
   sessionKey?: string;
   cleanupBranch?: string;
   approvedPaths?: string[];
+  /** PR number from a prior attempt on this same paid task, if any — enables same-PR repair (Part 12E) instead of always creating a new PR. */
+  existingPrNumber?: number;
 }
 
 const ARTIFACT_PATHS = {
@@ -310,16 +313,40 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     baseBranch,
     scanCommitSha: findings.repo.commitSha,
     validatedEdits: mode === "safe_only" ? deliveryOps.contentEdits : [],
+    deletePaths: mode === "safe_only" ? deliveryOps.deletePaths : [],
   });
   warnings.push(...deliveryContext.warnings);
 
   const baseSha = deliveryContext.liveBaseSha;
-  const cleanupBranch = input.cleanupBranch?.trim() || buildCleanupBranchName();
+  const requestedBranch = input.cleanupBranch?.trim() || buildCleanupBranchName();
+
+  let repair: PrRepairResolution | undefined;
+  if (input.existingPrNumber !== undefined) {
+    repair = await resolvePrRepairStrategy(client, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      cleanupBranch: requestedBranch,
+      existingPrNumber: input.existingPrNumber,
+    });
+    if (repair.reason) warnings.push(repair.reason);
+  }
+
+  // A replacement can never reuse the original (possibly unusable) branch
+  // name — it always gets a fresh one, even if that name happened to exist.
+  const cleanupBranch =
+    repair?.action === "replacement_required" && repair.branchExists
+      ? `${requestedBranch}-replacement-${nanoid(6)}`
+      : requestedBranch;
+
   if (!/^repodiet\/(?:cleanup|green-pr)-[A-Za-z0-9._-]+$/.test(cleanupBranch) ||
       cleanupBranch.includes("..")) {
     throw new ToolExecutionError("INVALID_INPUT", "Invalid RepoDiet cleanup branch name.", 400);
   }
-  await client.createBranch(parsed.owner, parsed.repo, cleanupBranch, baseSha);
+
+  const reuseExistingBranch = repair?.action === "reuse_existing_branch_and_pr";
+  if (!reuseExistingBranch) {
+    await client.createBranch(parsed.owner, parsed.repo, cleanupBranch, baseSha);
+  }
 
   let filesDeleted = 0;
   const deletedPathsApplied: string[] = [];
@@ -440,23 +467,29 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   });
   const prTitle = buildPrTitle(editedPaths.length, filesDeleted, maintenanceOutcome);
 
-  const pr = await client.createPullRequest(
-    parsed.owner,
-    parsed.repo,
-    prTitle,
-    cleanupBranch,
-    baseBranch,
-    buildPrBody(
-      mode,
-      deletedPathsApplied,
-      findings,
-      buckets,
-      patchKit,
-      editedPaths,
-      filesDeleted,
-      maintenanceOutcome
-    )
-  );
+  // Same-PR repair (Part 12E): when the original pull request and branch
+  // are both still usable, push the corrected commits to them and reuse
+  // the existing PR rather than opening a second one.
+  const pr =
+    repair?.action === "reuse_existing_branch_and_pr" && repair.existingPr
+      ? { url: repair.existingPr.url, number: repair.existingPr.number }
+      : await client.createPullRequest(
+          parsed.owner,
+          parsed.repo,
+          prTitle,
+          cleanupBranch,
+          baseBranch,
+          buildPrBody(
+            mode,
+            deletedPathsApplied,
+            findings,
+            buckets,
+            patchKit,
+            editedPaths,
+            filesDeleted,
+            maintenanceOutcome
+          )
+        );
 
   return {
     data: {
@@ -472,6 +505,14 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
         number: pr.number,
         title: prTitle,
       },
+      repair: repair
+        ? {
+            action: repair.action,
+            reason: repair.reason,
+            originalPrNumber: repair.existingPr?.number,
+          }
+        : undefined,
+      baseAutoRecovered: deliveryContext.baseAutoRecovered,
       actionSummary: {
         mode,
         maintenanceOutcome,

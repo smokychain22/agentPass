@@ -1715,6 +1715,19 @@ export function UserDirectedWorkbench({
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
+                  <div className="w-full rounded border border-border/40 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
+                    <p>
+                      RepoDiet delivers a tested, merge-ready pull request. If RepoDiet&apos;s own
+                      changes fail validation, RepoDiet corrects the delivery without another
+                      charge.
+                    </p>
+                    <p className="mt-1">
+                      No extra payment for fixing RepoDiet&apos;s own delivery errors, for a
+                      transient retry, or for a replacement pull request required because the
+                      original became unusable. A new payment is only ever requested for
+                      genuinely expanded scope you explicitly agree to afterward.
+                    </p>
+                  </div>
                   <button
                     type="button"
                     className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
