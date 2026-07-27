@@ -34,6 +34,26 @@ const DO_NOT_TOUCH_PATTERNS: RegExp[] = [
   /(^|\/)\.github\/actions\//i,
 ];
 
+// Subset of DO_NOT_TOUCH_PATTERNS that specifically represents generated,
+// vendored, or otherwise machine-produced artefacts — distinct from other
+// protected reasons (env files, lockfiles, framework route/config files) so
+// callers can tell "regenerate through its source" apart from "framework-
+// managed, do not touch at all".
+const GENERATED_ARTEFACT_PATTERNS: RegExp[] = [
+  /(^|\/)next-env\.d\.ts$/,
+  /\.generated\.(ts|tsx|js|jsx|json)$/,
+  /(^|\/)generated\//i,
+  /(^|\/)vendored?\//i,
+  /(^|\/)migrations?\//i,
+  /(^|\/)\.github\/workflows\//i,
+  /(^|\/)\.github\/actions\//i,
+];
+
+export function isGeneratedArtefactPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  return GENERATED_ARTEFACT_PATTERNS.some((p) => p.test(normalized));
+}
+
 const SAFE_CANDIDATE_PATTERNS: RegExp[] = [
   /(^|\/)(archive|backup|old|unused|tmp|temp)(\/|$)/i,
   /-backup\./i,

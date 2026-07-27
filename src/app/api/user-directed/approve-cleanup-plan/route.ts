@@ -64,6 +64,18 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
+    // Command 3E, Part 8: a plan can only include findings with a real,
+    // implemented transformation. Findings persisted before the detection/
+    // resolution split (no detectionType) fall back to the check above only.
+    if (finding.detectionType && !finding.supportedTransformationId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Finding ${findingId} has no implemented transformation — it cannot be part of an approved plan.`,
+        },
+        { status: 403 }
+      );
+    }
   }
 
   const currentDecisions = await listFindingDecisions(body.scanId);

@@ -251,10 +251,12 @@ export function UserDirectedWorkbench({
   // depth: even a stale "selected" decision on a finding whose CURRENT
   // classification is Protected is excluded here — protected findings never
   // count as selected, regardless of what was persisted before.
-  const protectedFindingIds = useMemo(
+  const nonSelectableFindingIds = useMemo(
     () =>
       new Set(
-        allStatusFindings.filter(({ status }) => status === "Protected").map(({ finding }) => finding.id)
+        allStatusFindings
+          .filter(({ status }) => status === "Protected" || status === "Informational")
+          .map(({ finding }) => finding.id)
       ),
     [allStatusFindings]
   );
@@ -263,27 +265,29 @@ export function UserDirectedWorkbench({
       Object.values(decisions).filter(
         (d) =>
           (d.decision === "selected" || d.decision === "verified_selected") &&
-          !protectedFindingIds.has(d.findingId)
+          !nonSelectableFindingIds.has(d.findingId)
       ),
-    [decisions, protectedFindingIds]
+    [decisions, nonSelectableFindingIds]
   );
   const persistedSelectedCount = persistedSelectedFindings.length;
 
   // Actively clear (server-side) any stale "selected" decision whose
-  // finding is now classified Protected — e.g. a classifier fix reclassified
-  // a previously-selectable file. Never just hide it client-side.
+  // finding is now classified Protected or Informational (no implemented
+  // transformation) — e.g. a classifier fix reclassified a previously-
+  // selectable file, or Command 3E's detection/resolution split revealed
+  // it never had a real transformation. Never just hide it client-side.
   useEffect(() => {
-    if (!scanId || protectedFindingIds.size === 0) return;
+    if (!scanId || nonSelectableFindingIds.size === 0) return;
     for (const [findingId, decision] of Object.entries(decisions)) {
       if (
-        protectedFindingIds.has(findingId) &&
+        nonSelectableFindingIds.has(findingId) &&
         (decision.decision === "selected" || decision.decision === "verified_selected")
       ) {
         void undoDecision(findingId);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanId, protectedFindingIds, decisions]);
+  }, [scanId, nonSelectableFindingIds, decisions]);
 
   const persistedOverrideCount = useMemo(
     () => persistedSelectedFindings.filter((d) => d.isOverride).length,
@@ -1152,7 +1156,10 @@ export function UserDirectedWorkbench({
                       currentDecision?.decision === "selected" ||
                       currentDecision?.decision === "verified_selected";
                     const expandIndividually =
-                      status !== "Protected" && expandedIndividualReview[f.id] && f.files.length > 1;
+                      status !== "Protected" &&
+                      status !== "Informational" &&
+                      expandedIndividualReview[f.id] &&
+                      f.files.length > 1;
 
                     return (
                       <article
@@ -1185,9 +1192,11 @@ export function UserDirectedWorkbench({
                         </p>
                         <p className="text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
 
-                        {status === "Protected" ? (
+                        {status === "Protected" || status === "Informational" ? (
                           <p className="text-xs font-medium text-muted-foreground">
-                            RepoDiet will leave this file unchanged.
+                            {status === "Protected"
+                              ? "RepoDiet will leave this file unchanged."
+                              : "RepoDiet will leave this unchanged — no implemented transformation exists for this finding yet."}
                           </p>
                         ) : (
                           <>

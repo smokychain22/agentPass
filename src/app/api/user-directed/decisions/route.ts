@@ -94,6 +94,24 @@ export async function POST(request: Request) {
     );
   }
 
+  // Command 3E, Part 1/8: a finding can only be selected when RepoDiet has a
+  // real, implemented transformation for it — never inferred from the
+  // detector's own output. Findings persisted before this split (no
+  // detectionType) fall back to the riskBucket check above only.
+  if (
+    (body.decision === "selected" || body.decision === "verified_selected") &&
+    finding.detectionType &&
+    !finding.supportedTransformationId
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "RepoDiet has no implemented transformation for this finding — it cannot be selected.",
+      },
+      { status: 403 }
+    );
+  }
+
   const allowedFiles = new Set(finding.files);
   const clientFileArrays: Array<[string, string[] | undefined]> = [
     ["canonicalFile", body.canonicalFile ? [body.canonicalFile] : undefined],

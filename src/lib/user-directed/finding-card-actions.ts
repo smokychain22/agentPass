@@ -40,7 +40,7 @@ export function buildFindingCardActions(
 ): FindingCardAction[] {
   const files = finding.files.length > 0 ? finding.files : [finding.title];
 
-  if (status === "Protected") {
+  if (status === "Protected" || status === "Informational") {
     return [];
   }
 

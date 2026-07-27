@@ -14,6 +14,7 @@ import { enrichFindingsWithPreflight } from "./enrich-preflight";
 import { enrichFindingsWithEvidence } from "./enrich-evidence";
 import { countActionableFindings, countTransformedFindings } from "./actionability-signals";
 import { enrichPayloadLifecycle } from "./enrich-lifecycle";
+import { enrichFindingsWithDetectionResolution } from "./enrich-detection-resolution";
 import { applyStrictFindingsMode, isKnipAvailable } from "./strict-findings";
 import {
   deduplicateCanonicalFindings,
@@ -189,6 +190,7 @@ export async function runFindingsEngine(
     payload = enrichFindingsWithEvidenceGate(payload);
 
     payload = enrichPayloadLifecycle(payload);
+    payload = enrichFindingsWithDetectionResolution(payload);
 
     const verifiedFlat = flattenPayloadFindings(payload);
     const eligibleFindings = countCleanupEligible(verifiedFlat);

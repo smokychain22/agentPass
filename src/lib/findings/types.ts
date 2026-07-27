@@ -209,6 +209,17 @@ export interface Finding {
   confidenceTier?: FindingConfidenceTier;
   priorityScore?: number;
   evidenceGate?: import("@/lib/findings/evidence-gate").FindingEvidenceGate;
+  /**
+   * Command 3E detection/resolution split — what RepoDiet observed vs what
+   * it can actually do about it. A detector's own output (e.g. "Knip found
+   * no imports") must never be read as an implicit resolution decision.
+   */
+  detectionType?: import("@/lib/findings/detection-resolution").DetectionType;
+  resolutionType?: import("@/lib/execution/transformer-registry").ResolutionType;
+  supportedTransformationId?: import("@/lib/execution/transformer-registry").CanonicalTransformationId | null;
+  verificationStatus?: "verified" | "not_required" | "unsupported";
+  /** True only when resolutionType maps to a real, implemented transformation the user can select. */
+  actionable?: boolean;
 }
 
 export type FindingConfidenceTier =

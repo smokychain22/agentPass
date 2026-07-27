@@ -115,3 +115,89 @@ export function listAutomaticTransformers(): TransformerDefinition[] {
 export function isSuccessfulTransformState(state: TransformerLifecycleState): boolean {
   return state === "diff_generated" || state === "validated" || state === "verified";
 }
+
+/**
+ * Command 3E — stable, product-facing transformation IDs and their
+ * resolution semantics. A canonical ID exists only for a `Phase1PluginId`
+ * that is genuinely implemented (has a real supports()/apply path) — this
+ * is the single place a finding's `supportedTransformationId` is derived
+ * from, so nothing can advertise a transformation RepoDiet cannot execute.
+ */
+export type CanonicalTransformationId =
+  | "REMOVE_UNUSED_FILE"
+  | "REMOVE_UNUSED_DEPENDENCY"
+  | "CONSOLIDATE_DUPLICATE_IMPLEMENTATION"
+  | "REMOVE_UNUSED_IMPORT";
+
+export type ResolutionType =
+  | "delete_file"
+  | "remove_dependency"
+  | "consolidate_duplicate"
+  | "update_references"
+  | "edit_code"
+  | "leave_protected"
+  | "report_only"
+  | "unsupported";
+
+const PHASE1_TO_CANONICAL: Partial<Record<Phase1PluginId, CanonicalTransformationId>> = {
+  remove_unused_import: "REMOVE_UNUSED_IMPORT",
+  remove_unused_dependency: "REMOVE_UNUSED_DEPENDENCY",
+  remove_temp_file: "REMOVE_UNUSED_FILE",
+  remove_empty_file: "REMOVE_UNUSED_FILE",
+  remove_confirmed_unused_file: "REMOVE_UNUSED_FILE",
+  consolidate_exact_duplicate: "CONSOLIDATE_DUPLICATE_IMPLEMENTATION",
+};
+
+const CANONICAL_RESOLUTION_TYPE: Record<CanonicalTransformationId, ResolutionType> = {
+  REMOVE_UNUSED_FILE: "delete_file",
+  REMOVE_UNUSED_DEPENDENCY: "remove_dependency",
+  CONSOLIDATE_DUPLICATE_IMPLEMENTATION: "consolidate_duplicate",
+  REMOVE_UNUSED_IMPORT: "edit_code",
+};
+
+const CANONICAL_ROLLBACK: Record<CanonicalTransformationId, string> = {
+  REMOVE_UNUSED_FILE: "Revert the branch's file-deletion commit; original file content is preserved in git history.",
+  REMOVE_UNUSED_DEPENDENCY: "Revert the package.json/lockfile commit to restore the dependency.",
+  CONSOLIDATE_DUPLICATE_IMPLEMENTATION:
+    "Revert the consolidation commit to restore the duplicate file and its original references.",
+  REMOVE_UNUSED_IMPORT: "Revert the import-removal commit to restore the original import statement.",
+};
+
+export function canonicalTransformationId(
+  pluginId: Phase1PluginId
+): CanonicalTransformationId | null {
+  return PHASE1_TO_CANONICAL[pluginId] ?? null;
+}
+
+export function resolutionTypeForCanonicalId(id: CanonicalTransformationId): ResolutionType {
+  return CANONICAL_RESOLUTION_TYPE[id];
+}
+
+export function rollbackStrategyForCanonicalId(id: CanonicalTransformationId): string {
+  return CANONICAL_ROLLBACK[id];
+}
+
+/**
+ * Explicit audit of transformation IDs named in the Command 3E product
+ * spec that are NOT yet implemented. Listed here — rather than silently
+ * omitted — so the gap is documented and reviewable, and so no finding
+ * pipeline can accidentally treat one of these as executable. Any
+ * detection type that would map to one of these must resolve to
+ * "unsupported"/"report_only", never "actionable".
+ *
+ * UPDATE_REFERENCES is listed as not-yet-standalone: reference updates are
+ * only implemented today as an internal step of
+ * CONSOLIDATE_DUPLICATE_IMPLEMENTATION, not as an independently selectable
+ * transformation.
+ */
+export const NOT_YET_IMPLEMENTED_TRANSFORMATIONS = [
+  "UPDATE_REFERENCES",
+  "FIX_BROKEN_IMPORT",
+  "FIX_TYPE_ERROR",
+  "FIX_LINT_ERROR",
+  "FIX_TEST_FAILURE",
+  "REMOVE_STALE_SCRIPT",
+  "UPDATE_CONFIGURATION",
+  "UPDATE_DOCUMENTATION",
+  "ADD_REGRESSION_TEST",
+] as const;

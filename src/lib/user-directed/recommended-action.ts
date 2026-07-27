@@ -17,6 +17,12 @@ export type FindingStatusLabel = "Recommended fix" | "Review suggested" | "Prote
 export function outcomeStatusLabel(finding: Finding): FindingStatusLabel {
   const bucket = riskBucketOf(finding);
   if (bucket === "PROTECTED") return "Protected";
+  // Command 3E: a finding with no implemented transformation at all is
+  // "Informational" — RepoDiet will leave it unchanged with no dangerous
+  // override action, never "Review suggested" (which implies one exists).
+  // Findings persisted before the detection/resolution split (no
+  // detectionType) fall back to the legacy bucket-only behavior below.
+  if (finding.detectionType && !finding.supportedTransformationId) return "Informational";
   if (bucket === "REVIEW") return "Review suggested";
   // bucket === "SAFE"
   return isCleanupEligible(finding) ? "Recommended fix" : "Review suggested";
