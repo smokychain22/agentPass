@@ -5,6 +5,7 @@ import { prepareAutomaticCleanupPlan } from "@/lib/user-directed/auto-cleanup-pl
 import { partitionPlans } from "@/lib/user-directed/partition-plans";
 import { buildScanOutcomeSummary } from "@/lib/user-directed/scan-outcome-summary";
 import { saveDraftPlan } from "@/lib/user-directed/cleanup-plan-store";
+import { computeDecisionsFingerprint, listFindingDecisions } from "@/lib/user-directed/decision-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -57,11 +58,15 @@ export async function POST(request: Request) {
 
     const parts = partitionPlans(prepared.plans);
 
+    const currentDecisions = await listFindingDecisions(body.scanId);
+    const decisionsFingerprint = computeDecisionsFingerprint(currentDecisions);
+
     const planState = await saveDraftPlan({
       scanId: body.scanId,
       pinnedCommit,
       includedFindingIds: prepared.includedFindingIds,
       excludedFindingIds: prepared.excludedFindingIds,
+      decisionsFingerprint,
     });
 
     return NextResponse.json({
@@ -78,6 +83,7 @@ export async function POST(request: Request) {
       userChoosesOutcome: true,
       transformerSelectionRequired: false,
       planStatus: planState.status,
+      decisionsFingerprint,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Prepare cleanup plan failed.";
