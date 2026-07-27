@@ -296,7 +296,7 @@ test("8. stale findings from another repository are ignored", () => {
   assert.notEqual(byId(steps).findings.status, "complete");
 });
 
-test("9. scope confirmed unlocks Create Cleanup PR", () => {
+test("9. scope confirmed alone is not enough — plan approval + GitHub capability are required", () => {
   const s = scan();
   const f = findings();
   const steps = resolveWorkflowStepStates({
@@ -309,7 +309,65 @@ test("9. scope confirmed unlocks Create Cleanup PR", () => {
   });
   const map = byId(steps);
   assert.equal(map.findings.status, "complete");
-  assert.equal(map.cleanup_pr.status, "current");
+  // A findings-eligible scope alone must never unlock Create Cleanup PR —
+  // an approved, current plan and confirmed GitHub write access are also
+  // required (fail-closed: omitted here, so still locked).
+  assert.equal(map.cleanup_pr.status, "locked");
+});
+
+test("9b. approved current plan + GitHub capability unlocks Create Cleanup PR", () => {
+  const s = scan();
+  const f = findings();
+  const steps = resolveWorkflowStepStates({
+    scanResult: s,
+    scanComplete: true,
+    scanRecordId: s.id,
+    findings: f,
+    scopeReviewed: true,
+    selectedFindingIds: ["f1"],
+    planApproved: true,
+    planCurrent: true,
+    githubWriteCapable: true,
+  });
+  assert.equal(byId(steps).cleanup_pr.status, "current");
+});
+
+test("9c. plan approved but superseded (not current) stays locked with the right explanation", () => {
+  const s = scan();
+  const f = findings();
+  const steps = resolveWorkflowStepStates({
+    scanResult: s,
+    scanComplete: true,
+    scanRecordId: s.id,
+    findings: f,
+    scopeReviewed: true,
+    selectedFindingIds: ["f1"],
+    planApproved: true,
+    planCurrent: false,
+    githubWriteCapable: true,
+  });
+  const map = byId(steps);
+  assert.equal(map.cleanup_pr.status, "locked");
+  assert.match(map.cleanup_pr.explanation ?? "", /decision changed/i);
+});
+
+test("9d. plan approved and current but GitHub not connected stays locked", () => {
+  const s = scan();
+  const f = findings();
+  const steps = resolveWorkflowStepStates({
+    scanResult: s,
+    scanComplete: true,
+    scanRecordId: s.id,
+    findings: f,
+    scopeReviewed: true,
+    selectedFindingIds: ["f1"],
+    planApproved: true,
+    planCurrent: true,
+    githubWriteCapable: false,
+  });
+  const map = byId(steps);
+  assert.equal(map.cleanup_pr.status, "locked");
+  assert.match(map.cleanup_pr.explanation ?? "", /connect github/i);
 });
 
 test("10. payment made but no PR: Create Cleanup PR running, not complete", () => {
