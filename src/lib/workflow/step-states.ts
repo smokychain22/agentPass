@@ -364,6 +364,13 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   // actually finished producing a persisted findings payload. While that
   // stage is still running (or has failed), Review Findings stays locked;
   // monitoring progress and retrying belong to Analyze Repository, not here.
+  // "Complete" (green check) requires a current, approved cleanup plan —
+  // selecting fixes alone is still "current" (in progress), matching Part
+  // 10: Review Findings is active while selecting/reviewing, complete only
+  // once the plan is approved.
+  const planReady = Boolean(input.planApproved && input.planCurrent);
+  const githubReady = Boolean(input.githubWriteCapable);
+
   if (!repositoryConnected || !projectRootConfirmed) {
     findings.status = "locked";
     findings.explanation = !repositoryConnected
@@ -372,24 +379,28 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   } else if (!findingsBound || !input.findings) {
     findings.status = "locked";
     findings.explanation = "Review Findings unlocks once repository analysis finishes.";
-  } else if (findingsComplete) {
-    findings.status = "complete";
-    if (zeroFindings) {
-      findings.explanation =
-        "Analysis complete — no supported maintenance findings were detected.";
-    }
-  } else {
+  } else if (!findingsComplete) {
     findings.status = "current";
     findings.primaryAction = "Review findings";
     if (findingsBound && zeroFindings) {
       findings.explanation =
         "Analysis complete — no supported maintenance findings were detected.";
     }
+  } else if (planReady) {
+    findings.status = "complete";
+  } else {
+    findings.status = "current";
+    findings.primaryAction = "Review and approve your cleanup plan";
+    if (zeroFindings) {
+      findings.explanation =
+        "Analysis complete — no supported maintenance findings were detected.";
+    }
   }
 
-  // Create Cleanup PR
-  const planReady = Boolean(input.planApproved && input.planCurrent);
-  const githubReady = Boolean(input.githubWriteCapable);
+  // Create Cleanup PR — unlocks (becomes reachable) once the plan is
+  // approved and current, regardless of GitHub connection: the tab itself
+  // guides the user through connecting GitHub and approving payment. GitHub
+  // is never a reason to keep the whole tab locked (Part 5/10).
   if (!findingsComplete) {
     cleanup.status = "locked";
   } else if (!cleanupPrUnlocked) {
@@ -415,11 +426,12 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
     cleanup.status = "locked";
     cleanup.explanation =
       input.planApproved && !input.planCurrent
-        ? "A decision changed since the cleanup plan was approved — prepare and approve it again."
-        : "Prepare and approve a cleanup plan before creating a cleanup pull request.";
+        ? "Your selections changed. Review and approve the updated plan."
+        : "Approve your cleanup plan first.";
   } else if (!githubReady) {
-    cleanup.status = "locked";
-    cleanup.explanation = "Connect GitHub to create the pull request.";
+    cleanup.status = "current";
+    cleanup.primaryAction = "Connect GitHub";
+    cleanup.explanation = "Connect GitHub to continue.";
   } else {
     cleanup.status = "current";
     cleanup.primaryAction = "Create Cleanup PR";
@@ -428,6 +440,10 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   // Review & Accept
   if (!prComplete) {
     accept.status = "locked";
+    accept.explanation =
+      cleanup.status === "running" || cleanup.status === "failed"
+        ? "RepoDiet is creating your pull request. You can safely leave and return."
+        : "Review becomes available when the pull request is ready.";
   } else if (acceptComplete) {
     accept.status = "complete";
   } else if (acceptRunning) {

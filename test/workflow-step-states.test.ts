@@ -269,6 +269,19 @@ test("7. real findings complete only when bound and reviewed", () => {
   });
   assert.equal(byId(incomplete).findings.status, "current");
 
+  // Selections made but no plan approved yet: Review Findings stays
+  // "current" (in progress), not "complete" — completion requires an
+  // approved, current cleanup plan (Part 10).
+  const reviewedNoPlan = resolveWorkflowStepStates({
+    scanResult: s,
+    scanComplete: true,
+    scanRecordId: s.id,
+    findings: f,
+    scopeReviewed: true,
+    selectedFindingIds: ["f1"],
+  });
+  assert.equal(byId(reviewedNoPlan).findings.status, "current");
+
   const complete = resolveWorkflowStepStates({
     scanResult: s,
     scanComplete: true,
@@ -276,6 +289,8 @@ test("7. real findings complete only when bound and reviewed", () => {
     findings: f,
     scopeReviewed: true,
     selectedFindingIds: ["f1"],
+    planApproved: true,
+    planCurrent: true,
   });
   assert.equal(byId(complete).findings.status, "complete");
 });
@@ -305,7 +320,7 @@ test("8. stale findings from another repository are ignored", () => {
   assert.notEqual(byId(steps).findings.status, "complete");
 });
 
-test("9. scope confirmed alone is not enough — plan approval + GitHub capability are required", () => {
+test("9. scope confirmed alone is not enough — plan approval is required", () => {
   const s = scan();
   const f = findings();
   const steps = resolveWorkflowStepStates({
@@ -317,10 +332,10 @@ test("9. scope confirmed alone is not enough — plan approval + GitHub capabili
     selectedFindingIds: ["f1"],
   });
   const map = byId(steps);
-  assert.equal(map.findings.status, "complete");
-  // A findings-eligible scope alone must never unlock Create Cleanup PR —
-  // an approved, current plan and confirmed GitHub write access are also
-  // required (fail-closed: omitted here, so still locked).
+  // A findings-eligible scope alone must never mark Review Findings
+  // "complete" or unlock Create Cleanup PR — an approved, current plan is
+  // required first (fail-closed: omitted here, so still in progress/locked).
+  assert.equal(map.findings.status, "current");
   assert.equal(map.cleanup_pr.status, "locked");
 });
 
@@ -357,10 +372,10 @@ test("9c. plan approved but superseded (not current) stays locked with the right
   });
   const map = byId(steps);
   assert.equal(map.cleanup_pr.status, "locked");
-  assert.match(map.cleanup_pr.explanation ?? "", /decision changed/i);
+  assert.match(map.cleanup_pr.explanation ?? "", /selections changed/i);
 });
 
-test("9d. plan approved and current but GitHub not connected stays locked", () => {
+test("9d. plan approved and current but GitHub not connected stays reachable, guiding the user to connect", () => {
   const s = scan();
   const f = findings();
   const steps = resolveWorkflowStepStates({
@@ -375,7 +390,10 @@ test("9d. plan approved and current but GitHub not connected stays locked", () =
     githubWriteCapable: false,
   });
   const map = byId(steps);
-  assert.equal(map.cleanup_pr.status, "locked");
+  // Part 5/10: missing GitHub connection must never lock the whole Create
+  // Cleanup PR tab — it stays reachable/"current" so the in-tab CTA can
+  // guide the user through connecting GitHub.
+  assert.equal(map.cleanup_pr.status, "current");
   assert.match(map.cleanup_pr.explanation ?? "", /connect github/i);
 });
 
