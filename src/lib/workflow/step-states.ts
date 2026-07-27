@@ -91,6 +91,14 @@ export interface WorkflowStepInput {
   a2aTask?: WorkflowA2ATask | null;
   /** Active UI tab — prefers this unlocked step as "current" when appropriate. */
   activeTab?: WorkflowTabId;
+  /**
+   * Authoritative, server-verified cleanup-plan/GitHub state — see
+   * GET /api/user-directed/cleanup-plan-status and computeCreateCleanupPrReadiness.
+   * Fail-closed: omitted or false means NOT satisfied, never assumed ready.
+   */
+  planApproved?: boolean;
+  planCurrent?: boolean;
+  githubWriteCapable?: boolean;
 }
 
 function normalizeRepoKey(owner?: string, name?: string): string {
@@ -368,6 +376,8 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   }
 
   // Create Cleanup PR
+  const planReady = Boolean(input.planApproved && input.planCurrent);
+  const githubReady = Boolean(input.githubWriteCapable);
   if (!findingsComplete) {
     cleanup.status = "locked";
   } else if (!cleanupPrUnlocked) {
@@ -389,6 +399,15 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
     cleanup.status = "failed";
     cleanup.primaryAction = "Start a new cleanup attempt";
     cleanup.explanation = input.a2aTask.error || "Cleanup pull request delivery failed.";
+  } else if (!planReady) {
+    cleanup.status = "locked";
+    cleanup.explanation =
+      input.planApproved && !input.planCurrent
+        ? "A decision changed since the cleanup plan was approved — prepare and approve it again."
+        : "Prepare and approve a cleanup plan before creating a cleanup pull request.";
+  } else if (!githubReady) {
+    cleanup.status = "locked";
+    cleanup.explanation = "Connect GitHub to create the pull request.";
   } else {
     cleanup.status = "current";
     cleanup.primaryAction = "Create Cleanup PR";

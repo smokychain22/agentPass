@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Lock } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
@@ -61,6 +62,69 @@ function AppWorkspace() {
     scanRecordId: session.scanRecordId,
   });
 
+  const scanId = findings?.scanId ?? session.scanRecordId;
+  const pinnedCommit = session.scanResult?.repo?.commitSha ?? findings?.repo.commitSha ?? "";
+  const repository = session.scanResult?.repo
+    ? `${session.scanResult.repo.owner}/${session.scanResult.repo.name}`
+    : findings
+      ? `${findings.repo.owner}/${findings.repo.name}`
+      : "";
+
+  // Authoritative, server-verified plan/GitHub state — fetched fresh here so
+  // it is available to every consumer (nav + direct-URL guard) regardless of
+  // which tab is active, and re-fetched on refresh rather than cached.
+  const [planReadiness, setPlanReadiness] = useState<{ approved: boolean; current: boolean } | null>(
+    null
+  );
+  const [githubWriteCapable, setGithubWriteCapable] = useState(false);
+
+  useEffect(() => {
+    if (!scanId) {
+      setPlanReadiness(null);
+      return;
+    }
+    let cancelled = false;
+    void fetch(
+      `/api/user-directed/cleanup-plan-status?scanId=${encodeURIComponent(scanId)}&pinnedCommit=${encodeURIComponent(pinnedCommit)}`
+    )
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; approved?: boolean; current?: boolean }) => {
+        if (cancelled) return;
+        setPlanReadiness(
+          data.ok ? { approved: Boolean(data.approved), current: Boolean(data.current) } : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPlanReadiness(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId, pinnedCommit]);
+
+  useEffect(() => {
+    if (!repository) {
+      setGithubWriteCapable(false);
+      return;
+    }
+    let cancelled = false;
+    void fetch("/api/okx/intake/repository", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repositoryUrl: `https://github.com/${repository}` }),
+    })
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; canCreatePullRequest?: boolean }) => {
+        if (!cancelled) setGithubWriteCapable(Boolean(data.ok && data.canCreatePullRequest));
+      })
+      .catch(() => {
+        if (!cancelled) setGithubWriteCapable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repository]);
+
   const workflowSteps = useMemo(
     () =>
       resolveWorkflowStepStates({
@@ -74,6 +138,9 @@ function AppWorkspace() {
         scopeReviewed,
         a2aTask,
         activeTab: (tab === "cleanup" ? "scan" : tab) as WorkflowTabId,
+        planApproved: planReadiness?.approved ?? false,
+        planCurrent: planReadiness?.current ?? false,
+        githubWriteCapable,
       }),
     [
       session.scanResult,
@@ -87,8 +154,36 @@ function AppWorkspace() {
       scopeReviewed,
       a2aTask,
       tab,
+      planReadiness,
+      githubWriteCapable,
     ]
   );
+
+  const stepMapByTab = useMemo(
+    () => new Map(workflowSteps.map((s) => [s.tabId, s])),
+    [workflowSteps]
+  );
+
+  /**
+   * Direct-URL guard: a locked stage must never render its real page just
+   * because the URL was typed directly — the sidebar/rail already refuse to
+   * link to it, but the route itself must independently refuse too.
+   */
+  function guardedStageOrLock(tabId: WorkflowTabId, page: ReactNode): ReactNode {
+    const step = stepMapByTab.get(tabId);
+    if (step && step.status === "locked") {
+      return (
+        <div className="flex flex-col items-center gap-3 rounded-md border border-border/50 bg-card/30 p-8 text-center">
+          <Lock className="h-5 w-5 text-muted-foreground" aria-hidden />
+          <p className="font-medium">{step.title} is not available yet</p>
+          <p className="max-w-md text-sm text-muted-foreground">
+            {step.explanation ?? "This stage unlocks once its prerequisites are complete."}
+          </p>
+        </div>
+      );
+    }
+    return page;
+  }
 
   // Header reflects real repository connection — never a blank-form cosmetic override.
   const scanStatus = repositoryConnected ? "complete" : "idle";
@@ -127,11 +222,12 @@ function AppWorkspace() {
             <WorkflowRail steps={workflowSteps} className="mb-6" />
 
             {tab === "scan" && <ScanTab />}
-            {tab === "findings" && (
-              <UserDirectedWorkbench initialStage="review" />
-            )}
-            {tab === "patch" && <UserDirectedWorkbench initialStage="plan" />}
-            {tab === "verify" && <UserDirectedWorkbench initialStage="delivery" />}
+            {tab === "findings" &&
+              guardedStageOrLock("findings", <UserDirectedWorkbench initialStage="review" />)}
+            {tab === "patch" &&
+              guardedStageOrLock("patch", <UserDirectedWorkbench initialStage="plan" />)}
+            {tab === "verify" &&
+              guardedStageOrLock("verify", <UserDirectedWorkbench initialStage="delivery" />)}
             {tab === "cleanup" && <CleanupTab />}
           </Container>
         </main>
