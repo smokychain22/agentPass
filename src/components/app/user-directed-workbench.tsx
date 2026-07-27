@@ -225,7 +225,19 @@ export function UserDirectedWorkbench({
     [flatFindings]
   );
 
+  /**
+   * A finding is only "unresolved" (blocks plan approval) when the user
+   * genuinely started a cleanup operation on it that is still incomplete
+   * (persisted as "verification_requested") — never merely because it is
+   * an optional/uncertain finding the user has not touched at all.
+   * Untouched review-suggested, protected, and informational findings are
+   * never blockers; they simply remain unchanged by default.
+   */
   const unresolvedRequiredCount = useMemo(
+    () => Object.values(decisions).filter((d) => d.decision === "verification_requested").length,
+    [decisions]
+  );
+  const optionalUncountedCount = useMemo(
     () =>
       allStatusFindings.filter(
         ({ finding, status }) => status === "Review suggested" && !decisions[finding.id]
@@ -236,15 +248,44 @@ export function UserDirectedWorkbench({
   // Authoritative selected-fixes count — sourced only from persisted
   // decisions for the active scan/commit, never from client-only checkbox
   // state or Technical Details path selection. Kept/protected/informational
-  // findings and stale decisions from another scan never count.
+  // findings and stale decisions from another scan never count. Defense in
+  // depth: even a stale "selected" decision on a finding whose CURRENT
+  // classification is Protected is excluded here — protected findings never
+  // count as selected, regardless of what was persisted before.
+  const protectedFindingIds = useMemo(
+    () =>
+      new Set(
+        allStatusFindings.filter(({ status }) => status === "Protected").map(({ finding }) => finding.id)
+      ),
+    [allStatusFindings]
+  );
   const persistedSelectedFindings = useMemo(
     () =>
       Object.values(decisions).filter(
-        (d) => d.decision === "selected" || d.decision === "verified_selected"
+        (d) =>
+          (d.decision === "selected" || d.decision === "verified_selected") &&
+          !protectedFindingIds.has(d.findingId)
       ),
-    [decisions]
+    [decisions, protectedFindingIds]
   );
   const persistedSelectedCount = persistedSelectedFindings.length;
+
+  // Actively clear (server-side) any stale "selected" decision whose
+  // finding is now classified Protected — e.g. a classifier fix reclassified
+  // a previously-selectable file. Never just hide it client-side.
+  useEffect(() => {
+    if (!scanId || protectedFindingIds.size === 0) return;
+    for (const [findingId, decision] of Object.entries(decisions)) {
+      if (
+        protectedFindingIds.has(findingId) &&
+        (decision.decision === "selected" || decision.decision === "verified_selected")
+      ) {
+        void undoDecision(findingId);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanId, protectedFindingIds, decisions]);
+
   const persistedOverrideCount = useMemo(
     () => persistedSelectedFindings.filter((d) => d.isOverride).length,
     [persistedSelectedFindings]
@@ -1408,8 +1449,14 @@ export function UserDirectedWorkbench({
                 <dd>{persistedSelectedEligibleFindings.length}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Excluded / kept</dt>
-                <dd>{excludedFindingIds.length}</dd>
+                <dt className="text-muted-foreground">Optional findings unchanged</dt>
+                <dd>{optionalUncountedCount}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Protected files unchanged</dt>
+                <dd>
+                  {allStatusFindings.filter(({ status }) => status === "Protected").length}
+                </dd>
               </div>
             </dl>
             {planSummary ? (
@@ -1425,8 +1472,14 @@ export function UserDirectedWorkbench({
             )}
             {unresolvedRequiredCount > 0 ? (
               <p className="text-amber-400">
-                {unresolvedRequiredCount} finding(s) still need your decision before the plan can
-                be approved.
+                {unresolvedRequiredCount} selected fix{unresolvedRequiredCount === 1 ? "" : "es"} still
+                need{unresolvedRequiredCount === 1 ? "s" : ""} a choice before this plan can be
+                approved.
+              </p>
+            ) : optionalUncountedCount > 0 ? (
+              <p className="text-muted-foreground">
+                {optionalUncountedCount} optional finding{optionalUncountedCount === 1 ? "" : "s"}{" "}
+                will remain unchanged.
               </p>
             ) : null}
 
@@ -1557,6 +1610,12 @@ export function UserDirectedWorkbench({
                   <dd>{persistedSelectedEligibleFindings.length} fix(es)</dd>
                 </div>
                 <div>
+                  <dt className="text-muted-foreground">Tests RepoDiet will run</dt>
+                  <dd>
+                    {(planSummary?.validationCommands ?? ["npm run typecheck", "npm test"]).join(", ")}
+                  </dd>
+                </div>
+                <div>
                   <dt className="text-muted-foreground">Deliverable</dt>
                   <dd>One tested GitHub pull request</dd>
                 </div>
@@ -1566,11 +1625,26 @@ export function UserDirectedWorkbench({
                 </div>
               </dl>
 
+              <div className="rounded border border-border/40 bg-background/30 px-3 py-2 text-xs">
+                <p>
+                  GitHub access:{" "}
+                  <span
+                    className={githubCapability.canCreatePullRequest ? "text-signal" : "text-amber-400"}
+                  >
+                    {githubCapability.canCreatePullRequest ? "Connected" : "Not connected"}
+                  </span>
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Repository scope: <span className="font-mono">{repository || "—"}</span>
+                </p>
+              </div>
+
               {!githubCapability.canCreatePullRequest ? (
                 <div className="space-y-2">
-                  <p className="text-xs text-amber-400">
-                    RepoDiet does not yet have permission to open a pull request on this
-                    repository.
+                  <p className="text-sm font-medium">Connect GitHub to create the pull request</p>
+                  <p className="text-xs text-muted-foreground">
+                    RepoDiet needs repository-scoped permission to create a branch and open the
+                    cleanup pull request.
                   </p>
                   <button
                     type="button"
@@ -1578,7 +1652,7 @@ export function UserDirectedWorkbench({
                     disabled={githubConnectLoading}
                     onClick={() => void connectGithubForCleanup()}
                   >
-                    {githubConnectLoading ? "Connecting…" : "Connect GitHub to create the pull request"}
+                    {githubConnectLoading ? "Connecting…" : "Connect GitHub"}
                   </button>
                   {githubConnectError ? (
                     <p className="text-xs text-destructive">{githubConnectError}</p>
@@ -1596,7 +1670,7 @@ export function UserDirectedWorkbench({
                       else void createQuote();
                     }}
                   >
-                    Approve and create cleanup PR
+                    Approve 1 USD₮0 and create cleanup PR
                   </button>
                   <button
                     type="button"

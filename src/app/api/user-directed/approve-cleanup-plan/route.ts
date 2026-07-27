@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { approvePlan } from "@/lib/user-directed/cleanup-plan-store";
 import { computeDecisionsFingerprint, listFindingDecisions } from "@/lib/user-directed/decision-store";
+import { getStoredFindings } from "@/lib/findings/findings-store";
+import { flattenFindings } from "@/lib/findings/client";
+import { riskBucketOf } from "@/lib/findings/cleanup-eligibility";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -20,13 +23,67 @@ export async function POST(request: Request) {
     );
   }
 
+  const findingsPayload = await getStoredFindings(body.scanId);
+  if (!findingsPayload) {
+    return NextResponse.json(
+      { ok: false, error: "Findings not found for scanId — the scan is stale or unknown." },
+      { status: 404 }
+    );
+  }
+  if (findingsPayload.repo.commitSha && findingsPayload.repo.commitSha !== body.pinnedCommit) {
+    return NextResponse.json(
+      { ok: false, error: "The pinned commit no longer matches this scan's findings." },
+      { status: 409 }
+    );
+  }
+
+  const includeFindingIds = body.includeFindingIds ?? [];
+  if (includeFindingIds.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: "At least one selected cleanup action is required to approve a plan." },
+      { status: 400 }
+    );
+  }
+
+  const allFindings = flattenFindings(findingsPayload);
+  const byId = new Map(allFindings.map((f) => [f.id, f]));
+  for (const findingId of includeFindingIds) {
+    const finding = byId.get(findingId);
+    if (!finding) {
+      return NextResponse.json(
+        { ok: false, error: `Finding ${findingId} is not present in this scan's stored findings.` },
+        { status: 404 }
+      );
+    }
+    if (riskBucketOf(finding) === "PROTECTED") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Finding ${findingId} is protected — RepoDiet will not modify it directly, so it cannot be part of an approved plan.`,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  const currentDecisions = await listFindingDecisions(body.scanId);
+  const incomplete = currentDecisions.filter((d) => d.decision === "verification_requested");
+  if (incomplete.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `${incomplete.length} selected fix(es) still need a choice before this plan can be approved.`,
+      },
+      { status: 409 }
+    );
+  }
+
   try {
-    const currentDecisions = await listFindingDecisions(body.scanId);
     const decisionsFingerprint = computeDecisionsFingerprint(currentDecisions);
     const plan = await approvePlan({
       scanId: body.scanId,
       pinnedCommit: body.pinnedCommit,
-      includedFindingIds: body.includeFindingIds ?? [],
+      includedFindingIds: includeFindingIds,
       decisionsFingerprint,
     });
     return NextResponse.json({ ok: true, plan });
