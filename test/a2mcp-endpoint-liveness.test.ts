@@ -1,12 +1,13 @@
 /**
- * OKX marketplace rejection remediation — the registered A2MCP service
- * endpoint must answer reachability probes.
+ * Defensive compatibility hardening for the registered A2MCP endpoint.
  *
- * Agent 9636 was rejected with: "We were unable to reach your Agent's
- * service endpoint during testing." The registered endpoint
- * (/api/a2mcp/quick-triage) previously exported only POST, so a plain
- * GET/HEAD probe received Next.js's default 405 with no body —
- * indistinguishable from an undeployed service.
+ * NOT a proven remediation for any specific review failure. Official
+ * A2MCP validation is an unpaid POST returning HTTP 402, and that path
+ * was already healthy. There is no evidence a reviewer probe required
+ * GET or HEAD. What is true is that this route previously exported only
+ * POST, so a plain GET/HEAD returned Next.js's default 405 with an empty
+ * body; answering such probes with a real 200 is cheap and removes one
+ * plausible source of ambiguity.
  *
  * These tests pin both halves of the contract: the probe must be
  * reachable (200), and it must never become a billable side door.

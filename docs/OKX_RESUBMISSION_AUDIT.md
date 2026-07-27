@@ -530,7 +530,7 @@ Confirmed live: `a2aRuntimeReady:true`, `degradedReasons:[]`, `agentOnline:true`
 
 ---
 
-## Final audit pass — listing rejection root cause (2026-07-27)
+## Final audit pass — availability architecture (2026-07-27)
 
 ### Live listing status at time of audit
 
@@ -547,64 +547,100 @@ Exact rejection text, preserved verbatim:
 > 1. Check your service's deployment status and make sure the endpoint is accessible.
 > 2. Re-verify that your service is working, then resubmit.
 
-Registered endpoints at audit time:
+Registered services:
 
 | Service | Type | Registered endpoint |
 |---|---|---|
 | 37347 | A2MCP | `https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage` |
-| 37348 | A2A | `null` (XMTP to `0x00DbDBb36b71ACE0E1fc517056F376F977d8256E`) |
+| 37348 | A2A | `null` — expected; A2A does not use the callable HTTP endpoint model |
 
-### Cause A — registered endpoint returned 405 to reachability probes (FIXED)
+**The root cause of the rejection has not been positively identified.** The
+sections below separate what was proven from what was inferred.
 
-The A2MCP route exported only `POST`. A plain `GET`/`HEAD` fell through to
-Next.js's default **405 Method Not Allowed with an empty body**, which is
-indistinguishable from a service that was never deployed.
+### A2MCP 37347 — paid path verified healthy, no defect found
 
-Measured against production before the fix:
+Official A2MCP validation is an unpaid `POST` returning HTTP 402 with a
+correctly bound x402 challenge. Measured against production:
 
 ```
-GET  /api/a2mcp/quick-triage -> 405  (2.078s)
-HEAD /api/a2mcp/quick-triage -> 405  (0.470s)
-POST /api/a2mcp/quick-triage -> 402  (0.552s)  valid x402 challenge
+POST /api/a2mcp/quick-triage -> 402  (0.552s)  valid, correctly bound challenge
 ```
 
-The paid rail was healthy throughout — only the probe surface was absent.
-`GET`/`HEAD` now return a static 200 service descriptor that performs no
-billable work: no repository fetch, no scan, no quote, no revenue, and no
-x402 challenge. Paid execution remains exclusively on `POST`. Covered by
-`test/a2mcp-endpoint-liveness.test.ts` (7 tests), including assertions that
-a probe never returns 402, never mints a quote, and never emits the seller
-wallet or communication signer.
+This path was healthy before and after this audit. No defect was found in it.
 
-### Cause B — A2A runtime is workstation-hosted (NOT FIXED — requires a hosting decision)
+### GET/HEAD 200 — defensive hardening, explicitly NOT a claimed root cause
 
-The A2A listener for service 37348 is not hosted. It runs as ordinary
-processes on a developer workstation, confirmed by process inspection during
-this audit:
+The route previously exported only `POST`, so `GET`/`HEAD` returned Next.js's
+default 405 with an empty body:
+
+```
+GET  /api/a2mcp/quick-triage -> 405  (2.078s)   [before]
+HEAD /api/a2mcp/quick-triage -> 405  (0.470s)   [before]
+```
+
+`GET`/`HEAD` now return a static 200 service descriptor. This is **defensive
+compatibility hardening for generic reachability probes**. It is deliberately
+**not** claimed as the confirmed cause of the review timeout: official A2MCP
+guidance validates via unpaid POST, and no evidence was obtained showing a
+reviewer probe required GET or HEAD. The change is cheap, removes one
+plausible ambiguity, and performs no billable work — no repository fetch, no
+scan, no quote, no revenue, no x402 challenge. Covered by
+`test/a2mcp-endpoint-liveness.test.ts` (7 tests).
+
+### A2A 37348 — confirmed production availability defect
+
+Two independent problems were confirmed by direct inspection.
+
+**1. The listener runs only on a developer workstation.**
 
 | PID | Process |
 |---|---|
-| 27180, 22840 | `@okxweb3/a2a-node/dist/cli.js run` (XMTP listeners) |
+| 27180, 22840 | `@okxweb3/a2a-node/dist/cli.js run` |
 | 34736, 28572 | `tsx scripts/okx-seller-heartbeat-daemon.ts` |
 
-`scripts/okx-seller-heartbeat-daemon.ts` posts a heartbeat every 60s with a
-90s TTL. Consequently `agentRuntime.heartbeatStatus: "fresh"` on
-`/api/okx/health` attests only that **that workstation is currently awake**.
-Within 90 seconds of it sleeping, disconnecting, or shutting down, Agent 9636
-stops answering A2A traffic entirely.
+The heartbeat posts every 60s with a 90s TTL, so
+`agentRuntime.heartbeatStatus: "fresh"` on `/api/okx/health` attests only that
+that workstation is currently awake. Within 90 seconds of it sleeping,
+disconnecting, or shutting down, Agent 9636 stops answering A2A traffic. This
+is consistent with the "**has gone offline**" clause of the rejection, though
+it does not by itself prove that is what the reviewer hit.
 
-This matches the "**has gone offline**" clause of the rejection directly, and
-it is a genuine availability defect independent of Cause A: a reviewer
-probing outside the workstation's uptime window would find the agent
-unreachable no matter how correct the code is.
+**2. The vendor daemon delegates task processing to a local AI CLI.**
 
-This cannot be resolved in application code. It requires deploying the A2A
-listener and heartbeat daemon to an always-on host. Vercel is unsuitable for
-this specific component — the listener is a long-lived XMTP subscriber, not a
-request-scoped serverless function.
+`@okxweb3/a2a-node`'s own README states:
+
+> Background task processing runs the local Codex or Claude CLI.
+
+and, on auth failure, instructs the operator to run `codex login` or
+`claude login` "from the terminal environment where `okx-a2a` runs".
+
+This means the current A2A responder is, architecturally:
+
+```
+OKX → XMTP → @okxweb3/a2a-node (workstation) → local Codex/Claude CLI → response
+```
+
+That is the prohibited `OKX user → Claude or Codex acting as RepoDiet`
+topology, and it is **not liftable to a container as-is**: the AI provider it
+shells out to requires an interactive terminal login.
+
+### Consequence
+
+Relocating the existing daemon to an always-on host would not resolve this.
+It would relocate the Claude/Codex dependency, not remove it, and the
+container could not complete the required interactive provider login.
+
+Correct remediation requires RepoDiet to own a deterministic A2A responder
+that consumes the official task primitives directly instead of delegating
+reasoning to an AI CLI.
+
+**Open blocker:** both `onchainos` and `okx-a2a` authenticate via browser
+social login backed by a machine-bound credential store
+(`~/.onchainos/keyring.enc` alongside a 64-byte `machine-identity`). No
+documented non-interactive/server authentication method was found. Per
+operator instruction, no undocumented method was invented and no local
+keyring was copied.
 
 ### Status
 
-Cause A is fixed, tested, and deployed. Cause B is documented and awaiting an
-explicit hosting decision. **No listing mutation, reactivation, or resubmission
-was performed during this audit**, per the marketplace-freeze instruction.
+No listing mutation, reactivation, or resubmission was performed.

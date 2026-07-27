@@ -20,11 +20,15 @@ export const maxDuration = 25;
 /**
  * Liveness / capability descriptor for the registered A2MCP endpoint.
  *
- * The marketplace listing registers this URL as the service endpoint, and
- * reachability probes issue a plain GET/HEAD against it. Previously only
- * POST was exported, so those probes received Next.js's default 405 with
- * no body — indistinguishable from "the service isn't deployed". This
- * returns a fast, fully static 200 descriptor instead.
+ * DEFENSIVE COMPATIBILITY HARDENING — NOT a proven fix for any specific
+ * review failure. Official A2MCP validation is an unpaid POST returning
+ * HTTP 402, and that path was already healthy and correctly bound. We have
+ * no evidence that any reviewer probe required GET or HEAD.
+ *
+ * What is true: this route previously exported only POST, so a plain
+ * GET/HEAD received Next.js's default 405 with an empty body. Answering
+ * generic reachability probes with a real 200 costs nothing and removes
+ * one plausible source of ambiguity, so it is worth having regardless.
  *
  * It deliberately performs NO billable work: no repository is fetched, no
  * scan runs, no quote is minted, no revenue is recorded, and no x402
