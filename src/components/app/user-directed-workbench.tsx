@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAppSession } from "@/components/app/app-session";
 import { RepositoryExplorer } from "@/components/repository-explorer";
 import { ChangePlanPanel } from "@/components/change-plan-panel";
@@ -78,6 +78,20 @@ function stageFromLegacyTab(tab?: string): WorkbenchStage {
 
 export type ProductWorkbenchTab = WorkbenchStage;
 
+/**
+ * Which workflow tab owns each workbench stage. The URL tab is the single
+ * source of truth for what may render: findings owns finding selection and
+ * cleanup-plan review/approval; patch owns the paid Create Cleanup PR
+ * experience; verify owns delivery review. A stage may never render under a
+ * tab that does not own it — that is what previously let the payment panel
+ * appear while the URL still said tab=findings.
+ */
+export function tabForStage(stage: WorkbenchStage): "findings" | "patch" | "verify" {
+  if (stage === "review" || stage === "plan") return "findings";
+  if (stage === "pay") return "patch";
+  return "verify";
+}
+
 export function UserDirectedWorkbench({
   initialTab,
   initialStage,
@@ -110,9 +124,15 @@ export function UserDirectedWorkbench({
 
   const okxOnlyPayment = !allowsDirectWebsitePayment(sessionSource);
 
-  const [stage, setStage] = useState<WorkbenchStage>(
-    initialStage ?? stageFromLegacyTab(initialTab)
-  );
+  const router = useRouter();
+  // The tab that mounted this workbench owns a fixed stage. `substage` may
+  // only move within that same tab (e.g. review -> plan inside findings);
+  // anything crossing a tab boundary navigates instead, so the URL and the
+  // rendered stage can never disagree.
+  const ownedStage: WorkbenchStage = initialStage ?? stageFromLegacyTab(initialTab);
+  const [substage, setSubstage] = useState<WorkbenchStage | null>(null);
+  const stage: WorkbenchStage =
+    substage && tabForStage(substage) === tabForStage(ownedStage) ? substage : ownedStage;
   const [resultsView, setResultsView] = useState<"results" | "technical">("results");
   const [resultsFilter, setResultsFilter] = useState("");
   const [resultsStatusFilter, setResultsStatusFilter] = useState<
@@ -174,6 +194,26 @@ export function UserDirectedWorkbench({
   });
 
   const scanId = session.scanRecordId || session.scanResult?.id;
+
+  /**
+   * Stage transitions. A move within the owning tab is local state; a move
+   * to a stage owned by a different tab performs real navigation (carrying
+   * scanId) instead of silently rendering another tab's content in place.
+   * Navigation only — it never creates a task, quote, payment, branch or PR.
+   */
+  const setStage = useCallback(
+    (next: WorkbenchStage) => {
+      if (tabForStage(next) === tabForStage(ownedStage)) {
+        setSubstage(next);
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set("tab", tabForStage(next));
+      if (scanId) params.set("scanId", scanId);
+      router.push(`/app?${params.toString()}`);
+    },
+    [ownedStage, scanId, router]
+  );
   const repository =
     session.scanResult?.repo
       ? `${session.scanResult.repo.owner}/${session.scanResult.repo.name}`
@@ -1658,125 +1698,175 @@ export function UserDirectedWorkbench({
           </details>
 
           {planStatus?.approved && planStatus.current ? (
-            <div className="rounded-md border border-border/50 bg-card/30 p-4 text-sm space-y-3">
-              <p className="font-medium">Create cleanup pull request</p>
-              <dl className="grid gap-1 text-xs sm:grid-cols-2">
-                <div>
-                  <dt className="text-muted-foreground">Repository</dt>
-                  <dd className="font-mono">{repository || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Branch</dt>
-                  <dd className="font-mono">{session.scanResult?.repo?.branch || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Selected cleanup</dt>
-                  <dd>{persistedSelectedEligibleFindings.length} fix(es)</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Tests RepoDiet will run</dt>
-                  <dd>
-                    {(planSummary?.validationCommands ?? ["npm run typecheck", "npm test"]).join(", ")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Deliverable</dt>
-                  <dd>One tested GitHub pull request</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Price</dt>
-                  <dd>1 USD₮0</dd>
-                </div>
-              </dl>
-
-              <div className="rounded border border-border/40 bg-background/30 px-3 py-2 text-xs">
-                <p>
-                  GitHub access:{" "}
-                  <span
-                    className={githubCapability.canCreatePullRequest ? "text-signal" : "text-amber-400"}
-                  >
-                    {githubCapability.canCreatePullRequest ? "Connected" : "Not connected"}
-                  </span>
-                </p>
-                <p className="mt-1 text-muted-foreground">
-                  Repository scope: <span className="font-mono">{repository || "—"}</span>
-                </p>
-              </div>
-
-              {!githubCapability.canCreatePullRequest ? (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Connect GitHub to create the pull request</p>
-                  <p className="text-xs text-muted-foreground">
-                    RepoDiet needs repository-scoped permission to create a branch and open the
-                    cleanup pull request.
-                  </p>
-                  <button
-                    type="button"
-                    className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-                    disabled={githubConnectLoading}
-                    onClick={() => void connectGithubForCleanup()}
-                  >
-                    {githubConnectLoading ? "Connecting…" : "Connect GitHub"}
-                  </button>
-                  {githubConnectError ? (
-                    <p className="text-xs text-destructive">{githubConnectError}</p>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  <div className="w-full rounded border border-border/40 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
-                    <p>
-                      RepoDiet delivers a tested, merge-ready pull request. If RepoDiet&apos;s own
-                      changes fail validation, RepoDiet corrects the delivery without another
-                      charge.
-                    </p>
-                    <p className="mt-1">
-                      No extra payment for fixing RepoDiet&apos;s own delivery errors, for a
-                      transient retry, or for a replacement pull request required because the
-                      original became unusable. A new payment is only ever requested for
-                      genuinely expanded scope you explicitly agree to afterward.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-                    disabled={!createCleanupPrReadiness.unlocked}
-                    title={createCleanupPrReadiness.reasons.join(" ")}
-                    onClick={() => {
-                      if (!preview) void generatePreview();
-                      else void createQuote();
-                    }}
-                  >
-                    Approve 1 USD₮0 and create cleanup PR
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-                    onClick={() => setStage("review")}
-                  >
-                    Back to findings
-                  </button>
-                </div>
-              )}
-              {!createCleanupPrReadiness.unlocked && githubCapability.canCreatePullRequest ? (
-                <ul className="list-disc pl-4 text-xs text-muted-foreground">
-                  {createCleanupPrReadiness.reasons.map((r) => (
-                    <li key={r}>{r}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-                onClick={() => setStage("review")}
+                className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background"
+                onClick={() => setStage("pay")}
               >
-                Back to findings
+                Continue to Create Cleanup PR
               </button>
+              <span className="text-xs text-muted-foreground">
+                Navigation only — no task, payment, branch or pull request is created.
+              </span>
             </div>
-          )}
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* Create Cleanup PR — owned exclusively by tab=patch. Renders only
+          against an authoritative, current, non-superseded approved plan. */}
+      {stage === "pay" && planStatus?.approved && !planStatus.current ? (
+        <section className="space-y-3 rounded-md border border-amber-400/40 bg-amber-400/5 p-4 text-sm">
+          <p className="font-medium text-amber-400">
+            Your selected fixes changed after this cleanup plan was approved.
+          </p>
+          <dl className="grid gap-1 text-xs sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Currently selected fixes</dt>
+              <dd>{persistedSelectedCount}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Previously approved fixes</dt>
+              <dd>{planSummary ? planSummary.deleteCount + planSummary.consolidateCount + planSummary.editCount : "—"}</dd>
+            </div>
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            RepoDiet will not create a task or move funds against a superseded plan.
+            Review and approve the updated plan to continue.
+          </p>
+          <button
+            type="button"
+            className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background"
+            onClick={() => setStage("review")}
+          >
+            Review updated cleanup plan
+          </button>
+        </section>
+      ) : null}
+
+      {stage === "pay" ? (
+        <section className="space-y-3">
+        {planStatus?.approved && planStatus.current ? (
+          <div className="rounded-md border border-border/50 bg-card/30 p-4 text-sm space-y-3">
+            <p className="font-medium">Create cleanup pull request</p>
+            <dl className="grid gap-1 text-xs sm:grid-cols-2">
+              <div>
+                <dt className="text-muted-foreground">Repository</dt>
+                <dd className="font-mono">{repository || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Branch</dt>
+                <dd className="font-mono">{session.scanResult?.repo?.branch || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Selected cleanup</dt>
+                <dd>{persistedSelectedEligibleFindings.length} fix(es)</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Tests RepoDiet will run</dt>
+                <dd>
+                  {(planSummary?.validationCommands ?? ["npm run typecheck", "npm test"]).join(", ")}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Deliverable</dt>
+                <dd>One tested GitHub pull request</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Price</dt>
+                <dd>1 USD₮0</dd>
+              </div>
+            </dl>
+
+            <div className="rounded border border-border/40 bg-background/30 px-3 py-2 text-xs">
+              <p>
+                GitHub access:{" "}
+                <span
+                  className={githubCapability.canCreatePullRequest ? "text-signal" : "text-amber-400"}
+                >
+                  {githubCapability.canCreatePullRequest ? "Connected" : "Not connected"}
+                </span>
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Repository scope: <span className="font-mono">{repository || "—"}</span>
+              </p>
+            </div>
+
+            {!githubCapability.canCreatePullRequest ? (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Connect GitHub to create the pull request</p>
+                <p className="text-xs text-muted-foreground">
+                  RepoDiet needs repository-scoped permission to create a branch and open the
+                  cleanup pull request.
+                </p>
+                <button
+                  type="button"
+                  className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                  disabled={githubConnectLoading}
+                  onClick={() => void connectGithubForCleanup()}
+                >
+                  {githubConnectLoading ? "Connecting…" : "Connect GitHub"}
+                </button>
+                {githubConnectError ? (
+                  <p className="text-xs text-destructive">{githubConnectError}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <div className="w-full rounded border border-border/40 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
+                  <p>
+                    RepoDiet delivers a tested, merge-ready pull request. If RepoDiet&apos;s own
+                    changes fail validation, RepoDiet corrects the delivery without another
+                    charge.
+                  </p>
+                  <p className="mt-1">
+                    No extra payment for fixing RepoDiet&apos;s own delivery errors, for a
+                    transient retry, or for a replacement pull request required because the
+                    original became unusable. A new payment is only ever requested for
+                    genuinely expanded scope you explicitly agree to afterward.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                  disabled={!createCleanupPrReadiness.unlocked}
+                  title={createCleanupPrReadiness.reasons.join(" ")}
+                  onClick={() => {
+                    if (!preview) void generatePreview();
+                    else void createQuote();
+                  }}
+                >
+                  Approve 1 USD₮0 and create cleanup PR
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                  onClick={() => setStage("review")}
+                >
+                  Back to findings
+                </button>
+              </div>
+            )}
+            {!createCleanupPrReadiness.unlocked && githubCapability.canCreatePullRequest ? (
+              <ul className="list-disc pl-4 text-xs text-muted-foreground">
+                {createCleanupPrReadiness.reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+              onClick={() => setStage("review")}
+            >
+              Back to findings
+            </button>
+          </div>
+        )}
         </section>
       ) : null}
 
