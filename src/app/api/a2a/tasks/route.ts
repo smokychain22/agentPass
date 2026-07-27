@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     if (message && isMarketplaceDiscoveryMessage(message) && !repoUrl) {
       logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
       const intake = buildMarketplaceIntakeResponse(requestId);
-      await recordTaskAcknowledged({ queueDepth: 0 });
+      await recordTaskAcknowledged({ queueDepth: 0, responseLatencyMs: Date.now() - started });
       logMarketplaceTelemetry("a2a_acknowledgement_sent", {
         requestId,
         durationMs: Date.now() - started,
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     if (message && isInformationalQuery(message) && !repoUrl) {
       logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
       const info = buildInformationalResponse(requestId);
-      await recordTaskAcknowledged({ queueDepth: 0 });
+      await recordTaskAcknowledged({ queueDepth: 0, responseLatencyMs: Date.now() - started });
       logMarketplaceTelemetry("a2a_acknowledgement_sent", {
         requestId,
         durationMs: Date.now() - started,

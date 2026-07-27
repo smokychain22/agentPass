@@ -18,6 +18,7 @@ export type MarketplaceTelemetryEvent =
   | "a2mcp_result_persisted"
   | "a2mcp_receipt_persisted"
   | "a2mcp_replay_served"
+  | "a2mcp_sampling_authenticated"
   | "a2a_message_received"
   | "a2a_acknowledgement_sent"
   | "a2a_task_queued"

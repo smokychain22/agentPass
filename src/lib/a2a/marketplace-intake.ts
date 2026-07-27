@@ -25,6 +25,14 @@ const INFORMATIONAL_PATTERNS = [
   /what\s+is\s+repodiet(\s+quick\s*triage)?/i,
   /can\s+repodiet\s+create\s+a\s+(cleanup\s+)?pull\s+request/i,
   /does\s+repodiet\s+(support|create|open|deliver)\s+(a\s+)?(cleanup\s+)?pull\s+request/i,
+  /what\s+services?\s+(are|is)\s+available/i,
+  /what\s+services?\s+does\s+repodiet\s+(offer|provide|have)/i,
+  /can\s+repodiet\s+(inspect|analy[sz]e|scan|review|diagnose)\s+(my\s+)?repository/i,
+  /what\s+information\s+do\s+you\s+need/i,
+  /what\s+(info|information)\s+is\s+(required|needed)/i,
+  /how\s+much\s+(do|does)\s+(the\s+)?services?\s+cost/i,
+  /what\s+(is|are)\s+the\s+(price|cost|fee)s?/i,
+  /how\s+much\s+(is|does)\s+repodiet\s+cost/i,
 ];
 
 export function extractUserMessage(body: Record<string, unknown>): string | undefined {

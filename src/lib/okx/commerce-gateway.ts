@@ -12,6 +12,7 @@ import { getBoundQuote } from "@/lib/payment/payment-store";
 import {
   A2mcpX402Error,
   decodePaymentSignatureHeader,
+  isX402SamplingResult,
   quoteIdFromPaymentPayload,
   verifyAndSettleA2mcpPayment,
 } from "@/lib/payment/a2mcp-x402-production";
@@ -85,6 +86,13 @@ export interface CommerceGateResult {
   requestHash: string;
   paymentResponseHeader?: string;
   paymentReference?: string;
+  /**
+   * True only when the authenticated OKX x402 facilitator settlement response
+   * itself carried `sampling: true` (OKX AI Agent Marketplace User Agreement
+   * §7.7). Never set from caller-supplied fields. Internal-only — must never
+   * be echoed into the public HTTP response body.
+   */
+  samplingAuthenticated?: boolean;
 }
 
 export async function gateA2mcpCall(input: {
@@ -181,6 +189,19 @@ export async function gateA2mcpCall(input: {
           quote,
           binding: input.binding,
         });
+        if (isX402SamplingResult(settlement)) {
+          // Authenticated OKX Sampling Call (§7.7): no settlement occurred and
+          // none is expected. Execute the bounded service once, but never
+          // enter the paid entitlement gate below — that gate requires a
+          // verified quote, which a sampling call deliberately never has.
+          return {
+            allowed: true,
+            quote,
+            mode: "sampling_authenticated",
+            requestHash: input.binding.requestHash,
+            samplingAuthenticated: true,
+          };
+        }
         paymentResponseHeader = settlement.paymentResponseHeader;
         paymentReference = settlement.transaction;
       } catch (error) {

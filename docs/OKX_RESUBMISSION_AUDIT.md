@@ -2,6 +2,129 @@
 
 Last verified: 2026-07-27
 
+## Command 1 (this pass) — availability, request routing, and OKX sampling (§7.7)
+
+### Root cause of the timeout rejection
+
+Two distinct causes, both now fixed:
+
+1. The seller runtime (heartbeat + XMTP daemon) only ran inside an interactive
+   Claude Code session — closing the session ended the runtime, so a reviewer
+   probe arriving afterward received nothing. Fixed by the Windows Task
+   Scheduler durable runtime (`scripts/windows/`), verified surviving process
+   kill and session end (see below).
+2. Conversational discovery/informational messages ("is RepoDiet online?",
+   "what does X do?", capability/price questions) were rejected by
+   `POST /api/a2a/tasks` with a generic HTTP 400 `INVALID_TASK_TYPE` instead
+   of an informative answer. Fixed and extended this pass — see "Discovery
+   and informational responses" below.
+
+### CLI evidence (installed package, exact redacted output)
+
+```
+> where.exe okx-a2a
+C:\Users\hp\AppData\Roaming\npm\okx-a2a
+C:\Users\hp\AppData\Roaming\npm\okx-a2a.cmd
+C:\Users\hp\AppData\Roaming\npm\okx-a2a.exe
+
+> okx-a2a --version
+0.1.10
+
+> okx-a2a --help
+okx-a2a 0.1.10
+Commands: daemon, start, restart, stop, status, run, logs, user, session,
+task, agent, file, ai, setup, doctor, update, config, ai-provider, runtime,
+switch-runtime, job-provider, xmtp-send
+```
+
+Installed package: `@okxweb3/a2a-node` (bundled `dist/cli.js`, ~4MB).
+
+### Request-path tracing (traced, not assumed)
+
+| Event | Transport | Notes |
+| --- | --- | --- |
+| Discovery / informational message | HTTP `POST /api/a2a/tasks` | Same channel OKX's reviewer uses pre-listing. Classified deterministically by `isMarketplaceDiscoveryMessage` / `isInformationalQuery`. |
+| A2MCP unpaid/paid request | HTTP `POST /api/a2mcp/quick-triage`, x402 facilitator (`web3.okx.com/api/v6/pay/x402/*`, HMAC-signed with `OKX_API_KEY`/`OKX_SECRET_KEY`/`OKX_PASSPHRASE`) | Facilitator responses normalized at `OkxX402Broker.request()` — the trusted boundary (see sampling below). |
+| A2A task creation / negotiation / decision_request | XMTP, via `okx-a2a user watch --json` (inbound) and `okx-a2a xmtp-send` (outbound, no `--provider`, signed via `onchainos agent xmtp-sign --key-uuid <id>`) | Traced directly from installed source in the prior "autonomous responder" investigation (still valid). |
+| OKX sampling call | Authenticated x402 facilitator settlement response (`SettleData.sampling`) | See below — never from caller input. |
+
+Did not assume the reviewer prompt's transport — HTTP intake, x402, and XMTP
+were each independently traced to source/installed CLI before being relied on.
+
+### Discovery and informational responses (Phase 3)
+
+Extended `INFORMATIONAL_PATTERNS` in `src/lib/a2a/marketplace-intake.ts` to
+cover: "what services are available", "what services does RepoDiet offer",
+"can RepoDiet inspect/analyze/scan my repository", "what information do you
+need", "what is the price/cost/fee", "how much does it cost" — in addition to
+the previously-covered "is RepoDiet online" / "what does X do" / "can it
+create a PR". `buildInformationalResponse` and `buildMarketplaceIntakeResponse`
+both identify Agent 9636, describe A2MCP 37347 (read-only diagnosis, 0.03
+USD₮0) and A2A 37348 (negotiated cleanup, tested PR delivery, default 1
+USD₮0), ask for repository URL and scope, and set
+`paymentRequired:false` / `taskPolicy: {startWork:false, fundEscrow:false,
+repositoryScan:false, createBranch:false, createPullRequest:false}`.
+
+### Authenticated sampling (Phase 4) — OKX AI Agent Marketplace User Agreement §7.7
+
+Authoritative source: OKX AI Agent Marketplace User Agreement §7.7 (dated
+24 Jul 2026) — a Sampling Call returns a settlement response carrying an
+OKX-defined `sampling: true` field and reports payment as unsettled.
+
+Implementation, entirely at the trusted facilitator boundary
+(`src/lib/payment/a2mcp-x402-production.ts`):
+
+- `SettleData.sampling?: boolean` — typed field on the interface populated
+  exclusively from `OkxX402Broker.request()`'s parsed, HMAC-authenticated
+  response from `web3.okx.com`. Never derived from caller request bodies,
+  query parameters, or headers — those have no code path into `SettleData`.
+- `verifyAndSettleA2mcpPayment` checks `settled.sampling === true` immediately
+  after `broker.settle()`, before the normal success/status/transaction
+  assertions — an authenticated sampling response is never rejected for
+  being unsettled. Returns a distinct `X402SamplingResult` (`{sampling:true,
+  amount}`) — no `transaction`, no `paymentResponseHeader`.
+- Durable idempotency: a new `"sampled"` state (alongside existing
+  `"verifying"`/`"settled"`) in the same `payment_entitlements` record keyed
+  by `authorizationKey()`. An identical replay returns the cached sampling
+  result with no second facilitator call; a mismatched replay (same
+  authorization, different request binding) is rejected.
+- `commerce-gateway.ts`'s `gateA2mcpCall` detects the sampling result via
+  `isX402SamplingResult()` and returns `samplingAuthenticated:true` instead of
+  entering the paid entitlement gate (which requires a verified quote that a
+  sampling call deliberately never has).
+- `phase3-route.ts` skips `gateQuoteId` assignment for sampling — the bounded
+  service still executes and returns a genuine result, but `markQuoteCompleted`,
+  revenue recording, and execution-result caching are never reached.
+- Internal-only telemetry: `FacilitatorDiagnostic.samplingDetected` (server
+  logs only) and `logMarketplaceTelemetry("a2mcp_sampling_authenticated", ...)`
+  — `sampling` is never included in the public HTTP response body.
+- No public message anywhere claims OKX endorsement, certification, or
+  sampling success.
+
+Fixture tests (`test/a2mcp-sampling.test.ts`, all passing): authenticated
+`sampling:true`, authenticated `sampling:false`, missing sampling field,
+spoofed request-body `sampling:true` (proven inert — the function has no
+input path for it), paid normal request not misclassified as sampling,
+malformed settlement response, duplicate sampling request (cached replay vs.
+rejected mismatch).
+
+### Durable runtime hardening (Phase 5)
+
+Production health (`GET /api/okx/health`) now also exposes, matching the
+audit's exact field names: `agentId`, `lastHeartbeatAt`, `a2mcpReady`,
+`a2aReady`, `taskWatcherOnline`, `xmtpConnected`, `reviewerRequestCount`,
+`lastReviewerRequestAt`, `lastReviewerResponseAt`,
+`lastReviewerResponseLatencyMs`, `samplingSupported`, `workerPid`,
+`duplicateWorkerCount` (existing `agentOnline`, `heartbeatStatus`,
+`degradedReasons` unchanged). `workerPid` / `duplicateWorkerCount` are
+reported by the Windows runtime itself in each heartbeat POST (own PID, and
+a persistent counter of lock-file duplicate-instance refusals) —
+observability only, never trusted for identity. `reviewerRequestCount` /
+`lastReviewerRequestAt` / `lastReviewerResponseAt` /
+`lastReviewerResponseLatencyMs` are updated from real inbound
+`POST /api/a2a/tasks` traffic.
+
+
 ## Pinned production identities
 
 | Resource | Canonical value |

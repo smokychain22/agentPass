@@ -34,6 +34,7 @@ $LogDir = "$RuntimeDir\logs"
 $LockFile = "$RuntimeDir\runtime.lock"
 $SecretFile = "$RuntimeDir\secrets\heartbeat-secret.enc"
 $LogFile = "$LogDir\runtime.log"
+$DuplicateCountFile = "$RuntimeDir\duplicate-attempts.count"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -59,7 +60,12 @@ function Test-DuplicateInstance {
 }
 
 if (Test-DuplicateInstance) {
-    Write-Log "INFO" "Another runtime instance is already active (lock file held by a live PID). Exiting to prevent duplicates."
+    $count = 0
+    if (Test-Path $DuplicateCountFile) {
+        $count = [int](Get-Content $DuplicateCountFile -Raw -ErrorAction SilentlyContinue).Trim()
+    }
+    Set-Content -Path $DuplicateCountFile -Value ($count + 1)
+    Write-Log "INFO" "Another runtime instance is already active (lock file held by a live PID). Exiting to prevent duplicates. duplicateWorkerAttemptCount=$($count + 1)"
     exit 0
 }
 
@@ -156,6 +162,13 @@ try {
         return $true
     }
 
+    function Get-DuplicateWorkerAttemptCount {
+        if (-not (Test-Path $DuplicateCountFile)) { return 0 }
+        $raw = (Get-Content $DuplicateCountFile -Raw -ErrorAction SilentlyContinue).Trim()
+        if ([int]::TryParse($raw, [ref]$null)) { return [int]$raw }
+        return 0
+    }
+
     function Send-Heartbeat {
         $secret = Get-HeartbeatSecret
         $body = @{
@@ -168,6 +181,8 @@ try {
             officialWatchActive = $true
             xmtpClientReady = $true
             ttlSeconds = $TtlSeconds
+            workerPid = $PID
+            duplicateWorkerAttemptCount = (Get-DuplicateWorkerAttemptCount)
         } | ConvertTo-Json
 
         try {

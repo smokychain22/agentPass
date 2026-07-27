@@ -61,6 +61,15 @@ export async function POST(request: Request) {
         typeof body.ttlSeconds === "number" && Number.isFinite(body.ttlSeconds)
           ? body.ttlSeconds
           : undefined,
+      workerPid:
+        typeof body.workerPid === "number" && Number.isFinite(body.workerPid)
+          ? body.workerPid
+          : undefined,
+      duplicateWorkerAttemptCount:
+        typeof body.duplicateWorkerAttemptCount === "number" &&
+        Number.isFinite(body.duplicateWorkerAttemptCount)
+          ? body.duplicateWorkerAttemptCount
+          : undefined,
     });
     return NextResponse.json({
       ok: true,
