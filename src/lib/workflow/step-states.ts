@@ -306,7 +306,7 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   const connect: WorkflowStepState = {
     id: "connect",
     tabId: "scan",
-    title: "Connect Repository",
+    title: "Analyze Repository",
     status: "locked",
   };
   const findings: WorkflowStepState = {
@@ -333,33 +333,45 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
     explanation: "Review & Accept unlocks after a real cleanup pull request has been created.",
   };
 
-  // Connect
+  // Analyze Repository — covers the whole stage: URL entry, resolution,
+  // commit pinning, findings analysis, validation, and result persistence.
+  // Repository resolution alone is never treated as the stage being done —
+  // it stays "running" until findings are actually complete.
   if (scanPhase === "running") {
     connect.status = "running";
-    connect.primaryAction = "Scanning repository…";
+    connect.primaryAction = "Analyzing repository…";
   } else if (scanPhase === "failed" && !repositoryConnected) {
     connect.status = "failed";
     connect.primaryAction = "Retry scan";
     connect.explanation = "Repository scan failed. Fix the URL or branch and scan again.";
-  } else if (repositoryConnected) {
+  } else if (!repositoryConnected) {
+    connect.status = "current";
+    connect.primaryAction = "Analyze Repository";
+  } else if (findingsPhase === "failed" && !findingsBound) {
+    connect.status = "failed";
+    connect.primaryAction = "Retry analysis";
+    connect.explanation = "Findings analysis failed. Retry to complete the repository analysis.";
+  } else if (findingsComplete) {
     connect.status = "complete";
   } else {
-    connect.status = "current";
-    connect.primaryAction = "Scan Repository";
+    // Commit is pinned, but findings analysis/validation/persistence is
+    // still in progress — the stage is not done.
+    connect.status = "running";
+    connect.primaryAction = "Analyzing repository…";
   }
 
-  // Findings
+  // Findings — only ever unlocks once the Analyze Repository stage has
+  // actually finished producing a persisted findings payload. While that
+  // stage is still running (or has failed), Review Findings stays locked;
+  // monitoring progress and retrying belong to Analyze Repository, not here.
   if (!repositoryConnected || !projectRootConfirmed) {
     findings.status = "locked";
     findings.explanation = !repositoryConnected
       ? "Review Findings becomes available after RepoDiet successfully scans and pins the repository commit."
       : "Select which application RepoDiet should analyze.";
-  } else if (findingsPhase === "running") {
-    findings.status = "running";
-    findings.primaryAction = "Analyzing findings…";
-  } else if (findingsPhase === "failed" && !findingsBound) {
-    findings.status = "failed";
-    findings.primaryAction = "Retry findings analysis";
+  } else if (!findingsBound || !input.findings) {
+    findings.status = "locked";
+    findings.explanation = "Review Findings unlocks once repository analysis finishes.";
   } else if (findingsComplete) {
     findings.status = "complete";
     if (zeroFindings) {

@@ -36,7 +36,7 @@ test("workspace step names describe user outcomes", () => {
   const rail = read("src/components/app/shell/workflow-rail.tsx");
   assert.match(rail, /step\.title/);
   for (const label of [
-    "Connect Repository",
+    "Analyze Repository",
     "Review Findings",
     "Create Cleanup PR",
     "Review & Accept",
