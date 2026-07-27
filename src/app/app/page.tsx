@@ -243,7 +243,7 @@ function AppWorkspace() {
             {tab === "findings" &&
               guardedStageOrLock("findings", <UserDirectedWorkbench initialStage="review" />)}
             {tab === "patch" &&
-              guardedStageOrLock("patch", <UserDirectedWorkbench initialStage="plan" />)}
+              guardedStageOrLock("patch", <UserDirectedWorkbench initialStage="pay" />)}
             {tab === "verify" &&
               guardedStageOrLock("verify", <UserDirectedWorkbench initialStage="delivery" />)}
             {tab === "cleanup" && <CleanupTab />}
