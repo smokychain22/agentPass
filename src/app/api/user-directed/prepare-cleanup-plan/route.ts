@@ -4,6 +4,7 @@ import { flattenFindings } from "@/lib/findings/client";
 import { prepareAutomaticCleanupPlan } from "@/lib/user-directed/auto-cleanup-plan";
 import { partitionPlans } from "@/lib/user-directed/partition-plans";
 import { buildScanOutcomeSummary } from "@/lib/user-directed/scan-outcome-summary";
+import { saveDraftPlan } from "@/lib/user-directed/cleanup-plan-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -56,6 +57,13 @@ export async function POST(request: Request) {
 
     const parts = partitionPlans(prepared.plans);
 
+    const planState = await saveDraftPlan({
+      scanId: body.scanId,
+      pinnedCommit,
+      includedFindingIds: prepared.includedFindingIds,
+      excludedFindingIds: prepared.excludedFindingIds,
+    });
+
     return NextResponse.json({
       ok: true,
       mode: "AUTOMATIC_CLEANUP",
@@ -69,6 +77,7 @@ export async function POST(request: Request) {
       selectionSeparatedFromEligibility: true,
       userChoosesOutcome: true,
       transformerSelectionRequired: false,
+      planStatus: planState.status,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Prepare cleanup plan failed.";

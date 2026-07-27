@@ -40,7 +40,9 @@ export type PersistentCollection =
   | "a2a_task_audit_events"
   | "a2a_task_audit_index"
   | "a2mcp_payment_executions"
-  | "a2mcp_payment_identity";
+  | "a2mcp_payment_identity"
+  | "finding_decisions"
+  | "cleanup_plan_state";
 
 export type ArtifactCollection = "artifacts";
 
@@ -82,6 +84,8 @@ export interface DurableDb {
   a2a_task_audit_index: Record<string, unknown>;
   a2mcp_payment_executions: Record<string, unknown>;
   a2mcp_payment_identity: Record<string, unknown>;
+  finding_decisions: Record<string, unknown>;
+  cleanup_plan_state: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -122,6 +126,8 @@ const DEFAULT_DB: DurableDb = {
   a2a_task_audit_index: {},
   a2mcp_payment_executions: {},
   a2mcp_payment_identity: {},
+  finding_decisions: {},
+  cleanup_plan_state: {},
 };
 
 let redisClient: Redis | null = null;
@@ -196,6 +202,8 @@ function loadLocalDb(): DurableDb {
       a2a_task_audit_index: parsed.a2a_task_audit_index ?? {},
       a2mcp_payment_executions: parsed.a2mcp_payment_executions ?? {},
       a2mcp_payment_identity: parsed.a2mcp_payment_identity ?? {},
+      finding_decisions: parsed.finding_decisions ?? {},
+      cleanup_plan_state: parsed.cleanup_plan_state ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);
