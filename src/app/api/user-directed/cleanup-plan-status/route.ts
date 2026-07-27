@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPlanState, isPlanCurrent } from "@/lib/user-directed/cleanup-plan-store";
 import { computeDecisionsFingerprint, listFindingDecisions } from "@/lib/user-directed/decision-store";
+import { getStoredFindings } from "@/lib/findings/findings-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -21,14 +22,23 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "scanId is required." }, { status: 400 });
   }
 
-  const [plan, decisions] = await Promise.all([
+  const [plan, decisions, findingsPayload] = await Promise.all([
     getPlanState(scanId),
     listFindingDecisions(scanId),
+    getStoredFindings(scanId),
   ]);
+
+  // The pinned commit is server truth. A client that has not finished
+  // hydrating its session cannot supply it, and previously that produced an
+  // empty string — which made isPlanCurrent() fail and reported a perfectly
+  // valid approved plan as not-current. Resolve it from the stored scan
+  // whenever the caller does not pass one, rather than comparing against "".
+  const resolvedCommit = pinnedCommit || findingsPayload?.repo.commitSha || "";
+
   const currentDecisionsFingerprint = computeDecisionsFingerprint(decisions);
-  const current = isPlanCurrent(plan, pinnedCommit, currentDecisionsFingerprint);
+  const current = isPlanCurrent(plan, resolvedCommit, currentDecisionsFingerprint);
   const superseded = Boolean(
-    plan && plan.status === "approved" && pinnedCommit && !current
+    plan && plan.status === "approved" && resolvedCommit && !current
   );
 
   return NextResponse.json({
@@ -38,5 +48,11 @@ export async function GET(request: Request) {
     approved: Boolean(plan?.status === "approved"),
     current,
     superseded,
+    // Authoritative echo so callers can prove which scan/commit was judged.
+    scanId,
+    pinnedCommit: resolvedCommit,
+    commitSource: pinnedCommit ? "request" : "stored_scan",
+    planScanId: plan?.scanId ?? null,
+    selectedCount: plan?.includedFindingIds.length ?? 0,
   });
 }
