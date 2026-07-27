@@ -8,6 +8,8 @@ export interface CleanupPlanRecord {
   pinnedCommit: string;
   includedFindingIds: string[];
   excludedFindingIds: string[];
+  /** Fingerprint of the decision set this plan reflects — see decision-store.computeDecisionsFingerprint. */
+  decisionsFingerprint: string;
   updatedAt: string;
 }
 
@@ -17,6 +19,7 @@ export async function saveDraftPlan(input: {
   pinnedCommit: string;
   includedFindingIds: string[];
   excludedFindingIds: string[];
+  decisionsFingerprint: string;
 }): Promise<CleanupPlanRecord> {
   const record: CleanupPlanRecord = {
     scanId: input.scanId,
@@ -24,6 +27,7 @@ export async function saveDraftPlan(input: {
     pinnedCommit: input.pinnedCommit,
     includedFindingIds: input.includedFindingIds,
     excludedFindingIds: input.excludedFindingIds,
+    decisionsFingerprint: input.decisionsFingerprint,
     updatedAt: durableNow(),
   };
   await setDurableRecord("cleanup_plan_state", input.scanId, record);
@@ -34,17 +38,25 @@ export async function getPlanState(scanId: string): Promise<CleanupPlanRecord | 
   return getDurableRecord<CleanupPlanRecord>("cleanup_plan_state", scanId);
 }
 
-/** Idempotent — approving an already-approved plan for the same scan/commit/selection is a no-op returning the same record. */
+/**
+ * Idempotent — approving an already-approved plan for the same scan/commit/
+ * fingerprint is a no-op returning the same record. Requires a plan drafted
+ * for this exact commit AND decision fingerprint — approving after any
+ * decision changed (a different fingerprint) is rejected; the caller must
+ * re-prepare first.
+ */
 export async function approvePlan(input: {
   scanId: string;
   pinnedCommit: string;
   includedFindingIds: string[];
+  decisionsFingerprint: string;
 }): Promise<CleanupPlanRecord> {
   const existing = await getPlanState(input.scanId);
   if (
     existing &&
     existing.status === "approved" &&
     existing.pinnedCommit === input.pinnedCommit &&
+    existing.decisionsFingerprint === input.decisionsFingerprint &&
     existing.includedFindingIds.length === input.includedFindingIds.length &&
     existing.includedFindingIds.every((id) => input.includedFindingIds.includes(id))
   ) {
@@ -52,6 +64,11 @@ export async function approvePlan(input: {
   }
   if (!existing || existing.pinnedCommit !== input.pinnedCommit) {
     throw new Error("Cleanup plan must be prepared for this commit before it can be approved.");
+  }
+  if (existing.decisionsFingerprint !== input.decisionsFingerprint) {
+    throw new Error(
+      "A decision changed since this plan was prepared. Prepare the cleanup plan again before approving."
+    );
   }
   const approved: CleanupPlanRecord = {
     ...existing,
@@ -68,4 +85,18 @@ export function isPlanApprovedForCommit(
   pinnedCommit: string
 ): boolean {
   return Boolean(plan && plan.status === "approved" && plan.pinnedCommit === pinnedCommit);
+}
+
+/** True only when the approved plan still reflects the live decision set — false the instant any decision changes. */
+export function isPlanCurrent(
+  plan: CleanupPlanRecord | undefined,
+  pinnedCommit: string,
+  currentDecisionsFingerprint: string
+): boolean {
+  return Boolean(
+    plan &&
+      plan.status === "approved" &&
+      plan.pinnedCommit === pinnedCommit &&
+      plan.decisionsFingerprint === currentDecisionsFingerprint
+  );
 }

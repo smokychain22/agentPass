@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { approvePlan } from "@/lib/user-directed/cleanup-plan-store";
+import { computeDecisionsFingerprint, listFindingDecisions } from "@/lib/user-directed/decision-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -20,10 +21,13 @@ export async function POST(request: Request) {
   }
 
   try {
+    const currentDecisions = await listFindingDecisions(body.scanId);
+    const decisionsFingerprint = computeDecisionsFingerprint(currentDecisions);
     const plan = await approvePlan({
       scanId: body.scanId,
       pinnedCommit: body.pinnedCommit,
       includedFindingIds: body.includeFindingIds ?? [],
+      decisionsFingerprint,
     });
     return NextResponse.json({ ok: true, plan });
   } catch (err) {

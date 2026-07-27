@@ -20,13 +20,16 @@ import { canOpenResults } from "../src/lib/workflow/results-readiness";
 import {
   saveFindingDecision,
   listFindingDecisions,
+  computeDecisionsFingerprint,
 } from "../src/lib/user-directed/decision-store";
 import {
   saveDraftPlan,
   approvePlan,
   getPlanState,
   isPlanApprovedForCommit,
+  isPlanCurrent,
 } from "../src/lib/user-directed/cleanup-plan-store";
+import { computeCreateCleanupPrReadiness } from "../src/lib/workflow/create-cleanup-pr-readiness";
 import { buildFindingCardActions } from "../src/lib/user-directed/finding-card-actions";
 
 function finding(overrides: Partial<Finding>): Finding {
@@ -151,12 +154,16 @@ async function testDecisionPersistence() {
 async function testCleanupPlanApproval() {
   const scanId = "scan_plan_test";
   const commit = "commit_v1";
+  const fingerprintV1 = computeDecisionsFingerprint([
+    { scanId, findingId: "fnd_a", decision: "selected", decisionTimestamp: "t1" },
+  ]);
 
   const draft = await saveDraftPlan({
     scanId,
     pinnedCommit: commit,
     includedFindingIds: ["fnd_a"],
     excludedFindingIds: [],
+    decisionsFingerprint: fingerprintV1,
   });
   assert.equal(draft.status, "draft");
   assert.equal(isPlanApprovedForCommit(draft, commit), false);
@@ -165,23 +172,52 @@ async function testCleanupPlanApproval() {
     scanId,
     pinnedCommit: commit,
     includedFindingIds: ["fnd_a"],
+    decisionsFingerprint: fingerprintV1,
   });
   assert.equal(approved.status, "approved");
   assert.equal(isPlanApprovedForCommit(approved, commit), true);
+  assert.equal(isPlanCurrent(approved, commit, fingerprintV1), true);
 
   // Approving again with the same selection is idempotent — no state churn.
   const approvedAgain = await approvePlan({
     scanId,
     pinnedCommit: commit,
     includedFindingIds: ["fnd_a"],
+    decisionsFingerprint: fingerprintV1,
   });
   assert.equal(approvedAgain.status, "approved");
   assert.equal(approvedAgain.updatedAt, approved.updatedAt, "re-approving the same plan must not bump state");
 
   // A plan for a different, unprepared commit cannot be approved.
   await assert.rejects(
-    approvePlan({ scanId, pinnedCommit: "commit_v2", includedFindingIds: ["fnd_a"] }),
+    approvePlan({
+      scanId,
+      pinnedCommit: "commit_v2",
+      includedFindingIds: ["fnd_a"],
+      decisionsFingerprint: fingerprintV1,
+    }),
     /prepared for this commit/
+  );
+
+  // A decision changing after approval must be detectable as "not current"
+  // (superseded) purely from persisted state — the client must never be
+  // able to disagree with this by keeping stale local state.
+  const fingerprintV2 = computeDecisionsFingerprint([
+    { scanId, findingId: "fnd_a", decision: "kept", decisionTimestamp: "t2" },
+  ]);
+  assert.equal(
+    isPlanCurrent(approved, commit, fingerprintV2),
+    false,
+    "a changed decision must make the previously-approved plan stale"
+  );
+  await assert.rejects(
+    approvePlan({
+      scanId,
+      pinnedCommit: commit,
+      includedFindingIds: ["fnd_a"],
+      decisionsFingerprint: fingerprintV2,
+    }),
+    /decision changed/
   );
 
   const stored = await getPlanState(scanId);
@@ -290,6 +326,79 @@ function testEveryActionHasARealConsequenceAndDecision() {
   }
 }
 
+// --- Authoritative Create-Cleanup-PR readiness selector ---------------------
+
+function baseReadinessInput() {
+  return {
+    scanComplete: true,
+    findingsReady: true,
+    findingsError: false,
+    analyzedCommit: "abc123",
+    activeCommit: "abc123",
+    eligibleSelectedCount: 2,
+    unresolvedRequiredCount: 0,
+    planApproved: true,
+    planCurrent: true,
+    planSuperseded: false,
+    githubWriteCapable: true,
+  };
+}
+
+function testCreateCleanupPrReadiness() {
+  const fullyReady = computeCreateCleanupPrReadiness(baseReadinessInput());
+  assert.equal(fullyReady.unlocked, true, "every condition satisfied must unlock");
+  assert.deepEqual(fullyReady.reasons, []);
+
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), scanComplete: false }).unlocked,
+    false,
+    "incomplete scan must lock the stage"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), findingsReady: false }).unlocked,
+    false,
+    "unpersisted findings must lock the stage"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), analyzedCommit: "old", activeCommit: "new" })
+      .unlocked,
+    false,
+    "a stale analyzed commit must lock the stage"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), eligibleSelectedCount: 0 }).unlocked,
+    false,
+    "no selected findings must lock the stage"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), unresolvedRequiredCount: 1 }).unlocked,
+    false,
+    "an unresolved required decision must lock the stage"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), planApproved: false }).unlocked,
+    false,
+    "an unapproved plan must lock the stage"
+  );
+  // The core "do not rely on a stale boolean" requirement: even with
+  // planApproved true, a superseded/non-current plan must still lock.
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), planSuperseded: true }).unlocked,
+    false,
+    "a superseded plan must lock the stage even if 'approved' is still true"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), planCurrent: false }).unlocked,
+    false,
+    "a non-current plan must lock the stage even if 'approved' is still true"
+  );
+  assert.equal(
+    computeCreateCleanupPrReadiness({ ...baseReadinessInput(), githubWriteCapable: false }).unlocked,
+    false,
+    "missing GitHub write capability must lock the stage"
+  );
+}
+
 async function main() {
   await testCanOpenResults();
   await testDecisionPersistence();
@@ -300,6 +409,7 @@ async function main() {
   testUncertainFindingActions();
   testNoFakeVerifyActions();
   testEveryActionHasARealConsequenceAndDecision();
+  testCreateCleanupPrReadiness();
   console.log("repodiet-workflow-repair.test.ts passed");
 }
 

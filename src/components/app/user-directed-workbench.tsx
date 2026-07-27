@@ -38,6 +38,7 @@ import { plainLanguageWhy } from "@/lib/findings/plain-language";
 import { buildFindingCardActions, type FindingCardAction } from "@/lib/user-directed/finding-card-actions";
 import type { FindingDecisionRecord } from "@/lib/user-directed/decision-store";
 import type { Finding } from "@/lib/findings/types";
+import { computeCreateCleanupPrReadiness } from "@/lib/workflow/create-cleanup-pr-readiness";
 import type {
   DynamicSignedQuote,
   PaymentChannelChoice,
@@ -124,6 +125,21 @@ export function UserDirectedWorkbench({
   const [plans, setPlans] = useState<TransformationPlan[]>([]);
   const [excludedFindingIds, setExcludedFindingIds] = useState<string[]>([]);
   const [decisions, setDecisions] = useState<Record<string, FindingDecisionRecord>>({});
+  const [decisionPending, setDecisionPending] = useState<Record<string, boolean>>({});
+  const [decisionErrors, setDecisionErrors] = useState<Record<string, string>>({});
+  const [planStatus, setPlanStatus] = useState<{
+    approved: boolean;
+    current: boolean;
+    superseded: boolean;
+  } | null>(null);
+  const [githubCapability, setGithubCapability] = useState<{
+    checked: boolean;
+    canCreatePullRequest: boolean;
+  }>({ checked: false, canCreatePullRequest: false });
+  const [githubConnectLoading, setGithubConnectLoading] = useState(false);
+  const [githubConnectError, setGithubConnectError] = useState<string | null>(null);
+  const [approvingPlan, setApprovingPlan] = useState(false);
+  const [approvePlanError, setApprovePlanError] = useState<string | null>(null);
   const [planSummary, setPlanSummary] = useState<{
     deleteCount: number;
     consolidateCount: number;
@@ -196,6 +212,41 @@ export function UserDirectedWorkbench({
     [flatFindings]
   );
 
+  const unresolvedRequiredCount = useMemo(
+    () =>
+      allStatusFindings.filter(
+        ({ finding, status }) => status === "Needs your review" && !decisions[finding.id]
+      ).length,
+    [allStatusFindings, decisions]
+  );
+
+  const createCleanupPrReadiness = useMemo(
+    () =>
+      computeCreateCleanupPrReadiness({
+        scanComplete:
+          scanState === "complete_with_findings" || scanState === "complete_with_zero_findings",
+        findingsReady: Boolean(findings),
+        findingsError: scanState === "failed" || scanState === "unavailable",
+        analyzedCommit: findings?.repo.commitSha ?? null,
+        activeCommit: session.scanResult?.repo?.commitSha ?? null,
+        eligibleSelectedCount: eligibleFindings.length,
+        unresolvedRequiredCount,
+        planApproved: Boolean(planStatus?.approved),
+        planCurrent: Boolean(planStatus?.current),
+        planSuperseded: Boolean(planStatus?.superseded),
+        githubWriteCapable: githubCapability.canCreatePullRequest,
+      }),
+    [
+      scanState,
+      findings,
+      session.scanResult?.repo?.commitSha,
+      eligibleFindings.length,
+      unresolvedRequiredCount,
+      planStatus,
+      githubCapability.canCreatePullRequest,
+    ]
+  );
+
   const filteredResults = useMemo(() => {
     const q = resultsFilter.trim().toLowerCase();
     const statusMap: Record<typeof resultsStatusFilter, string | null> = {
@@ -263,6 +314,120 @@ export function UserDirectedWorkbench({
     };
   }, [scanId]);
 
+  // Authoritative — recomputed server-side from the persisted plan and the
+  // live decision set every time. Never trust a locally-remembered "approved" flag.
+  const refreshPlanStatus = useCallback(async () => {
+    if (!scanId) return;
+    try {
+      const res = await fetch(
+        `/api/user-directed/cleanup-plan-status?scanId=${encodeURIComponent(scanId)}&pinnedCommit=${encodeURIComponent(pinnedCommit)}`
+      );
+      const data = (await res.json()) as {
+        ok?: boolean;
+        approved?: boolean;
+        current?: boolean;
+        superseded?: boolean;
+      };
+      if (!res.ok || !data.ok) {
+        setPlanStatus(null);
+        return;
+      }
+      setPlanStatus({
+        approved: Boolean(data.approved),
+        current: Boolean(data.current),
+        superseded: Boolean(data.superseded),
+      });
+    } catch {
+      setPlanStatus(null);
+    }
+  }, [scanId, pinnedCommit]);
+
+  useEffect(() => {
+    void refreshPlanStatus();
+  }, [refreshPlanStatus]);
+
+  // Real, repository-scoped production capability check — never assume
+  // GitHub write access from a generic "session connected" flag.
+  useEffect(() => {
+    if (!repository) return;
+    let cancelled = false;
+    void fetch("/api/okx/intake/repository", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repositoryUrl: `https://github.com/${repository}` }),
+    })
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; canCreatePullRequest?: boolean }) => {
+        if (cancelled) return;
+        setGithubCapability({
+          checked: true,
+          canCreatePullRequest: Boolean(data.ok && data.canCreatePullRequest),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setGithubCapability({ checked: true, canCreatePullRequest: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repository]);
+
+  async function connectGithubForCleanup() {
+    if (!repository) return;
+    setGithubConnectLoading(true);
+    setGithubConnectError(null);
+    try {
+      const res = await fetch("/api/github/install/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repositoryFullName: repository,
+          scanId,
+          returnPath: `/app?tab=patch`,
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; url?: string; error?: string };
+      if (!res.ok || !data.ok || !data.url) {
+        throw new Error(data.error || "Could not start the GitHub connection flow.");
+      }
+      window.location.href = data.url;
+    } catch (err) {
+      setGithubConnectError(
+        err instanceof Error ? err.message : "Could not start the GitHub connection flow."
+      );
+    } finally {
+      setGithubConnectLoading(false);
+    }
+  }
+
+  async function approveCleanupPlan() {
+    if (!scanId || !pinnedCommit) return;
+    setApprovingPlan(true);
+    setApprovePlanError(null);
+    try {
+      const res = await fetch("/api/user-directed/approve-cleanup-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scanId,
+          pinnedCommit,
+          includeFindingIds: eligibleFindings.map((f) => f.id),
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Could not approve the cleanup plan.");
+      }
+      await refreshPlanStatus();
+    } catch (err) {
+      setApprovePlanError(
+        err instanceof Error ? err.message : "Could not approve the cleanup plan."
+      );
+    } finally {
+      setApprovingPlan(false);
+    }
+  }
+
   useEffect(() => {
     if (!scanId) return;
     let cancelled = false;
@@ -329,6 +494,7 @@ export function UserDirectedWorkbench({
       setScopeReviewed(true);
       setStage("plan");
       setPlanOpen((s) => ({ ...s, selected: true, patch: true }));
+      await refreshPlanStatus();
     } catch (err) {
       setPlans([]);
       setPreviewError(err instanceof Error ? err.message : "Prepare failed.");
@@ -381,9 +547,24 @@ export function UserDirectedWorkbench({
     }
   }
 
-  /** Idempotent — clicking the same action twice persists the same decision, no duplicates. */
+  /**
+   * Idempotent, and never claims success from client-only state. The
+   * confirmed decision, exclusion set, and any dependent plan/analysis calls
+   * only proceed once the backend has actually persisted the decision.
+   */
   async function recordDecision(finding: Finding, action: FindingCardAction) {
     if (!scanId) return;
+    if (decisionPending[finding.id]) return; // one mutation in flight per finding at a time
+
+    setDecisionPending((prev) => ({ ...prev, [finding.id]: true }));
+    setDecisionErrors((prev) => {
+      if (!(finding.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[finding.id];
+      return next;
+    });
+
+    let saved: FindingDecisionRecord | undefined;
     try {
       const res = await fetch("/api/user-directed/decisions", {
         method: "POST",
@@ -398,13 +579,30 @@ export function UserDirectedWorkbench({
           filesToKeep: action.filesToKeep,
         }),
       });
-      const data = (await res.json()) as { ok?: boolean; decision?: FindingDecisionRecord };
-      if (data.ok && data.decision) {
-        setDecisions((prev) => ({ ...prev, [finding.id]: data.decision! }));
+      const data = (await res.json()) as {
+        ok?: boolean;
+        decision?: FindingDecisionRecord;
+        error?: string;
+      };
+      if (!res.ok || !data.ok || !data.decision) {
+        throw new Error(data.error || "This decision was not saved. Try again.");
       }
+      saved = data.decision;
     } catch {
-      /* Decision UI still reflects local state below even if persistence briefly fails. */
+      // Persistence failed: do not touch the confirmed decision, the
+      // exclusion set, or any plan/analysis state. Only surface a retryable
+      // error for this finding.
+      setDecisionPending((prev) => ({ ...prev, [finding.id]: false }));
+      setDecisionErrors((prev) => ({
+        ...prev,
+        [finding.id]: "This decision was not saved. Try again.",
+      }));
+      return;
     }
+
+    setDecisions((prev) => ({ ...prev, [finding.id]: saved! }));
+    setDecisionPending((prev) => ({ ...prev, [finding.id]: false }));
+    setPlanStatus(null); // any approved plan may no longer reflect the new decision set
 
     if (action.decision === "excluded" || action.decision === "kept") {
       setExcludedFindingIds((prev) => Array.from(new Set([...prev, finding.id])));
@@ -798,7 +996,11 @@ export function UserDirectedWorkbench({
                           <code className="text-xs">{f.files.join(", ") || f.title}</code>
                         </p>
                         <p className="text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
-                        {currentDecision ? (
+                        {decisionPending[f.id] ? (
+                          <p className="text-xs text-muted-foreground">Saving…</p>
+                        ) : decisionErrors[f.id] ? (
+                          <p className="text-xs text-destructive">{decisionErrors[f.id]}</p>
+                        ) : currentDecision ? (
                           <p className="text-xs font-medium text-signal">
                             Decision saved:{" "}
                             {cardActions.find((a) => a.decision === currentDecision.decision)?.label ??
@@ -810,7 +1012,8 @@ export function UserDirectedWorkbench({
                             <button
                               key={a.id}
                               type="button"
-                              className={`rounded border px-2 py-1 text-xs ${
+                              disabled={Boolean(decisionPending[f.id])}
+                              className={`rounded border px-2 py-1 text-xs disabled:opacity-50 ${
                                 a.kind === "primary"
                                   ? "border-electric/60 bg-electric/10 font-medium"
                                   : "border-border/50"
@@ -960,18 +1163,78 @@ export function UserDirectedWorkbench({
 
       {stage === "plan" ? (
         <section className="space-y-3" aria-label="Plan">
-          {planSummary ? (
-            <div className="rounded-md border border-border/50 bg-card/30 p-4 text-sm">
-              <p className="font-medium">Combined cleanup plan</p>
-              <p className="mt-1 text-muted-foreground">
-                Delete {planSummary.deleteCount} · consolidate {planSummary.consolidateCount} ·
-                update refs {planSummary.referenceUpdateCount} · edits {planSummary.editCount}
+          <div className="rounded-md border border-electric/40 bg-electric/5 p-4 text-sm space-y-3">
+            <p className="font-medium">Cleanup plan</p>
+            <dl className="grid gap-1 text-xs sm:grid-cols-2">
+              <div>
+                <dt className="text-muted-foreground">Repository</dt>
+                <dd className="font-mono">{repository || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Pinned commit</dt>
+                <dd className="font-mono">{pinnedCommit ? pinnedCommit.slice(0, 7) : "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Selected fixes</dt>
+                <dd>{eligibleFindings.length}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Excluded / kept</dt>
+                <dd>{excludedFindingIds.length}</dd>
+              </div>
+            </dl>
+            {planSummary ? (
+              <p className="text-muted-foreground">
+                Files expected to change: delete {planSummary.deleteCount} · consolidate{" "}
+                {planSummary.consolidateCount} · update refs {planSummary.referenceUpdateCount} ·
+                edits {planSummary.editCount}
               </p>
-            </div>
-          ) : null}
+            ) : (
+              <p className="text-muted-foreground">
+                Prepare the plan below to see exactly which files will change.
+              </p>
+            )}
+            {unresolvedRequiredCount > 0 ? (
+              <p className="text-amber-400">
+                {unresolvedRequiredCount} finding(s) still need your decision before the plan can
+                be approved.
+              </p>
+            ) : null}
 
-          <Expandable
-            title="Selected work"
+            {planStatus?.approved && planStatus.current ? (
+              <p className="font-medium text-signal">Cleanup plan approved</p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                  disabled={
+                    approvingPlan ||
+                    !planSummary ||
+                    unresolvedRequiredCount > 0 ||
+                    eligibleFindings.length < 1
+                  }
+                  onClick={() => void approveCleanupPlan()}
+                >
+                  {approvingPlan ? "Approving…" : "Approve cleanup plan"}
+                </button>
+                {planStatus?.approved && !planStatus.current ? (
+                  <span className="text-xs text-amber-400">
+                    A decision changed since this plan was approved — prepare and approve again.
+                  </span>
+                ) : null}
+                {approvePlanError ? (
+                  <span className="text-xs text-destructive">{approvePlanError}</span>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Technical details</summary>
+            <div className="mt-2 space-y-3">
+              <Expandable
+                title="Selected work"
             open={planOpen.selected}
             onToggle={() => setPlanOpen((s) => ({ ...s, selected: !s.selected }))}
           >
@@ -1034,38 +1297,106 @@ export function UserDirectedWorkbench({
             </ul>
           </Expandable>
 
-          <Expandable
-            title="Rollback"
-            open={planOpen.rollback}
-            onToggle={() => setPlanOpen((s) => ({ ...s, rollback: !s.rollback }))}
-          >
-            <p className="text-sm text-muted-foreground">
-              {preview?.rollbackPlan ??
-                executablePlan?.rollbackPlan ??
-                "Close or revert the delivery PR to restore the pinned commit."}
-            </p>
-          </Expandable>
+              <Expandable
+                title="Rollback"
+                open={planOpen.rollback}
+                onToggle={() => setPlanOpen((s) => ({ ...s, rollback: !s.rollback }))}
+              >
+                <p className="text-sm text-muted-foreground">
+                  {preview?.rollbackPlan ??
+                    executablePlan?.rollbackPlan ??
+                    "Close or revert the delivery PR to restore the pinned commit."}
+                </p>
+              </Expandable>
+            </div>
+          </details>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-              disabled={!executablePlan && !preview}
-              onClick={() => {
-                if (!preview) void generatePreview();
-                else void createQuote();
-              }}
-            >
-              Continue to Pay
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
-              onClick={() => setStage("review")}
-            >
-              Back to Review
-            </button>
-          </div>
+          {planStatus?.approved && planStatus.current ? (
+            <div className="rounded-md border border-border/50 bg-card/30 p-4 text-sm space-y-3">
+              <p className="font-medium">Create cleanup pull request</p>
+              <dl className="grid gap-1 text-xs sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted-foreground">Repository</dt>
+                  <dd className="font-mono">{repository || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Branch</dt>
+                  <dd className="font-mono">{session.scanResult?.repo?.branch || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Selected cleanup</dt>
+                  <dd>{eligibleFindings.length} fix(es)</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Deliverable</dt>
+                  <dd>One tested GitHub pull request</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Price</dt>
+                  <dd>1 USD₮0</dd>
+                </div>
+              </dl>
+
+              {!githubCapability.canCreatePullRequest ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-amber-400">
+                    RepoDiet does not yet have permission to open a pull request on this
+                    repository.
+                  </p>
+                  <button
+                    type="button"
+                    className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                    disabled={githubConnectLoading}
+                    onClick={() => void connectGithubForCleanup()}
+                  >
+                    {githubConnectLoading ? "Connecting…" : "Connect GitHub to create the pull request"}
+                  </button>
+                  {githubConnectError ? (
+                    <p className="text-xs text-destructive">{githubConnectError}</p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md bg-electric px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+                    disabled={!createCleanupPrReadiness.unlocked}
+                    title={createCleanupPrReadiness.reasons.join(" ")}
+                    onClick={() => {
+                      if (!preview) void generatePreview();
+                      else void createQuote();
+                    }}
+                  >
+                    Approve and create cleanup PR
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                    onClick={() => setStage("review")}
+                  >
+                    Back to findings
+                  </button>
+                </div>
+              )}
+              {!createCleanupPrReadiness.unlocked && githubCapability.canCreatePullRequest ? (
+                <ul className="list-disc pl-4 text-xs text-muted-foreground">
+                  {createCleanupPrReadiness.reasons.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-border/50 px-3 py-1.5 text-sm"
+                onClick={() => setStage("review")}
+              >
+                Back to findings
+              </button>
+            </div>
+          )}
         </section>
       ) : null}
 
