@@ -19,6 +19,8 @@ export interface FindingCardAction {
   expandsToIndividualFiles?: boolean;
   /** Marks this decision as an explicit override of RepoDiet's own recommendation. */
   isOverride?: boolean;
+  /** Triggers a real bounded automated verification instead of persisting this decision directly (see Command 3E, Part 3/6). */
+  triggersVerification?: boolean;
 }
 
 function shortName(path: string): string {
@@ -48,9 +50,17 @@ export function buildFindingCardActions(
     const path = files[0];
     return [
       {
+        id: "verify_automatically",
+        label: "Verify automatically",
+        kind: "primary",
+        decision: "verification_requested",
+        triggersVerification: true,
+        consequence: `RepoDiet re-searches the repository for real static and dynamic references to ${shortName(path)}. If none are found it becomes a recommended fix; otherwise RepoDiet leaves it unchanged.`,
+      },
+      {
         id: "keep_recommended",
         label: "Leave unchanged — recommended",
-        kind: "primary",
+        kind: "secondary",
         decision: "kept",
         filesToKeep: files,
         consequence: `${shortName(path)} stays exactly as it is. RepoDiet keeps this out of the cleanup plan until it can verify removal is safe.`,
@@ -58,7 +68,7 @@ export function buildFindingCardActions(
       {
         id: "remove_anyway",
         label: "Remove this file anyway",
-        kind: "secondary",
+        kind: "additional",
         decision: "selected",
         filesToRemove: files,
         isOverride: true,
