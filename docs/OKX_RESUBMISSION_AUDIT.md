@@ -527,3 +527,84 @@ Confirmed live: `a2aRuntimeReady:true`, `degradedReasons:[]`, `agentOnline:true`
 5. Complete one fresh 0.03 USD₮0 A2MCP canary and prove identical replay causes no second
    settlement or scan.
 6. Resubmit ASP 9636 with this evidence attached.
+
+---
+
+## Final audit pass — listing rejection root cause (2026-07-27)
+
+### Live listing status at time of audit
+
+`onchainos agent service-list --agent-id 9636` reported `approvalStatus: 6`
+(`get-my-agents` → `approvalDisplayStatus: 5`, "Listing rejected").
+
+Exact rejection text, preserved verbatim:
+
+> We were unable to reach your Agent's service endpoint during testing. This
+> may be because the service hasn't been deployed, has gone offline, or
+> there's an issue with the network configuration.
+>
+> Please follow these steps to make changes:
+> 1. Check your service's deployment status and make sure the endpoint is accessible.
+> 2. Re-verify that your service is working, then resubmit.
+
+Registered endpoints at audit time:
+
+| Service | Type | Registered endpoint |
+|---|---|---|
+| 37347 | A2MCP | `https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage` |
+| 37348 | A2A | `null` (XMTP to `0x00DbDBb36b71ACE0E1fc517056F376F977d8256E`) |
+
+### Cause A — registered endpoint returned 405 to reachability probes (FIXED)
+
+The A2MCP route exported only `POST`. A plain `GET`/`HEAD` fell through to
+Next.js's default **405 Method Not Allowed with an empty body**, which is
+indistinguishable from a service that was never deployed.
+
+Measured against production before the fix:
+
+```
+GET  /api/a2mcp/quick-triage -> 405  (2.078s)
+HEAD /api/a2mcp/quick-triage -> 405  (0.470s)
+POST /api/a2mcp/quick-triage -> 402  (0.552s)  valid x402 challenge
+```
+
+The paid rail was healthy throughout — only the probe surface was absent.
+`GET`/`HEAD` now return a static 200 service descriptor that performs no
+billable work: no repository fetch, no scan, no quote, no revenue, and no
+x402 challenge. Paid execution remains exclusively on `POST`. Covered by
+`test/a2mcp-endpoint-liveness.test.ts` (7 tests), including assertions that
+a probe never returns 402, never mints a quote, and never emits the seller
+wallet or communication signer.
+
+### Cause B — A2A runtime is workstation-hosted (NOT FIXED — requires a hosting decision)
+
+The A2A listener for service 37348 is not hosted. It runs as ordinary
+processes on a developer workstation, confirmed by process inspection during
+this audit:
+
+| PID | Process |
+|---|---|
+| 27180, 22840 | `@okxweb3/a2a-node/dist/cli.js run` (XMTP listeners) |
+| 34736, 28572 | `tsx scripts/okx-seller-heartbeat-daemon.ts` |
+
+`scripts/okx-seller-heartbeat-daemon.ts` posts a heartbeat every 60s with a
+90s TTL. Consequently `agentRuntime.heartbeatStatus: "fresh"` on
+`/api/okx/health` attests only that **that workstation is currently awake**.
+Within 90 seconds of it sleeping, disconnecting, or shutting down, Agent 9636
+stops answering A2A traffic entirely.
+
+This matches the "**has gone offline**" clause of the rejection directly, and
+it is a genuine availability defect independent of Cause A: a reviewer
+probing outside the workstation's uptime window would find the agent
+unreachable no matter how correct the code is.
+
+This cannot be resolved in application code. It requires deploying the A2A
+listener and heartbeat daemon to an always-on host. Vercel is unsuitable for
+this specific component — the listener is a long-lived XMTP subscriber, not a
+request-scoped serverless function.
+
+### Status
+
+Cause A is fixed, tested, and deployed. Cause B is documented and awaiting an
+explicit hosting decision. **No listing mutation, reactivation, or resubmission
+was performed during this audit**, per the marketplace-freeze instruction.
