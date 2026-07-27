@@ -125,6 +125,7 @@ export function UserDirectedWorkbench({
   const [plans, setPlans] = useState<TransformationPlan[]>([]);
   const [decisions, setDecisions] = useState<Record<string, FindingDecisionRecord>>({});
   const [decisionPending, setDecisionPending] = useState<Record<string, boolean>>({});
+  const [verifyingFindingIds, setVerifyingFindingIds] = useState<Record<string, boolean>>({});
   const [decisionErrors, setDecisionErrors] = useState<Record<string, string>>({});
   const [planStatus, setPlanStatus] = useState<{
     approved: boolean;
@@ -638,6 +639,11 @@ export function UserDirectedWorkbench({
       return;
     }
 
+    if (action.triggersVerification) {
+      await verifyFinding(finding);
+      return;
+    }
+
     if (
       action.requiresConfirmation &&
       !window.confirm(action.confirmationText ?? "Are you sure?")
@@ -707,6 +713,53 @@ export function UserDirectedWorkbench({
         actionType: "INSPECT",
         userInstruction: `Verify deletion for ${finding.files[0] ?? finding.title}`,
       });
+    }
+  }
+
+  /**
+   * Runs a real bounded automated verification (Command 3E, Part 3/6): the
+   * server re-clones the pinned commit and re-searches for actual static
+   * and dynamic references before deciding. Never claims a result the
+   * server hasn't confirmed, and never leaves the finding stuck mid-flight
+   * — it always resolves to a real final decision.
+   */
+  async function verifyFinding(finding: Finding) {
+    if (!scanId) return;
+    if (decisionPending[finding.id]) return;
+
+    setDecisionPending((prev) => ({ ...prev, [finding.id]: true }));
+    setVerifyingFindingIds((prev) => ({ ...prev, [finding.id]: true }));
+    setDecisionErrors((prev) => {
+      if (!(finding.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[finding.id];
+      return next;
+    });
+
+    try {
+      const res = await fetch("/api/user-directed/verify-finding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scanId, findingId: finding.id }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        decision?: FindingDecisionRecord;
+        error?: string;
+      };
+      if (!res.ok || !data.ok || !data.decision) {
+        throw new Error(data.error || "Verification failed. Try again.");
+      }
+      setDecisions((prev) => ({ ...prev, [finding.id]: data.decision! }));
+      setPlanStatus(null);
+    } catch (err) {
+      setDecisionErrors((prev) => ({
+        ...prev,
+        [finding.id]: err instanceof Error ? err.message : "Verification failed. Try again.",
+      }));
+    } finally {
+      setDecisionPending((prev) => ({ ...prev, [finding.id]: false }));
+      setVerifyingFindingIds((prev) => ({ ...prev, [finding.id]: false }));
     }
   }
 
@@ -1201,7 +1254,11 @@ export function UserDirectedWorkbench({
                         ) : (
                           <>
                             {decisionPending[f.id] ? (
-                              <p className="text-xs text-muted-foreground">Saving decision…</p>
+                              <p className="text-xs text-muted-foreground">
+                                {verifyingFindingIds[f.id]
+                                  ? "RepoDiet is verifying this automatically…"
+                                  : "Saving decision…"}
+                              </p>
                             ) : decisionErrors[f.id] ? (
                               <p className="text-xs text-destructive">{decisionErrors[f.id]}</p>
                             ) : currentDecision ? (

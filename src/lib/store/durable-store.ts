@@ -108,6 +108,7 @@ export async function withDurableDb<T>(
       a2mcp_payment_identity: {},
       finding_decisions: {},
       cleanup_plan_state: {},
+      finding_verifications: {},
     };
     return fn(db);
   });
