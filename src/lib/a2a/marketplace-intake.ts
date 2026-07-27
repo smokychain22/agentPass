@@ -96,6 +96,7 @@ export function buildMarketplaceIntakeResponse(requestId: string) {
     a2aServiceId: String(identity.a2aServiceId),
     a2mcpServiceId: String(identity.a2mcpServiceId),
     service: "RepoDiet — Verified Repository Cleanup",
+    registeredDefaultPrice: "negotiated (default 1 USD₮0)",
     message: IMMEDIATE_TASK_ACKNOWLEDGEMENT,
     messageShort: IMMEDIATE_TASK_ACKNOWLEDGEMENT_SHORT,
     supported: {

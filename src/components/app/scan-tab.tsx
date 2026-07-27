@@ -25,6 +25,7 @@ import { ScanEmptyIllustration } from "@/components/app/ui/scan-empty-illustrati
 import { FeedbackBanner, useFeedbackToast } from "@/components/app/ui/feedback-banner";
 import { ProjectRootSelectionPanel } from "@/components/app/scan/project-root-selection-panel";
 import { FINDINGS_STEPS } from "@/lib/findings/client";
+import { canOpenResults } from "@/lib/workflow/results-readiness";
 
 const LOADING_PHASES: ScanPhase[] = [
   "validating",
@@ -58,6 +59,7 @@ export function ScanTab() {
     findingsAnalysisPhase,
     findingsAnalysisProgress,
     findingsAnalysisError,
+    retryFindingsAnalysis,
   } = useAppSession();
   const { show, Toast } = useFeedbackToast();
   // Blank form until the user pastes/types a URL or starts a demo — do not hydrate from prior session.
@@ -149,6 +151,13 @@ export function ScanTab() {
     findingsAnalysisPhase !== "idle" &&
     findingsAnalysisPhase !== "failed";
   const showSuccess = phase === "complete" && Boolean(result);
+  const resultsReady = canOpenResults({
+    scan: displayResult ? { phase: phase as ScanPhase | "idle", repo: displayResult.repo } : null,
+    findings,
+    findingsAnalysisPhase,
+    findingsAnalysisError,
+    activeRepository: session.scanResult?.repo ? { commitSha: session.scanResult.repo.commitSha } : null,
+  });
   const previousScanLabel =
     !result &&
     !isLoading &&
@@ -323,7 +332,13 @@ export function ScanTab() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-semibold text-signal">
-                  {isAnalysingFindings ? "Analysing repository findings" : "Analysis complete"}
+                  {findingsAnalysisError
+                    ? "Repository connected — findings analysis failed"
+                    : isAnalysingFindings
+                      ? "Analysing repository findings"
+                      : resultsReady
+                        ? "Analysis complete"
+                        : "Analysing repository findings"}
                 </p>
                 <p className="mt-1 font-mono text-xs text-muted-foreground">
                   {displayResult.repo.owner}/{displayResult.repo.name} · {displayResult.repo.branch}
@@ -357,13 +372,22 @@ export function ScanTab() {
                   <p className="mt-2 text-xs text-amber-400">{displayResult.warnings.join(" · ")}</p>
                 )}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button asChild disabled={!session.projectRootConfirmed}>
-                  <Link href="/app?tab=findings">
-                    Open Results
-                    <ArrowRight className="h-4 w-4" aria-hidden />
-                  </Link>
-                </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {resultsReady ? (
+                  <Button asChild disabled={!session.projectRootConfirmed}>
+                    <Link href="/app?tab=findings">
+                      Open Results
+                      <ArrowRight className="h-4 w-4" aria-hidden />
+                    </Link>
+                  </Button>
+                ) : findingsAnalysisError ? (
+                  <Button onClick={retryFindingsAnalysis}>Retry analysis</Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    RepoDiet is analyzing your repository. Results will appear when verification is
+                    complete.
+                  </p>
+                )}
                 <Button variant="secondary" onClick={startFresh}>
                   Analyze another repository
                 </Button>

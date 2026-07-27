@@ -33,13 +33,11 @@ import {
 import { buildScanOutcomeSummary } from "@/lib/user-directed/scan-outcome-summary";
 import { flattenFindingsPayload } from "@/lib/findings/selection";
 import { isCleanupEligible } from "@/lib/findings/cleanup-eligibility";
-import { buildGuidedReviewPrompt } from "@/lib/user-directed/guided-review";
-import {
-  outcomeLabelForFinding,
-  recommendedActionForFinding,
-  resultLabelForAction,
-} from "@/lib/user-directed/recommended-action";
+import { outcomeLabelForFinding } from "@/lib/user-directed/recommended-action";
 import { plainLanguageWhy } from "@/lib/findings/plain-language";
+import { buildFindingCardActions, type FindingCardAction } from "@/lib/user-directed/finding-card-actions";
+import type { FindingDecisionRecord } from "@/lib/user-directed/decision-store";
+import type { Finding } from "@/lib/findings/types";
 import type {
   DynamicSignedQuote,
   PaymentChannelChoice,
@@ -125,6 +123,7 @@ export function UserDirectedWorkbench({
   const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
   const [plans, setPlans] = useState<TransformationPlan[]>([]);
   const [excludedFindingIds, setExcludedFindingIds] = useState<string[]>([]);
+  const [decisions, setDecisions] = useState<Record<string, FindingDecisionRecord>>({});
   const [planSummary, setPlanSummary] = useState<{
     deleteCount: number;
     consolidateCount: number;
@@ -239,6 +238,30 @@ export function UserDirectedWorkbench({
     },
     [invalidateQuoteAndPreview]
   );
+
+  // Decisions must survive refresh, browser restart, and re-navigation — hydrate
+  // from durable storage instead of trusting only in-memory state.
+  useEffect(() => {
+    if (!scanId) return;
+    let cancelled = false;
+    void fetch(`/api/user-directed/decisions?scanId=${encodeURIComponent(scanId)}`)
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; decisions?: FindingDecisionRecord[] }) => {
+        if (cancelled || !data.ok || !data.decisions) return;
+        const byId: Record<string, FindingDecisionRecord> = {};
+        const excluded: string[] = [];
+        for (const d of data.decisions) {
+          byId[d.findingId] = d;
+          if (d.decision === "excluded" || d.decision === "kept") excluded.push(d.findingId);
+        }
+        setDecisions(byId);
+        setExcludedFindingIds((prev) => Array.from(new Set([...prev, ...excluded])));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId]);
 
   useEffect(() => {
     if (!scanId) return;
@@ -355,6 +378,53 @@ export function UserDirectedWorkbench({
       setPreviewError(err instanceof Error ? err.message : "Analyze failed.");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  /** Idempotent — clicking the same action twice persists the same decision, no duplicates. */
+  async function recordDecision(finding: Finding, action: FindingCardAction) {
+    if (!scanId) return;
+    try {
+      const res = await fetch("/api/user-directed/decisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scanId,
+          findingId: finding.id,
+          decision: action.decision,
+          analyzedCommit: pinnedCommit,
+          canonicalFile: action.canonicalFile,
+          filesToRemove: action.filesToRemove,
+          filesToKeep: action.filesToKeep,
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; decision?: FindingDecisionRecord };
+      if (data.ok && data.decision) {
+        setDecisions((prev) => ({ ...prev, [finding.id]: data.decision! }));
+      }
+    } catch {
+      /* Decision UI still reflects local state below even if persistence briefly fails. */
+    }
+
+    if (action.decision === "excluded" || action.decision === "kept") {
+      setExcludedFindingIds((prev) => Array.from(new Set([...prev, finding.id])));
+    } else if (action.decision === "selected") {
+      setExcludedFindingIds((prev) => prev.filter((id) => id !== finding.id));
+    }
+
+    if (finding.type === "duplicate_code" && action.canonicalFile) {
+      setSelectedPathIds((finding.files ?? []).map((p) => `path_${p}`));
+      void analyzeScope({
+        actionType: "CONSOLIDATE_DUPLICATES",
+        canonicalPath: action.canonicalFile,
+        userInstruction: `Use ${action.canonicalFile} as the canonical file and remove the rest`,
+      });
+    } else if (action.id === "remove_anyway") {
+      setSelectedPathIds((finding.files ?? []).map((p) => `path_${p}`));
+      void analyzeScope({
+        actionType: "INSPECT",
+        userInstruction: `Verify deletion for ${finding.files[0] ?? finding.title}`,
+      });
     }
   }
 
@@ -523,13 +593,6 @@ export function UserDirectedWorkbench({
     });
   }
 
-  function toggleExclude(findingId: string) {
-    setExcludedFindingIds((ids) =>
-      ids.includes(findingId) ? ids.filter((id) => id !== findingId) : [...ids, findingId]
-    );
-    invalidateQuoteAndPreview();
-  }
-
   return (
     <div className="space-y-4" data-user-directed-workbench data-session-source={sessionSource}>
       {/*
@@ -666,7 +729,20 @@ export function UserDirectedWorkbench({
 
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/40 bg-card/20 px-3 py-2 text-sm">
                 <span className="text-muted-foreground">
-                  {eligibleFindings.length} selected for cleanup
+                  {(() => {
+                    const decisionValues = Object.values(decisions);
+                    const selectedCount = decisionValues.filter(
+                      (d) => d.decision === "selected" || d.decision === "verified_selected"
+                    ).length;
+                    const keptCount = decisionValues.filter(
+                      (d) => d.decision === "kept" || d.decision === "verified_kept"
+                    ).length;
+                    const reviewCount = flatFindings.filter(
+                      (f) => outcomeStatusLabel(f) === "Needs your review" && !decisions[f.id]
+                    ).length;
+                    const selected = selectedCount || eligibleFindings.length;
+                    return `${selected} fixes selected · ${keptCount} kept · ${reviewCount} needs review`;
+                  })()}
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -697,9 +773,8 @@ export function UserDirectedWorkbench({
                   <p className="text-sm text-muted-foreground">No findings match the current filter.</p>
                 ) : (
                   filteredResults.slice(0, 50).map(({ finding: f, status }) => {
-                    const action = recommendedActionForFinding(f);
-                    const included = !excludedFindingIds.includes(f.id);
-                    const guided = status === "Needs your review" ? buildGuidedReviewPrompt(f) : null;
+                    const cardActions = buildFindingCardActions(f, status);
+                    const currentDecision = decisions[f.id];
                     return (
                       <article
                         key={f.id}
@@ -716,57 +791,38 @@ export function UserDirectedWorkbench({
                                   : "bg-muted-foreground/15 text-muted-foreground"
                             }`}
                           >
-                            {status}
+                            {status === "Needs your review" ? "Needs your decision" : status}
                           </span>
                         </div>
                         <p>
                           <code className="text-xs">{f.files.join(", ") || f.title}</code>
                         </p>
                         <p className="text-xs text-muted-foreground">{plainLanguageWhy(f)}</p>
-                        {status === "Safe to fix" ? (
-                          <p className="text-xs text-muted-foreground">
-                            Proposed: {resultLabelForAction(action, f.files.length || 1)}
+                        {currentDecision ? (
+                          <p className="text-xs font-medium text-signal">
+                            Decision saved:{" "}
+                            {cardActions.find((a) => a.decision === currentDecision.decision)?.label ??
+                              currentDecision.decision}
                           </p>
                         ) : null}
                         <div className="flex flex-wrap gap-2">
-                          {status === "Safe to fix" ? (
+                          {cardActions.map((a) => (
                             <button
+                              key={a.id}
                               type="button"
-                              className="rounded border border-border/50 px-2 py-1 text-xs"
-                              onClick={() => toggleExclude(f.id)}
+                              className={`rounded border px-2 py-1 text-xs ${
+                                a.kind === "primary"
+                                  ? "border-electric/60 bg-electric/10 font-medium"
+                                  : "border-border/50"
+                              } ${currentDecision?.decision === a.decision ? "ring-1 ring-signal" : ""}`}
+                              title={a.consequence}
+                              onClick={() => void recordDecision(f, a)}
                             >
-                              {included ? "Exclude from cleanup" : "Include in cleanup"}
+                              {a.label}
                             </button>
-                          ) : null}
-                          {guided ? (
-                            <>
-                              {guided.choices.map((c) => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  className="rounded border border-border/50 px-2 py-1 text-xs"
-                                  onClick={() => {
-                                    if (c.id === "yes_keep") {
-                                      void analyzeScope({
-                                        actionType: "KEEP",
-                                        userInstruction: `Keep ${guided.path} intentionally`,
-                                      });
-                                    } else if (c.id === "no_verify_deletion") {
-                                      setSelectedPathIds((f.files ?? []).map((p) => `path_${p}`));
-                                      void analyzeScope({
-                                        actionType: "INSPECT",
-                                        userInstruction: `Verify deletion for ${guided.path}`,
-                                      });
-                                    }
-                                  }}
-                                >
-                                  {c.label}
-                                </button>
-                              ))}
-                            </>
-                          ) : null}
+                          ))}
                           <details className="text-xs text-muted-foreground">
-                            <summary className="cursor-pointer">Evidence</summary>
+                            <summary className="cursor-pointer">View evidence</summary>
                             <ul className="mt-1 list-disc pl-4">
                               {(f.evidence.signals ?? []).slice(0, 6).map((s) => (
                                 <li key={s}>{s}</li>

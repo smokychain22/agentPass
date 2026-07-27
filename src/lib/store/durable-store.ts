@@ -106,6 +106,8 @@ export async function withDurableDb<T>(
       a2a_task_audit_index: {},
       a2mcp_payment_executions: {},
       a2mcp_payment_identity: {},
+      finding_decisions: {},
+      cleanup_plan_state: {},
     };
     return fn(db);
   });
