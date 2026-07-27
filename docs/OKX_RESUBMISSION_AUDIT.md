@@ -644,3 +644,84 @@ keyring was copied.
 ### Status
 
 No listing mutation, reactivation, or resubmission was performed.
+
+---
+
+## Pre-resubmission endpoint verification (2026-07-27)
+
+Rejection being addressed, verbatim:
+
+> We were unable to reach your Agent's service endpoint during testing. This
+> may be because the service hasn't been deployed, has gone offline, or
+> there's an issue with the network configuration.
+
+| Item | Value |
+|---|---|
+| Merged SHA | `cab35ce` (PR #102) |
+| Deployment | `dpl_A6rSvqCzoUvdeWDNNQK4DfPGKTr5` (`skillswap-98dzcu0ti`), Ready |
+| Production alias | `https://skillswap-virid-kappa.vercel.app` → that deployment |
+| Registered endpoint (37347) | `https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage` |
+| Endpoint match | Exact — no typo, stale URL, wrong route, or bad protocol |
+
+### DNS / TLS / network path
+
+```
+ssl_verify_result=0   remote_ip=216.198.79.67   num_redirects=0
+final_url=https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage
+```
+
+Valid certificate, public resolution, no redirect, no auth wall, no preview
+password, no deployment protection. Responses are 402/200 — never a 401/403
+or login page.
+
+### Five consecutive external unpaid POST tests
+
+| # | Status | Latency | `PAYMENT-REQUIRED` header |
+|---|---|---|---|
+| 1 | 402 | 0.561s | present |
+| 2 | 402 | 0.517s | present |
+| 3 | 402 | 0.516s | present |
+| 4 | 402 | 0.495s | present |
+| 5 | 402 | 0.482s | present |
+
+**5/5 passed.** No cold-start timeout, no intermittent 5xx.
+
+### Challenge binding (test 1)
+
+```
+x402Version           2
+operation             analyze_repository
+network               eip155:196
+amountMicro           30000
+asset                 0x779ded0c9e1022225f8e0630b35a9b54be713736
+recipient / payTo     0xaa895234c3fc31c40018eef975db6ac79bf87f1a
+resourceUrl           https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage
+requestMethod         POST
+repository            velz-cmd/repodiet-e2e-test
+```
+
+All unpaid tests performed no repository scan, minted no payment, created no
+task, and recorded no revenue.
+
+### Defensive liveness hardening
+
+```
+GET  200  0.478s
+HEAD 200  0.467s
+```
+
+Reiterated: GET/HEAD 200 is **defensive compatibility hardening**, not a
+proven root cause. Official validation is the unpaid POST → 402, which was
+already healthy.
+
+### Runtime at resubmission time
+
+```
+overallReady true · a2aRuntimeReady true · agentOnline true
+officialWatchActive true · xmtpClientReady true · heartbeatStatus fresh
+a2mcpEndpointHealthy true
+```
+
+The existing local A2A listener, heartbeat, and watchdog were deliberately
+left running for the review window; the cloud-hosted migration is deferred
+until after submission.
