@@ -45,6 +45,8 @@ function AppWorkspace() {
     selectedFindingIds,
     scopeReviewed,
     setA2aTask,
+    findingsAnalysisPhase,
+    findingsAnalysisError,
   } = useAppSession();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const linkedTaskId = searchParams.get("taskId") ?? searchParams.get("task");
@@ -125,6 +127,19 @@ function AppWorkspace() {
     };
   }, [repository]);
 
+  // Real findings lifecycle — never collapse into the structure-scan's own
+  // idle/running/failed/complete; a repository can resolve while findings
+  // analysis is still running, still failing, or already durably persisted.
+  const findingsLifecyclePhase: "idle" | "running" | "failed" | "complete" = repositoryConnected
+    ? findings
+      ? "complete"
+      : findingsAnalysisError
+        ? "failed"
+        : findingsAnalysisPhase !== "idle"
+          ? "running"
+          : "idle"
+    : "idle";
+
   const workflowSteps = useMemo(
     () =>
       resolveWorkflowStepStates({
@@ -134,6 +149,7 @@ function AppWorkspace() {
         projectRootConfirmed: session.projectRootConfirmed,
         scanPhase: session.scanPhase,
         findings: repositoryConnected ? findings : null,
+        findingsPhase: findingsLifecyclePhase,
         selectedFindingIds,
         scopeReviewed,
         a2aTask,
@@ -150,6 +166,7 @@ function AppWorkspace() {
       session.scanPhase,
       repositoryConnected,
       findings,
+      findingsLifecyclePhase,
       selectedFindingIds,
       scopeReviewed,
       a2aTask,

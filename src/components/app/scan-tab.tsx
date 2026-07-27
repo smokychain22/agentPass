@@ -72,6 +72,7 @@ export function ScanTab() {
   const demoAutoStarted = useRef(false);
 
   const isLoading = LOADING_PHASES.includes(phase as ScanPhase);
+  const [planApprovedForActiveScan, setPlanApprovedForActiveScan] = useState(false);
 
   const startScan = useCallback(
     async (url: string, isDemo = false) => {
@@ -117,6 +118,31 @@ export function ScanTab() {
     [branch, router, setScanComplete, setScanPhase, show]
   );
 
+  // Real, server-verified — used only to decide whether "Analyze another
+  // repository" needs a confirmation before clearing an approved plan.
+  useEffect(() => {
+    const scanId = findings?.scanId ?? session.scanRecordId;
+    const pinnedCommit = session.scanResult?.repo?.commitSha;
+    if (!scanId || !pinnedCommit) {
+      setPlanApprovedForActiveScan(false);
+      return;
+    }
+    let cancelled = false;
+    void fetch(
+      `/api/user-directed/cleanup-plan-status?scanId=${encodeURIComponent(scanId)}&pinnedCommit=${encodeURIComponent(pinnedCommit)}`
+    )
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; approved?: boolean; current?: boolean }) => {
+        if (!cancelled) setPlanApprovedForActiveScan(Boolean(data.ok && data.approved && data.current));
+      })
+      .catch(() => {
+        if (!cancelled) setPlanApprovedForActiveScan(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [findings?.scanId, session.scanRecordId, session.scanResult?.repo?.commitSha]);
+
   useEffect(() => {
     const demo = searchParams.get("demo");
     if (demo === "1" || demo === "true") {
@@ -158,6 +184,18 @@ export function ScanTab() {
     findingsAnalysisError,
     activeRepository: session.scanResult?.repo ? { commitSha: session.scanResult.repo.commitSha } : null,
   });
+
+  // Exact contract: analysis is one stage (URL entry through result
+  // persistence) — repository resolution alone is never "done", and no
+  // action may claim the analysis finished before findings are genuinely
+  // completed, validated, and persisted for the active commit.
+  const analysisCompleted = resultsReady;
+  const analysisFailed = Boolean(result) && Boolean(findingsAnalysisError);
+  const analysisRunning =
+    isLoading || (Boolean(result) && !resultsReady && !analysisFailed);
+  const showOpenResults = analysisCompleted;
+  const showAnalyzeAnotherRepository = analysisCompleted || analysisFailed;
+  const showRunningMessage = analysisRunning;
   const previousScanLabel =
     !result &&
     !isLoading &&
@@ -176,6 +214,14 @@ export function ScanTab() {
   };
 
   const startFresh = () => {
+    if (
+      planApprovedForActiveScan &&
+      !window.confirm(
+        "This repository has an approved cleanup plan. Starting a new analysis clears that plan from this session (the historical record is preserved). Continue?"
+      )
+    ) {
+      return;
+    }
     setResult(null);
     setPhase("idle");
     setError(null);
@@ -224,7 +270,7 @@ export function ScanTab() {
                   placeholder="https://github.com/owner/repository"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
-                  disabled={isLoading}
+                  disabled={analysisRunning}
                   aria-invalid={phase === "failed" && !!error}
                   className="font-mono text-sm"
                 />
@@ -233,7 +279,7 @@ export function ScanTab() {
                   variant="outline"
                   size="sm"
                   onClick={pasteUrl}
-                  disabled={isLoading}
+                  disabled={analysisRunning}
                   className="shrink-0"
                 >
                   Paste
@@ -247,7 +293,7 @@ export function ScanTab() {
                 placeholder="Auto-detect default branch"
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
-                disabled={isLoading}
+                disabled={analysisRunning}
               />
               <p className="text-[10px] text-muted-foreground">
                 Leave empty and RepoDiet will detect the repository&apos;s default branch.
@@ -255,8 +301,15 @@ export function ScanTab() {
             </div>
           </div>
 
+          {analysisRunning && (
+            <p className="text-xs text-muted-foreground">
+              An analysis is already running for this repository — submitting a new URL is
+              disabled until it finishes, so the active job is never accidentally replaced.
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-3 pt-1">
-            <Button type="submit" disabled={isLoading || !repoUrl.trim()} size="lg">
+            <Button type="submit" disabled={analysisRunning || !repoUrl.trim()} size="lg">
               {isLoading ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden />
@@ -272,7 +325,7 @@ export function ScanTab() {
                 variant="secondary"
                 size="lg"
                 onClick={startFresh}
-                disabled={isLoading}
+                disabled={analysisRunning}
               >
                 Exit Example / Analyze My Repository
               </Button>
@@ -287,8 +340,12 @@ export function ScanTab() {
           message={classifyScanError(error).hint}
           technicalDetail={error}
           actions={[
-            { label: "Retry scan", onClick: () => void startScan(repoUrl) },
-            { label: "Edit repository", onClick: () => setPhase("idle"), variant: "secondary" },
+            { label: "Retry analysis", onClick: () => void startScan(repoUrl) },
+            {
+              label: "Choose another repository",
+              onClick: () => setPhase("idle"),
+              variant: "secondary",
+            },
             { label: "Try demo", onClick: () => startScan(DEMO_REPO, true), variant: "outline" },
           ]}
         />
@@ -373,24 +430,26 @@ export function ScanTab() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {resultsReady ? (
+                {showOpenResults ? (
                   <Button asChild disabled={!session.projectRootConfirmed}>
                     <Link href="/app?tab=findings">
                       Open Results
                       <ArrowRight className="h-4 w-4" aria-hidden />
                     </Link>
                   </Button>
-                ) : findingsAnalysisError ? (
+                ) : analysisFailed ? (
                   <Button onClick={retryFindingsAnalysis}>Retry analysis</Button>
-                ) : (
+                ) : showRunningMessage ? (
                   <p className="text-xs text-muted-foreground">
                     RepoDiet is analyzing your repository. Results will appear when verification is
                     complete.
                   </p>
+                ) : null}
+                {showAnalyzeAnotherRepository && (
+                  <Button variant="secondary" onClick={startFresh}>
+                    {analysisFailed ? "Choose another repository" : "Analyze another repository"}
+                  </Button>
                 )}
-                <Button variant="secondary" onClick={startFresh}>
-                  Analyze another repository
-                </Button>
               </div>
             </div>
           </Panel>

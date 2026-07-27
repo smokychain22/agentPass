@@ -169,7 +169,7 @@ test("4. scan failed: connect failed, findings locked", () => {
   assert.equal(map.findings.status, "locked");
 });
 
-test("5. successful scan: connect complete, findings current", () => {
+test("5. structure scan alone (no findings yet) never completes the Analyze Repository stage", () => {
   const s = scan();
   assert.equal(
     isRepositoryConnected({ scanResult: s, scanComplete: true, scanRecordId: s.id }),
@@ -183,8 +183,10 @@ test("5. successful scan: connect complete, findings current", () => {
     findings: null,
   });
   const map = byId(steps);
-  assert.equal(map.connect.status, "complete");
-  assert.equal(map.findings.status, "current");
+  // Repository resolution alone must never be represented as the whole
+  // "Analyze Repository" stage finishing — findings haven't been produced yet.
+  assert.equal(map.connect.status, "running");
+  assert.equal(map.findings.status, "locked");
   assert.equal(map.cleanup_pr.status, "locked");
 });
 
@@ -204,7 +206,7 @@ test("scan without commit SHA is not connected", () => {
   );
 });
 
-test("6. findings analysis running: findings running, no completion check", () => {
+test("6. findings analysis running: Analyze Repository stays running, Review Findings stays locked (not prematurely current)", () => {
   const s = scan();
   const steps = resolveWorkflowStepStates({
     scanResult: s,
@@ -214,8 +216,15 @@ test("6. findings analysis running: findings running, no completion check", () =
     findings: null,
     findingsPhase: "running",
   });
-  assert.equal(byId(steps).findings.status, "running");
-  assert.notEqual(byId(steps).findings.status, "complete");
+  const map = byId(steps);
+  // Monitoring/retrying belongs to the Analyze Repository stage; Review
+  // Findings must stay locked (never "running" or "current") until findings
+  // are actually produced — this is the exact bug that let a user think
+  // Review Findings was already accessible mid-analysis.
+  assert.equal(map.connect.status, "running");
+  assert.equal(map.findings.status, "locked");
+  assert.notEqual(map.findings.status, "complete");
+  assert.notEqual(map.findings.status, "current");
 });
 
 test("7. real findings complete only when bound and reviewed", () => {
@@ -503,7 +512,10 @@ test("15. repository identity change detaches stale findings completion", () => 
     }),
   });
   const map = byId(steps);
-  assert.equal(map.connect.status, "complete");
+  // The active repository's own analysis hasn't produced real findings yet
+  // (the only findings present belong to a different, stale repo/commit),
+  // so Analyze Repository correctly stays "running", not "complete".
+  assert.equal(map.connect.status, "running");
   assert.notEqual(map.findings.status, "complete");
   assert.equal(map.cleanup_pr.status, "locked");
   assert.equal(map.review_accept.status, "locked");

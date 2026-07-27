@@ -795,7 +795,7 @@ export function UserDirectedWorkbench({
     <div className="space-y-4" data-user-directed-workbench data-session-source={sessionSource}>
       {/*
        * No internal Review/Plan/Pay/Delivery tab bar here — the outer app
-       * workflow (Connect Repository → Review Findings → Create Cleanup PR →
+       * workflow (Analyze Repository → Review Findings → Create Cleanup PR →
        * Review & Accept) already provides that navigation via the sidebar and
        * workflow rail. `stage` still advances the single continuous flow
        * forward as the user takes explicit actions below.
