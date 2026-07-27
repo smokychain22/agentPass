@@ -294,9 +294,14 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   const zeroFindings = findingsBound && input.findings
     ? hasZeroMaintenanceFindings(input.findings)
     : false;
+  // A server-approved-and-current plan already proves a valid selection was
+  // made (approve-cleanup-plan requires it) — the local selectedFindingIds
+  // array is a client-only cache that can go stale across full page loads,
+  // so it must never be the only path to unlocking this tab.
+  const planReady = Boolean(input.planApproved && input.planCurrent);
 
   const cleanupPrUnlocked =
-    findingsComplete && (actionableSelected > 0 || zeroFindings);
+    findingsComplete && (actionableSelected > 0 || zeroFindings || planReady);
 
   const prComplete = isCleanupPrComplete(input);
   const prRunning = isCleanupPrRunning(input);
@@ -368,7 +373,6 @@ export function resolveWorkflowStepStates(input: WorkflowStepInput): WorkflowSte
   // selecting fixes alone is still "current" (in progress), matching Part
   // 10: Review Findings is active while selecting/reviewing, complete only
   // once the plan is approved.
-  const planReady = Boolean(input.planApproved && input.planCurrent);
   const githubReady = Boolean(input.githubWriteCapable);
 
   if (!repositoryConnected || !projectRootConfirmed) {

@@ -356,6 +356,23 @@ test("9b. approved current plan + GitHub capability unlocks Create Cleanup PR", 
   assert.equal(byId(steps).cleanup_pr.status, "current");
 });
 
+test("9e. an approved current plan unlocks Create Cleanup PR even with a stale/empty local selectedFindingIds cache (e.g. after a full page reload)", () => {
+  const s = scan();
+  const f = findings();
+  const steps = resolveWorkflowStepStates({
+    scanResult: s,
+    scanComplete: true,
+    scanRecordId: s.id,
+    findings: f,
+    scopeReviewed: true,
+    selectedFindingIds: [],
+    planApproved: true,
+    planCurrent: true,
+    githubWriteCapable: true,
+  });
+  assert.equal(byId(steps).cleanup_pr.status, "current");
+});
+
 test("9c. plan approved but superseded (not current) stays locked with the right explanation", () => {
   const s = scan();
   const f = findings();
