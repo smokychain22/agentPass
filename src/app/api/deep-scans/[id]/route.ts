@@ -9,7 +9,7 @@ import {
 } from "@/lib/tenant/request-auth";
 
 export const runtime = "nodejs";
-export const maxDuration = 20;
+export const maxDuration = 30;
 
 /**
  * Progress for a deep-scan job.

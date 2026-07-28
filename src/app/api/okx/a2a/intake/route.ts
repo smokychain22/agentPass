@@ -12,7 +12,7 @@ import {
 import { requirePinnedService } from "@/lib/okx-runtime/service-selection";
 
 export const runtime = "nodejs";
-export const maxDuration = 10;
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   const requestId = `req_${nanoid(12)}`;

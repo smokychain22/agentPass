@@ -64,7 +64,14 @@ function AppWorkspace() {
     scanRecordId: session.scanRecordId,
   });
 
-  const scanId = findings?.scanId ?? session.scanRecordId;
+  // The URL is the canonical carrier of the active scan across navigation.
+  // "Continue to Create Cleanup PR" passes ?scanId=..., and this previously
+  // ignored it entirely — so on a fresh patch-route load, before session
+  // hydration restored `findings`, scanId was undefined, the plan-status
+  // fetch never ran, and the guard reported "Approve your cleanup plan
+  // first" for a plan that was in fact approved.
+  const scanIdParam = searchParams.get("scanId")?.trim() || undefined;
+  const scanId = scanIdParam ?? findings?.scanId ?? session.scanRecordId;
   const pinnedCommit = session.scanResult?.repo?.commitSha ?? findings?.repo.commitSha ?? "";
   const repository = session.scanResult?.repo
     ? `${session.scanResult.repo.owner}/${session.scanResult.repo.name}`
@@ -79,25 +86,36 @@ function AppWorkspace() {
     null
   );
   const [githubWriteCapable, setGithubWriteCapable] = useState(false);
+  // Distinguishes "not approved" from "not checked yet". Without this the
+  // guard renders a definitive prerequisite while verification is still in
+  // flight, which is how an approved plan appeared as unapproved.
+  const [planReadinessChecked, setPlanReadinessChecked] = useState(false);
 
   useEffect(() => {
     if (!scanId) {
       setPlanReadiness(null);
+      setPlanReadinessChecked(false);
       return;
     }
     let cancelled = false;
-    void fetch(
-      `/api/user-directed/cleanup-plan-status?scanId=${encodeURIComponent(scanId)}&pinnedCommit=${encodeURIComponent(pinnedCommit)}`
-    )
+    setPlanReadinessChecked(false);
+    // pinnedCommit may be empty until session hydration completes; the
+    // server resolves it from the stored scan in that case.
+    const query = new URLSearchParams({ scanId });
+    if (pinnedCommit) query.set("pinnedCommit", pinnedCommit);
+    void fetch(`/api/user-directed/cleanup-plan-status?${query.toString()}`)
       .then((res) => res.json())
       .then((data: { ok?: boolean; approved?: boolean; current?: boolean }) => {
         if (cancelled) return;
         setPlanReadiness(
           data.ok ? { approved: Boolean(data.approved), current: Boolean(data.current) } : null
         );
+        setPlanReadinessChecked(true);
       })
       .catch(() => {
-        if (!cancelled) setPlanReadiness(null);
+        if (cancelled) return;
+        setPlanReadiness(null);
+        setPlanReadinessChecked(true);
       });
     return () => {
       cancelled = true;
@@ -189,6 +207,20 @@ function AppWorkspace() {
    */
   function guardedStageOrLock(tabId: WorkflowTabId, page: ReactNode): ReactNode {
     const step = stepMapByTab.get(tabId);
+    // Never assert a prerequisite that has not actually been verified yet.
+    // While the authoritative plan check is in flight, say so rather than
+    // claiming the plan is unapproved.
+    if (tabId === "patch" && scanId && !planReadinessChecked) {
+      return (
+        <div className="flex flex-col items-center gap-3 rounded-md border border-border/50 bg-card/30 p-8 text-center">
+          <p className="font-medium">Checking cleanup-plan approval…</p>
+          <p className="max-w-md text-sm text-muted-foreground">
+            RepoDiet is verifying the approved plan for this scan against the current
+            repository, commit, and selected fixes.
+          </p>
+        </div>
+      );
+    }
     if (step && step.status === "locked") {
       return (
         <div className="flex flex-col items-center gap-3 rounded-md border border-border/50 bg-card/30 p-8 text-center">
