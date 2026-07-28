@@ -3,10 +3,7 @@ import { NextResponse } from "next/server";
 import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
 import { resolvePlanReadiness } from "@/lib/user-directed/plan-readiness";
-import {
-  computeDecisionsFingerprint,
-  listFindingDecisions,
-} from "@/lib/user-directed/decision-store";
+import { listFindingDecisions } from "@/lib/user-directed/decision-store";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { flattenFindings } from "@/lib/findings/client";
 import { riskBucketOf } from "@/lib/findings/cleanup-eligibility";
