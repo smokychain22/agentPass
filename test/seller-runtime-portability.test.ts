@@ -173,10 +173,52 @@ function run() {
 
   test("the container runs as a non-root user with a real init", () => {
     const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
-    assert.ok(dockerfile.includes("USER node"), "must not run as root");
+    // The seller process runs unprivileged via the entrypoint privilege
+    // drop rather than a build-time USER, because root is needed briefly to
+    // chown the freshly mounted Railway volume.
+    assert.ok(dockerfile.includes("gosu"), "must drop privileges to a non-root user");
     assert.ok(dockerfile.includes("tini"), "an init is required so SIGTERM reaches the runtime");
     assert.ok(dockerfile.includes("HEALTHCHECK"), "a health check is required");
     assert.ok(dockerfile.includes("VOLUME"), "credential/data persistence is required");
+  });
+
+  test("Dockerfile declares no Docker VOLUME — Railway rejects it at parse time", () => {
+    // Railway fails the build before any step runs with:
+    //   "dockerfile invalid: docker VOLUME at Line N is not supported,
+    //    use Railway Volumes"
+    // Persistence is attached by the platform instead, so a VOLUME
+    // instruction must never be reintroduced.
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    const volumeLines = dockerfile
+      .split(String.fromCharCode(10))
+      .filter((line) => line.trim().startsWith("VOLUME"));
+    assert.deepEqual(volumeLines, [], "Dockerfile.seller must not declare a Docker VOLUME");
+  });
+
+  test("the mounted persistence paths survive as environment configuration", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    for (const expected of [
+      "REPODIET_OKX_RUNTIME_ROOT=/persistent/data/okx-runtimes",
+      "XDG_DATA_HOME=/persistent/data",
+      "HOME=/persistent/home",
+    ]) {
+      assert.ok(dockerfile.includes(expected), `missing runtime path: ${expected}`);
+    }
+  });
+
+  test("the entrypoint creates and chowns the volume at runtime, then drops privileges", () => {
+    // A build-time chown is masked once Railway mounts its volume at
+    // /persistent, so ownership must be corrected after the mount.
+    const entry = fs.readFileSync(path.join(REPO_ROOT, "scripts", "seller-entrypoint.sh"), "utf8");
+    assert.ok(entry.includes("mkdir -p"), "must create the directories on the mounted volume");
+    assert.ok(entry.includes("chown -R node:node"), "must hand the volume to the runtime user");
+    assert.ok(entry.includes("exec gosu node"), "must drop privileges before running the seller");
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(dockerfile.includes("gosu"), "gosu must be installed for the privilege drop");
+    assert.ok(
+      dockerfile.includes("seller-entrypoint.sh"),
+      "the entrypoint script must be wired into the image"
+    );
   });
 
   test("restart policy keeps the agent online across host reboot", () => {
