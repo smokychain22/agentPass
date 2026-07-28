@@ -1,0 +1,27 @@
+# Controlled local validation of the always-online seller runtime.
+#
+# This does NOT provision hosting and contains no secrets — every value comes
+# from an env file that is never committed. See docs/SELLER_RUNTIME_DEPLOYMENT.md.
+services:
+  repodiet-seller:
+    build:
+      context: .
+      dockerfile: Dockerfile.seller
+    image: repodiet-seller:local
+    # Survives host reboot and container crash without a scheduler.
+    restart: unless-stopped
+    env_file:
+      - .env.seller
+    environment:
+      # Data root and CLI credential home are both volumes so a rebuilt image
+      # keeps its authenticated session.
+      REPODIET_OKX_RUNTIME_ROOT: /persistent/data/okx-runtimes
+    volumes:
+      # Single volume, matching the Railway /persistent mount exactly.
+      - repodiet-seller-persistent:/persistent
+    # No published ports: the runtime is an outbound XMTP/HTTPS client, not a
+    # server. Nothing should be able to reach it inbound.
+    stop_grace_period: 30s
+
+volumes:
+  repodiet-seller-persistent:

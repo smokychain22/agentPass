@@ -20,6 +20,11 @@ agentpass/data-test/
 tsconfig.tsbuildinfo
 /.swc
 .env*
+# Example environment contracts declare NAMES ONLY and must be committed so a
+# clean checkout can be configured (and so CI can assert they carry no values).
+# Real .env / .env.seller files stay ignored by the rule above.
+!.env.seller.example
+!.env*.example
 /test-results/
 /playwright-report/
 /blob-report/
