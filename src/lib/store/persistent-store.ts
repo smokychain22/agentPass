@@ -43,7 +43,8 @@ export type PersistentCollection =
   | "a2mcp_payment_identity"
   | "finding_decisions"
   | "cleanup_plan_state"
-  | "finding_verifications";
+  | "finding_verifications"
+  | "a2a_task_idempotency";
 
 export type ArtifactCollection = "artifacts";
 
@@ -88,6 +89,7 @@ export interface DurableDb {
   finding_decisions: Record<string, unknown>;
   cleanup_plan_state: Record<string, unknown>;
   finding_verifications: Record<string, unknown>;
+  a2a_task_idempotency: Record<string, unknown>;
 }
 
 const DEFAULT_DB: DurableDb = {
@@ -131,6 +133,7 @@ const DEFAULT_DB: DurableDb = {
   finding_decisions: {},
   cleanup_plan_state: {},
   finding_verifications: {},
+  a2a_task_idempotency: {},
 };
 
 let redisClient: Redis | null = null;
@@ -208,6 +211,7 @@ function loadLocalDb(): DurableDb {
       finding_decisions: parsed.finding_decisions ?? {},
       cleanup_plan_state: parsed.cleanup_plan_state ?? {},
       finding_verifications: parsed.finding_verifications ?? {},
+      a2a_task_idempotency: parsed.a2a_task_idempotency ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_DB);
