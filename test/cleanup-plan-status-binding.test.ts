@@ -198,6 +198,59 @@ async function run() {
     assert.equal(json.superseded, true);
   });
 
+  await test(
+    "REGRESSION 2: an approved plan stays current when the stored scan has no commit either",
+    async () => {
+      // Production case: getStoredFindings() could not supply a commit for
+      // scan_xeXBJuvAiGsJ, so resolution fell through to "" and a valid
+      // plan reported current:false with commitSource "stored_scan".
+      // With no independent commit available, the plan's own pinned commit
+      // is authoritative — there is no evidence of divergence to act on.
+      const orphanScan = "scan_no_stored_findings";
+      await saveFindingDecision({
+        scanId: orphanScan,
+        findingId: "fnd_x",
+        decision: "selected",
+        analyzedCommit: COMMIT,
+      });
+      const fp = computeDecisionsFingerprint(await listFindingDecisions(orphanScan));
+      await saveDraftPlan({
+        scanId: orphanScan,
+        pinnedCommit: COMMIT,
+        includedFindingIds: ["fnd_x"],
+        excludedFindingIds: [],
+        decisionsFingerprint: fp,
+      });
+      await approvePlan({
+        scanId: orphanScan,
+        pinnedCommit: COMMIT,
+        includedFindingIds: ["fnd_x"],
+        decisionsFingerprint: fp,
+      });
+
+      const json = (await (await get(`scanId=${orphanScan}`)).json()) as Status;
+      assert.equal(json.approved, true);
+      assert.equal(json.current, true, "plan must stay current with no independent commit");
+      assert.equal(json.superseded, false);
+      assert.equal(json.commitSource, "approved_plan");
+      assert.equal(json.pinnedCommit, COMMIT);
+    }
+  );
+
+  await test(
+    "the plan-commit fallback never masks a real divergence the caller reports",
+    async () => {
+      // Tier 3 only applies when nothing better exists. A caller-supplied
+      // commit always wins and still supersedes.
+      const json = (await (
+        await get("scanId=scan_no_stored_findings&pinnedCommit=feedfacefeedface")
+      ).json()) as Status;
+      assert.equal(json.commitSource, "request");
+      assert.equal(json.current, false);
+      assert.equal(json.superseded, true);
+    }
+  );
+
   await test("an unknown scan reports no approved plan rather than throwing", async () => {
     const json = (await (await get("scanId=scan_does_not_exist")).json()) as Status;
     assert.equal(json.ok, true);

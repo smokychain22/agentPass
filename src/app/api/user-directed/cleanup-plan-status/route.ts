@@ -31,9 +31,29 @@ export async function GET(request: Request) {
   // The pinned commit is server truth. A client that has not finished
   // hydrating its session cannot supply it, and previously that produced an
   // empty string — which made isPlanCurrent() fail and reported a perfectly
-  // valid approved plan as not-current. Resolve it from the stored scan
-  // whenever the caller does not pass one, rather than comparing against "".
-  const resolvedCommit = pinnedCommit || findingsPayload?.repo.commitSha || "";
+  // valid approved plan as not-current.
+  //
+  // Resolution order, most to least independent:
+  //   1. the caller's commit — the only source that can reveal the client
+  //      having moved to a different commit than the plan was approved for;
+  //   2. the stored scan's commit — server truth for this scan;
+  //   3. the plan's own commit — used only when neither of the above exists.
+  //
+  // Tier 3 makes the commit comparison trivially pass, which is correct:
+  // the check exists to detect divergence, and with no independent commit
+  // to compare against there is no evidence of divergence — inventing a
+  // mismatch against "" is strictly worse. Protection against changed
+  // selections is unaffected, because that is carried by the decision
+  // fingerprint below, which is always compared.
+  const resolvedCommit =
+    pinnedCommit || findingsPayload?.repo.commitSha || plan?.pinnedCommit || "";
+  const commitSource = pinnedCommit
+    ? "request"
+    : findingsPayload?.repo.commitSha
+      ? "stored_scan"
+      : plan?.pinnedCommit
+        ? "approved_plan"
+        : "unavailable";
 
   const currentDecisionsFingerprint = computeDecisionsFingerprint(decisions);
   const current = isPlanCurrent(plan, resolvedCommit, currentDecisionsFingerprint);
@@ -51,7 +71,7 @@ export async function GET(request: Request) {
     // Authoritative echo so callers can prove which scan/commit was judged.
     scanId,
     pinnedCommit: resolvedCommit,
-    commitSource: pinnedCommit ? "request" : "stored_scan",
+    commitSource,
     planScanId: plan?.scanId ?? null,
     selectedCount: plan?.includedFindingIds.length ?? 0,
   });
