@@ -162,7 +162,12 @@ async function run() {
     const res = await preflightPost(req({ scanId }));
     const json = (await res.json()) as Preflight;
     assert.equal(json.ok, false);
-    assert.ok(json.blockers?.some((b) => /no approved cleanup plan/i.test(b)));
+    // Wording comes from the shared plan-readiness selector, which
+    // distinguishes "no plan exists" from "exists but not approved".
+    assert.ok(
+      json.blockers?.some((b) => /no cleanup plan exists|not been approved/i.test(b)),
+      `expected a plan blocker, got: ${json.blockers?.join(" | ")}`
+    );
     assert.ok(json.blockers?.some((b) => /at least one selected/i.test(b)));
   });
 
