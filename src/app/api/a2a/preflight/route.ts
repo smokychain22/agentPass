@@ -17,7 +17,7 @@ import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 45;
+export const maxDuration = 60;
 
 const A2A_AMOUNT_LABEL = "1 USD₮0";
 

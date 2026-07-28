@@ -15,7 +15,7 @@ import { A2MCP_SERVICES } from "@/lib/okx/services";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 25;
+export const maxDuration = 30;
 
 /**
  * Liveness / capability descriptor for the registered A2MCP endpoint.

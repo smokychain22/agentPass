@@ -7,7 +7,7 @@ import { customerError } from "@/lib/product/customer-errors";
 import { isWorkerAvailable } from "@/lib/worker/worker-instance-store";
 
 export const runtime = "nodejs";
-export const maxDuration = 15;
+export const maxDuration = 30;
 
 /**
  * Public repository intake — validates URL, pins commit, optionally enqueues durable deep scan.
