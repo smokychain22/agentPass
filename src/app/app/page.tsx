@@ -21,6 +21,7 @@ const UserDirectedWorkbench = dynamic(
     ),
   }
 );
+import { A2ATaskReview } from "@/components/app/a2a-task-review";
 import { AppTopBar } from "@/components/app/shell/app-top-bar";
 import { WalletProvider } from "@/components/wallet/wallet-provider";
 import { WorkflowRail } from "@/components/app/shell/workflow-rail";
@@ -274,8 +275,7 @@ function AppWorkspace() {
             {tab === "scan" && <ScanTab />}
             {tab === "findings" &&
               guardedStageOrLock("findings", <UserDirectedWorkbench initialStage="review" />)}
-            {tab === "patch" &&
-              guardedStageOrLock("patch", <UserDirectedWorkbench initialStage="pay" />)}
+            {tab === "patch" && guardedStageOrLock("patch", <A2ATaskReview />)}
             {tab === "verify" &&
               guardedStageOrLock("verify", <UserDirectedWorkbench initialStage="delivery" />)}
             {tab === "cleanup" && <CleanupTab />}

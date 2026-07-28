@@ -11,6 +11,7 @@ import { getAgentRuntimeHealth } from "@/lib/a2a/agent-runtime-health";
 import { resolveAuthoritativeRepositoryAccess } from "@/lib/github-app/authoritative-repository-access";
 import { isRepositoryVerifiedState } from "@/lib/github-app/authoritative-access";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
+import { findActiveCleanupTask } from "@/lib/a2a/find-active-task";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -208,8 +209,10 @@ export async function POST(request: Request) {
     blockers.push(`Seller runtime heartbeat is "${runtimeHealth.heartbeatStatus}", expected fresh.`);
   }
 
-  // --- Idempotency ------------------------------------------------------
-
+  // --- Idempotency key --------------------------------------------------
+  //
+  // Deterministic over the exact unit of work, so the same task shape always
+  // yields the same key and can be claimed exactly once at funding time.
   const idempotencyKey = createHash("sha256")
     .update(
       [
@@ -227,6 +230,22 @@ export async function POST(request: Request) {
     )
     .digest("hex")
     .slice(0, 32);
+
+  // --- Duplicate-task safety -------------------------------------------
+  //
+  // Funding must never proceed while it is unknown whether a paid task
+  // already covers this work. A lookup that could not complete is treated
+  // as a blocker, not as an all-clear.
+  const existingTask = await findActiveCleanupTask({ idempotencyKey });
+  if (!existingTask.lookupCompleted) {
+    blockers.push(
+      `Could not determine whether an active task already exists for this plan (${existingTask.lookupError}). Funding is blocked until duplicate status is known.`
+    );
+  } else if (existingTask.found) {
+    blockers.push(
+      `An active A2A task (${existingTask.taskId}, state: ${existingTask.state}) already covers this repository and commit. Funding again would create a duplicate paid task.`
+    );
+  }
 
   return NextResponse.json(
     {
@@ -250,9 +269,7 @@ export async function POST(request: Request) {
       affectedFiles: [...affectedFiles],
       githubCapabilities,
       runtimeHealth,
-      // No task lookup mutation — reported as unknown until the official
-      // task-lifecycle work lands; funding stays gated on ok:true anyway.
-      existingTask: null,
+      existingTask,
       idempotencyKey,
       amount: A2A_AMOUNT_LABEL,
       verifiedAt,

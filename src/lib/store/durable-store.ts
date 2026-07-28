@@ -109,6 +109,7 @@ export async function withDurableDb<T>(
       finding_decisions: {},
       cleanup_plan_state: {},
       finding_verifications: {},
+      a2a_task_idempotency: {},
     };
     return fn(db);
   });
