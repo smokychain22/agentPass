@@ -22,22 +22,23 @@ COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY src ./src
 
-# The OKX CLIs the runtime shells out to for the official gate-check and the
-# XMTP client. Pinning is intentional: an unpinned agent CLI must not change
-# under a running marketplace listing.
-ARG OKX_A2A_VERSION=latest
-ARG ONCHAINOS_VERSION=latest
-RUN npm install -g "@okxweb3/a2a-node@${OKX_A2A_VERSION}" || \
-    echo "WARN: @okxweb3/a2a-node not installed at build time; mount or install at runtime"
+# The official A2A CLI that the runtime shells out to for the XMTP client.
+# Pinned deliberately: an unpinned agent CLI must not change under a live
+# marketplace listing. The build FAILS if it is unavailable — a container
+# missing a required executable must never reach production.
+ARG OKX_A2A_VERSION=0.1.10
+RUN npm install -g "@okxweb3/a2a-node@${OKX_A2A_VERSION}"  && okx-a2a --version
+
+# NOTE: `onchainos` is NOT available on the npm registry (404) — it is a
+# native binary. Until an official Linux install channel is confirmed, the
+# gate-check it provides cannot run in this image, so this container is not
+# yet a complete seller runtime. See docs/SELLER_RUNTIME_DEPLOYMENT.md.
 
 # Non-root. The runtime writes only to its data root, which is a volume.
-ENV REPODIET_OKX_RUNTIME_ROOT=/data/okx-runtimes \
-    XDG_DATA_HOME=/data \
-    HOME=/home/node \
-    NODE_ENV=production
-RUN mkdir -p /data /home/node && chown -R node:node /data /home/node /app
+ENV REPODIET_OKX_RUNTIME_ROOT=/persistent/data/okx-runtimes     XDG_DATA_HOME=/persistent/data     HOME=/persistent/home     NODE_ENV=production
+RUN mkdir -p /persistent/data/okx-runtimes /persistent/home  && chown -R node:node /persistent /app
 USER node
-VOLUME ["/data", "/home/node"]
+VOLUME ["/persistent"]
 
 # Proves the process is alive AND holding its instance lock — not merely running.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \

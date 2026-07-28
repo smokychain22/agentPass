@@ -15,14 +15,13 @@ services:
     environment:
       # Data root and CLI credential home are both volumes so a rebuilt image
       # keeps its authenticated session.
-      REPODIET_OKX_RUNTIME_ROOT: /data/okx-runtimes
+      REPODIET_OKX_RUNTIME_ROOT: /persistent/data/okx-runtimes
     volumes:
-      - repodiet-seller-data:/data
-      - repodiet-seller-home:/home/node
+      # Single volume, matching the Railway /persistent mount exactly.
+      - repodiet-seller-persistent:/persistent
     # No published ports: the runtime is an outbound XMTP/HTTPS client, not a
     # server. Nothing should be able to reach it inbound.
     stop_grace_period: 30s
 
 volumes:
-  repodiet-seller-data:
-  repodiet-seller-home:
+  repodiet-seller-persistent:
