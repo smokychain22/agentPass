@@ -2,11 +2,8 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getCanonicalOkxIdentity } from "@/lib/okx/identity";
 import { OKX_A2A_PUBLIC_OPERATION } from "@/lib/okx/services";
-import { getPlanState, isPlanCurrent } from "@/lib/user-directed/cleanup-plan-store";
-import {
-  computeDecisionsFingerprint,
-  listFindingDecisions,
-} from "@/lib/user-directed/decision-store";
+import { resolvePlanReadiness } from "@/lib/user-directed/plan-readiness";
+import { listFindingDecisions } from "@/lib/user-directed/decision-store";
 import { getStoredFindings } from "@/lib/findings/findings-store";
 import { flattenFindings } from "@/lib/findings/client";
 import { riskBucketOf } from "@/lib/findings/cleanup-eligibility";
@@ -96,12 +93,15 @@ export async function POST(request: Request) {
 
   const repository = `${findingsPayload.repo.owner}/${findingsPayload.repo.name}`;
   const branch = findingsPayload.repo.branch;
-  const pinnedCommit = findingsPayload.repo.commitSha ?? "";
-  if (!pinnedCommit) blockers.push("The scan has no pinned commit.");
+  // One shared authoritative selector — identical to what the nav and the
+  // patch-route guard use, so preflight can never disagree with them.
+  const readiness = await resolvePlanReadiness({ scanId: body.scanId });
+  const pinnedCommit = readiness.pinnedCommit;
+  const decisionFingerprint = readiness.decisionFingerprint;
+  const plan = readiness.plan;
+  if (!pinnedCommit) blockers.push("No pinned commit could be resolved for this scan or plan.");
 
   const decisions = await listFindingDecisions(body.scanId);
-  const decisionFingerprint = computeDecisionsFingerprint(decisions);
-  const plan = await getPlanState(body.scanId);
 
   const selectedDecisions = decisions.filter(
     (d) => d.decision === "selected" || d.decision === "verified_selected"
@@ -109,12 +109,10 @@ export async function POST(request: Request) {
   const selectedFindingIds = selectedDecisions.map((d) => d.findingId);
   const selectedCount = selectedFindingIds.length;
 
-  if (!plan || plan.status !== "approved") {
-    blockers.push("No approved cleanup plan exists for this scan.");
-  } else if (!isPlanCurrent(plan, pinnedCommit, decisionFingerprint)) {
-    blockers.push(
-      `The approved cleanup plan is superseded: it was approved for ${plan.includedFindingIds.length} fix(es), but ${selectedCount} are selected now. Review and approve the updated plan.`
-    );
+  if (!readiness.approved) {
+    blockers.push(readiness.blockerReason ?? "No approved cleanup plan exists for this scan.");
+  } else if (!readiness.current) {
+    blockers.push(readiness.blockerReason ?? "The approved cleanup plan is no longer current.");
   }
 
   // Selected set must agree with the approved plan exactly.
