@@ -8,7 +8,7 @@ FROM node:22-bookworm-slim
 # tini gives us a real init so SIGTERM reaches the runtime and shutdown is
 # clean rather than a 10-second SIGKILL.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tini gosu ca-certificates git \
+ && apt-get install -y --no-install-recommends tini gosu curl ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,10 +29,58 @@ COPY src ./src
 ARG OKX_A2A_VERSION=0.1.10
 RUN npm install -g "@okxweb3/a2a-node@${OKX_A2A_VERSION}"  && okx-a2a --version
 
-# NOTE: `onchainos` is NOT available on the npm registry (404) — it is a
-# native binary. Until an official Linux install channel is confirmed, the
-# gate-check it provides cannot run in this image, so this container is not
-# yet a complete seller runtime. See docs/SELLER_RUNTIME_DEPLOYMENT.md.
+# OnchainOS — official Linux release, pinned and checksum-verified.
+#
+# Source: okx/onchainos-skills. The official README documents piping
+# install.sh from `main` to sh; we deliberately do NOT do that in a
+# production image, because an unpinned moving-main script could change
+# what ships here without review. Instead we pin an immutable release tag,
+# fetch that release's own published checksums.txt at build time, and cross-
+# check it against a pinned expected value — so the checksum actually used to
+# verify the binary is never an unexplained bare constant, and a change to
+# the release (which should never happen for an immutable tag) is caught
+# explicitly instead of silently trusted. The build fails closed if
+# checksums.txt cannot be fetched, the asset is missing, more than one line
+# matches, the published value disagrees with the pinned expectation, the
+# downloaded binary's checksum does not match, or the binary cannot run.
+ARG ONCHAINOS_RELEASE_TAG=v4.4.1
+ARG ONCHAINOS_LINUX_ASSET=onchainos-x86_64-unknown-linux-gnu
+ARG ONCHAINOS_LINUX_SHA256=a835c87dc13b1176924023ecb842e5dac9f84a2f5ddcb3e97f65299aac2cc3bb
+RUN set -eu; \
+    base="https://github.com/okx/onchainos-skills/releases/download/${ONCHAINOS_RELEASE_TAG}"; \
+    curl -fsSL -o /tmp/onchainos-checksums.txt "${base}/checksums.txt"; \
+    match_count=$(grep -c "  ${ONCHAINOS_LINUX_ASSET}\$" /tmp/onchainos-checksums.txt); \
+    if [ "${match_count}" != "1" ]; then \
+      echo "expected exactly one checksums.txt entry for ${ONCHAINOS_LINUX_ASSET} in release ${ONCHAINOS_RELEASE_TAG}, found ${match_count}" >&2; \
+      exit 1; \
+    fi; \
+    published_sha256=$(grep "  ${ONCHAINOS_LINUX_ASSET}\$" /tmp/onchainos-checksums.txt | awk '{print $1}'); \
+    if [ "${published_sha256}" != "${ONCHAINOS_LINUX_SHA256}" ]; then \
+      echo "release ${ONCHAINOS_RELEASE_TAG} checksums.txt now publishes ${published_sha256} for ${ONCHAINOS_LINUX_ASSET}, but ${ONCHAINOS_LINUX_SHA256} was pinned — an immutable release tag must never change; refusing to install" >&2; \
+      exit 1; \
+    fi; \
+    curl -fsSL -o /usr/local/bin/onchainos "${base}/${ONCHAINOS_LINUX_ASSET}"; \
+    echo "${published_sha256}  /usr/local/bin/onchainos" | sha256sum -c -; \
+    chmod +x /usr/local/bin/onchainos; \
+    rm -f /tmp/onchainos-checksums.txt; \
+    onchainos --version
+
+# Provider binding: @okxweb3/a2a-node exposes exactly four providers — codex,
+# claude, hermes, openclaw — with no generic process/webhook/MCP/HTTP-callback
+# adapter. The officially supported host-agnostic path is `okx-a2a setup
+# openclaw`.
+#
+# Verified by direct reproduction: `okx-a2a setup openclaw` does NOT bootstrap
+# OpenClaw itself — it runs `openclaw plugins install @okxweb3/a2a-openclaw`
+# against an ALREADY-installed openclaw CLI. Without openclaw on PATH it fails
+# immediately with "spawn openclaw ENOENT". So the openclaw CLI itself must be
+# installed here, pinned, same as the other two CLIs — only okx-a2a's plugin
+# registration into it is left to run at container STARTUP (it is stateful:
+# writes into the persisted home volume). Do not reimplement provider
+# installation manually — the official CLIs own it, they just aren't the same
+# CLI as each other.
+ARG OPENCLAW_VERSION=2026.7.1-2
+RUN npm install -g "openclaw@${OPENCLAW_VERSION}" && openclaw --version
 
 # Non-root. The runtime writes only to its data root, which is a volume.
 ENV REPODIET_OKX_RUNTIME_ROOT=/persistent/data/okx-runtimes     XDG_DATA_HOME=/persistent/data     HOME=/persistent/home     NODE_ENV=production
@@ -50,4 +98,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
 
 COPY --chmod=0755 scripts/seller-entrypoint.sh /usr/local/bin/seller-entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/seller-entrypoint.sh"]
-CMD ["npx", "tsx", "scripts/repodiet-seller-runtime.ts"]
+# Verified by direct reproduction: `npx tsx ...` does NOT exec into a single
+# process — npx spawns through `npm exec` -> `sh -c` -> tsx's own CLI, and
+# that chain does not forward SIGTERM to the innermost Node process. The
+# container was killed by a raw, unhandled SIGTERM (exit 143) with no
+# shutdown_started/shutdown_complete logged — the lock was never released.
+# node_modules/.bin/tsx is itself a shell shim that ends in `exec`, so
+# invoking it directly (bypassing npx) keeps this a single exec'd process
+# from tini down, and SIGTERM reaches the runtime's own handler.
+CMD ["node_modules/.bin/tsx", "scripts/repodiet-seller-runtime.ts"]

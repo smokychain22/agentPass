@@ -182,6 +182,23 @@ function run() {
     assert.ok(dockerfile.includes("VOLUME"), "credential/data persistence is required");
   });
 
+  test("the container process starts via a single exec'd chain so SIGTERM actually reaches the runtime's handler", () => {
+    // Verified by direct reproduction in a real running container: CMD
+    // ["npx", "tsx", ...] spawns through npm exec -> sh -c -> tsx's CLI, none
+    // of which is a single exec'd chain — SIGTERM never reached the runtime's
+    // own process.on("SIGTERM") handler, the container was killed raw (exit
+    // 143), and shutdown_started/shutdown_complete never got logged, meaning
+    // the instance lock was never released. node_modules/.bin/tsx is a shell
+    // shim that itself ends in `exec`, so invoking it directly keeps tini ->
+    // gosu (execs) -> tsx shim (execs) -> node as one signal-transparent chain.
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(
+      dockerfile.includes('CMD ["node_modules/.bin/tsx", "scripts/repodiet-seller-runtime.ts"]'),
+      "must exec the local tsx binary directly, not via npx"
+    );
+    assert.ok(!/CMD \[.?"npx"/.test(dockerfile), "must not run the entrypoint command through npx");
+  });
+
   test("Dockerfile declares no Docker VOLUME — Railway rejects it at parse time", () => {
     // Railway fails the build before any step runs with:
     //   "dockerfile invalid: docker VOLUME at Line N is not supported,
@@ -221,10 +238,206 @@ function run() {
     );
   });
 
+  test("the entrypoint script and Dockerfile are LF-only — a CRLF shebang makes the container fail to start", () => {
+    // Reproduced for real: building this image from a CRLF working tree
+    // (produced here by Windows git core.autocrlf=true with no .gitattributes
+    // override) fails at container start with exactly:
+    //   [FATAL tini (8)] exec /usr/local/bin/seller-entrypoint.sh failed: No such file or directory
+    // because the kernel looks for an interpreter literally named "/bin/sh\r".
+    // The git-committed blob was already clean LF; only the local checkout
+    // was corrupted — but nothing enforced that before this test/attributes
+    // file existed, so any Windows contributor's local Docker build (or a
+    // future edit saved with CRLF) could silently reintroduce this.
+    for (const relPath of ["scripts/seller-entrypoint.sh", "Dockerfile.seller"]) {
+      const raw = fs.readFileSync(path.join(REPO_ROOT, relPath));
+      assert.ok(!raw.includes(Buffer.from("\r\n")), `${relPath} must not contain CRLF line endings`);
+    }
+  });
+
+  test(".gitattributes forces LF for shell scripts and Dockerfiles regardless of the checkout client's autocrlf setting", () => {
+    const attrs = fs.readFileSync(path.join(REPO_ROOT, ".gitattributes"), "utf8");
+    assert.ok(/\*\.sh\s+text\s+eol=lf/.test(attrs));
+    assert.ok(/Dockerfile\*\s+text\s+eol=lf/.test(attrs));
+  });
+
   test("restart policy keeps the agent online across host reboot", () => {
     const compose = fs.readFileSync(path.join(REPO_ROOT, "docker-compose.production.yml"), "utf8");
     assert.ok(compose.includes("restart: unless-stopped"));
     assert.ok(compose.includes("stop_grace_period"), "graceful shutdown needs a grace period");
+  });
+
+  // --- OnchainOS: pinned, checksum-verified install ----------------------
+
+  test("OnchainOS installs from a pinned release tag, not a moving install.sh", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(
+      /ONCHAINOS_RELEASE_TAG=v?\d+\.\d+\.\d+/.test(dockerfile),
+      "an immutable semantic release tag must be pinned"
+    );
+    assert.ok(
+      dockerfile.includes("okx/onchainos-skills/releases/download/"),
+      "must download from the official release asset URL, not a branch"
+    );
+    assert.ok(
+      !/install\.sh\s*(\||`|\$\().*sh\b/.test(dockerfile) && !/curl[^\n]*install\.sh[^\n]*\|\s*sh/.test(dockerfile),
+      "must not pipe the moving-main installer into sh"
+    );
+  });
+
+  test("OnchainOS download is checksum-verified and the build fails closed", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(/ONCHAINOS_LINUX_SHA256=[0-9a-f]{64}/.test(dockerfile), "a real SHA-256 must be pinned");
+    assert.ok(dockerfile.includes("sha256sum -c"), "the checksum must actually be verified");
+    assert.ok(dockerfile.includes("onchainos --version"), "the binary must be proven to run before the build succeeds");
+    assert.ok(!dockerfile.includes("|| true"), "the install must not be allowed to fail silently");
+    assert.ok(!/\|\|\s*echo/.test(dockerfile), "the install must not fall back to a warning instead of failing");
+  });
+
+  test("curl is installed so the pinned OnchainOS asset can be downloaded", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(/apt-get install[^\n]*\bcurl\b/.test(dockerfile));
+  });
+
+  test("the checksum used to verify OnchainOS comes from the release's own live checksums.txt, not a bare unexplained constant", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(
+      dockerfile.includes("okx/onchainos-skills/releases/download/${ONCHAINOS_RELEASE_TAG}") &&
+        dockerfile.includes('"${base}/checksums.txt"'),
+      "must fetch the official checksums.txt for the pinned release"
+    );
+    assert.ok(
+      dockerfile.includes("match_count"),
+      "must verify exactly one checksums.txt line matches the requested asset"
+    );
+    assert.ok(
+      dockerfile.includes('"${published_sha256}" != "${ONCHAINOS_LINUX_SHA256}"'),
+      "must cross-check the live published checksum against the pinned expectation and fail on any mismatch"
+    );
+  });
+
+  // --- Provider binding: official CLI only, no reimplemented adapter -----
+
+  test("codex and claude are rejected as the production A2A provider", () => {
+    const src = entrypointSource();
+    assert.ok(src.includes('A2A_PROVIDER === "codex"') && src.includes('A2A_PROVIDER === "claude"'));
+    assert.ok(
+      src.includes("codex_and_claude_are_development_tools_only_not_a_production_provider"),
+      "the rejection must name why: dev tools must never be the production responder"
+    );
+  });
+
+  test("the openclaw CLI itself is installed and pinned, not assumed to be bootstrapped by okx-a2a setup", () => {
+    // Verified by direct reproduction: `okx-a2a setup openclaw` only installs
+    // its OWN plugin into an already-installed openclaw CLI (it shells out to
+    // `openclaw plugins install ...`); without openclaw on PATH it fails with
+    // "spawn openclaw ENOENT". So the openclaw CLI itself must be pinned and
+    // installed at build time, same as the other required CLIs.
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(/ARG OPENCLAW_VERSION=\d+\.\d+\.\d+-\d+/.test(dockerfile), "openclaw version must be pinned");
+    assert.ok(dockerfile.includes('npm install -g "openclaw@${OPENCLAW_VERSION}"'));
+    assert.ok(dockerfile.includes("openclaw --version"), "must prove the binary runs before the build succeeds");
+  });
+
+  test("only openclaw and hermes are accepted, matching the CLI's closed provider enum", () => {
+    const src = entrypointSource();
+    assert.ok(src.includes('new Set(["openclaw", "hermes"])'));
+    assert.ok(src.includes("unsupported_a2a_provider"));
+    assert.ok(
+      src.includes('|| "openclaw"'),
+      "openclaw must be the default — the documented host-agnostic Agent host"
+    );
+  });
+
+  test("provider setup, readiness, and daemon liveness use the official CLI, not a reimplementation", () => {
+    const src = entrypointSource();
+    assert.ok(src.includes('"setup", A2A_PROVIDER'), "must call the official setup command");
+    assert.ok(src.includes('"doctor", "--fix", "--json"'), "must call the official readiness/repair command");
+    assert.ok(src.includes('"daemon", "status"'), "must probe the official daemon status command");
+    assert.ok(
+      src.includes('"daemon", "start", "--provider", A2A_PROVIDER'),
+      "must restart the daemon via the official start command, not a spawned child process"
+    );
+  });
+
+  test("communication readiness runs once at startup, before the heartbeat loop begins", () => {
+    const src = entrypointSource();
+    const readinessCallIndex = src.indexOf("await establishCommunicationReadiness();");
+    const firstHeartbeatIndex = src.indexOf("await publishHeartbeat();");
+    assert.ok(readinessCallIndex > -1 && firstHeartbeatIndex > -1);
+    assert.ok(readinessCallIndex < firstHeartbeatIndex, "setup must precede the first heartbeat attempt");
+  });
+
+  test("the heartbeat is withheld when the daemon is down, even if the gate-check and XMTP both pass", () => {
+    const src = entrypointSource();
+    assert.ok(
+      src.includes("!daemonOk || !gateOk || !xmtpOk"),
+      "daemon liveness must be a hard requirement for sending a heartbeat"
+    );
+    assert.ok(src.includes("daemonOk = await ensureDaemonRunning()"));
+  });
+
+  test("readiness events use the requested vocabulary: communication_ready, provider_bound, a2a_daemon_ready, xmtp_ready", () => {
+    const src = entrypointSource();
+    for (const event of [
+      "communication_ready",
+      "provider_bound",
+      "a2a_daemon_ready",
+      "xmtp_ready",
+    ]) {
+      assert.ok(src.includes(`"${event}"`), `missing log event: ${event}`);
+    }
+  });
+
+  test("doctor output is parsed defensively: real JSON counters first, the observed text summary as fallback, never assumed ready", () => {
+    const src = entrypointSource();
+    assert.ok(src.includes("Summary:"), "must fall back to the directly-observed human summary format");
+    assert.ok(src.includes("fail === 0"), "readiness must require zero failures, not merely a parse success");
+    assert.ok(src.includes("return { ok: false, pass: 0, warn: 0, fail: -1 }"), "an unparseable result must fail closed, not default to ready");
+  });
+
+  test("doctor JSON parsing reads counts from the real verified schema (summary.pass/warn/fail), not an assumed top-level shape", () => {
+    // Verified directly against the live pinned 0.1.10 CLI: `okx-a2a doctor
+    // --fix --json` writes one JSON object to stdout shaped like
+    // { ok, ready, summary: { pass, warn, fail, ... }, ... } — the counts are
+    // nested, and a flat parsed.pass/warn/fail would silently never match.
+    const src = entrypointSource();
+    assert.ok(src.includes("parsed?.summary") || src.includes("const summary = parsed?.summary"));
+    assert.ok(src.includes("summary?.pass") && src.includes("summary?.warn") && src.includes("summary?.fail"));
+    assert.ok(
+      src.includes('parsed?.ready === true && summary.fail === 0'),
+      "readiness must require both the CLI's own ready flag and zero failures"
+    );
+    assert.ok(!/typeof parsed\?\.pass === "number"/.test(src), "must not read counts off a flat top-level shape");
+  });
+
+  test("doctor's diagnostic JSON is read even when the CLI exits non-zero — the ordinary case on a fresh container", () => {
+    // Verified by direct reproduction in a real built container: `okx-a2a
+    // doctor --fix --json` exits 1 (not 0) whenever there is a real blocking
+    // failure (e.g. no provider bound yet on first boot) — `{"ok":false,
+    // "ready":false,"blockingFailures":1,...}` is still valid, parseable
+    // stdout. execFileAsync rejects on that non-zero exit, and Node attaches
+    // the captured stdout to the rejection as `err.stdout` — discarding that
+    // would make every first-boot container report a meaningless fail:-1
+    // instead of the real diagnostic.
+    const src = entrypointSource();
+    assert.ok(
+      src.includes("(err as { stdout?: string }"),
+      "must read err.stdout when the doctor exec rejects, not discard it"
+    );
+    assert.ok(
+      src.includes("fromFailedExec"),
+      "the rejected exec's stdout must be captured into the same parse path as a successful exec, not a separate discard-only branch"
+    );
+  });
+
+  test("doctor --fix is given enough time for a first-run install, per the CLI's own advisory", () => {
+    // The live CLI prints: "--fix may take a few minutes on a fresh install
+    // (plugin install, daemon start, XMTP warm-up)... allow at least 180s."
+    const src = entrypointSource();
+    const match = src.match(/"doctor", "--fix", "--json"\], \{ timeout: (\d+)_(\d+) \}/);
+    assert.ok(match, "doctor --fix must set an explicit exec timeout");
+    const timeoutMs = Number(`${match![1]}${match![2]}`);
+    assert.ok(timeoutMs >= 180_000, `timeout ${timeoutMs}ms must be at least the CLI's documented 180s minimum`);
   });
 
   console.log("seller-runtime-portability: all passed");

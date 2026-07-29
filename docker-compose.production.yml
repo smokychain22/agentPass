@@ -11,6 +11,8 @@ services:
     # Survives host reboot and container crash without a scheduler.
     restart: unless-stopped
     env_file:
+      # Includes REPODIET_OKX_A2A_PROVIDER (defaults to openclaw if unset —
+      # see .env.seller.example) alongside every other runtime variable.
       - .env.seller
     environment:
       # Data root and CLI credential home are both volumes so a rebuilt image
