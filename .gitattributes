@@ -1,0 +1,6 @@
+# Shell scripts and Dockerfiles run inside Linux containers and must never
+# pick up CRLF from a Windows checkout (core.autocrlf) — a CRLF shebang line
+# makes the kernel look for an interpreter literally named e.g. "/bin/sh\r",
+# which does not exist, and the container fails to start.
+*.sh text eol=lf
+Dockerfile* text eol=lf

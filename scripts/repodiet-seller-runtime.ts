@@ -37,6 +37,17 @@ const SELLER = OKX_RUNTIME_IDENTITIES.seller;
 const A2A_SERVICE_ID = "37348";
 const COMMUNICATION_ADDRESS = "0x00dbdbb36b71ace0e1fc517056f376f977d8256e";
 
+/**
+ * @okxweb3/a2a-node exposes exactly four providers (codex, claude, hermes,
+ * openclaw) and no generic process/webhook/MCP/HTTP-callback adapter — see
+ * `okx-a2a daemon --help` / `okx-a2a config provider --help`. openclaw is the
+ * default here because it is the documented host-agnostic Agent host; hermes
+ * is supported as an explicit override. codex/claude are never valid in this
+ * runtime — they are development tools, never the production responder.
+ */
+const A2A_PROVIDER = (process.env.REPODIET_OKX_A2A_PROVIDER?.trim() || "openclaw").toLowerCase();
+const SUPPORTED_PROVIDERS = new Set(["openclaw", "hermes"]);
+
 const BASE_URL = (
   process.env.REPODIET_PRODUCTION_URL || "https://skillswap-virid-kappa.vercel.app"
 ).replace(/\/$/, "");
@@ -95,6 +106,23 @@ function verifyIdentityOrExit(): void {
     log("startup_failed", { reason: "heartbeat_secret_missing_or_too_short" });
     process.exit(1);
   }
+  if (A2A_PROVIDER === "codex" || A2A_PROVIDER === "claude") {
+    // Claude/Codex are development tools only and must never front the
+    // production ASP responder — see the module-level A2A_PROVIDER comment.
+    log("identity_rejected", {
+      reason: "codex_and_claude_are_development_tools_only_not_a_production_provider",
+      configuredProvider: A2A_PROVIDER,
+    });
+    process.exit(1);
+  }
+  if (!SUPPORTED_PROVIDERS.has(A2A_PROVIDER)) {
+    log("identity_rejected", {
+      reason: "unsupported_a2a_provider",
+      configuredProvider: A2A_PROVIDER,
+      supported: [...SUPPORTED_PROVIDERS],
+    });
+    process.exit(1);
+  }
   log("identity_verified", {
     agentId: SELLER.agentId,
     a2aServiceId: A2A_SERVICE_ID,
@@ -146,15 +174,179 @@ async function xmtpClientActive(): Promise<boolean> {
 }
 
 /**
- * Publishes a heartbeat only when the official gate-check AND the XMTP
- * client both genuinely pass. Process liveness alone never counts as online.
+ * Installs/refreshes okx-a2a's OpenClaw (or Hermes) plugin via the official
+ * CLI. This is the ONLY supported host-agnostic provider path — see the
+ * A2A_PROVIDER comment. `okx-a2a setup <provider>` is idempotent (it
+ * preserves an already-installed matching version), so it is safe to call
+ * once on every container start, including restarts against a warm
+ * /persistent/home volume where the plugin is already installed.
+ *
+ * Requires the `openclaw` CLI itself to already be on PATH (installed and
+ * pinned in Dockerfile.seller) — verified by direct reproduction that this
+ * command shells out to `openclaw plugins install ...` and fails immediately
+ * with "spawn openclaw ENOENT" if openclaw isn't present. It installs its own
+ * plugin INTO openclaw, not openclaw itself.
+ */
+async function ensureProviderSetup(): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const { stdout } = await execFileAsync(
+      "okx-a2a",
+      ["setup", A2A_PROVIDER, "--release", "latest", "--json"],
+      { timeout: 120_000 }
+    );
+    return { ok: true, detail: stdout.trim().slice(-2000) };
+  } catch (err) {
+    return {
+      ok: false,
+      detail: err instanceof Error ? err.message : "unknown_error",
+    };
+  }
+}
+
+interface DoctorResult {
+  ok: boolean;
+  pass: number;
+  warn: number;
+  fail: number;
+}
+
+/**
+ * Runs the official readiness/repair command once at startup.
+ *
+ * Schema verified directly against the real pinned 0.1.10 CLI (not assumed):
+ * `okx-a2a doctor --fix --json` writes progress/log lines to STDERR only and
+ * exactly one JSON object to STDOUT — `{ ok, ready, summary: { pass, warn,
+ * fail, ... }, ... }`. The counts are nested under `summary`, not top-level.
+ * `--fix` can take several minutes on a first run (plugin install, daemon
+ * start, XMTP warm-up) — the CLI's own advisory says "allow at least 180s",
+ * so the exec timeout here is set above that with margin.
+ *
+ * A human-readable "Summary: X pass, Y warn, Z fail" line is what the same
+ * command prints without --json (also directly observed) — kept as a
+ * fallback in case a future CLI version ever mixes that text into stdout.
+ * Either path fails closed: an unparseable result counts as not ready.
+ *
+ * Critical, directly-reproduced behavior: the CLI exits NON-ZERO whenever
+ * there is any real blocking failure (`{"ok":false,"ready":false,...}`) —
+ * which is the ordinary case on a fresh, not-yet-authenticated container,
+ * not an execution error. `execFileAsync` rejects on a non-zero exit, but
+ * Node still attaches the captured stdout to that rejection (`err.stdout`),
+ * so the real diagnostic JSON is read from there rather than discarded.
+ */
+async function runDoctorFix(): Promise<DoctorResult> {
+  let stdout: string;
+  try {
+    stdout = (await execFileAsync("okx-a2a", ["doctor", "--fix", "--json"], { timeout: 240_000 }))
+      .stdout;
+  } catch (err) {
+    const fromFailedExec = (err as { stdout?: string } | undefined)?.stdout;
+    if (!fromFailedExec?.trim()) {
+      return { ok: false, pass: 0, warn: 0, fail: -1 };
+    }
+    stdout = fromFailedExec;
+  }
+  {
+    const trimmed = stdout.trim();
+    try {
+      const parsed = JSON.parse(trimmed.split("\n").pop() ?? trimmed);
+      const summary = parsed?.summary;
+      if (
+        typeof summary?.pass === "number" &&
+        typeof summary?.warn === "number" &&
+        typeof summary?.fail === "number"
+      ) {
+        return {
+          ok: parsed?.ready === true && summary.fail === 0,
+          pass: summary.pass,
+          warn: summary.warn,
+          fail: summary.fail,
+        };
+      }
+    } catch {
+      // Not a JSON line — fall through to the text-summary parse below.
+    }
+    const match = trimmed.match(/Summary:\s*(\d+)\s*pass,\s*(\d+)\s*warn,\s*(\d+)\s*fail/i);
+    if (match) {
+      const pass = Number(match[1]);
+      const warn = Number(match[2]);
+      const fail = Number(match[3]);
+      return { ok: fail === 0, pass, warn, fail };
+    }
+    return { ok: false, pass: 0, warn: 0, fail: -1 };
+  }
+}
+
+/** Lightweight liveness probe — no --fix, no plugin install, just status. */
+async function daemonIsRunning(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("okx-a2a", ["daemon", "status"], { timeout: 20_000 });
+    return /\brunning\b/i.test(stdout) || /\bready\b/i.test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keeps the official A2A daemon alive. The daemon is the OKX CLI's own
+ * background process (its own autostart/restart mechanism, not a child we
+ * spawn), so "keeping it alive" here means driving its own start/status
+ * commands rather than reimplementing process supervision ourselves — per
+ * the instruction not to reimplement what the official CLI already owns.
+ * Called once per heartbeat tick, so a daemon that dies gets one restart
+ * attempt per HEARTBEAT_INTERVAL_MS — a bounded-backoff restart tied to the
+ * existing heartbeat cadence rather than a separate fast retry loop.
+ */
+async function ensureDaemonRunning(): Promise<boolean> {
+  if (await daemonIsRunning()) return true;
+  try {
+    // Verified against the real `okx-a2a daemon --help`: `daemon start`
+    // documents only [--provider] [--ai-provider] [--no-autostart] — no
+    // --json. Success is confirmed below via the documented `daemon status`
+    // check rather than by parsing start's own output.
+    await execFileAsync("okx-a2a", ["daemon", "start", "--provider", A2A_PROVIDER], {
+      timeout: 60_000,
+    });
+  } catch {
+    return false;
+  }
+  return daemonIsRunning();
+}
+
+/**
+ * One-time startup sequence: install/refresh the provider plugin, run the
+ * official readiness/repair check, and make sure the daemon is up before the
+ * heartbeat loop starts probing it every tick.
+ */
+async function establishCommunicationReadiness(): Promise<void> {
+  const setup = await ensureProviderSetup();
+  log("provider_bound", { provider: A2A_PROVIDER, ok: setup.ok, detail: setup.detail });
+
+  const doctor = await runDoctorFix();
+  log("communication_ready", {
+    ok: doctor.ok,
+    pass: doctor.pass,
+    warn: doctor.warn,
+    fail: doctor.fail,
+  });
+
+  const daemonOk = await ensureDaemonRunning();
+  log("a2a_daemon_ready", { ok: daemonOk, provider: A2A_PROVIDER });
+}
+
+/**
+ * Publishes a heartbeat only when the daemon is up AND the official
+ * gate-check AND the XMTP client all genuinely pass. Process liveness alone
+ * never counts as online.
  */
 async function publishHeartbeat(): Promise<void> {
+  const daemonOk = await ensureDaemonRunning();
   const [gateOk, xmtpOk] = await Promise.all([officialGateCheckPasses(), xmtpClientActive()]);
+  if (xmtpOk) log("xmtp_ready", { ok: true });
 
-  if (!gateOk || !xmtpOk) {
+  if (!daemonOk || !gateOk || !xmtpOk) {
     consecutiveHeartbeatFailures += 1;
     log("heartbeat_withheld", {
+      daemonOk,
       gateOk,
       xmtpOk,
       consecutiveFailures: consecutiveHeartbeatFailures,
@@ -176,9 +368,12 @@ async function publishHeartbeat(): Promise<void> {
         sellerWallet: SELLER.walletAddress,
         registeredCommunicationAddress: COMMUNICATION_ADDRESS,
         recoveredSignerAddress: COMMUNICATION_ADDRESS,
-        onchainOsAuthenticated: true,
-        officialWatchActive: true,
-        xmtpClientReady: true,
+        // Real values, not literal `true` — this is only reached because the
+        // guard above already required all three, but passing the variables
+        // keeps the payload honest if that guard is ever refactored.
+        onchainOsAuthenticated: gateOk,
+        officialWatchActive: daemonOk,
+        xmtpClientReady: xmtpOk,
         ttlSeconds: HEARTBEAT_TTL_SECONDS,
       }),
     });
@@ -228,6 +423,7 @@ async function main(): Promise<void> {
   log("startup", {
     runtimeRoot: root,
     baseUrl: BASE_URL,
+    a2aProvider: A2A_PROVIDER,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
     heartbeatTtlSeconds: HEARTBEAT_TTL_SECONDS,
     platform: process.platform,
@@ -239,6 +435,8 @@ async function main(): Promise<void> {
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+
+  await establishCommunicationReadiness();
 
   await publishHeartbeat();
   heartbeatTimer = setInterval(() => {
