@@ -47,6 +47,15 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
+  seller-runtime-image:
+    name: docker-seller-runtime-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the seller runtime image (real build, not static inspection)
+        run: docker build --progress=plain -f Dockerfile.seller -t repodiet-seller:ci .
+
   contracts:
     name: delivery-okx-contracts
     runs-on: ubuntu-latest
