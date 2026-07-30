@@ -238,6 +238,14 @@ function run() {
     );
   });
 
+  test("the entrypoint re-asserts HOME through gosu — verified by direct reproduction that gosu resets HOME to the target user's /etc/passwd entry, discarding the Dockerfile's ENV HOME=/persistent/home and silently redirecting every OpenClaw/OnchainOS/okx-a2a write to the ephemeral filesystem", () => {
+    const entry = fs.readFileSync(path.join(REPO_ROOT, "scripts", "seller-entrypoint.sh"), "utf8");
+    assert.ok(
+      entry.includes('exec gosu node env HOME="$HOME" "$@"'),
+      "gosu must be followed by an explicit env HOME=... re-assertion, or every persisted-volume write silently goes to the wrong, non-persisted path"
+    );
+  });
+
   test("the entrypoint script and Dockerfile are LF-only — a CRLF shebang makes the container fail to start", () => {
     // Reproduced for real: building this image from a CRLF working tree
     // (produced here by Windows git core.autocrlf=true with no .gitattributes
