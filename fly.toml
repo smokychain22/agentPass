@@ -47,13 +47,17 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
 # that drives Fly's proxy-idle "auto stop machines" behavior. Omitting it
 # means there is no public HTTP service, no public IP, AND no proxy-driven
 # autostop to disable in the first place. The machine's own lifecycle is
-# controlled by [restart] below plus the explicit --autostop=off documented
-# under "Operator commands after this PR is merged" in the deployment
-# runbook (a Machines-API-level flag, not a fly.toml block, as of the
-# flyctl version in use — confirm with `fly machine run --help` /
-# `fly config validate` before the first real deploy).
+# controlled by [[restart]] below plus the explicit --autostop=off
+# documented under "Operator commands after this PR is merged" in the
+# deployment runbook (a Machines-API-level flag, not a fly.toml block, as
+# of the flyctl version in use).
 
-[restart]
+# Array-of-tables, not a single table: `fly config validate` rejects
+# `[restart]` with "json: cannot unmarshal object into Go struct field
+# Config.restart of type []appconfig.Restart" — confirmed directly against
+# the real flyctl schema (both locally and via a live GitHub Actions
+# deploy run) after an initial guess got this wrong.
+[[restart]]
   policy = "always"
 
 # Persistent volume. Must exist before the first deploy — this repo does

@@ -46,10 +46,16 @@ function run() {
     assert.ok(/destination\s*=\s*"\/persistent"/.test(mounts![0]));
   });
 
-  test("fly.toml sets an explicit always restart policy", () => {
+  test("fly.toml sets an explicit always restart policy using the required array-of-tables syntax", () => {
+    // Regression: `[restart]` (single table) fails real flyctl validation
+    // with "json: cannot unmarshal object into Go struct field
+    // Config.restart of type []appconfig.Restart" — confirmed both via
+    // `fly config validate` locally and a live GitHub Actions deploy run
+    // that failed on exactly this before the fix. Must be `[[restart]]`.
     const toml = read("fly.toml");
-    const restart = toml.match(/^\[restart\]$[\s\S]*?(?=^\[|\s*$(?![\s\S]))/m);
-    assert.ok(restart, "must declare a [restart] block");
+    assert.ok(!/^\[restart\]$/m.test(toml), "must not use the single-table [restart] form — flyctl rejects it");
+    const restart = toml.match(/^\[\[restart\]\]$[\s\S]*?(?=^\[|\s*$(?![\s\S]))/m);
+    assert.ok(restart, "must declare a [[restart]] array-of-tables block");
     assert.ok(/policy\s*=\s*"always"/.test(restart![0]));
   });
 
