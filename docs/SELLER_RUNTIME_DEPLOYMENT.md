@@ -451,6 +451,54 @@ task (or relays the real payment quote for analysis) for real; automating
 further steps that touch real payment/escrow state, with no way to verify
 correctness against a live cycle, is out of scope for this pass.
 
+### Incident #3: `gosu` silently discarded `HOME`, so nothing was ever actually persisted
+
+Discovered during the first live boot of the Incident #2 fix on
+`repodiet-agent-9636`: bootstrap ran, several `openclaw config set` calls
+genuinely succeeded, then later calls in the same sequence began timing out,
+and — critically — **every subsequent boot still reported the config as
+`missing`**, even after prior calls had reported `ok:true`. That was the
+tell: a boot's own writes were not surviving into the next boot, which
+should be impossible if they were genuinely landing on the mounted
+`/persistent` volume.
+
+Root cause, confirmed by direct reproduction (both a standalone container
+test and `/proc/<pid>/environ` read from the live Machine while a boot was
+in progress): `scripts/seller-entrypoint.sh` runs `exec gosu node "$@"` to
+drop from root to the unprivileged `node` user. `gosu` resets `HOME` to the
+target user's `/etc/passwd` entry (`/home/node`) — it does **not** preserve
+an inherited `HOME`, even though it passes every other environment variable
+through unchanged (confirmed live: `REPODIET_OKX_RUNTIME_ROOT` and
+`XDG_DATA_HOME` both survived correctly; only `HOME` did not). So despite
+`Dockerfile.seller`'s `ENV HOME=/persistent/home`, the actual running
+supervisor process saw `HOME=/home/node` — part of the container's
+ephemeral filesystem, wiped on every restart — and every OpenClaw config
+write, and by extension any OnchainOS/okx-a2a credential write, silently
+went there instead of the mounted volume. This predates this PR's own
+bootstrap work; it means **any wallet login performed before this fix was
+never actually persisted either**, regardless of how the config bootstrap
+itself behaved.
+
+Fix: `scripts/seller-entrypoint.sh` now runs
+`exec gosu node env HOME="$HOME" "$@"` — capturing `$HOME` from the
+Dockerfile's `ENV` (still correct at that point, before `gosu` would
+otherwise discard it) and re-asserting it as the exec'd command's own
+environment via `env`. GNU coreutils `env` (installed here, not busybox)
+execs its target directly rather than forking, so this preserves the
+single signal-transparent exec chain from `tini` through to `node`
+established for Incident #1's fix.
+
+The remaining, separate `openclaw config set` timeouts observed partway
+through that same boot (a handful of calls each took 30s and failed) are
+not yet fully explained — plausibly cold-start/memory pressure on the
+`shared-cpu-1x`/512MB Machine from repeated `openclaw` CLI process spawns,
+consistent with the "Measuring actual memory" TODO below never having
+actually been completed against a real workload. Re-verify this once the
+`HOME` fix is deployed and boots are landing on the real persisted volume:
+if it recurs, it needs its own investigation (raising the Machine's memory,
+or reducing the number of separate CLI cold starts in the config-set
+sequence).
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
