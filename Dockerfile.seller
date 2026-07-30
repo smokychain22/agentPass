@@ -151,6 +151,24 @@ RUN set -eu; \
     rm -f "${tarball}" /tmp/pack-name.txt; \
     test -f /app/openclaw-plugins/okx-a2a-openclaw/openclaw.plugin.json
 
+# Build-time proof that both plugins actually load and activate, not just
+# that their files exist. Root cause this exists for: @okxweb3/a2a-openclaw
+# declares a real runtime dependency on @sentry/node (see its own
+# package.json), which this image never installed — the build above
+# succeeds (it only extracts and checksum-verifies files), and the failure
+# was only ever discovered live, when the Gateway actually tried to
+# require() the plugin on repodiet-agent-9636. See
+# docs/SELLER_RUNTIME_DEPLOYMENT.md ("Incident #5") for the full writeup.
+# Confined to this one layer: HOME and OPENCLAW_GATEWAY_TOKEN are inline
+# shell env assignments, never a Dockerfile ENV, so no placeholder value or
+# scratch config is ever baked into the image or the real runtime's HOME.
+RUN set -eu; \
+    export HOME=/tmp/plugin-load-verify; \
+    export OPENCLAW_GATEWAY_TOKEN="build-time-verification-placeholder-not-a-real-secret"; \
+    mkdir -p "$HOME"; \
+    node_modules/.bin/tsx scripts/verify-openclaw-plugins-load.ts; \
+    rm -rf "$HOME"
+
 # Proves the process is alive AND holding its instance lock — not merely running.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "const fs=require('fs');const p=process.env.REPODIET_OKX_RUNTIME_ROOT+'/seller-9636/runtime.pid';if(!fs.existsSync(p))process.exit(1);const pid=Number(fs.readFileSync(p,'utf8').trim());try{process.kill(pid,0)}catch{process.exit(1)}"

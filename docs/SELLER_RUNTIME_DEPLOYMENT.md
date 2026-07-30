@@ -537,6 +537,61 @@ by direct reproduction that a single invalid entry rejects the whole batch
 rather than partially applying it, so this cannot leave the config in a
 half-written state the way 8 independent calls could.
 
+### Incident #5: `@okxweb3/a2a-openclaw`'s own `@sentry/node` dependency was never installed
+
+After Incident #4's fix, the next live boot on `repodiet-agent-9636`
+finally cleared bootstrap entirely (batched config-set succeeded, marker
+written, second boot correctly skipped re-configuring via
+`bootstrap_skipped_marker_match`) and the OpenClaw Gateway itself came up
+and reported `ready`. But the `okx-a2a` plugin failed to load:
+
+```
+[plugins] okx-a2a failed to load from /app/openclaw-plugins/okx-a2a-openclaw/dist/index.js:
+Error: Cannot find module '@sentry/node'
+```
+
+Root cause, confirmed directly from the real published
+`@okxweb3/a2a-openclaw@0.1.10` package's own `package.json`: it declares a
+real runtime dependency, `"dependencies": { "@sentry/node": "^7.74.1" }`.
+`Dockerfile.seller` only ever `npm pack`s and extracts the plugin's own
+files (proving they're byte-correct via a checksum match) — it never
+installed the plugin's *own* dependencies anywhere Node's module
+resolution would find them. A checksum match and a successful `tar -xzf`
+prove nothing about whether the extracted code can actually load; that gap
+was only ever discoverable live, once the Gateway actually tried to
+`require()` the plugin — well after both build and deploy had already
+"succeeded."
+
+Fix: `@sentry/node` is now a real, pinned dependency in this repo's own
+`package.json` (resolved to `7.120.4`, satisfying the plugin's own
+`^7.74.1`), installed into `/app/node_modules` by the existing `npm ci`
+step — no separate install step needed, since Node's `require()`
+resolution walks up from `/app/openclaw-plugins/okx-a2a-openclaw/dist/`
+through ancestor `node_modules` directories and finds it at `/app/`.
+Verified end-to-end against the real pinned CLI with the real plugin
+manifest, `openclaw plugins inspect okx-a2a --runtime --json` reporting
+`status: "loaded"`, `activated: true`, and `before_agent_run` in
+`typedHooks` only once `@sentry/node` was present — confirming it was the
+only missing dependency (a raw `require()` test outside OpenClaw's own
+plugin loader gave a false-alarm second error, `Cannot find module
+'openclaw/plugin-sdk/gateway-runtime'`, because OpenClaw's real plugin
+loader injects its own module resolution before loading plugin code,
+which a bare `node -e` require never replicates).
+
+**A missing dependency like this must never again be discoverable only
+live.** `Dockerfile.seller` now runs `scripts/verify-openclaw-plugins-load.ts`
+as a build step immediately after the plugin extraction step: it configures
+a scratch OpenClaw home (via a placeholder gateway token and a temporary
+`$HOME`, both confined to that one `RUN` layer via inline shell `export`,
+never a Dockerfile `ENV` — nothing here is ever baked into the image or the
+real runtime's `HOME`) using the exact same `buildOpenclawConfigBatch()`
+the supervisor uses at boot, then runs `openclaw plugins inspect` for both
+plugins and fails the **build** closed if either does not report
+genuinely loaded and activated with its documented hook. This reuses the
+real supervisor's own batch/plugin/hook definitions and the same
+`parsePluginInspection` parser the supervisor's own runtime verification
+uses — not a second, hand-maintained copy that could drift.
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
