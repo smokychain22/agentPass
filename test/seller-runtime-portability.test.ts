@@ -309,6 +309,65 @@ function run() {
     assert.ok(envIndex < npmCiIndex, "must be set before npm ci runs @playwright/test's postinstall hook");
   });
 
+  // --- @okxweb3/a2a-openclaw's own runtime dependency (Incident #5) ------
+
+  test("@sentry/node is a real, pinned dependency satisfying @okxweb3/a2a-openclaw's own declared requirement", () => {
+    // Verified directly against the real published @okxweb3/a2a-openclaw@0.1.10
+    // package.json: "dependencies": { "@sentry/node": "^7.74.1" } — a real
+    // runtime dependency of the plugin itself, not guessed. Without this
+    // installed in the image, the plugin's own dist/index.js fails to load
+    // with "Cannot find module '@sentry/node'" — reproduced live on
+    // repodiet-agent-9636, only discovered once the Gateway actually tried
+    // to require() the plugin, well after the build itself had already
+    // succeeded (extracting/checksumming files proves nothing about whether
+    // they can actually load).
+    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+    const version = pkg.dependencies?.["@sentry/node"];
+    assert.ok(version, "@sentry/node must be a real pinned dependency in package.json");
+    const major = Number(version.replace(/^[^\d]*/, "").split(".")[0]);
+    assert.ok(major >= 7, `@sentry/node@${version} must satisfy the plugin's own ^7.74.1 requirement`);
+  });
+
+  test("the build proves both plugins actually load and activate, not just that their files were extracted correctly", () => {
+    // A checksum match and a successful `tar -xzf` prove the plugin's files
+    // are byte-correct; they prove nothing about whether the plugin's own
+    // require()'d dependencies are present, which is exactly what the
+    // @sentry/node gap above slipped through. This must run AFTER the
+    // plugin extraction step, so it can actually load what was just
+    // extracted.
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    const extractIndex = dockerfile.indexOf(
+      "test -f /app/openclaw-plugins/okx-a2a-openclaw/openclaw.plugin.json"
+    );
+    const verifyIndex = dockerfile.indexOf("scripts/verify-openclaw-plugins-load.ts");
+    assert.ok(extractIndex > -1, "the plugin extraction step must still exist");
+    assert.ok(verifyIndex > -1, "the build-time plugin-load verification step must exist");
+    assert.ok(extractIndex < verifyIndex, "verification must run after extraction, not before");
+  });
+
+  test("the build-time plugin-load verification never bakes its placeholder token or scratch HOME into the image", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(
+      !/^ENV\s+OPENCLAW_GATEWAY_TOKEN/m.test(dockerfile),
+      "the placeholder token must be a RUN-scoped shell export, never a Dockerfile ENV"
+    );
+    assert.ok(
+      dockerfile.includes('export OPENCLAW_GATEWAY_TOKEN="build-time-verification-placeholder-not-a-real-secret"'),
+      "must use an explicit, unmistakably-fake placeholder value"
+    );
+    assert.ok(dockerfile.includes('rm -rf "$HOME"'), "the scratch HOME used for verification must be cleaned up");
+  });
+
+  test("the plugin-load verification script reuses the real supervisor's exact batch/plugin/hook definitions, not a hand-maintained duplicate", () => {
+    const verifyScript = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts", "verify-openclaw-plugins-load.ts"),
+      "utf8"
+    );
+    assert.ok(verifyScript.includes('from "./seller-runtime-supervisor"'));
+    assert.ok(verifyScript.includes("buildOpenclawConfigBatch"));
+    assert.ok(verifyScript.includes("parsePluginInspection"));
+  });
+
   test("curl is installed so the pinned OnchainOS asset can be downloaded", () => {
     const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
     assert.ok(/apt-get install[^\n]*\bcurl\b/.test(dockerfile));
