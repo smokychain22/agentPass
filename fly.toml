@@ -1,23 +1,76 @@
-# fly.toml app configuration file generated for agentpass on 2026-07-29T17:47:47Z
+# fly.toml — RepoDiet seller runtime (Agent 9636), Fly.io testing target.
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# Replaces a stray fly.toml auto-committed by the Fly.io GitHub integration
+# ("New files from Fly.io Launch", PR #113) for an app named `agentpass`
+# that does not correspond to any app this project actually uses — the
+# canonical Fly app for this runtime is `repodiet-agent-9636` (already
+# created; no Machine or volume exists on it yet). See
+# docs/SELLER_RUNTIME_DEPLOYMENT.md for the full deployment runbook.
 #
+# This file intentionally does NOT deploy or create infrastructure by
+# itself — `fly deploy` / `fly volumes create` / `fly secrets deploy` are
+# operator actions run separately. The Fly account behind this app is on a
+# limited free trial: this is a testing target, not a claim of permanent
+# 24/7 hosting. See "Permanent Linux VM deployment path" in the runbook for
+# the long-term host.
 
-app = 'agentpass'
-primary_region = 'ams'
+app = "repodiet-agent-9636"
+primary_region = "sin"  # Singapore — current operator-selected candidate only, not a durability claim.
 
 [build]
+  dockerfile = "Dockerfile.seller"
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+# Non-secret runtime identity/paths only (see task instructions: these are
+# explicitly not secrets). The seven staged secrets
+# (REPODIET_OKX_RUNTIME_HEARTBEAT_SECRET, OPENCLAW_GATEWAY_TOKEN,
+# GITHUB_APP_*) are set via `fly secrets set` (already staged) — never here.
+[env]
+  HOME = "/persistent/home"
+  XDG_DATA_HOME = "/persistent/data"
+  REPODIET_OKX_RUNTIME_ROOT = "/persistent/data/okx-runtimes"
+  REPODIET_OKX_AGENT_ID = "9636"
+  REPODIET_OKX_RUNTIME_ROLE = "seller"
+  REPODIET_OKX_A2A_PROVIDER = "openclaw"
+  REPODIET_PRODUCTION_URL = "https://skillswap-virid-kappa.vercel.app"
 
+# This runtime is an outbound XMTP/HTTPS client (heartbeat POST, OpenClaw
+# Gateway is loopback-only at 127.0.0.1:18789), never a server other agents
+# or the public internet connect to inbound. Deliberately NO
+# [http_service] / [[services]] block: that block is what allocates a
+# public IP and a Fly Proxy HTTP endpoint, and is also the only mechanism
+# that drives Fly's proxy-idle "auto stop machines" behavior. Omitting it
+# means there is no public HTTP service, no public IP, AND no proxy-driven
+# autostop to disable in the first place. The machine's own lifecycle is
+# controlled by [restart] below plus the explicit --autostop=off documented
+# under "Operator commands after this PR is merged" in the deployment
+# runbook (a Machines-API-level flag, not a fly.toml block, as of the
+# flyctl version in use — confirm with `fly machine run --help` /
+# `fly config validate` before the first real deploy).
+
+[restart]
+  policy = "always"
+
+# Persistent volume. Must exist before the first deploy — this repo does
+# not create it. Expected name: repodiet_persistent (matches
+# docker-compose.production.yml's single-volume shape exactly, so the
+# in-container path contract is identical across Fly and the Linux VM
+# path). Not created by this PR — see runbook for the exact `fly volumes
+# create` command an operator runs separately.
+[mounts]
+  source = "repodiet_persistent"
+  destination = "/persistent"
+
+# Initial memory candidate only — not yet measured against a real running
+# container. See "Measuring actual memory" in the deployment runbook for
+# the exact command to run after the first real deploy, and revise this
+# value from observed RSS rather than leaving it as a guess.
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 256
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Exactly one production Machine is intended. This file does not itself
+# enforce machine count (that is a `fly scale count 1` / `fly machine run`
+# concern at deploy time, and the GitHub Actions workflow in
+# .github/workflows/fly-deploy.yml is written to never create a second
+# Machine) — see the runbook's "Operator commands" section for the exact
+# verification command (`fly machine list --app repodiet-agent-9636`).

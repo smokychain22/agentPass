@@ -193,8 +193,8 @@ function run() {
     // gosu (execs) -> tsx shim (execs) -> node as one signal-transparent chain.
     const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
     assert.ok(
-      dockerfile.includes('CMD ["node_modules/.bin/tsx", "scripts/repodiet-seller-runtime.ts"]'),
-      "must exec the local tsx binary directly, not via npx"
+      dockerfile.includes('CMD ["node_modules/.bin/tsx", "scripts/seller-runtime-supervisor.ts"]'),
+      "must exec the local tsx binary directly against the supervisor entrypoint, not via npx"
     );
     assert.ok(!/CMD \[.?"npx"/.test(dockerfile), "must not run the entrypoint command through npx");
   });

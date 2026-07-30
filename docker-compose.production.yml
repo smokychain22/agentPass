@@ -1,7 +1,18 @@
-# Controlled local validation of the always-online seller runtime.
+# Host-neutral deployment path for the always-online seller runtime — both
+# local validation AND the permanent Linux VM long-term hosting target (see
+# "Permanent Linux VM deployment" in docs/SELLER_RUNTIME_DEPLOYMENT.md).
 #
-# This does NOT provision hosting and contains no secrets — every value comes
-# from an env file that is never committed. See docs/SELLER_RUNTIME_DEPLOYMENT.md.
+# This file does NOT provision hosting itself and contains no secrets —
+# every value comes from an env file that is never committed. Tested on
+# x86_64 only; do not assume arm64 support (the pinned onchainos/okx-a2a/
+# openclaw binaries in Dockerfile.seller are not verified there).
+#
+# On a persistent Linux VM, pair this with deploy/repodiet-seller.service
+# (a HOST-level systemd unit that runs `docker compose up` — systemd itself
+# never runs inside the container; the container's own PID 1 stays tini,
+# per Dockerfile.seller) so the stack restarts automatically after a host
+# reboot even if the Docker daemon's own restart-container-on-boot behavior
+# is not enabled.
 services:
   repodiet-seller:
     build:
@@ -19,11 +30,13 @@ services:
       # keeps its authenticated session.
       REPODIET_OKX_RUNTIME_ROOT: /persistent/data/okx-runtimes
     volumes:
-      # Single volume, matching the Railway /persistent mount exactly.
-      - repodiet-seller-persistent:/persistent
+      # Single volume. Named to match the Fly volume (repodiet_persistent,
+      # see fly.toml) so the in-container path contract is identical across
+      # both deployment targets.
+      - repodiet_persistent:/persistent
     # No published ports: the runtime is an outbound XMTP/HTTPS client, not a
     # server. Nothing should be able to reach it inbound.
     stop_grace_period: 30s
 
 volumes:
-  repodiet-seller-persistent:
+  repodiet_persistent:

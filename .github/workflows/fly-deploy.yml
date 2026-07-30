@@ -1,0 +1,79 @@
+name: Fly deploy (repodiet-agent-9636)
+
+# Deploys the seller runtime (Agent 9636) to the existing Fly app
+# repodiet-agent-9636 — testing target only, see docs/SELLER_RUNTIME_DEPLOYMENT.md
+# ("Permanent Linux VM deployment" is the long-term host).
+#
+# Runs only after the required validation + real Docker build in CI (.github/
+# workflows/ci.yml: typecheck, lint, test, build, build:worker, and the
+# `seller-runtime-image` job's real `docker build -f Dockerfile.seller`)
+# have already succeeded on main — this workflow never re-runs or skips
+# those checks, it only fires once CI reports success via workflow_run.
+#
+# This workflow is present in this PR but is NOT triggered by this PR: it
+# only fires on a push to main, and only after this branch is merged.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  # Serializes deploys rather than cancelling one mid-flight — an aborted
+  # `flyctl deploy` can leave the Machine in a partially-updated state.
+  group: fly-deploy-repodiet-agent-9636
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: flyctl-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only deploy when the upstream CI run actually passed, and only for
+    # main (workflow_run always reports the triggering workflow's branch,
+    # regardless of what branch dispatched this workflow file itself).
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Require FLY_API_TOKEN
+        run: |
+          if [ -z "${{ secrets.FLY_API_TOKEN }}" ]; then
+            echo "::error::FLY_API_TOKEN is not configured in repository secrets. Add it under Settings > Secrets and variables > Actions before this workflow can deploy. See docs/SELLER_RUNTIME_DEPLOYMENT.md." >&2
+            exit 1
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy (remote build, exactly one Machine)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --remote-only: build on Fly's remote builder, not this runner.
+          # --ha=false: this app intentionally runs exactly one production
+          # Machine — flyctl's default high-availability behavior can
+          # provision a second Machine per process group on first deploy,
+          # which this task explicitly forbids. Verify this flag against
+          # the flyctl version pinned by setup-flyctl before the first real
+          # run (`flyctl deploy --help`) — not executed by this PR.
+          flyctl deploy --remote-only --ha=false --app repodiet-agent-9636
+          # Never echo or log FLY_API_TOKEN, request headers, or flyctl's
+          # own auth output above this line.
+
+      - name: Verify exactly one Machine exists after deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          count=$(flyctl machine list --app repodiet-agent-9636 --json | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{console.log(JSON.parse(d).length)})")
+          echo "Machine count: ${count}"
+          if [ "${count}" != "1" ]; then
+            echo "::error::Expected exactly one Machine on repodiet-agent-9636 after deploy, found ${count}. Investigate before allowing further deploys — do not scale manually without understanding why a second Machine exists." >&2
+            exit 1
+          fi

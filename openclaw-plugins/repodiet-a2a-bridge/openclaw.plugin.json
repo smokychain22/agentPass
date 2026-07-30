@@ -1,0 +1,13 @@
+{
+  "id": "repodiet-a2a-bridge",
+  "name": "RepoDiet A2A Bridge",
+  "description": "Deterministically answers okx-a2a seller-session (Agent 9636) messages without an LLM turn, so no model provider ever acts as the production ASP responder.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -106,4 +106,13 @@ ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/seller-entrypoint.sh"]
 # node_modules/.bin/tsx is itself a shell shim that ends in `exec`, so
 # invoking it directly (bypassing npx) keeps this a single exec'd process
 # from tini down, and SIGTERM reaches the runtime's own handler.
-CMD ["node_modules/.bin/tsx", "scripts/repodiet-seller-runtime.ts"]
+#
+# scripts/seller-runtime-supervisor.ts is the actual PID under tini/gosu. It
+# starts and supervises the OpenClaw Gateway as a managed foreground child
+# (previously unsupervised — okx-a2a's own post-install gateway restart
+# shells out to `systemctl --user`, which does not exist here) and only
+# then spawns repodiet-seller-runtime.ts as a second managed child. Both are
+# required children: a signal to this process is forwarded to both, and if
+# either exits unexpectedly the supervisor tears the other down and exits
+# non-zero rather than leaving a half-supervised container running.
+CMD ["node_modules/.bin/tsx", "scripts/seller-runtime-supervisor.ts"]

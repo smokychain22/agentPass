@@ -1,0 +1,30 @@
+[Unit]
+# Host-level systemd unit for a permanent Linux VM (x86_64). This unit runs
+# ON THE HOST and manages the Docker Compose stack.
+#
+# does NOT run inside the container: the container's own PID 1 stays tini
+# (see Dockerfile.seller). systemd here is exactly the "root-level systemd
+# service managing Docker" deployment path documented in
+# docs/SELLER_RUNTIME_DEPLOYMENT.md, distinct from and never a substitute
+# for the in-container process supervisor (scripts/seller-runtime-supervisor.ts).
+Description=RepoDiet seller runtime (Agent 9636) — Docker Compose stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Absolute path — set to wherever this repository is checked out on the VM.
+WorkingDirectory=/opt/repodiet
+ExecStart=/usr/bin/docker compose -f docker-compose.production.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.production.yml down
+# Reconciles drift (e.g. an operator manually stopped the container) on
+# every restart of this unit without recreating the image or the volume.
+ExecReload=/usr/bin/docker compose -f docker-compose.production.yml up -d
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
