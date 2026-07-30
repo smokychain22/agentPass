@@ -92,6 +92,17 @@ RUN chown -R node:node /app
 # Persistence is attached by the platform at /persistent, and the
 # entrypoint creates and chowns the directories once it is mounted.
 
+# The RepoDiet A2A Bridge OpenClaw plugin — loaded via plugins.load.paths
+# at /app/openclaw-plugins/repodiet-a2a-bridge (see
+# scripts/seller-runtime-supervisor.ts's REPODIET_BRIDGE_PLUGIN_PATH).
+# Copied AFTER the chown above, and deliberately NOT chowned to node:node:
+# verified by direct reproduction that OpenClaw's own plugin loader refuses
+# a plugins.load.paths entry owned by a non-root uid ("blocked plugin
+# candidate: suspicious ownership ... expected uid=0 or root"). Root
+# ownership of a read-only plugin directory is safe — the seller process
+# (running as node) only ever reads these files, never writes them.
+COPY openclaw-plugins ./openclaw-plugins
+
 # Proves the process is alive AND holding its instance lock — not merely running.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "const fs=require('fs');const p=process.env.REPODIET_OKX_RUNTIME_ROOT+'/seller-9636/runtime.pid';if(!fs.existsSync(p))process.exit(1);const pid=Number(fs.readFileSync(p,'utf8').trim());try{process.kill(pid,0)}catch{process.exit(1)}"

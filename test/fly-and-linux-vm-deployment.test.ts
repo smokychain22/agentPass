@@ -82,6 +82,20 @@ function run() {
     assert.ok(!/OPENCLAW_GATEWAY_TOKEN\s*=\s*"[^"]+"/.test(toml), "must not hardcode the gateway token value");
   });
 
+  test("fly.toml declares the non-secret GITHUB_APP_SLUG required alongside the 5 staged GitHub App secrets", () => {
+    // Regression: an earlier PR report claimed this was added to fly.toml
+    // when it had only actually been added to .env.seller.example.
+    // src/lib/github-app/config.ts's isGitHubAppConfigured() requires
+    // GITHUB_APP_SLUG in addition to GITHUB_APP_ID/CLIENT_ID/CLIENT_SECRET/
+    // PRIVATE_KEY — without it, the GitHub App is never usable even with
+    // all five secrets correctly staged.
+    const toml = read("fly.toml");
+    assert.ok(
+      /GITHUB_APP_SLUG\s*=\s*"repodiet-operator"/.test(toml),
+      "fly.toml [env] must declare GITHUB_APP_SLUG = \"repodiet-operator\""
+    );
+  });
+
   test("fly.toml documents how to measure real memory usage before finalizing the initial 512mb candidate", () => {
     const toml = read("fly.toml");
     assert.ok(/memory\s*=\s*"512mb"/.test(toml));

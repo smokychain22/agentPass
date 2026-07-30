@@ -61,17 +61,51 @@ function run() {
       "agent_9636_selected",
       "communication_address_correct",
       "openclaw_gateway_authenticated",
+      "okx_a2a_plugin_active",
+      "repodiet_a2a_bridge_plugin_active",
       "okx_a2a_provider_configured",
       "a2a_daemon_running",
       "xmtp_communication_active",
       "onchainos_ready",
       "vercel_heartbeat_accepted",
       "task_dispatcher_registered",
+      "real_37347_dispatcher_registered",
+      "real_37348_dispatcher_registered",
       "github_app_installation_token_works",
       "github_app_can_access_e2e_repo",
       "only_one_seller_runtime_active",
     ]) {
       assert.ok(src.includes(`"${id}"`), `missing required check: ${id}`);
+    }
+  });
+
+  test("plugin-active checks use the module-loaded inspection command, never file existence", () => {
+    const src = source();
+    assert.ok(src.includes('"plugins", "inspect", pluginId, "--runtime", "--json"'));
+    assert.ok(!/existsSync.*openclaw-plugins/.test(src), "must not treat a plugin file existing on disk as readiness");
+  });
+
+  test("the real 37347/37348 dispatcher checks reuse the bridge's own dispatch.js rather than a duplicated implementation", () => {
+    const src = source();
+    assert.ok(src.includes('"../openclaw-plugins/repodiet-a2a-bridge/dispatch.js"'));
+    assert.ok(src.includes("dispatchAnalyzeRepository") && src.includes("dispatchCreateTask"));
+  });
+
+  test("the 37348 dispatcher probe uses a safe discovery-only message — no task, payment, or repo access created", () => {
+    const src = source();
+    const match = src.match(/dispatchCreateTask\(\{\s*message:\s*"([^"]+)"\s*\}\)/);
+    assert.ok(match, "expected a literal discovery-only probe message");
+    assert.ok(!/github\.com/i.test(match![1]), "the probe message must not include a repository URL (which would start real task creation)");
+  });
+
+  test("readiness fails when either the 37347 or the 37348 dispatcher check is missing/failing — both are requiredForProduction", () => {
+    const src = source();
+    // Both checks are registered via record(id, true, ...) — the second
+    // positional argument is requiredForProduction; grep near each call to
+    // confirm neither was silently downgraded to optional.
+    for (const id of ["real_37347_dispatcher_registered", "real_37348_dispatcher_registered"]) {
+      const pattern = new RegExp(`record\\(\\s*"${id}"\\s*,\\s*true\\s*,`, "g");
+      assert.ok(pattern.test(src), `${id} must be recorded with requiredForProduction=true at every call site`);
     }
   });
 

@@ -16,10 +16,16 @@
  *   1. Verify OPENCLAW_GATEWAY_TOKEN is configured (fail closed otherwise).
  *   2. Write the token into OpenClaw's own config as the documented
  *      SecretRef form (`openclaw config set gateway.auth.token --ref-source
- *      env --ref-id OPENCLAW_GATEWAY_TOKEN`) and explicitly allow the
- *      trusted okx-a2a plugin (`plugins.allow`) — verified against the
- *      actual installed openclaw@2026.7.1-2 CLI docs (docs/cli/config.md,
- *      docs/cli/gateway.md) and config schema
+ *      env --ref-id OPENCLAW_GATEWAY_TOKEN`); explicitly allow both trusted
+ *      plugins (`plugins.allow`: `okx-a2a` and `repodiet-a2a-bridge`);
+ *      register the bridge's standalone plugin directory
+ *      (`plugins.load.paths`, docs/gateway/configuration-reference.md:
+ *      "files or directories listed in plugins.load.paths"); and grant it
+ *      conversation-hook access (`plugins.entries.repodiet-a2a-bridge.
+ *      hooks.allowConversationAccess`, required for any non-bundled plugin
+ *      using `before_agent_reply` — docs/plugins/hooks.md) — verified
+ *      against the actual installed openclaw@2026.7.1-2 CLI docs
+ *      (docs/cli/config.md, docs/cli/gateway.md) and config schema
  *      (dist/types.openclaw-*.d.ts: GatewayAuthConfig.token: SecretInput,
  *      PluginsConfig.allow: string[]), not guessed.
  *   3. Register the okx-a2a plugin into that config (`okx-a2a setup
@@ -28,6 +34,8 @@
  *      the CLI docs state writes to `plugins.entries`/`plugins.allow`
  *      "always require a restart" to take effect, so registering it after
  *      the Gateway is already running would not activate it this boot.
+ *      repodiet-a2a-bridge's own manifest also declares
+ *      `activation.onStartup: true` for the same reason.
  *   4. Start `openclaw gateway run` ourselves as a managed foreground child
  *      (the documented explicit foreground form — see docs/cli/gateway.md)
  *      instead of relying on okx-a2a's systemctl-based auto-restart.
@@ -36,7 +44,14 @@
  *      just configured and exits non-zero on any auth/read failure — this
  *      is the documented way to prove auth end-to-end without putting the
  *      token on a command line).
- *   6. Only then start scripts/repodiet-seller-runtime.ts, which still owns
+ *   6. Verify repodiet-a2a-bridge is genuinely loaded and active —
+ *      `openclaw plugins inspect repodiet-a2a-bridge --runtime --json`
+ *      (documented: "shows registered hooks and diagnostics from a
+ *      module-loaded inspection pass", docs/cli/plugins.md). A plugin file
+ *      existing on disk is not proof it loaded — this step fails the whole
+ *      startup closed if the inspection does not report the plugin present
+ *      with its `before_agent_reply` hook registered.
+ *   7. Only then start scripts/repodiet-seller-runtime.ts, which still owns
  *      identity verification, `okx-a2a setup`/`doctor --fix`/`daemon`, and
  *      the heartbeat loop exactly as before — this supervisor does not
  *      duplicate or weaken any of that.
@@ -59,10 +74,15 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { runProcess } from "../src/lib/okx-runtime/process-runner";
+import { parsePluginInspection } from "../src/lib/okx-runtime/plugin-inspection";
 
 export const OPENCLAW_GATEWAY_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
 export const OPENCLAW_GATEWAY_URL = `ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}`;
 export const OKX_A2A_PLUGIN_ID = "okx-a2a";
+// Matches openclaw-plugins/repodiet-a2a-bridge/openclaw.plugin.json's "id".
+export const REPODIET_BRIDGE_PLUGIN_ID = "repodiet-a2a-bridge";
+// Matches Dockerfile.seller's WORKDIR (/app) + COPY of openclaw-plugins/.
+export const REPODIET_BRIDGE_PLUGIN_PATH = "/app/openclaw-plugins/repodiet-a2a-bridge";
 
 const GATEWAY_READY_TIMEOUT_MS = Number(
   process.env.REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 120_000
@@ -113,7 +133,11 @@ export interface OpenclawConfigCall {
  * (env var name) — never a secret value — so this list is safe to log
  * verbatim, and safe to pass on argv (no token ever appears there).
  */
-export function buildOpenclawConfigCalls(pluginId: string = OKX_A2A_PLUGIN_ID): OpenclawConfigCall[] {
+export function buildOpenclawConfigCalls(
+  trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID],
+  bridgePluginId: string = REPODIET_BRIDGE_PLUGIN_ID,
+  bridgePluginPath: string = REPODIET_BRIDGE_PLUGIN_PATH
+): OpenclawConfigCall[] {
   return [
     {
       configPath: "gateway.mode",
@@ -141,9 +165,25 @@ export function buildOpenclawConfigCalls(pluginId: string = OKX_A2A_PLUGIN_ID): 
       description: "bind the shared gateway token to the OPENCLAW_GATEWAY_TOKEN SecretRef (documented builder mode)",
     },
     {
+      configPath: "plugins.load.paths",
+      args: ["config", "set", "plugins.load.paths", JSON.stringify([bridgePluginPath]), "--strict-json"],
+      description: `register the standalone repodiet-a2a-bridge plugin directory (docs/gateway/configuration-reference.md: "files or directories listed in plugins.load.paths")`,
+    },
+    {
+      configPath: `plugins.entries.${bridgePluginId}.hooks.allowConversationAccess`,
+      args: [
+        "config",
+        "set",
+        `plugins.entries.${bridgePluginId}.hooks.allowConversationAccess`,
+        "true",
+        "--strict-json",
+      ],
+      description: "required for any non-bundled plugin using a conversation hook (before_agent_reply) — docs/plugins/hooks.md",
+    },
+    {
       configPath: "plugins.allow",
-      args: ["config", "set", "plugins.allow", JSON.stringify([pluginId]), "--strict-json"],
-      description: `explicitly allow the trusted ${pluginId} plugin (PluginsConfig.allow)`,
+      args: ["config", "set", "plugins.allow", JSON.stringify(trustedPluginIds), "--strict-json"],
+      description: `explicitly allow the trusted plugins (PluginsConfig.allow): ${trustedPluginIds.join(", ")}`,
     },
   ];
 }
@@ -190,6 +230,42 @@ async function gatewayAuthenticatedAndReady(env: NodeJS.ProcessEnv): Promise<boo
     timeoutMs: 15_000,
   });
   return result.ok;
+}
+
+/**
+ * Proves repodiet-a2a-bridge is genuinely loaded and its
+ * `before_agent_reply` hook is registered — not merely that the plugin
+ * file exists on disk. `openclaw plugins inspect <id> --runtime --json`
+ * is the documented command for this ("shows registered hooks and
+ * diagnostics from a module-loaded inspection pass", docs/cli/plugins.md).
+ * Fails closed (returns false) on any non-zero exit, unparseable output,
+ * or output that does not name both the plugin id and the hook.
+ */
+/**
+ * Re-exported for backward-compatible test imports; the real parsing logic
+ * (and the real-verified schema it depends on) lives in the shared
+ * src/lib/okx-runtime/plugin-inspection.ts, so scripts/seller-production-
+ * readiness.ts can reuse the exact same parser without duplicating it or
+ * importing this module's top-level SIGTERM/SIGINT handlers as a side
+ * effect.
+ */
+export function parseBridgePluginInspection(
+  stdout: string,
+  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
+): boolean {
+  return parsePluginInspection(stdout, pluginId, "before_agent_reply");
+}
+
+export async function verifyBridgePluginActive(
+  env: NodeJS.ProcessEnv,
+  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
+): Promise<boolean> {
+  const result = await runProcess("openclaw", ["plugins", "inspect", pluginId, "--runtime", "--json"], {
+    env,
+    timeoutMs: 20_000,
+  });
+  if (!result.ok) return false;
+  return parseBridgePluginInspection(result.stdout, pluginId);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -325,9 +401,19 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Communication prerequisites (gateway live + authenticated) are proven —
-  // only now does the seller runtime start. It still independently gates
-  // its own heartbeat on okx-a2a setup/doctor/daemon, unchanged.
+  const bridgeActive = await verifyBridgePluginActive(env);
+  log("bridge_plugin_verified", { ok: bridgeActive, pluginId: REPODIET_BRIDGE_PLUGIN_ID });
+  if (!bridgeActive) {
+    log("startup_failed", { reason: "repodiet_a2a_bridge_not_active" });
+    await shutdown("bridge_plugin_not_active", 1);
+    return;
+  }
+
+  // Communication prerequisites (gateway live + authenticated) AND the
+  // real dispatch bridge (loaded and active, not merely present on disk)
+  // are proven — only now does the seller runtime start. It still
+  // independently gates its own heartbeat on okx-a2a setup/doctor/daemon,
+  // unchanged.
   spawnManaged(
     "repodiet-seller-runtime",
     "node_modules/.bin/tsx",

@@ -32,6 +32,12 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
   REPODIET_OKX_RUNTIME_ROLE = "seller"
   REPODIET_OKX_A2A_PROVIDER = "openclaw"
   REPODIET_PRODUCTION_URL = "https://skillswap-virid-kappa.vercel.app"
+  # Not secret — the canonical GitHub App's public slug (see
+  # https://github.com/apps/repodiet-operator). Required alongside the 5
+  # staged GitHub App secrets: src/lib/github-app/config.ts's
+  # isGitHubAppConfigured() checks this too, and it was previously missing
+  # from both the staged secrets and this file.
+  GITHUB_APP_SLUG = "repodiet-operator"
 
 # This runtime is an outbound XMTP/HTTPS client (heartbeat POST, OpenClaw
 # Gateway is loopback-only at 127.0.0.1:18789), never a server other agents

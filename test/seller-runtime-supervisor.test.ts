@@ -16,9 +16,12 @@ import path from "node:path";
 import {
   buildSupervisorEnv,
   buildOpenclawConfigCalls,
+  parseBridgePluginInspection,
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_GATEWAY_URL,
   OKX_A2A_PLUGIN_ID,
+  REPODIET_BRIDGE_PLUGIN_ID,
+  REPODIET_BRIDGE_PLUGIN_PATH,
 } from "../scripts/seller-runtime-supervisor";
 
 function test(name: string, fn: () => void) {
@@ -50,6 +53,11 @@ function run() {
 
   test("the trusted plugin id matches the actual installed plugin manifest (openclaw.plugin.json: id=\"okx-a2a\")", () => {
     assert.equal(OKX_A2A_PLUGIN_ID, "okx-a2a");
+  });
+
+  test("the bridge plugin id and path match openclaw-plugins/repodiet-a2a-bridge", () => {
+    assert.equal(REPODIET_BRIDGE_PLUGIN_ID, "repodiet-a2a-bridge");
+    assert.equal(REPODIET_BRIDGE_PLUGIN_PATH, "/app/openclaw-plugins/repodiet-a2a-bridge");
   });
 
   // --- Fail-closed env building (AUTH_TOKEN_MISSING regression) ---------
@@ -114,11 +122,45 @@ function run() {
     assert.deepEqual(call!.args, ["config", "set", "gateway.auth.mode", "token"]);
   });
 
-  test("plugins.allow explicitly allows the trusted okx-a2a plugin id (PluginsConfig.allow: string[])", () => {
-    const calls = buildOpenclawConfigCalls("okx-a2a");
+  test("plugins.allow explicitly allows BOTH trusted plugin ids by default (PluginsConfig.allow: string[])", () => {
+    const calls = buildOpenclawConfigCalls();
     const call = calls.find((c) => c.configPath === "plugins.allow");
     assert.ok(call);
+    assert.deepEqual(call!.args, ["config", "set", "plugins.allow", '["okx-a2a","repodiet-a2a-bridge"]', "--strict-json"]);
+  });
+
+  test("plugins.allow accepts an explicit override list", () => {
+    const calls = buildOpenclawConfigCalls(["okx-a2a"]);
+    const call = calls.find((c) => c.configPath === "plugins.allow");
     assert.deepEqual(call!.args, ["config", "set", "plugins.allow", '["okx-a2a"]', "--strict-json"]);
+  });
+
+  test("plugins.load.paths registers the standalone bridge plugin directory", () => {
+    const calls = buildOpenclawConfigCalls();
+    const call = calls.find((c) => c.configPath === "plugins.load.paths");
+    assert.ok(call);
+    assert.deepEqual(call!.args, [
+      "config",
+      "set",
+      "plugins.load.paths",
+      '["/app/openclaw-plugins/repodiet-a2a-bridge"]',
+      "--strict-json",
+    ]);
+  });
+
+  test("the bridge plugin is granted conversation-hook access, required for before_agent_reply", () => {
+    const calls = buildOpenclawConfigCalls();
+    const call = calls.find(
+      (c) => c.configPath === "plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess"
+    );
+    assert.ok(call);
+    assert.deepEqual(call!.args, [
+      "config",
+      "set",
+      "plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess",
+      "true",
+      "--strict-json",
+    ]);
   });
 
   test("no config call ever carries a secret value on argv — only path names, literal modes, and SecretRef pointers (env var names)", () => {
@@ -154,6 +196,90 @@ function run() {
     const sellerSpawnIndex = src.indexOf('spawnManaged(\n    "repodiet-seller-runtime"');
     assert.ok(waitIndex > -1 && sellerSpawnIndex > -1);
     assert.ok(waitIndex < sellerSpawnIndex, "communication prerequisites must be proven before the seller runtime starts");
+  });
+
+  test("the bridge plugin's real activation is verified after the gateway is ready and before the seller runtime starts", () => {
+    const src = supervisorSource();
+    const waitIndex = src.indexOf("const ready = await waitForGatewayReady(env)");
+    const verifyIndex = src.indexOf("const bridgeActive = await verifyBridgePluginActive(env)");
+    const sellerSpawnIndex = src.indexOf('spawnManaged(\n    "repodiet-seller-runtime"');
+    assert.ok(waitIndex > -1 && verifyIndex > -1 && sellerSpawnIndex > -1);
+    assert.ok(waitIndex < verifyIndex, "the gateway must be ready before checking plugin activation against it");
+    assert.ok(
+      verifyIndex < sellerSpawnIndex,
+      "a plugin file existing on disk is not readiness — genuine activation must be proven before the seller runtime starts"
+    );
+  });
+
+  test("verifyBridgePluginActive uses the documented module-loaded inspection command, not a file-existence check", () => {
+    const src = supervisorSource();
+    assert.ok(src.includes('"plugins", "inspect", pluginId, "--runtime", "--json"'));
+    assert.ok(!/existsSync.*openclaw-plugins/.test(src), "must not treat file presence as proof of activation");
+  });
+
+  // --- Plugin inspection parsing, against a REAL captured fixture --------
+  //
+  // test/fixtures/openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json
+  // is the exact, unedited stdout of `openclaw plugins inspect
+  // repodiet-a2a-bridge --runtime --json`, captured from a real run of the
+  // pinned openclaw@2026.7.1-2 CLI inside the actual built Dockerfile.seller
+  // image (docker exec, after the same plugins.load.paths / plugins.allow /
+  // hooks.allowConversationAccess config calls this supervisor performs).
+  // Not synthesized — this is what the real runtime actually returned.
+
+  test("parseBridgePluginInspection accepts the real captured fixture: status=loaded, activated=true, before_agent_reply registered", () => {
+    const fixture = fs.readFileSync(
+      path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
+      "utf8"
+    );
+    assert.equal(parseBridgePluginInspection(fixture), true);
+    // Sanity check that the fixture is genuinely the real shape referenced
+    // in the supervisor's parsing logic, not a stand-in.
+    const parsed = JSON.parse(fixture);
+    assert.equal(parsed.plugin.status, "loaded");
+    assert.equal(parsed.plugin.activated, true);
+    assert.equal(parsed.shape, "hook-only");
+    assert.deepEqual(parsed.typedHooks, [{ name: "before_agent_reply" }]);
+  });
+
+  test("parseBridgePluginInspection rejects a plugin that is present but not activated", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
+        "utf8"
+      )
+    );
+    fixture.plugin.activated = false;
+    fixture.plugin.status = "blocked";
+    assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
+  });
+
+  test("parseBridgePluginInspection rejects output where the hook did not actually register", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
+        "utf8"
+      )
+    );
+    fixture.typedHooks = [];
+    fixture.hookCount = 0;
+    assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
+  });
+
+  test("parseBridgePluginInspection rejects unparseable output instead of defaulting to true", () => {
+    assert.equal(parseBridgePluginInspection("not json"), false);
+    assert.equal(parseBridgePluginInspection(""), false);
+  });
+
+  test("parseBridgePluginInspection rejects a plugin id mismatch — the id must actually match, not just appear somewhere in output", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
+        "utf8"
+      )
+    );
+    fixture.plugin.id = "some-other-plugin";
+    assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
   });
 
   test("readiness is checked via the documented auth-resolving probe (gateway status --require-rpc), never by passing the token on argv", () => {
@@ -209,6 +335,7 @@ function run() {
       "openclaw_config_set_failed",
       "okx_a2a_plugin_registration_failed",
       "openclaw_gateway_not_ready_within_timeout",
+      "repodiet_a2a_bridge_not_active",
     ]) {
       assert.ok(src.includes(reason), `missing fail-closed path for: ${reason}`);
     }

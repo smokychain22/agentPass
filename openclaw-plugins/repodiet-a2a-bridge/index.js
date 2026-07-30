@@ -1,7 +1,7 @@
 /**
- * RepoDiet A2A Bridge — an OpenClaw plugin that makes RepoDiet's own code,
- * not a model call, the thing that answers okx-a2a seller-session traffic
- * for Agent 9636.
+ * RepoDiet A2A Bridge — an OpenClaw plugin that makes RepoDiet's own real
+ * production pipeline, never a model, the thing that answers okx-a2a
+ * seller-session traffic for Agent 9636.
  *
  * Why this exists: okx-a2a's own OpenClaw plugin (@okxweb3/a2a-openclaw)
  * turns every inbound XMTP message into a normal OpenClaw agent turn (its
@@ -11,7 +11,8 @@
  * agent turn would be answered by whatever model OpenClaw has configured —
  * which is exactly the prohibited "Claude/Codex/Cursor acting as RepoDiet"
  * topology this runtime must never produce, and would also simply fail if
- * no model-provider credential is configured at all.
+ * no model-provider credential is configured at all (none is, and none
+ * should be — see .env.seller.example).
  *
  * `before_agent_reply` is OpenClaw's documented, typed hook for exactly
  * this: "Short-circuit the model turn with a synthetic reply or silence"
@@ -21,39 +22,36 @@
  * string }`, `PluginHookBeforeAgentReplyResult = { handled: boolean; reply?:
  * ReplyPayload; reason?: string }`, `ReplyPayload = { text?: string; ... }`).
  *
- * Scope in this pass: every message inside an okx-a2a seller session for
- * Agent 9636 (`sessionKey` matching `my:9636:to:<peer>`, the exact pattern
- * already proven in scripts/okx-runtime/repodiet-a2a-responder.ts) is
- * unconditionally claimed (`handled: true`) — either answered with the
- * same deterministic safe-message template already proven over the HTTP
- * intake path, or, for anything not yet recognized as a safe pre-work
- * message, answered with a deterministic escalation notice. Nothing in this
- * scope ever falls through to a real model call. Funded-task execution
- * (real analysis / real PR dispatch) is intentionally NOT handled here yet
- * — see docs/SELLER_RUNTIME_DEPLOYMENT.md for the concrete next step.
+ * Scope: every message inside an okx-a2a seller session for Agent 9636
+ * (`sessionKey` matching `my:9636:to:<peer>`) is unconditionally claimed
+ * (`handled: true`) and dispatched to the real production pipeline
+ * (dispatch.js) — real A2MCP `analyze_repository` (service 37347, paid
+ * x402) or real A2A task intake (service 37348 `create_cleanup_pr`, via
+ * the same `/api/a2a/tasks` endpoint OKX's own reviewer already uses).
+ * Every reply is either the real backend's real response or a real,
+ * field-derived protocol error (logic.js) — never a fixed template.
+ * Nothing in this scope ever falls through to a real model call.
  *
- * All decision logic lives in logic.js, which has no dependency on the
- * "openclaw" package and is unit-tested directly (test/repodiet-a2a-bridge.
- * test.ts). This file is the thin adapter that only the real OpenClaw
- * runtime ever loads.
+ * All decision + dispatch logic lives in logic.js/dispatch.js/
+ * idempotency.js, none of which depend on the "openclaw" package, and all
+ * of which are unit- and integration-tested directly
+ * (test/repodiet-a2a-bridge.test.ts). This file is the thin adapter that
+ * only the real OpenClaw runtime ever loads.
  *
- * This plugin is NOT yet wired into scripts/seller-runtime-supervisor.ts's
- * startup config calls. Loading it requires `plugins.load.paths` plus
- * `plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess: true`
- * (required for any non-bundled plugin using a conversation hook — docs/
- * plugins/hooks.md). Wiring that in is deferred until a real container run
- * confirms `openclaw plugins inspect repodiet-a2a-bridge --runtime --json`
- * reports it loaded — activating an unverified plugin load inside the
- * fail-closed startup sequence risks turning a working gateway-ready path
- * into a new failure mode that cannot be exercised without a live gateway.
+ * Activated by scripts/seller-runtime-supervisor.ts via
+ * `plugins.load.paths` + `plugins.entries.repodiet-a2a-bridge.hooks.
+ * allowConversationAccess` + `plugins.allow` — see that file's module
+ * docblock for the exact config calls and the startup verification step
+ * (`openclaw plugins inspect repodiet-a2a-bridge --runtime --json`).
  */
 
 // definePluginEntry is the documented plugin-entry contract (docs/plugins/
 // building-plugins.md quickstart) — used as-is rather than a raw exported
 // object so this plugin gets the same validation/typing every other
-// OpenClaw plugin entry gets. Only this file (never logic.js) depends on
-// the "openclaw" package, which is resolvable only inside a real OpenClaw
-// runtime/container, not this repo's own node_modules.
+// OpenClaw plugin entry gets. Only this file (never logic.js/dispatch.js/
+// idempotency.js) depends on the "openclaw" package, which is resolvable
+// only inside a real OpenClaw runtime/container, not this repo's own
+// node_modules.
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { decideReply } from "./logic.js";
 
@@ -61,7 +59,7 @@ export default definePluginEntry({
   id: "repodiet-a2a-bridge",
   name: "RepoDiet A2A Bridge",
   description:
-    "Deterministically answers okx-a2a seller-session (Agent 9636) messages without an LLM turn.",
+    "Dispatches okx-a2a seller-session (Agent 9636) messages to RepoDiet's real production pipeline, never an LLM turn.",
   register(api) {
     api.on("before_agent_reply", async (event, ctx) => decideReply(event, ctx));
   },

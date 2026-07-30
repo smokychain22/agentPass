@@ -16,12 +16,22 @@
  *   - Agent 9636 selected                     -> onchainos gate-check: identity.agentId
  *   - correct communication address           -> onchainos gate-check: communication.ok
  *   - OpenClaw gateway authenticated          -> openclaw gateway status --require-rpc
- *   - okx-a2a provider configured             -> okx-a2a daemon status (--provider echoed)
+ *   - okx-a2a plugin active                   -> openclaw plugins inspect okx-a2a --runtime --json
+ *   - repodiet-a2a-bridge plugin active       -> openclaw plugins inspect repodiet-a2a-bridge --runtime --json
+ *     (module-loaded inspection — a plugin FILE existing on disk is not
+ *     readiness; this must report the plugin genuinely loaded)
  *   - A2A daemon running                      -> okx-a2a daemon status
  *   - XMTP communication active               -> okx-a2a agent refresh --json
  *   - communication.ok=true / ready=true      -> onchainos gate-check
  *   - Vercel heartbeat accepted                -> GET /api/okx/health: heartbeatStatus=fresh
- *   - task dispatcher registered               -> GET /api/okx/health: officialWatchActive
+ *   - real 37347 dispatcher registered         -> dispatchAnalyzeRepository() from the bridge's own
+ *     dispatch.js, reused (not duplicated) directly, against the real
+ *     production A2MCP endpoint — proves the dispatcher is wired to a
+ *     reachable, real service, not merely that a plugin file exists
+ *   - real 37348 dispatcher registered         -> dispatchCreateTask() from the same dispatch.js,
+ *     against the real production A2A intake endpoint with a safe
+ *     discovery-only message (no task created, no payment, matches the
+ *     already-proven safe-pattern probes elsewhere in this repo)
  *   - GitHub App installation token works      -> resolveAspGitHubToken()
  *   - GitHub App can access the E2E repo       -> same call, scoped to velz-cmd/repodiet-e2e-test
  *   - only one seller runtime is active        -> runtime.pid lock file, live PID
@@ -31,10 +41,17 @@
  */
 import { getRuntimePaths, readLivePid, OKX_RUNTIME_IDENTITIES } from "../src/lib/okx-runtime/runtime-layout";
 import { runProcess } from "../src/lib/okx-runtime/process-runner";
+import { parsePluginInspection } from "../src/lib/okx-runtime/plugin-inspection";
 
 const SELLER = OKX_RUNTIME_IDENTITIES.seller;
 const BASE_URL = (process.env.REPODIET_PRODUCTION_URL || "https://skillswap-virid-kappa.vercel.app").replace(/\/$/, "");
 const E2E_REPO = { owner: "velz-cmd", repo: "repodiet-e2e-test" };
+// Must match scripts/seller-runtime-supervisor.ts's OKX_A2A_PLUGIN_ID /
+// REPODIET_BRIDGE_PLUGIN_ID exactly. Kept as separate literals (not a
+// shared import) so this script never pulls in that module's top-level
+// SIGTERM/SIGINT handlers as an unwanted side effect of a plugin-id import.
+const OKX_A2A_PLUGIN_ID = "okx-a2a";
+const REPODIET_BRIDGE_PLUGIN_ID = "repodiet-a2a-bridge";
 
 interface Check {
   id: string;
@@ -91,6 +108,95 @@ async function checkOpenclawGatewayAuthenticated(): Promise<void> {
     result.ok,
     "openclaw gateway status --require-rpc (exits non-zero on any auth/read failure)"
   );
+}
+
+/**
+ * "A plugin file merely existing on disk is not readiness" — this uses the
+ * documented module-loaded inspection command (docs/cli/plugins.md:
+ * "openclaw plugins inspect <id> --runtime --json ... shows registered
+ * hooks and diagnostics from a module-loaded inspection pass"), the same
+ * check scripts/seller-runtime-supervisor.ts's verifyBridgePluginActive
+ * performs at startup — re-run here so the readiness gate does not merely
+ * trust that startup-time check happened correctly.
+ */
+async function checkPluginActive(pluginId: string, requiredHookName: string): Promise<boolean> {
+  const result = await runProcess("openclaw", ["plugins", "inspect", pluginId, "--runtime", "--json"], {
+    timeoutMs: 20_000,
+  });
+  return result.ok && parsePluginInspection(result.stdout, pluginId, requiredHookName);
+}
+
+async function checkPluginsActive(): Promise<void> {
+  const okxA2aActive = await checkPluginActive(OKX_A2A_PLUGIN_ID, "before_agent_run");
+  record(
+    "okx_a2a_plugin_active",
+    true,
+    okxA2aActive,
+    "openclaw plugins inspect okx-a2a --runtime --json (module-loaded inspection, not file existence)"
+  );
+  const bridgeActive = await checkPluginActive(REPODIET_BRIDGE_PLUGIN_ID, "before_agent_reply");
+  record(
+    "repodiet_a2a_bridge_plugin_active",
+    true,
+    bridgeActive,
+    "openclaw plugins inspect repodiet-a2a-bridge --runtime --json (module-loaded inspection, not file existence)"
+  );
+}
+
+/**
+ * Proves both real dispatchers (A2MCP 37347, A2A 37348) are genuinely
+ * wired to reachable production services — not merely that the plugin
+ * loaded. Reuses the bridge's own dispatch.js directly (no dependency on
+ * the "openclaw" package, so importable here too) rather than
+ * reimplementing a second copy of the dispatch logic. The A2A probe uses a
+ * safe discovery-only message — no task, payment, or repository access is
+ * created by this check, matching the safe-pattern probes already proven
+ * elsewhere in this repo (docs/OKX_RESUBMISSION_AUDIT.md).
+ */
+async function checkRealDispatchersRegistered(): Promise<void> {
+  try {
+    const { dispatchAnalyzeRepository, dispatchCreateTask } = await import(
+      "../openclaw-plugins/repodiet-a2a-bridge/dispatch.js"
+    );
+    try {
+      const result = await dispatchAnalyzeRepository({
+        repositoryUrl: `https://github.com/${E2E_REPO.owner}/${E2E_REPO.repo}`,
+      });
+      record(
+        "real_37347_dispatcher_registered",
+        true,
+        result.status === 402 || result.status === 200,
+        `dispatchAnalyzeRepository() -> real production HTTP ${result.status} (402 payment-required or 200 are both proof of a genuinely reachable dispatcher)`
+      );
+    } catch (err) {
+      record(
+        "real_37347_dispatcher_registered",
+        true,
+        false,
+        `dispatchAnalyzeRepository() failed: ${err instanceof Error ? err.message : "unknown_error"}`
+      );
+    }
+    try {
+      const result = await dispatchCreateTask({ message: "Is RepoDiet online?" });
+      record(
+        "real_37348_dispatcher_registered",
+        true,
+        result.status === 200,
+        `dispatchCreateTask() -> real production HTTP ${result.status} (safe discovery-only probe, no task created)`
+      );
+    } catch (err) {
+      record(
+        "real_37348_dispatcher_registered",
+        true,
+        false,
+        `dispatchCreateTask() failed: ${err instanceof Error ? err.message : "unknown_error"}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown_error";
+    record("real_37347_dispatcher_registered", true, false, `could not load dispatch.js: ${message}`);
+    record("real_37348_dispatcher_registered", true, false, `could not load dispatch.js: ${message}`);
+  }
 }
 
 async function checkA2aDaemon(): Promise<void> {
@@ -202,9 +308,11 @@ function checkSingleInstance(): void {
 async function main(): Promise<void> {
   await checkOnchainOsGate();
   await checkOpenclawGatewayAuthenticated();
+  await checkPluginsActive();
   await checkA2aDaemon();
   await checkXmtpActive();
   await checkVercelHeartbeatAndDispatcher();
+  await checkRealDispatchersRegistered();
   await checkGitHubApp();
   checkSingleInstance();
 
