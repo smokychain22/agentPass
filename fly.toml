@@ -57,8 +57,19 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
 # Config.restart of type []appconfig.Restart" — confirmed directly against
 # the real flyctl schema (both locally and via a live GitHub Actions
 # deploy run) after an initial guess got this wrong.
+#
+# TEMPORARILY changed from policy = "always" to a bounded
+# "on-failure"/retries = 3 while the new idempotent bootstrap
+# (scripts/seller-runtime-supervisor.ts, src/lib/okx-runtime/openclaw-
+# bootstrap.ts) is validated: an unbounded "always" restart loop is exactly
+# what let the previous boot-time network dependency burn trial runtime
+# silently (see docs/SELLER_RUNTIME_DEPLOYMENT.md incident writeup). This
+# change is NOT deployed by this PR — see the runbook for reverting to
+# policy = "always" once the new bootstrap has proven itself stable in
+# production.
 [[restart]]
-  policy = "always"
+  policy = "on-failure"
+  retries = 3
 
 # Persistent volume. Must exist before the first deploy — this repo does
 # not create it. Expected name: repodiet_persistent (matches

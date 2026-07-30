@@ -293,6 +293,14 @@ function run() {
     assert.ok(!/\|\|\s*echo/.test(dockerfile), "the install must not fall back to a warning instead of failing");
   });
 
+  test("npm ci skips Playwright's browser-binary download — this image never runs the e2e suite and that download is a separate, unrelated, much larger network dependency", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    const npmCiIndex = dockerfile.indexOf("RUN npm ci");
+    const envIndex = dockerfile.indexOf("ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1");
+    assert.ok(envIndex > -1, "must skip the Playwright browser download");
+    assert.ok(envIndex < npmCiIndex, "must be set before npm ci runs @playwright/test's postinstall hook");
+  });
+
   test("curl is installed so the pinned OnchainOS asset can be downloaded", () => {
     const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
     assert.ok(/apt-get install[^\n]*\bcurl\b/.test(dockerfile));
@@ -348,14 +356,39 @@ function run() {
     );
   });
 
-  test("provider setup, readiness, and daemon liveness use the official CLI, not a reimplementation", () => {
+  test("readiness and daemon liveness use the official CLI, not a reimplementation", () => {
     const src = entrypointSource();
-    assert.ok(src.includes('"setup", A2A_PROVIDER'), "must call the official setup command");
     assert.ok(src.includes('"doctor", "--fix", "--json"'), "must call the official readiness/repair command");
     assert.ok(src.includes('"daemon", "status"'), "must probe the official daemon status command");
     assert.ok(
       src.includes('"daemon", "start", "--provider", A2A_PROVIDER'),
       "must restart the daemon via the official start command, not a spawned child process"
+    );
+  });
+
+  // --- Single bootstrap owner (Incident #2 remediation) ------------------
+  //
+  // scripts/seller-runtime-supervisor.ts is now the SOLE owner of OpenClaw
+  // config bootstrap and okx-a2a provider selection — it starts this
+  // process only after both are proven. Two independent boot-time callers
+  // of `okx-a2a setup`/`ai-provider set` racing the same persisted
+  // openclaw.json is exactly what produced the real corruption incident
+  // (see docs/SELLER_RUNTIME_DEPLOYMENT.md), so this process must never
+  // call either command itself.
+
+  test("this process never calls okx-a2a setup or ai-provider set — the supervisor is the sole owner of provider configuration", () => {
+    const src = entrypointSource();
+    assert.ok(!src.includes("ensureProviderSetup"), "the duplicate provider-setup function must be removed, not merely unused");
+    assert.ok(!/"setup",\s*A2A_PROVIDER/.test(src), "must not shell out to okx-a2a setup");
+    assert.ok(!src.includes('"ai-provider"'), "provider selection belongs solely to the supervisor");
+    assert.ok(!/--release/.test(src), "no boot command in this process may resolve a version at runtime");
+  });
+
+  test("establishCommunicationReadiness documents that provider/plugin bootstrap is owned elsewhere", () => {
+    const src = entrypointSource();
+    assert.ok(
+      /owned exclusively by\r?\n \* scripts\/seller-runtime-supervisor\.ts/.test(src),
+      "the ownership boundary must be documented at the call site, not just assumed"
     );
   });
 
@@ -376,14 +409,9 @@ function run() {
     assert.ok(src.includes("daemonOk = await ensureDaemonRunning()"));
   });
 
-  test("readiness events use the requested vocabulary: communication_ready, provider_bound, a2a_daemon_ready, xmtp_ready", () => {
+  test("readiness events use the requested vocabulary: communication_ready, a2a_daemon_ready, xmtp_ready", () => {
     const src = entrypointSource();
-    for (const event of [
-      "communication_ready",
-      "provider_bound",
-      "a2a_daemon_ready",
-      "xmtp_ready",
-    ]) {
+    for (const event of ["communication_ready", "a2a_daemon_ready", "xmtp_ready"]) {
       assert.ok(src.includes(`"${event}"`), `missing log event: ${event}`);
     }
   });
@@ -438,6 +466,70 @@ function run() {
     assert.ok(match, "doctor --fix must set an explicit exec timeout");
     const timeoutMs = Number(`${match![1]}${match![2]}`);
     assert.ok(timeoutMs >= 180_000, `timeout ${timeoutMs}ms must be at least the CLI's documented 180s minimum`);
+  });
+
+  // --- Incident #2 remediation: no boot-time network dependency ----------
+
+  test("no `--release latest` (or any --release) appears in any executable line — only in prose documenting the retired flag", () => {
+    for (const relPath of ["Dockerfile.seller", "scripts/seller-runtime-supervisor.ts", "scripts/repodiet-seller-runtime.ts"]) {
+      const content = fs.readFileSync(path.join(REPO_ROOT, relPath), "utf8");
+      const executableLines = content
+        .split(/\r?\n/)
+        .filter((line) => !/^\s*(#|\/\/|\*)/.test(line));
+      for (const line of executableLines) {
+        assert.ok(!/--release/.test(line), `${relPath} must not resolve a version at runtime via --release: ${line}`);
+      }
+    }
+  });
+
+  test("no npm install/upgrade is reachable from normal startup — only from Dockerfile RUN (build time)", () => {
+    for (const relPath of ["scripts/seller-runtime-supervisor.ts", "scripts/repodiet-seller-runtime.ts"]) {
+      const content = fs.readFileSync(path.join(REPO_ROOT, relPath), "utf8");
+      const executableLines = content
+        .split(/\r?\n/)
+        .filter((line) => !/^\s*(#|\/\/|\*)/.test(line));
+      for (const line of executableLines) {
+        assert.ok(!/npm\s+(install|update|i\s)/.test(line), `${relPath} must not invoke npm at runtime: ${line}`);
+        assert.ok(!/"setup"/.test(line), `${relPath} must not call the broad, network-dependent setup command: ${line}`);
+      }
+    }
+  });
+
+  test("@okxweb3/a2a-openclaw is pinned and checksum-verified into the image at build time, not installed at boot", () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    assert.ok(/ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION=\d+\.\d+\.\d+/.test(dockerfile), "plugin version must be pinned");
+    assert.ok(
+      /ARG OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY=sha512-[A-Za-z0-9+/=]+/.test(dockerfile),
+      "a real npm sha512 integrity value must be pinned"
+    );
+    assert.ok(dockerfile.includes('npm pack "@okxweb3/a2a-openclaw@${OKX_A2A_OPENCLAW_PLUGIN_VERSION}"'));
+    assert.ok(
+      dockerfile.includes('"${actual_integrity}" != "${OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY}"'),
+      "the build must fail closed on any integrity mismatch"
+    );
+    assert.ok(dockerfile.includes("test -f /app/openclaw-plugins/okx-a2a-openclaw/openclaw.plugin.json"), "the build must prove the manifest actually extracted before succeeding");
+  });
+
+  test("the okx-a2a-openclaw plugin directory is extracted AFTER chown, so it lands root-owned like the bridge plugin", () => {
+    // Verified by direct reproduction: OpenClaw's plugin loader refuses a
+    // plugins.load.paths entry owned by a non-root uid ("blocked plugin
+    // candidate: suspicious ownership ... expected uid=0 or root").
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile.seller"), "utf8");
+    const chownIndex = dockerfile.indexOf("RUN chown -R node:node /app");
+    const bridgeCopyIndex = dockerfile.indexOf("COPY openclaw-plugins ./openclaw-plugins");
+    const okxPluginIndex = dockerfile.indexOf("ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION");
+    assert.ok(chownIndex > -1 && bridgeCopyIndex > -1 && okxPluginIndex > -1);
+    assert.ok(chownIndex < bridgeCopyIndex, "the bridge plugin must be placed after the chown to stay root-owned");
+    assert.ok(chownIndex < okxPluginIndex, "the okx-a2a-openclaw plugin must be placed after the chown to stay root-owned");
+  });
+
+  // --- fly.toml: bounded restart policy during development ---------------
+
+  test("fly.toml restart policy is temporarily bounded (on-failure, retries=3) while the new bootstrap is validated", () => {
+    const flyToml = fs.readFileSync(path.join(REPO_ROOT, "fly.toml"), "utf8");
+    assert.ok(flyToml.includes("[[restart]]"), "must keep the array-of-tables syntax flyctl requires");
+    assert.ok(/policy\s*=\s*"on-failure"/.test(flyToml));
+    assert.ok(/retries\s*=\s*3/.test(flyToml));
   });
 
   console.log("seller-runtime-portability: all passed");
