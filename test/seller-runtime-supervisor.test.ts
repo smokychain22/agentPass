@@ -19,7 +19,7 @@ import path from "node:path";
 
 import {
   buildSupervisorEnv,
-  buildOpenclawConfigCalls,
+  buildOpenclawConfigBatch,
   computeExpectedBootstrapVersions,
   parseBridgePluginInspection,
   OPENCLAW_GATEWAY_PORT,
@@ -122,109 +122,104 @@ function run() {
   });
 
   // --- OpenClaw config wiring (the actual, non-guessed schema) -----------
+  //
+  // These 8 entries are now issued as a single `openclaw config set
+  // --batch-json` call (see buildOpenclawConfigBatch) instead of 8 separate
+  // CLI invocations — replaced after live evidence on repodiet-agent-9636
+  // showed 8 separate cold Node.js starts per boot degrading under the
+  // Machine's shared-cpu-1x/512MB limit until every call exceeded this
+  // supervisor's own timeout. Batch mode is a real, documented CLI feature,
+  // verified end-to-end against the real pinned CLI with the real plugin
+  // manifests mounted at their real image paths.
 
   test("gateway.mode is set to local — openclaw gateway run refuses to start otherwise", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "gateway.mode");
-    assert.ok(call);
-    assert.deepEqual(call!.args, ["config", "set", "gateway.mode", "local"]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "gateway.mode");
+    assert.deepEqual(entry, { path: "gateway.mode", value: "local" });
   });
 
-  test("gateway.auth.token is bound via the documented SecretRef builder mode, not a plaintext value", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "gateway.auth.token");
-    assert.ok(call);
-    assert.deepEqual(call!.args, [
-      "config",
-      "set",
-      "gateway.auth.token",
-      "--ref-provider",
-      "default",
-      "--ref-source",
-      "env",
-      "--ref-id",
-      "OPENCLAW_GATEWAY_TOKEN",
-    ]);
+  test("gateway.auth.token is bound via a SecretRef pointer (provider/source/id), not a plaintext value", () => {
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "gateway.auth.token");
+    assert.deepEqual(entry, {
+      path: "gateway.auth.token",
+      ref: { provider: "default", source: "env", id: "OPENCLAW_GATEWAY_TOKEN" },
+    });
   });
 
   test("gateway.auth.mode is set explicitly to token", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "gateway.auth.mode");
-    assert.ok(call);
-    assert.deepEqual(call!.args, ["config", "set", "gateway.auth.mode", "token"]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "gateway.auth.mode");
+    assert.deepEqual(entry, { path: "gateway.auth.mode", value: "token" });
   });
 
   test("session.dmScope is normalized to per-channel-peer — traced from okx-a2a's own ensureOpenClawOkxA2aPluginConfig(), not guessed", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "session.dmScope");
-    assert.ok(call);
-    assert.deepEqual(call!.args, ["config", "set", "session.dmScope", "per-channel-peer"]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "session.dmScope");
+    assert.deepEqual(entry, { path: "session.dmScope", value: "per-channel-peer" });
   });
 
   test("plugins.allow explicitly allows BOTH trusted plugin ids by default (PluginsConfig.allow: string[])", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "plugins.allow");
-    assert.ok(call);
-    assert.deepEqual(call!.args, ["config", "set", "plugins.allow", '["okx-a2a","repodiet-a2a-bridge"]', "--strict-json"]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "plugins.allow");
+    assert.deepEqual(entry, { path: "plugins.allow", value: ["okx-a2a", "repodiet-a2a-bridge"] });
   });
 
   test("plugins.allow accepts an explicit override list", () => {
-    const calls = buildOpenclawConfigCalls(["okx-a2a"]);
-    const call = calls.find((c) => c.configPath === "plugins.allow");
-    assert.deepEqual(call!.args, ["config", "set", "plugins.allow", '["okx-a2a"]', "--strict-json"]);
+    const batch = buildOpenclawConfigBatch(["okx-a2a"]);
+    const entry = batch.find((e) => e.path === "plugins.allow");
+    assert.deepEqual(entry, { path: "plugins.allow", value: ["okx-a2a"] });
   });
 
   test("plugins.load.paths registers BOTH standalone plugin directories baked into the image at build time", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "plugins.load.paths");
-    assert.ok(call);
-    assert.deepEqual(call!.args, [
-      "config",
-      "set",
-      "plugins.load.paths",
-      '["/app/openclaw-plugins/okx-a2a-openclaw","/app/openclaw-plugins/repodiet-a2a-bridge"]',
-      "--strict-json",
-    ]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "plugins.load.paths");
+    assert.deepEqual(entry, {
+      path: "plugins.load.paths",
+      value: ["/app/openclaw-plugins/okx-a2a-openclaw", "/app/openclaw-plugins/repodiet-a2a-bridge"],
+    });
   });
 
   test("the okx-a2a plugin is granted conversation-hook access, required for before_agent_run/agent_end", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find((c) => c.configPath === "plugins.entries.okx-a2a.hooks.allowConversationAccess");
-    assert.ok(call);
-    assert.deepEqual(call!.args, [
-      "config",
-      "set",
-      "plugins.entries.okx-a2a.hooks.allowConversationAccess",
-      "true",
-      "--strict-json",
-    ]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "plugins.entries.okx-a2a.hooks.allowConversationAccess");
+    assert.deepEqual(entry, { path: "plugins.entries.okx-a2a.hooks.allowConversationAccess", value: true });
   });
 
   test("the bridge plugin is granted conversation-hook access, required for before_agent_reply", () => {
-    const calls = buildOpenclawConfigCalls();
-    const call = calls.find(
-      (c) => c.configPath === "plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess"
-    );
-    assert.ok(call);
-    assert.deepEqual(call!.args, [
-      "config",
-      "set",
-      "plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess",
-      "true",
-      "--strict-json",
-    ]);
+    const batch = buildOpenclawConfigBatch();
+    const entry = batch.find((e) => e.path === "plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess");
+    assert.deepEqual(entry, {
+      path: "plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess",
+      value: true,
+    });
   });
 
-  test("no config call ever carries a secret value on argv — only path names, literal modes, and SecretRef pointers (env var names)", () => {
-    const calls = buildOpenclawConfigCalls();
-    for (const call of calls) {
-      for (const arg of call.args) {
-        assert.ok(
-          !/^[A-Za-z0-9+/=]{20,}$/.test(arg) || arg === "OPENCLAW_GATEWAY_TOKEN",
-          `argument looks like it could be a secret value, not a name: ${arg}`
-        );
+  test("the batch has exactly 8 entries — no path silently dropped or duplicated", () => {
+    const batch = buildOpenclawConfigBatch();
+    assert.equal(batch.length, 8);
+    const paths = batch.map((e) => e.path);
+    assert.equal(new Set(paths).size, 8, "no duplicate paths");
+  });
+
+  test("no batch entry ever carries a secret value — only path names, literal modes, and SecretRef pointers (provider/source/id, an env var name)", () => {
+    const batch = buildOpenclawConfigBatch();
+    for (const entry of batch) {
+      if (entry.ref) {
+        assert.equal(entry.ref.id, "OPENCLAW_GATEWAY_TOKEN", "a ref's id must be an env var name, not a value");
+        continue;
       }
+      const serialized = JSON.stringify(entry.value);
+      assert.ok(
+        !/^"[A-Za-z0-9+/=]{20,}"$/.test(serialized),
+        `entry value looks like it could be a secret value, not a literal: ${serialized}`
+      );
     }
+  });
+
+  test("the batch is passed to the CLI as a single --batch-json argument, never as 8 separate config-set invocations", () => {
+    const src = supervisorSource();
+    assert.ok(src.includes('["config", "set", "--batch-json", JSON.stringify(batch), "--strict-json"]'));
   });
 
   // --- Incident #2 remediation: no boot-time network dependency ----------

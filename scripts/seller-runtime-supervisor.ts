@@ -81,8 +81,8 @@
  *   4. If the bootstrap marker matches the current pinned versions/plugin
  *      ids/config schema AND the config is valid: skip the config-set
  *      sequence (already bootstrapped by a prior successful boot).
- *      Otherwise, run the full idempotent config-set sequence (see
- *      buildOpenclawConfigCalls) plus `okx-a2a ai-provider set`, then
+ *      Otherwise, run the batched config-set call (see
+ *      buildOpenclawConfigBatch) plus `okx-a2a ai-provider set`, then
  *      validate again and write a fresh marker only on full success.
  *   5. Release the bootstrap lock (always, success or failure).
  *   6. Start `openclaw gateway run` as a managed foreground child.
@@ -199,18 +199,41 @@ export function buildSupervisorEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv |
   };
 }
 
-export interface OpenclawConfigCall {
-  configPath: string;
-  args: string[];
-  description: string;
+export interface OpenclawBatchEntry {
+  path: string;
+  value?: unknown;
+  ref?: { provider: string; source: string; id: string };
 }
 
 /**
  * The idempotent, pure-local OpenClaw config writes this supervisor is
- * responsible for. Every arg here is a path name, mode literal, or
- * SecretRef *pointer* (env var name) — never a secret value — so this list
- * is safe to log verbatim, and safe to pass on argv (no token ever appears
- * there). None of these calls touch the network.
+ * responsible for, expressed as a single `openclaw config set --batch-json`
+ * payload rather than one CLI invocation per path.
+ *
+ * Originally this ran as 8 separate `openclaw config set` invocations. Live
+ * on `repodiet-agent-9636`, that consistently degraded under the Machine's
+ * `shared-cpu-1x`/512MB limit: local reproduction with the exact pinned
+ * `openclaw@2026.7.1-2` CLI showed each cold Node.js start taking ~4-6s
+ * unconstrained but ~8-12s under a matching `--memory=512m --cpus=1`
+ * constraint, and in production the calls degraded further across boots
+ * (each boot pays for 8 separate cold starts) until they blew past this
+ * supervisor's own 30s per-call timeout entirely, going from "6-7 of 8
+ * calls succeed" on the first boot to "every call times out" on the next.
+ * See docs/SELLER_RUNTIME_DEPLOYMENT.md ("Incident #3" follow-up) for the
+ * full writeup.
+ *
+ * `--batch-json` is a real, documented mode of the installed CLI (traced
+ * directly from `openclaw`'s own `dist/config-cli-*.js`, not guessed):
+ * `[{ path, value }]` for literal values, `[{ path, ref: { provider,
+ * source, id } }]` for a SecretRef pointer — the same shape
+ * `--ref-provider/--ref-source/--ref-id` builds, so `gateway.auth.token`
+ * still carries only a pointer (an env var *name*), never the secret value,
+ * on argv. Batch mode is atomic: verified by direct reproduction that a
+ * single invalid entry rejects the whole batch rather than partially
+ * applying it. Verified end-to-end against the real pinned CLI with the
+ * real `@okxweb3/a2a-openclaw` and `repodiet-a2a-bridge` plugin manifests
+ * mounted at their real image paths: one ~4.5s call applied and correctly
+ * persisted all 8 paths, replacing 8 separate cold starts with one.
  *
  * `session.dmScope` and `plugins.entries.<okx-a2a>.hooks.
  * allowConversationAccess` replicate exactly what `okx-a2a setup
@@ -222,84 +245,25 @@ export interface OpenclawConfigCall {
  * not guessed — so this supervisor no longer needs to invoke that command
  * (or its network-dependent version-drift/install logic) at all.
  */
-export function buildOpenclawConfigCalls(
+export function buildOpenclawConfigBatch(
   trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID],
   bridgePluginId: string = REPODIET_BRIDGE_PLUGIN_ID,
   bridgePluginPath: string = REPODIET_BRIDGE_PLUGIN_PATH,
   okxA2aPluginId: string = OKX_A2A_PLUGIN_ID,
   okxA2aOpenclawPluginPath: string = OKX_A2A_OPENCLAW_PLUGIN_PATH
-): OpenclawConfigCall[] {
+): OpenclawBatchEntry[] {
   return [
+    { path: "gateway.mode", value: "local" },
+    { path: "gateway.auth.mode", value: "token" },
     {
-      configPath: "gateway.mode",
-      args: ["config", "set", "gateway.mode", "local"],
-      description: "allow the CLI to start the gateway locally (openclaw gateway run refuses otherwise)",
+      path: "gateway.auth.token",
+      ref: { provider: "default", source: "env", id: "OPENCLAW_GATEWAY_TOKEN" },
     },
-    {
-      configPath: "gateway.auth.mode",
-      args: ["config", "set", "gateway.auth.mode", "token"],
-      description: "select token auth explicitly rather than relying on default inference",
-    },
-    {
-      configPath: "gateway.auth.token",
-      args: [
-        "config",
-        "set",
-        "gateway.auth.token",
-        "--ref-provider",
-        "default",
-        "--ref-source",
-        "env",
-        "--ref-id",
-        "OPENCLAW_GATEWAY_TOKEN",
-      ],
-      description: "bind the shared gateway token to the OPENCLAW_GATEWAY_TOKEN SecretRef (documented builder mode)",
-    },
-    {
-      configPath: "session.dmScope",
-      args: ["config", "set", "session.dmScope", "per-channel-peer"],
-      description:
-        "normalize the DM session scope okx-a2a's own setup command would otherwise write (traced from the installed CLI, not guessed)",
-    },
-    {
-      configPath: "plugins.load.paths",
-      args: [
-        "config",
-        "set",
-        "plugins.load.paths",
-        JSON.stringify([okxA2aOpenclawPluginPath, bridgePluginPath]),
-        "--strict-json",
-      ],
-      description:
-        'register both standalone plugin directories baked into the image at build time (docs/gateway/configuration-reference.md: "files or directories listed in plugins.load.paths") — no network install at boot',
-    },
-    {
-      configPath: `plugins.entries.${okxA2aPluginId}.hooks.allowConversationAccess`,
-      args: [
-        "config",
-        "set",
-        `plugins.entries.${okxA2aPluginId}.hooks.allowConversationAccess`,
-        "true",
-        "--strict-json",
-      ],
-      description: "required for the okx-a2a plugin's before_agent_run/agent_end conversation hooks — docs/plugins/hooks.md",
-    },
-    {
-      configPath: `plugins.entries.${bridgePluginId}.hooks.allowConversationAccess`,
-      args: [
-        "config",
-        "set",
-        `plugins.entries.${bridgePluginId}.hooks.allowConversationAccess`,
-        "true",
-        "--strict-json",
-      ],
-      description: "required for any non-bundled plugin using a conversation hook (before_agent_reply) — docs/plugins/hooks.md",
-    },
-    {
-      configPath: "plugins.allow",
-      args: ["config", "set", "plugins.allow", JSON.stringify(trustedPluginIds), "--strict-json"],
-      description: `explicitly allow the trusted plugins (PluginsConfig.allow): ${trustedPluginIds.join(", ")}`,
-    },
+    { path: "session.dmScope", value: "per-channel-peer" },
+    { path: "plugins.load.paths", value: [okxA2aOpenclawPluginPath, bridgePluginPath] },
+    { path: `plugins.entries.${okxA2aPluginId}.hooks.allowConversationAccess`, value: true },
+    { path: `plugins.entries.${bridgePluginId}.hooks.allowConversationAccess`, value: true },
+    { path: "plugins.allow", value: trustedPluginIds },
   ];
 }
 
@@ -308,7 +272,7 @@ export function computeExpectedBootstrapVersions(
   provider: string,
   trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID]
 ): BootstrapVersions {
-  const configPaths = buildOpenclawConfigCalls().map((c) => c.configPath);
+  const configPaths = buildOpenclawConfigBatch().map((e) => e.path);
   return {
     onchainOsVersion: ONCHAINOS_VERSION,
     okxA2aVersion: OKX_A2A_VERSION,
@@ -320,18 +284,25 @@ export function computeExpectedBootstrapVersions(
 }
 
 async function configureOpenclaw(env: NodeJS.ProcessEnv): Promise<boolean> {
-  let allOk = true;
-  for (const call of buildOpenclawConfigCalls()) {
-    const startedAt = Date.now();
-    const result = await runProcess("openclaw", call.args, { env, timeoutMs: 30_000 });
-    if (result.ok) {
-      log("openclaw_config_set", { path: call.configPath, ok: true, description: call.description });
-    } else {
-      logCommandFailure("openclaw_config_set_failed", `openclaw ${call.args.join(" ")}`, result, Date.now() - startedAt, "fatal");
-      allOk = false;
-    }
+  const batch = buildOpenclawConfigBatch();
+  const startedAt = Date.now();
+  const result = await runProcess(
+    "openclaw",
+    ["config", "set", "--batch-json", JSON.stringify(batch), "--strict-json"],
+    { env, timeoutMs: 60_000 }
+  );
+  if (result.ok) {
+    log("openclaw_config_set_batch", { ok: true, paths: batch.map((e) => e.path) });
+    return true;
   }
-  return allOk;
+  logCommandFailure(
+    "openclaw_config_set_batch_failed",
+    "openclaw config set --batch-json <8 entries> --strict-json",
+    result,
+    Date.now() - startedAt,
+    "fatal"
+  );
+  return false;
 }
 
 /**
@@ -631,7 +602,7 @@ async function main(): Promise<void> {
 }
 
 // Guarded so this module can be imported for unit testing (buildSupervisorEnv,
-// buildOpenclawConfigCalls) without starting the supervisor as a side effect.
+// buildOpenclawConfigBatch) without starting the supervisor as a side effect.
 if (require.main === module) {
   main().catch((err) => {
     log("fatal", { message: err instanceof Error ? err.message : "unknown_error" });

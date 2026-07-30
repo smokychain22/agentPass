@@ -489,15 +489,53 @@ single signal-transparent exec chain from `tini` through to `node`
 established for Incident #1's fix.
 
 The remaining, separate `openclaw config set` timeouts observed partway
-through that same boot (a handful of calls each took 30s and failed) are
-not yet fully explained — plausibly cold-start/memory pressure on the
-`shared-cpu-1x`/512MB Machine from repeated `openclaw` CLI process spawns,
-consistent with the "Measuring actual memory" TODO below never having
-actually been completed against a real workload. Re-verify this once the
-`HOME` fix is deployed and boots are landing on the real persisted volume:
-if it recurs, it needs its own investigation (raising the Machine's memory,
-or reducing the number of separate CLI cold starts in the config-set
-sequence).
+through that same boot (a handful of calls each took 30s and failed) turned
+out to be a real, separate issue — see Incident #4.
+
+### Incident #4: 8 separate `openclaw` cold starts degraded under the Machine's resource limit
+
+After the `HOME` fix (Incident #3) landed and config writes were confirmed
+reaching the real persisted volume, the next live boot still failed: the
+first boot succeeded on 6 of 8 `openclaw config set` calls before the
+remaining two started timing out at exactly this supervisor's own 30s
+per-call limit, and — worse — the *next* boot (a fresh Firecracker VM, so
+no in-memory state could carry over) failed on every single call from the
+very first one, all timing out at ~30s.
+
+Root cause, isolated by local reproduction with the exact pinned
+`openclaw@2026.7.1-2` CLI, outside any Fly-specific factor: 8 separate
+`openclaw config set` invocations means 8 separate Node.js cold starts per
+boot. Unconstrained, each takes ~4-6s; under a `docker run --memory=512m
+--cpus=1` constraint matching the Machine's `shared-cpu-1x`/512MB spec,
+each takes ~8-12s — a real, reproducible ~2x slowdown from resource
+pressure alone, closely matching the ~7-8s per call actually observed live
+in production. The constrained local test never escalated all the way to a
+30s timeout across 10 calls, so memory pressure alone likely isn't the
+*whole* story — the leading theory is that a call SIGKILLed by this
+supervisor's own timeout (as happened on the first boot) leaves openclaw's
+`state/openclaw.sqlite` needing crash recovery on its next open, and that
+recovery, combined with the same resource pressure, is what pushes
+*every* subsequent call over 30s — but this compounding step was not
+independently proven, only inferred from the failure pattern.
+
+Fix: eliminate 7 of the 8 cold starts instead of trying to outrun them.
+`openclaw config set` has a real, documented `--batch-json` mode (traced
+directly from the installed CLI's own `dist/config-cli-*.js`, not guessed):
+a single invocation takes a JSON array of `{ path, value }` or `{ path,
+ref: { provider, source, id } }` entries — the same SecretRef pointer
+shape `--ref-provider/--ref-source/--ref-id` builds, so `gateway.auth.token`
+still never carries a literal secret value on argv. Verified end-to-end
+against the real pinned CLI with the real `@okxweb3/a2a-openclaw` and
+`repodiet-a2a-bridge` plugin manifests mounted at their real image paths: a
+single ~4.5s batched call applied and correctly persisted all 8 config
+paths, replacing 8 cold starts with 1. `scripts/seller-runtime-supervisor.ts`
+now issues one `openclaw config set --batch-json '[...]' --strict-json`
+call (`buildOpenclawConfigBatch`/`configureOpenclaw`) with a 60s timeout
+(up from 30s per call, now covering the one combined call) instead of
+looping over 8 separate invocations. Batch mode is also atomic — verified
+by direct reproduction that a single invalid entry rejects the whole batch
+rather than partially applying it, so this cannot leave the config in a
+half-written state the way 8 independent calls could.
 
 ## One-time CLI authentication
 
