@@ -13,7 +13,16 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Dependencies first so application edits do not invalidate the layer.
+# Dependencies first so application edits do not invalidate the layer. tsx
+# (a devDependency) is required at runtime — see the CMD at the bottom of
+# this file — so this deliberately does not pass --omit=dev. @playwright/test
+# is also a devDependency purely for the repo's own e2e test suite; this
+# container never runs it, so PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD skips its
+# postinstall browser-binary download (100s of MB from a separate CDN,
+# unrelated to and far slower than the npm registry) — this image has no use
+# for Chromium/Firefox/WebKit and installing them would only inflate the
+# image and slow every build for no runtime benefit.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
@@ -67,18 +76,9 @@ RUN set -eu; \
 
 # Provider binding: @okxweb3/a2a-node exposes exactly four providers — codex,
 # claude, hermes, openclaw — with no generic process/webhook/MCP/HTTP-callback
-# adapter. The officially supported host-agnostic path is `okx-a2a setup
-# openclaw`.
-#
-# Verified by direct reproduction: `okx-a2a setup openclaw` does NOT bootstrap
-# OpenClaw itself — it runs `openclaw plugins install @okxweb3/a2a-openclaw`
-# against an ALREADY-installed openclaw CLI. Without openclaw on PATH it fails
-# immediately with "spawn openclaw ENOENT". So the openclaw CLI itself must be
-# installed here, pinned, same as the other two CLIs — only okx-a2a's plugin
-# registration into it is left to run at container STARTUP (it is stateful:
-# writes into the persisted home volume). Do not reimplement provider
-# installation manually — the official CLIs own it, they just aren't the same
-# CLI as each other.
+# adapter. The officially supported host-agnostic path is the OpenClaw
+# gateway plugin @okxweb3/a2a-openclaw (pinned and extracted further below,
+# after the chown, so it lands root-owned like the bridge plugin).
 ARG OPENCLAW_VERSION=2026.7.1-2
 RUN npm install -g "openclaw@${OPENCLAW_VERSION}" && openclaw --version
 
@@ -102,6 +102,54 @@ RUN chown -R node:node /app
 # ownership of a read-only plugin directory is safe — the seller process
 # (running as node) only ever reads these files, never writes them.
 COPY openclaw-plugins ./openclaw-plugins
+
+# @okxweb3/a2a-openclaw — the official OpenClaw-side gateway plugin. Pinned
+# and checksum-verified at BUILD time, not installed at boot.
+#
+# Root cause of a real reproduced production incident: the previously-used
+# boot-time `okx-a2a setup openclaw --release latest` (a) resolves "latest"
+# freshly on every boot — when a newer @okxweb3/a2a-node release appeared on
+# npm after this image pinned 0.1.10, that command silently attempted `npm
+# install -g @okxweb3/a2a-node@latest` inside the running container, which
+# hung past the supervisor's timeout on both a bandwidth-constrained dev
+# sandbox AND on live Fly infrastructure — and (b) always ran `openclaw
+# plugins install <spec> --force`, an unconditional network fetch, whenever
+# the plugin was not yet installed (true on every fresh volume). A boot must
+# never depend on npm registry availability. See docs/SELLER_RUNTIME_DEPLOYMENT.md
+# for the full incident writeup.
+#
+# Fetched via `npm pack` (same trusted resolution path as the other pinned
+# CLIs above) and cross-checked against the exact sha512 integrity npm's own
+# registry publishes for this pinned version — verified directly with `npm
+# view @okxweb3/a2a-openclaw@0.1.10 dist.integrity`, not guessed. The build
+# fails closed on any mismatch, missing tarball, or extraction failure.
+#
+# Extracted to a plain image path (like the bridge plugin above), NOT
+# installed via `openclaw plugins install` (which writes into
+# $HOME/.openclaw/extensions — $HOME is /persistent/home, a volume mounted
+# at runtime, so anything written there at build time would be masked once
+# the real volume mounts). Instead this is loaded at boot via
+# `plugins.load.paths` alongside the bridge plugin, and must stay
+# root-owned for the same plugin-loader ownership check.
+ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION=0.1.10
+ARG OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY=sha512-4vkJw1ae+ZtOyIQricVN8Ek/pptLFaROr1B12o7UzRPenSOkFRTYr6+sDhJ0vsn+AnWTy+uN4pQuWvQmT1HqBQ==
+RUN set -eu; \
+    cd /tmp; \
+    npm pack "@okxweb3/a2a-openclaw@${OKX_A2A_OPENCLAW_PLUGIN_VERSION}" --silent >/tmp/pack-name.txt; \
+    tarball="$(tail -n1 /tmp/pack-name.txt | tr -d '\r')"; \
+    if [ ! -f "${tarball}" ]; then \
+      echo "npm pack did not produce the expected tarball for @okxweb3/a2a-openclaw@${OKX_A2A_OPENCLAW_PLUGIN_VERSION}" >&2; \
+      exit 1; \
+    fi; \
+    actual_integrity="sha512-$(node -e "process.stdout.write(require('crypto').createHash('sha512').update(require('fs').readFileSync('${tarball}')).digest('base64'))")"; \
+    if [ "${actual_integrity}" != "${OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY}" ]; then \
+      echo "@okxweb3/a2a-openclaw@${OKX_A2A_OPENCLAW_PLUGIN_VERSION} tarball integrity mismatch: expected ${OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY}, got ${actual_integrity} — refusing to install" >&2; \
+      exit 1; \
+    fi; \
+    mkdir -p /app/openclaw-plugins/okx-a2a-openclaw; \
+    tar -xzf "${tarball}" -C /app/openclaw-plugins/okx-a2a-openclaw --strip-components=1; \
+    rm -f "${tarball}" /tmp/pack-name.txt; \
+    test -f /app/openclaw-plugins/okx-a2a-openclaw/openclaw.plugin.json
 
 # Proves the process is alive AND holding its instance lock — not merely running.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \

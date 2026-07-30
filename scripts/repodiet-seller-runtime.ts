@@ -173,36 +173,6 @@ async function xmtpClientActive(): Promise<boolean> {
   }
 }
 
-/**
- * Installs/refreshes okx-a2a's OpenClaw (or Hermes) plugin via the official
- * CLI. This is the ONLY supported host-agnostic provider path — see the
- * A2A_PROVIDER comment. `okx-a2a setup <provider>` is idempotent (it
- * preserves an already-installed matching version), so it is safe to call
- * once on every container start, including restarts against a warm
- * /persistent/home volume where the plugin is already installed.
- *
- * Requires the `openclaw` CLI itself to already be on PATH (installed and
- * pinned in Dockerfile.seller) — verified by direct reproduction that this
- * command shells out to `openclaw plugins install ...` and fails immediately
- * with "spawn openclaw ENOENT" if openclaw isn't present. It installs its own
- * plugin INTO openclaw, not openclaw itself.
- */
-async function ensureProviderSetup(): Promise<{ ok: boolean; detail: string }> {
-  try {
-    const { stdout } = await execFileAsync(
-      "okx-a2a",
-      ["setup", A2A_PROVIDER, "--release", "latest", "--json"],
-      { timeout: 120_000 }
-    );
-    return { ok: true, detail: stdout.trim().slice(-2000) };
-  } catch (err) {
-    return {
-      ok: false,
-      detail: err instanceof Error ? err.message : "unknown_error",
-    };
-  }
-}
-
 interface DoctorResult {
   ok: boolean;
   pass: number;
@@ -313,14 +283,18 @@ async function ensureDaemonRunning(): Promise<boolean> {
 }
 
 /**
- * One-time startup sequence: install/refresh the provider plugin, run the
- * official readiness/repair check, and make sure the daemon is up before the
- * heartbeat loop starts probing it every tick.
+ * One-time startup sequence: run the official readiness/repair check and
+ * make sure the daemon is up before the heartbeat loop starts probing it
+ * every tick.
+ *
+ * Provider selection (`okx-a2a ai-provider set`) and OpenClaw plugin
+ * config/registration are owned exclusively by
+ * scripts/seller-runtime-supervisor.ts, which starts this process only
+ * after both are proven — see that file's module docblock for the "exactly
+ * one owner" rationale. This process must never call `okx-a2a setup` or
+ * `okx-a2a ai-provider set` itself.
  */
 async function establishCommunicationReadiness(): Promise<void> {
-  const setup = await ensureProviderSetup();
-  log("provider_bound", { provider: A2A_PROVIDER, ok: setup.ok, detail: setup.detail });
-
   const doctor = await runDoctorFix();
   log("communication_ready", {
     ok: doctor.ok,

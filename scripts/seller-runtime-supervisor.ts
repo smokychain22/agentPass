@@ -2,87 +2,154 @@
 /**
  * Container process supervisor for the RepoDiet seller runtime (Agent 9636).
  *
- * This is the new Dockerfile.seller CMD. It owns everything
- * scripts/repodiet-seller-runtime.ts could not own by itself: the OpenClaw
- * Gateway process. Previously the container started exactly one foreground
- * process (repodiet-seller-runtime.ts) and left the Gateway unsupervised —
- * `okx-a2a setup openclaw`'s own post-install restart shells out to
- * `systemctl --user`, which does not exist in this container (no session
- * manager under tini PID 1), so it silently logged "Gateway service
- * disabled" and the actual Gateway (the WebSocket/HTTP server other
- * processes authenticate against) never started.
+ * This is the Dockerfile.seller CMD. It owns everything scripts/repodiet-
+ * seller-runtime.ts could not own by itself: the OpenClaw Gateway process,
+ * the OpenClaw config bootstrap, and (as of this revision) the okx-a2a AI
+ * provider selection.
  *
- * Startup order (each step is a hard prerequisite for the next):
+ * === Incident #1 (fixed in an earlier revision): unsupervised Gateway ===
+ * The container started exactly one foreground process and left the
+ * OpenClaw Gateway unsupervised — `okx-a2a setup openclaw`'s own
+ * post-install restart shells out to `systemctl --user`, absent under
+ * this container's tini PID 1 — so the Gateway never actually started.
+ * Fixed by starting `openclaw gateway run` ourselves as a managed
+ * foreground child (see startup order below).
+ *
+ * === Incident #2 (this revision): boot-time network dependency ===
+ * The fix for incident #1 still called `okx-a2a setup openclaw --release
+ * latest --json` once at every boot to register the OpenClaw gateway
+ * plugin. Verified by direct reproduction (both in a local sandbox and on
+ * live Fly infrastructure — not merely suspected): that command (a)
+ * resolves "latest" fresh on every boot, and when a newer @okxweb3/a2a-node
+ * release appeared on npm after this image pinned 0.1.10, silently
+ * attempted `npm install -g @okxweb3/a2a-node@latest` inside the running
+ * container — which hung well past any reasonable boot timeout on both a
+ * bandwidth-constrained sandbox and Fly's own infrastructure; and (b)
+ * always ran `openclaw plugins install <spec> --force` (an unconditional
+ * network fetch) whenever the gateway plugin was not yet installed, true
+ * on every fresh /persistent volume. A concurrent live diagnostic
+ * SSH session compounded this by racing the supervisor's own config
+ * writes against the same persisted openclaw.json, and the resulting
+ * write conflict then made EVERY subsequent restart fail at the very
+ * first `config set` call — a self-perpetuating failure with no
+ * self-healing path, because every restart just replayed the same writes
+ * against the same broken file. See docs/SELLER_RUNTIME_DEPLOYMENT.md for
+ * the full incident writeup with real log excerpts.
+ *
+ * Fix, in full:
+ *   - @okxweb3/a2a-openclaw (the gateway plugin) is now pinned, checksum-
+ *     verified, and extracted into the image at BUILD time
+ *     (Dockerfile.seller), exactly like openclaw-plugins/repodiet-a2a-bridge,
+ *     and loaded at boot via `plugins.load.paths` — never installed over
+ *     the network at boot.
+ *   - The broad `okx-a2a setup openclaw --release latest` command is never
+ *     called at runtime. In its place, this supervisor performs the exact
+ *     same OpenClaw config normalization that command's own
+ *     `ensureOpenClawOkxA2aPluginConfig()` performs internally — traced
+ *     directly from the installed @okxweb3/a2a-node@0.1.10 bundle, not
+ *     guessed: `session.dmScope`, `plugins.allow`, and
+ *     `plugins.entries.okx-a2a.hooks.allowConversationAccess` — via plain
+ *     `openclaw config set`, a pure local operation with no network
+ *     dependency.
+ *   - AI provider selection (which provider the okx-a2a daemon uses) is
+ *     now set via the CLI's own minimal, documented, local command —
+ *     `okx-a2a ai-provider set --provider <provider> --json` ("Set the
+ *     default provider", confirmed via `okx-a2a ai-provider --help` and
+ *     its real implementation: a PATH check plus a write to a local
+ *     SQLite session store, no network) — instead of the broad `setup`
+ *     command. This supervisor is now the SOLE owner of provider
+ *     selection; scripts/repodiet-seller-runtime.ts no longer calls
+ *     `okx-a2a setup` at all (see that file for its remaining, narrower
+ *     responsibilities: `doctor --fix` and daemon start/status).
+ *   - Every OpenClaw config write is now guarded by an exclusive bootstrap
+ *     lock, validated before and after, and — if the persisted
+ *     openclaw.json is missing/empty/truncated/invalid — the damaged file
+ *     is quarantined (renamed, never deleted) and a fresh one is rebuilt
+ *     from the same pinned config-set sequence. See
+ *     src/lib/okx-runtime/openclaw-bootstrap.ts.
+ *   - A version-aware bootstrap marker means a healthy, unchanged restart
+ *     skips the config-set sequence entirely (pure validation instead) —
+ *     bootstrap only reruns when a pinned version changes, the marker is
+ *     missing/stale, required plugin files are missing, the config is
+ *     invalid, or plugin activation verification fails.
+ *
+ * === Startup order (each step is a hard prerequisite for the next) ===
  *   1. Verify OPENCLAW_GATEWAY_TOKEN is configured (fail closed otherwise).
- *   2. Write the token into OpenClaw's own config as the documented
- *      SecretRef form (`openclaw config set gateway.auth.token --ref-source
- *      env --ref-id OPENCLAW_GATEWAY_TOKEN`); explicitly allow both trusted
- *      plugins (`plugins.allow`: `okx-a2a` and `repodiet-a2a-bridge`);
- *      register the bridge's standalone plugin directory
- *      (`plugins.load.paths`, docs/gateway/configuration-reference.md:
- *      "files or directories listed in plugins.load.paths"); and grant it
- *      conversation-hook access (`plugins.entries.repodiet-a2a-bridge.
- *      hooks.allowConversationAccess`, required for any non-bundled plugin
- *      using `before_agent_reply` — docs/plugins/hooks.md) — verified
- *      against the actual installed openclaw@2026.7.1-2 CLI docs
- *      (docs/cli/config.md, docs/cli/gateway.md) and config schema
- *      (dist/types.openclaw-*.d.ts: GatewayAuthConfig.token: SecretInput,
- *      PluginsConfig.allow: string[]), not guessed.
- *   3. Register the okx-a2a plugin into that config (`okx-a2a setup
- *      openclaw`) BEFORE the Gateway starts — the plugin's manifest
- *      (openclaw.plugin.json) declares `activation.onStartup: true`, and
- *      the CLI docs state writes to `plugins.entries`/`plugins.allow`
- *      "always require a restart" to take effect, so registering it after
- *      the Gateway is already running would not activate it this boot.
- *      repodiet-a2a-bridge's own manifest also declares
- *      `activation.onStartup: true` for the same reason.
- *   4. Start `openclaw gateway run` ourselves as a managed foreground child
- *      (the documented explicit foreground form — see docs/cli/gateway.md)
- *      instead of relying on okx-a2a's systemctl-based auto-restart.
- *   5. Poll until the Gateway is live (`gateway health`) AND authenticated
- *      (`gateway status --require-rpc`, which resolves the SecretRef we
- *      just configured and exits non-zero on any auth/read failure — this
- *      is the documented way to prove auth end-to-end without putting the
- *      token on a command line).
- *   6. Verify repodiet-a2a-bridge is genuinely loaded and active —
- *      `openclaw plugins inspect repodiet-a2a-bridge --runtime --json`
- *      (documented: "shows registered hooks and diagnostics from a
- *      module-loaded inspection pass", docs/cli/plugins.md). A plugin file
- *      existing on disk is not proof it loaded — this step fails the whole
- *      startup closed if the inspection does not report the plugin present
- *      with its `before_agent_reply` hook registered.
- *   7. Only then start scripts/repodiet-seller-runtime.ts, which still owns
- *      identity verification, `okx-a2a setup`/`doctor --fix`/`daemon`, and
- *      the heartbeat loop exactly as before — this supervisor does not
- *      duplicate or weaken any of that.
+ *   2. Acquire the exclusive bootstrap lock.
+ *   3. Validate the persisted openclaw.json; quarantine + note rebuild if
+ *      invalid.
+ *   4. If the bootstrap marker matches the current pinned versions/plugin
+ *      ids/config schema AND the config is valid: skip the config-set
+ *      sequence (already bootstrapped by a prior successful boot).
+ *      Otherwise, run the full idempotent config-set sequence (see
+ *      buildOpenclawConfigCalls) plus `okx-a2a ai-provider set`, then
+ *      validate again and write a fresh marker only on full success.
+ *   5. Release the bootstrap lock (always, success or failure).
+ *   6. Start `openclaw gateway run` as a managed foreground child.
+ *   7. Poll until the Gateway is live (`gateway health`) AND authenticated
+ *      (`gateway status --require-rpc`).
+ *   8. Verify BOTH okx-a2a and repodiet-a2a-bridge are genuinely loaded and
+ *      active (`openclaw plugins inspect <id> --runtime --json`) — a
+ *      plugin file existing on disk is never accepted as proof.
+ *   9. Only then start scripts/repodiet-seller-runtime.ts.
  *
- * A second, independently-discovered fix lives here too: the `okx-a2a`
- * daemon/CLI (a separate process from the OpenClaw plugin) reads its OWN
- * gateway credentials from `OKX_A2A_OPENCLAW_GATEWAY_TOKEN` — a different
- * variable name from the `OPENCLAW_GATEWAY_TOKEN` the Gateway server and
- * the OpenClaw-side plugin config use — falling back to a "synced" config
- * file the plugin writes only after it has itself connected successfully.
- * Verified directly in the installed @okxweb3/a2a-node 0.1.10 bundle
- * (`env.OKX_A2A_OPENCLAW_GATEWAY_TOKEN`). Without mirroring it explicitly,
- * a plugin-side connection hiccup cascades into the daemon also failing to
- * authenticate. This supervisor sets both names from the one staged secret.
+ * A second, independently-discovered fix from the earlier revision still
+ * applies: the `okx-a2a` daemon/CLI reads its OWN gateway credentials from
+ * `OKX_A2A_OPENCLAW_GATEWAY_TOKEN` — a different variable name from
+ * `OPENCLAW_GATEWAY_TOKEN` — falling back to a "synced" config file the
+ * plugin writes only after connecting successfully. This supervisor sets
+ * both names from the one staged secret.
  *
  * Fails closed throughout: any required step that does not genuinely
- * succeed stops the container with a non-zero exit rather than starting the
- * seller runtime in a state that could report false readiness. Never logs
- * the token value — only whether each step succeeded.
+ * succeed stops the container with a non-zero exit rather than starting
+ * the seller runtime in a state that could report false readiness. Never
+ * logs a secret value — every command-failure diagnostic is redacted
+ * (src/lib/okx-runtime/command-diagnostics.ts).
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { runProcess } from "../src/lib/okx-runtime/process-runner";
+import { runProcess, type ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
 import { parsePluginInspection } from "../src/lib/okx-runtime/plugin-inspection";
+import { buildCommandFailureDiagnostics } from "../src/lib/okx-runtime/command-diagnostics";
+import {
+  acquireBootstrapLock,
+  bootstrapLockPath,
+  bootstrapMarkerMatches,
+  bootstrapMarkerPath,
+  computeConfigSchemaHash,
+  openclawConfigPath,
+  quarantineInvalidConfig,
+  readBootstrapMarker,
+  releaseBootstrapLock,
+  validateOpenclawConfigFile,
+  writeBootstrapMarker,
+  type BootstrapVersions,
+} from "../src/lib/okx-runtime/openclaw-bootstrap";
 
 export const OPENCLAW_GATEWAY_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
 export const OPENCLAW_GATEWAY_URL = `ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}`;
+// Matches openclaw-plugins/okx-a2a-openclaw/openclaw.plugin.json's "id"
+// (the extracted @okxweb3/a2a-openclaw package) — confirmed directly from
+// the real published package, not guessed.
 export const OKX_A2A_PLUGIN_ID = "okx-a2a";
+export const OKX_A2A_PLUGIN_HOOK = "before_agent_run";
+// Matches Dockerfile.seller's WORKDIR (/app) + the pinned build-time
+// extraction of @okxweb3/a2a-openclaw.
+export const OKX_A2A_OPENCLAW_PLUGIN_PATH = "/app/openclaw-plugins/okx-a2a-openclaw";
 // Matches openclaw-plugins/repodiet-a2a-bridge/openclaw.plugin.json's "id".
 export const REPODIET_BRIDGE_PLUGIN_ID = "repodiet-a2a-bridge";
+export const REPODIET_BRIDGE_PLUGIN_HOOK = "before_agent_reply";
 // Matches Dockerfile.seller's WORKDIR (/app) + COPY of openclaw-plugins/.
 export const REPODIET_BRIDGE_PLUGIN_PATH = "/app/openclaw-plugins/repodiet-a2a-bridge";
+
+// Pinned component versions. Must match Dockerfile.seller's ARG defaults
+// exactly (test/seller-runtime-supervisor.test.ts asserts this) — these
+// are the values the bootstrap marker is keyed on, so a version bump in
+// the Dockerfile without a matching bump here would silently make the
+// marker never invalidate.
+export const ONCHAINOS_VERSION = "4.4.1";
+export const OKX_A2A_VERSION = "0.1.10";
+export const OPENCLAW_VERSION = "2026.7.1-2";
+export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.1.10";
 
 const GATEWAY_READY_TIMEOUT_MS = Number(
   process.env.REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 120_000
@@ -97,6 +164,17 @@ function log(event: string, fields: LogFields = {}): void {
   // repodiet-seller-runtime.ts. Callers below only ever pass booleans,
   // counts, paths, and CLI exit status — never process output or env values.
   console.log(JSON.stringify({ at: new Date().toISOString(), component: "supervisor", event, ...fields }));
+}
+
+/** Logs a command failure with full, redacted, categorized diagnostics — see src/lib/okx-runtime/command-diagnostics.ts. */
+function logCommandFailure(
+  event: string,
+  command: string,
+  result: ProcessRunResult,
+  durationMs: number,
+  retryDecision: "will_retry" | "fatal" | "no_retry_configured"
+): void {
+  log(event, { ...buildCommandFailureDiagnostics(command, result, durationMs, retryDecision) });
 }
 
 /**
@@ -128,15 +206,28 @@ export interface OpenclawConfigCall {
 }
 
 /**
- * The one-time OpenClaw config writes this supervisor is responsible for.
- * Every arg here is a path name, mode literal, or SecretRef *pointer*
- * (env var name) — never a secret value — so this list is safe to log
- * verbatim, and safe to pass on argv (no token ever appears there).
+ * The idempotent, pure-local OpenClaw config writes this supervisor is
+ * responsible for. Every arg here is a path name, mode literal, or
+ * SecretRef *pointer* (env var name) — never a secret value — so this list
+ * is safe to log verbatim, and safe to pass on argv (no token ever appears
+ * there). None of these calls touch the network.
+ *
+ * `session.dmScope` and `plugins.entries.<okx-a2a>.hooks.
+ * allowConversationAccess` replicate exactly what `okx-a2a setup
+ * openclaw`'s own `ensureOpenClawOkxA2aPluginConfig()` normalizes
+ * internally — traced directly from the installed @okxweb3/a2a-node@0.1.10
+ * bundle (`OPENCLAW_SESSION_DM_SCOPE_CONFIG_PATH = "session.dmScope"`,
+ * value `"per-channel-peer"`; `OPENCLAW_OKX_A2A_CONVERSATION_HOOK_ACCESS_
+ * CONFIG_PATH = "plugins.entries.okx-a2a.hooks.allowConversationAccess"`),
+ * not guessed — so this supervisor no longer needs to invoke that command
+ * (or its network-dependent version-drift/install logic) at all.
  */
 export function buildOpenclawConfigCalls(
   trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID],
   bridgePluginId: string = REPODIET_BRIDGE_PLUGIN_ID,
-  bridgePluginPath: string = REPODIET_BRIDGE_PLUGIN_PATH
+  bridgePluginPath: string = REPODIET_BRIDGE_PLUGIN_PATH,
+  okxA2aPluginId: string = OKX_A2A_PLUGIN_ID,
+  okxA2aOpenclawPluginPath: string = OKX_A2A_OPENCLAW_PLUGIN_PATH
 ): OpenclawConfigCall[] {
   return [
     {
@@ -165,9 +256,33 @@ export function buildOpenclawConfigCalls(
       description: "bind the shared gateway token to the OPENCLAW_GATEWAY_TOKEN SecretRef (documented builder mode)",
     },
     {
+      configPath: "session.dmScope",
+      args: ["config", "set", "session.dmScope", "per-channel-peer"],
+      description:
+        "normalize the DM session scope okx-a2a's own setup command would otherwise write (traced from the installed CLI, not guessed)",
+    },
+    {
       configPath: "plugins.load.paths",
-      args: ["config", "set", "plugins.load.paths", JSON.stringify([bridgePluginPath]), "--strict-json"],
-      description: `register the standalone repodiet-a2a-bridge plugin directory (docs/gateway/configuration-reference.md: "files or directories listed in plugins.load.paths")`,
+      args: [
+        "config",
+        "set",
+        "plugins.load.paths",
+        JSON.stringify([okxA2aOpenclawPluginPath, bridgePluginPath]),
+        "--strict-json",
+      ],
+      description:
+        'register both standalone plugin directories baked into the image at build time (docs/gateway/configuration-reference.md: "files or directories listed in plugins.load.paths") — no network install at boot',
+    },
+    {
+      configPath: `plugins.entries.${okxA2aPluginId}.hooks.allowConversationAccess`,
+      args: [
+        "config",
+        "set",
+        `plugins.entries.${okxA2aPluginId}.hooks.allowConversationAccess`,
+        "true",
+        "--strict-json",
+      ],
+      description: "required for the okx-a2a plugin's before_agent_run/agent_end conversation hooks — docs/plugins/hooks.md",
     },
     {
       configPath: `plugins.entries.${bridgePluginId}.hooks.allowConversationAccess`,
@@ -188,24 +303,119 @@ export function buildOpenclawConfigCalls(
   ];
 }
 
+/** Non-secret metadata this boot's bootstrap would produce — compared against the persisted marker to decide whether to skip config-set. */
+export function computeExpectedBootstrapVersions(
+  provider: string,
+  trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID]
+): BootstrapVersions {
+  const configPaths = buildOpenclawConfigCalls().map((c) => c.configPath);
+  return {
+    onchainOsVersion: ONCHAINOS_VERSION,
+    okxA2aVersion: OKX_A2A_VERSION,
+    openclawVersion: OPENCLAW_VERSION,
+    okxA2aOpenclawPluginVersion: OKX_A2A_OPENCLAW_PLUGIN_VERSION,
+    pluginIds: [...trustedPluginIds, `provider:${provider}`],
+    configSchemaHash: computeConfigSchemaHash(configPaths),
+  };
+}
+
 async function configureOpenclaw(env: NodeJS.ProcessEnv): Promise<boolean> {
   let allOk = true;
   for (const call of buildOpenclawConfigCalls()) {
+    const startedAt = Date.now();
     const result = await runProcess("openclaw", call.args, { env, timeoutMs: 30_000 });
-    log("openclaw_config_set", { path: call.configPath, ok: result.ok, description: call.description });
-    if (!result.ok) allOk = false;
+    if (result.ok) {
+      log("openclaw_config_set", { path: call.configPath, ok: true, description: call.description });
+    } else {
+      logCommandFailure("openclaw_config_set_failed", `openclaw ${call.args.join(" ")}`, result, Date.now() - startedAt, "fatal");
+      allOk = false;
+    }
   }
   return allOk;
 }
 
-async function registerOkxA2aPlugin(env: NodeJS.ProcessEnv): Promise<boolean> {
-  // Must run before the Gateway starts — see module docblock step 3.
-  const result = await runProcess("okx-a2a", ["setup", "openclaw", "--release", "latest", "--json"], {
+/**
+ * Sole owner of AI-provider selection for the okx-a2a node CLI (see module
+ * docblock — scripts/repodiet-seller-runtime.ts no longer calls this).
+ * `okx-a2a ai-provider set --provider <provider> --json` is the
+ * documented, minimal, purely local equivalent of what the broad `setup`
+ * command did as a side effect — confirmed directly from the installed
+ * CLI's own --help text and implementation (a PATH check plus a write to
+ * a local SQLite session store; no network call).
+ */
+async function setAiProvider(env: NodeJS.ProcessEnv, provider: string): Promise<boolean> {
+  const startedAt = Date.now();
+  const result = await runProcess("okx-a2a", ["ai-provider", "set", "--provider", provider, "--json"], {
     env,
-    timeoutMs: 120_000,
+    timeoutMs: 15_000,
   });
-  log("plugin_registered", { ok: result.ok, pluginId: OKX_A2A_PLUGIN_ID });
+  if (result.ok) {
+    log("ai_provider_set", { ok: true, provider });
+  } else {
+    logCommandFailure("ai_provider_set_failed", "okx-a2a ai-provider set", result, Date.now() - startedAt, "fatal");
+  }
   return result.ok;
+}
+
+/**
+ * Runs bootstrap end-to-end under the exclusive lock: validate/quarantine
+ * the persisted config, skip the config-set sequence entirely when the
+ * marker already matches (pure validation instead), otherwise run the
+ * full idempotent sequence plus provider selection, validate again, and
+ * write a fresh marker only on complete success. Always releases the lock.
+ */
+async function runBootstrap(env: NodeJS.ProcessEnv): Promise<boolean> {
+  const lockPath = bootstrapLockPath(env);
+  const configPath = openclawConfigPath(env);
+  const markerPath = bootstrapMarkerPath(env);
+  const provider = (env.REPODIET_OKX_A2A_PROVIDER?.trim() || "openclaw").toLowerCase();
+
+  const lock = acquireBootstrapLock(lockPath);
+  if (!lock.acquired) {
+    log("bootstrap_lock_not_acquired", { reason: lock.reason, holderPid: lock.holderPid });
+    return false;
+  }
+  log("bootstrap_lock_acquired", { lockPath });
+
+  try {
+    const beforeState = validateOpenclawConfigFile(configPath);
+    log("openclaw_config_validated", { when: "before", state: beforeState.state, detail: beforeState.detail });
+    if (beforeState.state === "invalid_json" || beforeState.state === "invalid_shape" || beforeState.state === "empty") {
+      const quarantined = quarantineInvalidConfig(configPath);
+      log("openclaw_config_quarantined", { quarantinedTo: quarantined });
+    }
+
+    const expected = computeExpectedBootstrapVersions(provider);
+    const marker = readBootstrapMarker(markerPath);
+    const configNowValid = validateOpenclawConfigFile(configPath).state === "valid";
+    const canSkip = configNowValid && bootstrapMarkerMatches(marker, expected);
+
+    if (canSkip) {
+      log("bootstrap_skipped_marker_match", { reason: "pinned versions, plugin set, and config schema unchanged; config already valid" });
+      return true;
+    }
+
+    log("bootstrap_running", { reason: marker ? "marker_stale_or_config_invalid" : "no_prior_marker" });
+    const configured = await configureOpenclaw(env);
+    const providerSet = configured && (await setAiProvider(env, provider));
+    if (!configured || !providerSet) {
+      return false;
+    }
+
+    const afterState = validateOpenclawConfigFile(configPath);
+    log("openclaw_config_validated", { when: "after", state: afterState.state, detail: afterState.detail });
+    if (afterState.state !== "valid") {
+      log("bootstrap_failed", { reason: "config_invalid_after_configure" });
+      return false;
+    }
+
+    writeBootstrapMarker(markerPath, expected);
+    log("bootstrap_marker_written", { markerPath });
+    return true;
+  } finally {
+    releaseBootstrapLock(lockPath);
+    log("bootstrap_lock_released", { lockPath });
+  }
 }
 
 async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<boolean> {
@@ -233,39 +443,40 @@ async function gatewayAuthenticatedAndReady(env: NodeJS.ProcessEnv): Promise<boo
 }
 
 /**
- * Proves repodiet-a2a-bridge is genuinely loaded and its
- * `before_agent_reply` hook is registered — not merely that the plugin
- * file exists on disk. `openclaw plugins inspect <id> --runtime --json`
- * is the documented command for this ("shows registered hooks and
- * diagnostics from a module-loaded inspection pass", docs/cli/plugins.md).
- * Fails closed (returns false) on any non-zero exit, unparseable output,
- * or output that does not name both the plugin id and the hook.
+ * Proves a plugin is genuinely loaded and its documented hook is
+ * registered — not merely that its file exists on disk. `openclaw plugins
+ * inspect <id> --runtime --json` is the documented command for this
+ * ("shows registered hooks and diagnostics from a module-loaded
+ * inspection pass", docs/cli/plugins.md). Fails closed (returns false) on
+ * any non-zero exit, unparseable output, or output that does not report
+ * the plugin loaded/activated with the expected hook.
  */
-/**
- * Re-exported for backward-compatible test imports; the real parsing logic
- * (and the real-verified schema it depends on) lives in the shared
- * src/lib/okx-runtime/plugin-inspection.ts, so scripts/seller-production-
- * readiness.ts can reuse the exact same parser without duplicating it or
- * importing this module's top-level SIGTERM/SIGINT handlers as a side
- * effect.
- */
-export function parseBridgePluginInspection(
-  stdout: string,
-  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
-): boolean {
-  return parsePluginInspection(stdout, pluginId, "before_agent_reply");
-}
-
-export async function verifyBridgePluginActive(
+export async function verifyPluginActive(
   env: NodeJS.ProcessEnv,
-  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
+  pluginId: string,
+  requiredHook: string
 ): Promise<boolean> {
   const result = await runProcess("openclaw", ["plugins", "inspect", pluginId, "--runtime", "--json"], {
     env,
     timeoutMs: 20_000,
   });
   if (!result.ok) return false;
-  return parseBridgePluginInspection(result.stdout, pluginId);
+  return parsePluginInspection(result.stdout, pluginId, requiredHook);
+}
+
+/** Retained for backward-compatible test imports. */
+export async function verifyBridgePluginActive(
+  env: NodeJS.ProcessEnv,
+  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
+): Promise<boolean> {
+  return verifyPluginActive(env, pluginId, REPODIET_BRIDGE_PLUGIN_HOOK);
+}
+
+export function parseBridgePluginInspection(
+  stdout: string,
+  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
+): boolean {
+  return parsePluginInspection(stdout, pluginId, REPODIET_BRIDGE_PLUGIN_HOOK);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -378,16 +589,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const configured = await configureOpenclaw(env);
-  if (!configured) {
-    log("startup_failed", { reason: "openclaw_config_set_failed" });
-    process.exit(1);
-    return;
-  }
-
-  const registered = await registerOkxA2aPlugin(env);
-  if (!registered) {
-    log("startup_failed", { reason: "okx_a2a_plugin_registration_failed" });
+  const bootstrapped = await runBootstrap(env);
+  if (!bootstrapped) {
+    log("startup_failed", { reason: "openclaw_bootstrap_failed" });
     process.exit(1);
     return;
   }
@@ -401,19 +605,20 @@ async function main(): Promise<void> {
     return;
   }
 
-  const bridgeActive = await verifyBridgePluginActive(env);
-  log("bridge_plugin_verified", { ok: bridgeActive, pluginId: REPODIET_BRIDGE_PLUGIN_ID });
-  if (!bridgeActive) {
-    log("startup_failed", { reason: "repodiet_a2a_bridge_not_active" });
-    await shutdown("bridge_plugin_not_active", 1);
+  const okxA2aActive = await verifyPluginActive(env, OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK);
+  log("plugin_verified", { ok: okxA2aActive, pluginId: OKX_A2A_PLUGIN_ID });
+  const bridgeActive = await verifyPluginActive(env, REPODIET_BRIDGE_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_HOOK);
+  log("plugin_verified", { ok: bridgeActive, pluginId: REPODIET_BRIDGE_PLUGIN_ID });
+  if (!okxA2aActive || !bridgeActive) {
+    log("startup_failed", { reason: "required_plugin_not_active", okxA2aActive, bridgeActive });
+    await shutdown("required_plugin_not_active", 1);
     return;
   }
 
-  // Communication prerequisites (gateway live + authenticated) AND the
-  // real dispatch bridge (loaded and active, not merely present on disk)
-  // are proven — only now does the seller runtime start. It still
-  // independently gates its own heartbeat on okx-a2a setup/doctor/daemon,
-  // unchanged.
+  // Communication prerequisites (gateway live + authenticated) AND both
+  // required plugins (loaded and active, not merely present on disk) are
+  // proven — only now does the seller runtime start. It still
+  // independently gates its own heartbeat on doctor/daemon, unchanged.
   spawnManaged(
     "repodiet-seller-runtime",
     "node_modules/.bin/tsx",

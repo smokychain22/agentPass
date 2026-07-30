@@ -46,7 +46,7 @@ function run() {
     assert.ok(/destination\s*=\s*"\/persistent"/.test(mounts![0]));
   });
 
-  test("fly.toml sets an explicit always restart policy using the required array-of-tables syntax", () => {
+  test("fly.toml sets an explicit restart policy using the required array-of-tables syntax", () => {
     // Regression: `[restart]` (single table) fails real flyctl validation
     // with "json: cannot unmarshal object into Go struct field
     // Config.restart of type []appconfig.Restart" — confirmed both via
@@ -56,7 +56,20 @@ function run() {
     assert.ok(!/^\[restart\]$/m.test(toml), "must not use the single-table [restart] form — flyctl rejects it");
     const restart = toml.match(/^\[\[restart\]\]$[\s\S]*?(?=^\[|\s*$(?![\s\S]))/m);
     assert.ok(restart, "must declare a [[restart]] array-of-tables block");
-    assert.ok(/policy\s*=\s*"always"/.test(restart![0]));
+    assert.ok(/policy\s*=\s*"[a-z-]+"/.test(restart![0]), "a restart policy must be set explicitly");
+  });
+
+  test("fly.toml's restart policy is temporarily bounded (on-failure, retries=3) while the new idempotent bootstrap is validated", () => {
+    // An unbounded `policy = "always"` loop is exactly what let the earlier
+    // boot-time network dependency (Incident #2 — see
+    // docs/SELLER_RUNTIME_DEPLOYMENT.md) burn trial runtime silently. Not
+    // deployed by this PR — see the runbook for reverting to "always" once
+    // the new bootstrap has proven itself stable in production.
+    const toml = read("fly.toml");
+    const restart = toml.match(/^\[\[restart\]\]$[\s\S]*?(?=^\[|\s*$(?![\s\S]))/m);
+    assert.ok(restart, "must declare a [[restart]] array-of-tables block");
+    assert.ok(/policy\s*=\s*"on-failure"/.test(restart![0]));
+    assert.ok(/retries\s*=\s*3/.test(restart![0]));
   });
 
   test("fly.toml declares no public HTTP service or published port — this runtime is an outbound client only", () => {
