@@ -92,6 +92,17 @@ RUN chown -R node:node /app
 # Persistence is attached by the platform at /persistent, and the
 # entrypoint creates and chowns the directories once it is mounted.
 
+# The RepoDiet A2A Bridge OpenClaw plugin — loaded via plugins.load.paths
+# at /app/openclaw-plugins/repodiet-a2a-bridge (see
+# scripts/seller-runtime-supervisor.ts's REPODIET_BRIDGE_PLUGIN_PATH).
+# Copied AFTER the chown above, and deliberately NOT chowned to node:node:
+# verified by direct reproduction that OpenClaw's own plugin loader refuses
+# a plugins.load.paths entry owned by a non-root uid ("blocked plugin
+# candidate: suspicious ownership ... expected uid=0 or root"). Root
+# ownership of a read-only plugin directory is safe — the seller process
+# (running as node) only ever reads these files, never writes them.
+COPY openclaw-plugins ./openclaw-plugins
+
 # Proves the process is alive AND holding its instance lock — not merely running.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "const fs=require('fs');const p=process.env.REPODIET_OKX_RUNTIME_ROOT+'/seller-9636/runtime.pid';if(!fs.existsSync(p))process.exit(1);const pid=Number(fs.readFileSync(p,'utf8').trim());try{process.kill(pid,0)}catch{process.exit(1)}"
@@ -106,4 +117,13 @@ ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/seller-entrypoint.sh"]
 # node_modules/.bin/tsx is itself a shell shim that ends in `exec`, so
 # invoking it directly (bypassing npx) keeps this a single exec'd process
 # from tini down, and SIGTERM reaches the runtime's own handler.
-CMD ["node_modules/.bin/tsx", "scripts/repodiet-seller-runtime.ts"]
+#
+# scripts/seller-runtime-supervisor.ts is the actual PID under tini/gosu. It
+# starts and supervises the OpenClaw Gateway as a managed foreground child
+# (previously unsupervised — okx-a2a's own post-install gateway restart
+# shells out to `systemctl --user`, which does not exist here) and only
+# then spawns repodiet-seller-runtime.ts as a second managed child. Both are
+# required children: a signal to this process is forwarded to both, and if
+# either exits unexpectedly the supervisor tears the other down and exits
+# non-zero rather than leaving a half-supervised container running.
+CMD ["node_modules/.bin/tsx", "scripts/seller-runtime-supervisor.ts"]

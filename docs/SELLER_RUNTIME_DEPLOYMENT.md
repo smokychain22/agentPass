@@ -39,16 +39,78 @@ foreground process.
 
 The runtime is not a web server. Do not publish a port.
 
-### Railway (current deployment target)
+### Railway (prior deployment target)
 
-Agent 9636's production seller runtime is deployed on Railway: project
+Agent 9636's seller runtime was previously deployed on Railway: project
 `agile-patience`, service `repodiet-production-worker`, deploying `main` via
 `Dockerfile.seller` (`RAILWAY_DOCKERFILE_PATH=Dockerfile.seller`), with a
 Railway Volume mounted at `/persistent`. Railway rejects a Docker `VOLUME`
 instruction at Dockerfile parse time, so persistence is attached by the
 platform rather than declared in the image — see `scripts/seller-entrypoint.sh`,
 which `chown`s the volume to the runtime user after Railway mounts it, since a
-build-time `chown` at that path is masked by the later mount.
+build-time `chown` at that path is masked by the later mount. The same
+entrypoint behavior is reused unchanged on both deployment targets below.
+
+### Fly.io (current testing target)
+
+`fly.toml` at the repo root targets the existing Fly app
+`repodiet-agent-9636` (organisation `personal`) — no Machine or volume
+exists on it yet, and this repo does not create either. The Fly account
+behind this app is on a **limited free trial**; do not treat it as a claim
+of permanent 24/7 hosting — see "Permanent Linux VM deployment" below for
+the long-term host. The container image is identical on Fly and everywhere
+else: `Dockerfile.seller`, unchanged.
+
+Seven secrets are already staged in Fly
+(`REPODIET_OKX_RUNTIME_HEARTBEAT_SECRET`, `OPENCLAW_GATEWAY_TOKEN`,
+`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_BASE64`, `GITHUB_APP_CLIENT_ID`,
+`GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET`) — this PR does not
+read, print, or run `fly secrets deploy` against them.
+
+**Operator commands after this PR is merged** (none of these are run by
+this PR):
+
+```bash
+fly volumes create repodiet_persistent --app repodiet-agent-9636 --region sin --size 1
+fly deploy --app repodiet-agent-9636 --remote-only
+fly machine list --app repodiet-agent-9636   # confirm exactly one Machine
+fly machine update <machine-id> --app repodiet-agent-9636 --autostop=off --autostart=true
+```
+
+`--autostop=off` is a Machines-API-level flag (not a `fly.toml` block) as of
+current `flyctl` — confirm the exact flag name with `fly machine update
+--help` before running it, since this repo does not execute it.
+
+#### Measuring actual memory before finalizing the 512 MB candidate
+
+`fly.toml`'s `memory = "512mb"` is an initial candidate, not a measured
+value. After the first real deploy:
+
+```bash
+fly ssh console --app repodiet-agent-9636 -C "cat /sys/fs/cgroup/memory.current"
+# or, from outside the machine:
+fly machine status <machine-id> --app repodiet-agent-9636
+```
+
+Let the runtime run for at least one full `okx-a2a doctor --fix` cycle plus
+several heartbeat intervals (the highest-memory moment is Gateway startup +
+plugin install), then compare observed peak RSS against 512 MB with
+headroom (aim for peak usage under ~70% of the configured limit) before
+either lowering the candidate or raising it in `fly.toml`.
+
+### Permanent Linux VM deployment (host-neutral, long-term)
+
+See `deploy/README.md` for the full runbook. Summary: the same
+`Dockerfile.seller` image, run via `docker-compose.production.yml` (now the
+host-neutral compose file, not Fly/Railway-specific) on any persistent
+Linux VM, with `/persistent` as a named Docker volume
+(`repodiet_persistent` — same name as the Fly volume, so the in-container
+path contract is identical). `deploy/repodiet-seller.service` is an
+optional **host-level** systemd unit (not inside the container — the
+container's own PID 1 stays `tini`) that runs `docker compose up -d` at
+boot, on top of Docker's own `restart: unless-stopped` container-level
+recovery. Tested on x86_64 only; arm64 is not claimed since the pinned
+`onchainos`/`okx-a2a`/`openclaw` binaries are not verified there.
 
 ## Secrets
 
@@ -96,33 +158,119 @@ re-checks daemon liveness and restarts it via the official `daemon start`
 command if it died — a bounded-backoff restart tied to the heartbeat
 interval, not a custom process supervisor.
 
-**Known gap — task dispatch is not yet wired.** This layer proves the
-transport is real (daemon alive, identity verified, heartbeat honest). It
-does **not** yet make RepoDiet's own scan/plan/patch/PR pipeline the thing
-that handles an inbound service-37348 task. OpenClaw's Gateway exposes a
-`POST /tools/invoke` HTTP endpoint that runs one named tool deterministically
-without an LLM reasoning turn — that is the correct integration point for a
-future RepoDiet tool-plugin — but no such plugin exists yet, and OpenClaw's
-own `ai exec`/`ai resume` dispatch only lists `codex|claude|hermes` as
-providers, not `openclaw`, confirming OpenClaw is not driven through that
-per-task exec path either. Building and testing that plugin is required
-follow-up work before any inbound task can be safely served from this
-runtime.
+**Fixed — the OpenClaw Gateway process is now supervised.**
+`scripts/seller-runtime-supervisor.ts` is the container's actual PID under
+tini/gosu. Verified by direct reproduction in a real built container:
+`okx-a2a setup openclaw`'s automatic post-install gateway restart uses
+`systemctl --user` (or launchd/schtasks), which does not exist under this
+container's `tini` PID 1 — it silently logged "Gateway service disabled"
+and left the actual OpenClaw Gateway (the WebSocket/HTTP server other
+processes authenticate against) not running, which produced the reproduced
+failure: the okx-a2a OpenClaw plugin connected with `tokenConfigured:false`
+and failed with `AUTH_TOKEN_MISSING`.
 
-**Known gap — the OpenClaw Gateway process itself is not supervised yet.**
-Verified by direct reproduction in a real built container: `okx-a2a setup
-openclaw`'s automatic post-install gateway restart uses `systemctl --user`
-(or launchd/schtasks), which does not exist under this container's `tini`
-PID 1 — it logs "Gateway service disabled" and leaves the actual OpenClaw
-Gateway (the WebSocket/HTTP server that would host `/tools/invoke`) not
-running. This does not affect what this runtime currently proves: the
-`okx-a2a daemon` (the XMTP transport) starts and reports ready independently
-of Gateway state, so `a2a_daemon_ready`/heartbeat gating are unaffected. The
-Gateway only becomes load-bearing once the tool-dispatch plugin above is
-built — at that point this runtime needs its own supervisor for `openclaw
-gateway run` (the documented foreground form; `start`/`install`/`restart` all
-assume a service manager this container doesn't have), analogous to
-`ensureDaemonRunning()` for the okx-a2a daemon. Not implemented yet.
+The supervisor now: writes `gateway.mode=local`, `gateway.auth.mode=token`,
+and `gateway.auth.token` (bound to the `OPENCLAW_GATEWAY_TOKEN` SecretRef)
+plus `plugins.allow: ["okx-a2a"]` into OpenClaw's own config via `openclaw
+config set` (schema verified directly against the installed
+`openclaw@2026.7.1-2` CLI docs and TypeScript declarations — not guessed);
+registers the okx-a2a plugin (`okx-a2a setup openclaw`); starts `openclaw
+gateway run` itself as a managed foreground child; and polls `openclaw
+gateway health` then `openclaw gateway status --require-rpc` until the
+Gateway is live **and** authenticated before starting
+`repodiet-seller-runtime.ts` (which still owns `okx-a2a setup`/`doctor
+--fix`/`daemon`, unchanged). It also mirrors the shared token into
+`OKX_A2A_OPENCLAW_GATEWAY_TOKEN` — a second, separately-read env var name
+confirmed directly in the installed `@okxweb3/a2a-node@0.1.10` bundle,
+which the daemon/CLI's own gateway client reads independently of the
+plugin's config. See the module docblock in
+`scripts/seller-runtime-supervisor.ts` for the full, source-verified
+citation trail, and `test/seller-runtime-supervisor.test.ts` for the
+regression coverage (startup ordering, signal forwarding, fail-closed
+paths, secret hygiene).
+
+**Fixed — RepoDiet's own code, dispatching to the real production
+pipeline, now answers inbound XMTP traffic.** okx-a2a's own OpenClaw plugin
+(`@okxweb3/a2a-openclaw`) turns every inbound XMTP message into a normal
+OpenClaw **agent turn** — whatever model OpenClaw has configured would
+answer it, which is the prohibited "Claude/Codex/Cursor acting as
+RepoDiet" topology, and would simply fail with no model-provider
+credential configured (none is staged, and none should be — see below).
+`openclaw-plugins/repodiet-a2a-bridge/` fixes this: an OpenClaw plugin
+using the documented `before_agent_reply` hook ("Short-circuit the model
+turn with a synthetic reply or silence" — typed contract confirmed
+directly against the installed SDK's `dist/hook-types-*.d.ts`) to
+unconditionally claim every message inside an Agent 9636 seller session
+(`sessionKey` matching `my:9636:to:<peer>`) and dispatch it to real
+production endpoints (`dispatch.js`):
+
+- Analysis-intent messages with a repository URL → real A2MCP
+  `POST /api/a2mcp/quick-triage` (service 37347). Paid on every real call
+  in production (x402) — an unpaid dispatch genuinely returns a live 402
+  with a real quote (amount, asset, payTo, quoteId), which is exactly what
+  gets relayed to the requester, not a fabricated "please pay" string.
+- Cleanup-intent and unclassified messages → the real A2A intake endpoint
+  `POST /api/a2a/tasks` (service 37348) — the same "submitTask" endpoint
+  already published in the Agent Card and already exercised by OKX's own
+  reviewer. The backend's own dynamically-generated response (discovery
+  text, `SCOPE_REQUIRED` guidance, or a real task acknowledgement with a
+  real task id) is relayed verbatim.
+- Missing required fields (no message text, no repository URL for an
+  analysis-only request) → a protocol-validation error naming the exact
+  missing field, computed from the request, never fixed prose.
+- A local idempotency store (`idempotency.js`, keyed by the okx-a2a
+  job/session identity, persisted under `HOME`) replays the prior real
+  result for a retried identical message instead of dispatching — and
+  therefore paying/task-creating — twice.
+
+Two earlier fixed-template constants (`SAFE_REPLY`, `ESCALATION_REPLY`)
+were removed for exactly this reason — they answered without dispatching
+anything real. All of this is unit- and live-integration-tested
+(`test/repodiet-a2a-bridge.test.ts`, including one test that makes a real,
+side-effect-free call to production and asserts on the real dynamic
+response).
+
+**Activated in the supervisor.** `scripts/seller-runtime-supervisor.ts`
+writes `plugins.load.paths` (pointing at
+`/app/openclaw-plugins/repodiet-a2a-bridge`),
+`plugins.entries.repodiet-a2a-bridge.hooks.allowConversationAccess`, and an
+updated `plugins.allow` covering both `okx-a2a` and `repodiet-a2a-bridge`
+— then, once the Gateway is live and authenticated, runs `openclaw plugins
+inspect repodiet-a2a-bridge --runtime --json` and fails startup closed
+unless it reports the plugin genuinely `"status":"loaded"`,
+`"activated":true`, with `before_agent_reply` present in `typedHooks`. A
+plugin file existing on disk is not accepted as proof.
+
+**Proven against the real built image**, not just unit-tested in
+isolation: `docker exec` into a running `Dockerfile.seller` container,
+running the exact same config sequence the supervisor performs, then
+`openclaw plugins inspect repodiet-a2a-bridge --runtime --json` returned
+(captured verbatim in
+`test/fixtures/openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json`):
+
+```json
+{"plugin":{"id":"repodiet-a2a-bridge","status":"loaded","activated":true,
+"activationSource":"explicit","activationReason":"selected in allowlist"},
+"shape":"hook-only","typedHooks":[{"name":"before_agent_reply"}]}
+```
+
+One real, load-bearing finding from that same reproduction: OpenClaw's own
+plugin loader blocks a `plugins.load.paths` entry owned by a non-root uid
+("blocked plugin candidate: suspicious ownership ... expected uid=0 or
+root"). `Dockerfile.seller` copies `openclaw-plugins/` **after** the
+`chown -R node:node /app` step specifically so it stays root-owned — the
+seller process (running as `node`) only ever reads these files.
+
+Funded-task **continuation** (escrow funding, approval, and PR delivery —
+the `/api/okx/a2a/tasks/{taskId}/{fund-escrow,approval,delivery,release}`
+endpoints) is intentionally still not automated here. Per
+`docs/OKX_RESUBMISSION_AUDIT.md`, a full funded A2A cycle for service 37348
+has never actually completed against production even under manual,
+interactive control — blocked by an OKX-side routing defect ("mixed-service
+indexing"), not anything in this repo. The bridge creates the real initial
+task (or relays the real payment quote for analysis) for real; automating
+further steps that touch real payment/escrow state, with no way to verify
+correctness against a live cycle, is out of scope for this pass.
 
 ## One-time CLI authentication
 
@@ -245,7 +393,8 @@ liveness/availability proof only.
 ## Not covered here
 
 The container image and this runbook remain provider-neutral and provision
-nothing themselves; Railway was operator-provisioned (see "Railway (current
-deployment target)" above). Choosing a *different* host, or changing what is
-already provisioned on Railway, remains an operator decision this repo does
-not make on its own.
+nothing themselves; Railway, Fly, and any permanent Linux VM are all
+operator-provisioned (see "Railway (prior deployment target)", "Fly.io
+(current testing target)", and "Permanent Linux VM deployment" above). This
+PR does not create the Fly volume, deploy a Machine, or run `fly secrets
+deploy` — those remain explicit operator actions.

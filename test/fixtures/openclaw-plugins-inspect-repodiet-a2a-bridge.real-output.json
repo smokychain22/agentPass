@@ -1,0 +1,101 @@
+{
+  "workspaceDir": "/persistent/home/.openclaw/workspace",
+  "plugin": {
+    "id": "repodiet-a2a-bridge",
+    "name": "RepoDiet A2A Bridge",
+    "description": "Dispatches okx-a2a seller-session (Agent 9636) messages to RepoDiet's real production pipeline, never an LLM turn.",
+    "version": "1.0.0",
+    "packageName": "repodiet-a2a-bridge",
+    "format": "openclaw",
+    "source": "/app/openclaw-plugins/repodiet-a2a-bridge/index.js",
+    "rootDir": "/app/openclaw-plugins/repodiet-a2a-bridge",
+    "origin": "config",
+    "enabled": true,
+    "compat": [],
+    "explicitlyEnabled": true,
+    "activated": true,
+    "activationSource": "explicit",
+    "activationReason": "selected in allowlist",
+    "syntheticAuthRefs": [],
+    "status": "loaded",
+    "toolNames": [],
+    "hookNames": [],
+    "channelIds": [],
+    "cliBackendIds": [],
+    "providerIds": [],
+    "embeddingProviderIds": [],
+    "speechProviderIds": [],
+    "realtimeTranscriptionProviderIds": [],
+    "realtimeVoiceProviderIds": [],
+    "mediaUnderstandingProviderIds": [],
+    "transcriptSourceProviderIds": [],
+    "imageGenerationProviderIds": [],
+    "videoGenerationProviderIds": [],
+    "musicGenerationProviderIds": [],
+    "webFetchProviderIds": [],
+    "webSearchProviderIds": [],
+    "migrationProviderIds": [],
+    "contextEngineIds": [],
+    "memoryEmbeddingProviderIds": [],
+    "agentHarnessIds": [],
+    "cliCommands": [],
+    "services": [],
+    "gatewayDiscoveryServiceIds": [],
+    "commands": [],
+    "httpRoutes": 0,
+    "hookCount": 1,
+    "configSchema": true,
+    "configJsonSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "imported": true,
+    "dependencyStatus": {
+      "hasDependencies": false,
+      "installed": true,
+      "requiredInstalled": true,
+      "optionalInstalled": true,
+      "missing": [],
+      "missingOptional": [],
+      "dependencies": [],
+      "optionalDependencies": []
+    }
+  },
+  "shape": "hook-only",
+  "capabilityMode": "none",
+  "capabilityCount": 0,
+  "capabilities": [],
+  "typedHooks": [
+    {
+      "name": "before_agent_reply"
+    }
+  ],
+  "customHooks": [],
+  "tools": [],
+  "commands": [],
+  "cliCommands": [],
+  "services": [],
+  "gatewayDiscoveryServices": [],
+  "gatewayMethods": [],
+  "mcpServers": [],
+  "lspServers": [],
+  "httpRouteCount": 0,
+  "bundleCapabilities": [],
+  "diagnostics": [],
+  "policy": {
+    "allowConversationAccess": true,
+    "allowedModels": [],
+    "hasAllowedModelsConfig": false
+  },
+  "usesLegacyBeforeAgentStart": false,
+  "compatibility": [
+    {
+      "pluginId": "repodiet-a2a-bridge",
+      "code": "hook-only",
+      "compatCode": "hook-only-plugin-shape",
+      "severity": "info",
+      "message": "is hook-only. This remains a supported compatibility path, but it has not migrated to explicit capability registration yet."
+    }
+  ]
+}
