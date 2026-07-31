@@ -86,9 +86,14 @@
  *      validate again and write a fresh marker only on full success.
  *   5. Release the bootstrap lock (always, success or failure).
  *   6. Start `openclaw gateway run` as a managed foreground child.
- *   7. Poll until the Gateway is live (`GET /health`) AND authenticated
- *      (`GET /ready`, bearer token attached) — both against the Gateway's
- *      own HTTP server, not the CLI's RPC transport. See Incident #7.
+ *   7. Wait for the Gateway child's own "gateway ready" stdout milestone as
+ *      a PRELIMINARY signal only (bounded wait; proceeds regardless once
+ *      the wait elapses, since that log line is not guaranteed to print in
+ *      every valid configuration — see Incident #7), then poll a direct,
+ *      in-process, authenticated WebSocket/RPC probe
+ *      (src/lib/okx-runtime/gateway-rpc-probe.ts) until it genuinely
+ *      succeeds. Only that RPC result — never the stdout milestone alone —
+ *      gates readiness.
  *   8. Verify BOTH okx-a2a and repodiet-a2a-bridge are genuinely loaded and
  *      active (`openclaw plugins inspect <id> --runtime --json`) — a
  *      plugin file existing on disk is never accepted as proof.
@@ -108,9 +113,10 @@
  * (src/lib/okx-runtime/command-diagnostics.ts).
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { runProcess, redactProcessOutput, type ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
+import { runProcess, type ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
 import { parsePluginInspection } from "../src/lib/okx-runtime/plugin-inspection";
 import { buildCommandFailureDiagnostics } from "../src/lib/okx-runtime/command-diagnostics";
+import { probeGatewayRpc, type GatewayProbeResult } from "../src/lib/okx-runtime/gateway-rpc-probe";
 import {
   acquireBootstrapLock,
   bootstrapLockPath,
@@ -153,58 +159,68 @@ export const OPENCLAW_VERSION = "2026.7.1-2";
 export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.1.10";
 
 /**
- * === Incident #6 (previous revision, superseded below): raised these
- * timeouts from 10s/15s to 60s/60s on the theory that `openclaw gateway
- * health`/`gateway status --require-rpc` were cold-start-bound CLI
- * subprocess spawns, the same cost already measured for `openclaw config
- * set` (Incident #4). That theory was wrong: live on repodiet-agent-9636,
- * every poll still timed out at the full 60s, and a direct, bounded
- * 120-second SSH probe (`timeout 120 openclaw gateway health ...`)
- * produced zero stdout/stderr and was killed by the shell's own timeout —
- * not a slow cold start, an indefinite hang.
+ * === Incident #6 (superseded): raised `gateway health`/`gateway status
+ * --require-rpc`'s own per-call timeouts from 10s/15s to 60s/60s on the
+ * theory they were cold-start-bound CLI subprocess spawns (the same cost
+ * measured for `openclaw config set` in Incident #4). That theory was
+ * wrong: live on repodiet-agent-9636, every poll still timed out at the
+ * full 60s, and a direct, bounded 120-second SSH probe
+ * (`timeout 120 openclaw gateway health ...`) produced zero stdout/stderr
+ * — not a slow cold start, an indefinite hang.
  *
- * === Incident #7: the CLI's RPC transport hangs; stopped depending on it ===
- * Traced directly into the real `openclaw` 2026.7.1-2 source
- * (call-Bj6Erfmh.js / call-DE3i_Hr1.js): both `gateway health` and
- * `gateway status --require-rpc` funnel through the same `callGateway` ->
- * `callGatewayCli` -> `callGatewayWithScopes` RPC client, which does carry
- * its own internal `setTimeout`-based safety net (`resolveGatewayCallTimeout`)
- * — yet that safety net never fired either on the live Machine, meaning
- * whatever is wrong sits below the RPC layer. Root cause not conclusively
- * pinned down inside third-party minified code after a genuine attempt;
- * further static tracing hit diminishing returns.
+ * === Incident #7: stopped depending on the CLI's RPC transport entirely ===
+ * Traced directly into the real `openclaw` 2026.7.1-2 source: both
+ * `gateway health` and `gateway status --require-rpc` funnel through the
+ * same `callGateway` -> `callGatewayCli` -> `callGatewayWithScopes` RPC
+ * client, which does carry its own internal `setTimeout`-based safety net
+ * — yet that safety net never fired either on the live Machine. Root
+ * cause not conclusively pinned down inside the CLI's own wrapper code
+ * (something before a GatewayClient is ever constructed — config
+ * loading, discovery, or similar — not inside GatewayClient itself).
  *
- * The same source also confirms the Gateway's own HTTP server
- * (server-http.ts), bound to the identical `--port`, serves plain
- * `GET /health` ("live") and `GET /ready` ("ready", backed by a real
- * `createReadinessChecker` reflecting startup-pending/draining/channel
- * health, not just "process started") — an entirely different code path
- * from the one that hangs. `gatewayHealthy`/`gatewayAuthenticatedAndReady`
- * below now call that HTTP server directly via `fetch()`, in-process, with
- * no subprocess and no dependency on the CLI's RPC client at all. These
- * two constants are now HTTP request timeouts rather than subprocess
- * timeouts, but kept at the same names/values/env-var overrides since the
- * "how long is one probe attempt allowed to take" question is unchanged.
+ * The fix does not patch around that hang — it removes the dependency on
+ * it. `src/lib/okx-runtime/gateway-rpc-probe.ts` reuses the REAL, exported
+ * `GatewayClient` (`openclaw/plugin-sdk/gateway-runtime` — the exact same
+ * class the CLI itself constructs internally) directly, in-process, with
+ * its own independent outer timeout. A `GET /health` HTTP-only shortcut
+ * was deliberately rejected: the Gateway's HTTP probe routes bypass
+ * authentication entirely for local callers (`isLocalDirectRequest`), so
+ * they cannot prove genuine token authentication the way a real
+ * WebSocket "connect" RPC round-trip can (there is no such bypass at the
+ * protocol level — reaching hello-ok at all is itself proof the
+ * configured token was accepted). See docs/SELLER_RUNTIME_DEPLOYMENT.md
+ * ("Incident #6" and "Incident #7") for the full writeups.
  *
- * `verifyPluginActive` (`openclaw plugins inspect <id> --runtime --json`)
- * is deliberately left calling the CLI: traced into
- * plugins-inspect-command-DRp1IKYf.js, `--runtime` mode performs a purely
- * local "runtime plugin registry load" inside the CLI's own process — it
- * never calls `callGateway`, so it does not share this bug.
+ * The Gateway child's own "gateway ready" stdout line is watched only as
+ * a PRELIMINARY signal to avoid probing before the process has even
+ * started — never as a substitute for the RPC probe succeeding. That
+ * line is conditional in the real Gateway source (`if (sidecarStartup ===
+ * "defer") log.info("gateway ready")`), so this wait is bounded and
+ * proceeds to RPC-probing regardless once it elapses, rather than
+ * blocking forever on a log line that is not guaranteed to print in
+ * every valid configuration.
  *
- * See docs/SELLER_RUNTIME_DEPLOYMENT.md ("Incident #6" and "Incident #7")
- * for the full writeups with real diagnostic evidence.
+ * The probe stops at a validated `hello-ok` and does not chain a further
+ * RPC call — an earlier revision tried calling `"status"` afterward and
+ * was proven live to always fail (`missing scope: operator.read`):
+ * `gateway.auth.mode: "token"` grants an empty operator-scope set
+ * unconditionally, so every scoped method is structurally unreachable
+ * regardless of what is requested. See gateway-rpc-probe.ts's module
+ * docblock for the full empirical trace.
  */
 const GATEWAY_READY_TIMEOUT_MS = Number(
   process.env.REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 300_000
 );
 const GATEWAY_READY_POLL_MS = Number(process.env.REPODIET_OPENCLAW_GATEWAY_READY_POLL_MS || 3_000);
-const GATEWAY_HEALTH_PROBE_TIMEOUT_MS = Number(
-  process.env.REPODIET_OPENCLAW_GATEWAY_HEALTH_PROBE_TIMEOUT_MS || 60_000
+/** Bounds the full connect -> authenticate -> hello-ok round trip of the readiness probe (src/lib/okx-runtime/gateway-rpc-probe.ts). */
+const GATEWAY_RPC_CONNECT_TIMEOUT_MS = Number(
+  process.env.REPODIET_OPENCLAW_GATEWAY_RPC_CONNECT_TIMEOUT_MS || 15_000
 );
-const GATEWAY_AUTH_PROBE_TIMEOUT_MS = Number(
-  process.env.REPODIET_OPENCLAW_GATEWAY_AUTH_PROBE_TIMEOUT_MS || 60_000
+/** Bounded wait for the Gateway child's own "gateway ready" stdout milestone — a preliminary signal only, never required. See the Incident #7 note above. */
+const GATEWAY_STDOUT_PRELIMINARY_WAIT_MS = Number(
+  process.env.REPODIET_OPENCLAW_GATEWAY_STDOUT_PRELIMINARY_WAIT_MS || 30_000
 );
+const GATEWAY_STDOUT_READY_MARKER = "gateway ready";
 const CHILD_SHUTDOWN_GRACE_MS = 15_000;
 
 type LogFields = Record<string, unknown>;
@@ -440,88 +456,26 @@ async function runBootstrap(env: NodeJS.ProcessEnv): Promise<boolean> {
 }
 
 /**
- * Plain `fetch()` against the Gateway's own HTTP server — no subprocess.
- * See Incident #7 above for why this replaced a CLI-spawn approach that
- * hung indefinitely in production, immune to timeout increases.
+ * Direct, in-process, authenticated Gateway RPC probe — see
+ * src/lib/okx-runtime/gateway-rpc-probe.ts for the full protocol writeup
+ * and Incident #7 above for why this replaced two CLI-spawned checks
+ * proven to hang indefinitely. Proves genuine token authentication by
+ * completing the real "connect" RPC round-trip (reaching hello-ok at all
+ * requires it — there is no local-bypass at the WebSocket protocol
+ * level, unlike the Gateway's HTTP probe routes) and validates the
+ * response identifies a real Gateway/runtime. Does not chain a further
+ * RPC call (e.g. "status"): live testing proved `gateway.auth.mode:
+ * "token"` grants an empty operator-scope set unconditionally, so every
+ * scoped method (status and health both included) is structurally
+ * unreachable regardless of what scopes are requested — see the full
+ * writeup in gateway-rpc-probe.ts's module docblock.
  */
-async function fetchGatewayProbe(
-  path: string,
-  timeoutMs: number,
-  headers: Record<string, string> = {}
-): Promise<ProcessRunResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${path}`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-    const body = await response.text();
-    return {
-      ok: response.ok,
-      exitCode: response.status,
-      signal: null,
-      stdout: redactProcessOutput(body),
-      stderr: "",
-      timedOut: false,
-      cancelled: false,
-    };
-  } catch (err) {
-    const timedOut = err instanceof Error && err.name === "AbortError";
-    const cause = err instanceof Error && err.cause instanceof Error ? `: ${err.cause.message}` : "";
-    const message = err instanceof Error ? `${err.message}${cause}` : String(err);
-    return {
-      ok: false,
-      exitCode: null,
-      signal: null,
-      stdout: "",
-      stderr: redactProcessOutput(message),
-      timedOut,
-      cancelled: false,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * `GET /health` — unauthenticated liveness probe. Maps to the same "live"
- * concept `openclaw gateway health` was trying to report (see
- * GATEWAY_PROBE_STATUS_BY_PATH in the real Gateway source), reached via
- * the Gateway's plain HTTP server instead of its RPC client.
- */
-async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<ProcessRunResult> {
-  return fetchGatewayProbe("/health", GATEWAY_HEALTH_PROBE_TIMEOUT_MS);
-}
-
-/**
- * `GET /ready` with the real bearer token attached. The Gateway's HTTP
- * probe route answers local callers' status code the same way regardless
- * of the token (an `isLocalDirectRequest` bypass in its own source), so
- * this cannot exercise auth *enforcement* the way `--require-rpc` once
- * aimed to — but it does exercise the real internal readiness state
- * (`createReadinessChecker`: startup-pending sidecars, gateway-draining,
- * channel health), which is what actually gates whether it's safe to
- * start the seller runtime. The token is still attached and the response
- * body's `ready` field still checked explicitly, both as defense-in-depth
- * and so a wrong/missing token remains visible in the response shape if
- * that local-bypass behavior ever changes upstream.
- */
-async function gatewayAuthenticatedAndReady(env: NodeJS.ProcessEnv): Promise<ProcessRunResult> {
-  const token = env.OPENCLAW_GATEWAY_TOKEN;
-  const result = await fetchGatewayProbe(
-    "/ready",
-    GATEWAY_AUTH_PROBE_TIMEOUT_MS,
-    token ? { Authorization: `Bearer ${token}` } : {}
-  );
-  if (!result.ok) return result;
-  try {
-    const parsed = JSON.parse(result.stdout) as { ready?: boolean };
-    return parsed.ready === true ? result : { ...result, ok: false };
-  } catch {
-    return { ...result, ok: false };
-  }
+async function gatewayAuthenticatedRpc(env: NodeJS.ProcessEnv): Promise<GatewayProbeResult> {
+  return probeGatewayRpc({
+    url: OPENCLAW_GATEWAY_URL,
+    token: env.OPENCLAW_GATEWAY_TOKEN ?? "",
+    connectTimeoutMs: GATEWAY_RPC_CONNECT_TIMEOUT_MS,
+  });
 }
 
 /**
@@ -565,50 +519,94 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Module-level state for the real Gateway child's stdout, watched only for the preliminary "gateway ready" milestone (see Incident #7). */
+let gatewayStdoutReadyObserved = false;
+
+/** Wired to the real gateway child's stdout — see spawnManaged's onStdoutData hook and its call site in main(). */
+export function observeGatewayStdoutChunk(chunk: string): void {
+  if (!gatewayStdoutReadyObserved && chunk.includes(GATEWAY_STDOUT_READY_MARKER)) {
+    gatewayStdoutReadyObserved = true;
+    log("gateway_stdout_ready_observed", {});
+  }
+}
+
+/** Exposed for tests only — resets the module-level stdout-observed flag between test cases. */
+export function resetGatewayStdoutReadyObservedForTests(): void {
+  gatewayStdoutReadyObserved = false;
+}
+
+/** Exposed for tests only — observes the module-level stdout-observed flag without waiting. */
+export function isGatewayStdoutReadyObservedForTests(): boolean {
+  return gatewayStdoutReadyObserved;
+}
+
+async function waitForGatewayStdoutReadyMarkerOrTimeout(): Promise<"observed" | "timed_out"> {
+  const deadline = Date.now() + GATEWAY_STDOUT_PRELIMINARY_WAIT_MS;
+  while (!gatewayStdoutReadyObserved && Date.now() < deadline) {
+    await sleep(250);
+  }
+  return gatewayStdoutReadyObserved ? "observed" : "timed_out";
+}
+
+export interface GatewayReadinessDeps {
+  /** Waits for the Gateway child's own preliminary stdout milestone, or gives up after a bound — never blocks readiness on it alone. */
+  waitForStdoutReadyMarker: () => Promise<"observed" | "timed_out">;
+  /** One authenticated connect -> RPC round-trip attempt. */
+  probeOnce: () => Promise<GatewayProbeResult>;
+}
+
 /**
- * Every failed poll is logged with full, redacted, categorized diagnostics
- * (see command-diagnostics.ts) — not a bare boolean. Built after this exact
- * gap cost an entire investigation cycle live on repodiet-agent-9636: five
- * consecutive boots each hit `openclaw_gateway_not_ready_within_timeout`
- * with zero information about which of the two probes was failing or why.
+ * The actual readiness gate: the Gateway child's own "gateway ready"
+ * stdout milestone (if/when observed — see GATEWAY_STDOUT_PRELIMINARY_WAIT_MS)
+ * is used only to avoid probing before the process has even started.
+ * Readiness itself is decided EXCLUSIVELY by `deps.probeOnce()` genuinely
+ * succeeding — a stdout milestone with no successful RPC probe can never,
+ * by construction, produce readiness (see
+ * test/seller-runtime-gateway-readiness.test.ts's Incident #7 regression
+ * test, which injects an immediately-"observed" stdout marker alongside a
+ * probe that never succeeds and asserts this still returns false).
  */
-async function waitForGatewayReady(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const deadline = Date.now() + GATEWAY_READY_TIMEOUT_MS;
-  let healthy = false;
+export async function waitForGatewayReadyWithDeps(
+  deps: GatewayReadinessDeps,
+  overallTimeoutMs: number,
+  pollIntervalMs: number
+): Promise<boolean> {
+  const stdoutOutcome = await deps.waitForStdoutReadyMarker();
+  log("gateway_stdout_ready_gate_passed", { outcome: stdoutOutcome });
+
+  const deadline = Date.now() + overallTimeoutMs;
   while (Date.now() < deadline) {
-    if (!healthy) {
-      const startedAt = Date.now();
-      const result = await gatewayHealthy(env);
-      if (result.ok) {
-        healthy = true;
-        log("gateway_health_ok", {});
-      } else {
-        logCommandFailure(
-          "gateway_health_not_ready_yet",
-          "GET http://127.0.0.1:<port>/health",
-          result,
-          Date.now() - startedAt,
-          "will_retry"
-        );
-      }
-    } else {
-      const startedAt = Date.now();
-      const result = await gatewayAuthenticatedAndReady(env);
-      if (result.ok) {
-        log("gateway_auth_ready", { url: OPENCLAW_GATEWAY_URL });
-        return true;
-      }
-      logCommandFailure(
-        "gateway_auth_not_ready_yet",
-        "GET http://127.0.0.1:<port>/ready (authenticated)",
-        result,
-        Date.now() - startedAt,
-        "will_retry"
-      );
+    const startedAt = Date.now();
+    const result = await deps.probeOnce();
+    if (result.ok) {
+      log("gateway_auth_ready", {
+        url: OPENCLAW_GATEWAY_URL,
+        serverVersion: result.serverVersion,
+        connId: result.connId,
+        authRole: result.authRole,
+      });
+      return true;
     }
-    await sleep(GATEWAY_READY_POLL_MS);
+    log("gateway_rpc_not_ready_yet", {
+      category: result.category,
+      message: result.message,
+      durationMs: Date.now() - startedAt,
+      retryDecision: "will_retry",
+    });
+    await sleep(pollIntervalMs);
   }
   return false;
+}
+
+async function waitForGatewayReady(env: NodeJS.ProcessEnv): Promise<boolean> {
+  return waitForGatewayReadyWithDeps(
+    {
+      waitForStdoutReadyMarker: waitForGatewayStdoutReadyMarkerOrTimeout,
+      probeOnce: () => gatewayAuthenticatedRpc(env),
+    },
+    GATEWAY_READY_TIMEOUT_MS,
+    GATEWAY_READY_POLL_MS
+  );
 }
 
 interface ManagedChild {
@@ -620,14 +618,33 @@ interface ManagedChild {
 const children: ManagedChild[] = [];
 let shuttingDown = false;
 
+/**
+ * `onStdoutData`, when given, switches this child's stdout from a plain
+ * OS-level `inherit` to a piped stream this process reads and immediately
+ * re-writes to its own stdout (so Fly log visibility is unchanged) while
+ * also handing each raw chunk to the callback — used only for the
+ * Gateway child's preliminary "gateway ready" stdout-milestone watch (see
+ * Incident #7). Every other managed child keeps the simpler pure-inherit
+ * path.
+ */
 function spawnManaged(
   name: string,
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  required: boolean
+  required: boolean,
+  onStdoutData?: (chunk: string) => void
 ): ChildProcess {
-  const proc = spawn(command, args, { stdio: "inherit", env });
+  const stdio: ["inherit", "inherit" | "pipe", "inherit"] = onStdoutData
+    ? ["inherit", "pipe", "inherit"]
+    : ["inherit", "inherit", "inherit"];
+  const proc = spawn(command, args, { stdio, env });
+  if (onStdoutData && proc.stdout) {
+    proc.stdout.on("data", (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      onStdoutData(chunk.toString("utf8"));
+    });
+  }
   const entry: ManagedChild = { name, proc, required };
   children.push(entry);
 
@@ -704,7 +721,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  spawnManaged("openclaw-gateway", "openclaw", ["gateway", "run", "--port", String(OPENCLAW_GATEWAY_PORT)], env, true);
+  spawnManaged(
+    "openclaw-gateway",
+    "openclaw",
+    ["gateway", "run", "--port", String(OPENCLAW_GATEWAY_PORT)],
+    env,
+    true,
+    observeGatewayStdoutChunk
+  );
 
   const ready = await waitForGatewayReady(env);
   if (!ready) {

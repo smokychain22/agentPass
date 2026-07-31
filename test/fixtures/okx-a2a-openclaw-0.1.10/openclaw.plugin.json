@@ -1,0 +1,18 @@
+{
+  "id": "okx-a2a",
+  "name": "OKX A2A",
+  "description": "E2E encrypted wallet-to-agent communication via A2A protocol",
+  "version": "0.1.10",
+  "activation": {
+    "onStartup": true
+  },
+  "hooks": [
+    "before_agent_run",
+    "agent_end"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

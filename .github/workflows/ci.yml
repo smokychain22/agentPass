@@ -24,7 +24,19 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Matches Dockerfile.seller's node:22-bookworm-slim, not an
+          # arbitrary bump: the pinned `openclaw` package (a real
+          # dependency as of this PR, needed for
+          # src/lib/okx-runtime/gateway-rpc-probe.ts's direct Gateway
+          # client import) pulls in a bundled undici whose CacheStorage
+          # implementation calls `webidl.util.markAsUncloneable`, which
+          # does not exist on Node 20 — reproduced directly in CI
+          # (`TypeError: webidl.util.markAsUncloneable is not a function`
+          # inside node_modules/openclaw/node_modules/undici) before this
+          # fix. Production has never run this code on anything older
+          # than Node 22, so this brings CI in line with reality rather
+          # than papering over a real incompatibility.
+          node-version: "22"
           cache: npm
 
       - name: Install dependencies
