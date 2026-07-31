@@ -413,6 +413,22 @@ function run() {
     assert.ok(!/--token["'`]?,?\s*(token|env\.OPENCLAW_GATEWAY_TOKEN)/.test(src));
   });
 
+  test("a failed readiness poll is logged with full diagnostics, not a silent retry — five real boots on repodiet-agent-9636 hit a 120s timeout with zero information about which probe failed or why", () => {
+    const src = supervisorSource();
+    assert.ok(src.includes("gateway_health_not_ready_yet"));
+    assert.ok(src.includes("gateway_auth_not_ready_yet"));
+    const healthFailIndex = src.indexOf("gateway_health_not_ready_yet");
+    const authFailIndex = src.indexOf("gateway_auth_not_ready_yet");
+    assert.ok(
+      src.slice(Math.max(0, healthFailIndex - 300), healthFailIndex).includes("logCommandFailure("),
+      "the health probe failure must be logged via logCommandFailure, not silently swallowed"
+    );
+    assert.ok(
+      src.slice(Math.max(0, authFailIndex - 300), authFailIndex).includes("logCommandFailure("),
+      "the auth probe failure must be logged via logCommandFailure, not silently swallowed"
+    );
+  });
+
   // --- Signal forwarding and child-process cleanup (regression) ---------
 
   test("SIGTERM and SIGINT are both handled and trigger the same shutdown path", () => {
