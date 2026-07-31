@@ -81,13 +81,17 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
   source = "repodiet_persistent"
   destination = "/persistent"
 
-# Initial memory candidate only — not yet measured against a real running
-# container. See "Measuring actual memory" in the deployment runbook for
-# the exact command to run after the first real deploy, and revise this
-# value from observed RSS rather than leaving it as a guess.
+# Bumped from 512mb after a real, live OOM kill: the kernel killed the
+# openclaw-gateway process (anon-rss ~196MB at kill time) roughly 15
+# minutes into a real production boot with the Gateway and the seller
+# runtime both live — not a boot-time spike, sustained operational
+# pressure. Confirmed via `dmesg`-surfaced "Out of memory: Killed process"
+# in `fly logs` and the resulting supervisor `required_child_exited` /
+# full VM reboot. See docs/SELLER_RUNTIME_DEPLOYMENT.md for the incident
+# writeup and the actual peak/steady-state RSS measured after this bump.
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "1024mb"
 
 # Exactly one production Machine is intended. This file does not itself
 # enforce machine count (that is a `fly scale count 1` / `fly machine run`
