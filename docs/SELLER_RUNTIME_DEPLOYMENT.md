@@ -727,10 +727,15 @@ signal observed instantly, paired with an RPC probe that never succeeds,
 and asserts readiness still comes back `false`.
 
 `verifyPluginActive` (`openclaw plugins inspect <id> --runtime --json`)
-is deliberately left calling the CLI: traced into the real
+was deliberately left calling the CLI at this point: traced into the real
 `plugins-inspect-command`, `--runtime` mode performs a purely local
 "runtime plugin registry load" inside the CLI's own process — it never
-calls `callGateway`, so it does not share this bug.
+calls `callGateway`, so the reasoning was that it could not share this
+bug. **This reasoning was later proven incomplete — see Incident #8
+below:** the command does not hang because of the RPC transport, but it
+still does not return in any usable time on this Machine, for a different
+reason entirely (CPU/memory contention with the already-running Gateway
+process, not a network or lock stall).
 
 **A separate, previously-suspected-but-unproven bug, now confirmed and
 fixed.** The `@okxweb3/a2a-openclaw` plugin's *own* internal Gateway
@@ -827,6 +832,118 @@ cycles to find and then correctly fix — is the concrete reason the plan
 required testing against the real pinned Gateway inside Docker: neither
 bug, nor the fact that the first fix attempt didn't work, was visible
 from fake-server unit tests alone.
+
+### Incident #8: `openclaw plugins inspect --runtime --json` — proven, live, to starve the Gateway's CPU rather than hang on a lock or network stall
+
+The next live boot attempt after Incident #7's fix landed failed three
+times in a row: `startup_failed: required_plugin_not_active`, each
+followed by a full Firecracker VM reboot (the Machine's restart policy,
+`on-failure, retries=3`), before settling into `State: stopped` once the
+budget was exhausted. A direct, bounded SSH diagnostic reproduced it in
+isolation:
+
+```bash
+fly ssh console --app repodiet-agent-9636 \
+  -C "timeout 90 openclaw plugins inspect okx-a2a --runtime --json"
+```
+
+Zero stdout, zero stderr, exit status 124, twice, at both 30s and 90s
+bounds. The `--json`-only, non-`--runtime` snapshot variant (a
+theoretically cheaper code path, per the CLI's own source) was tested too
+and hung identically.
+
+**This looked, at first, like a second instance of Incident #7's bug** —
+except Incident #7's own fix note above had already traced `--runtime`
+mode as a purely local operation that never calls `callGateway`, so it
+should not have been able to share that specific RPC-transport hang. That
+reasoning turned out to be correct on its own terms and irrelevant: this
+is a different bug with the same symptom.
+
+**Root cause, confirmed by direct `/proc` inspection on the live Machine
+while the hang was in progress** (not inferred from source alone this
+time): with the command backgrounded over the same SSH session, its real
+child process showed:
+
+- `/proc/<pid>/status`: `State: R (running)` — actively scheduled and
+  executing, not blocked.
+- `/proc/<pid>/stat`: `utime` genuinely incrementing across repeated
+  samples — real CPU time being consumed, continuously, not a process
+  sitting idle.
+- `/proc/net/tcp` and `/proc/net/tcp6`: no outbound connection
+  attributable to the process (only the pre-existing SSH tunnel itself) —
+  ruling out a network stall.
+- No anomalous open file descriptors — ruling out a lock/IO block.
+
+In other words: not a deadlock, not a lock, not a network call that never
+resolves — the process is genuinely, continuously computing, just far too
+slowly to ever finish inside a usable boot-time bound. The reason is
+resource contention, not a bug in the traditional sense: `openclaw
+plugins inspect --runtime` reloads a large fraction of the same module
+graph and plugin registry the live `openclaw gateway run` process already
+has resident, as a **second, separate Node.js process**, on a Machine
+with exactly one shared vCPU and — per the "First real measurement"
+section above — the Gateway process alone already peaking near the
+512MB memory ceiling. Spawning a second full runtime instantiation
+concurrently with the live Gateway is not merely slow here; it is unsafe
+to attempt at any timeout, since it also risks starving the live
+Gateway's own event loop (heartbeats, XMTP) of CPU while it runs.
+
+**The fix does not raise the timeout or retry harder — it removes the
+second process entirely**, the same category of fix as Incident #7.
+`src/lib/okx-runtime/plugin-activation-proof.ts` (see that file's module
+docblock for the full derivation) instead:
+
+1. Parses the live Gateway's own real startup line, traced verbatim from
+   `node_modules/openclaw/dist/server-startup-log-mxipLyo5.js`'s
+   `formatReadyDetails`: `"http server listening (N plugins: id1, id2;
+   Xs)"` (or `"(0 plugins)"`) — sourced from
+   `pluginRegistry.plugins.filter(p => p.status === "loaded").map(p =>
+   p.id)` inside the live process itself, traced from
+   `server-startup-post-attach-B3O9knW5.js`. `status === "loaded"` (versus
+   `"error"`, set wherever the plugin's own module import throws — traced
+   from `loader-D8d2EvVh.js`) proves the plugin module genuinely executed
+   without error, a stronger proof than file existence.
+2. Combines that with a fact already independently guaranteed by this
+   supervisor's own bootstrap: `runBootstrap` is a hard precondition for
+   the Gateway ever starting, and only completes successfully after
+   `openclaw config set` for `plugins.entries.<id>.hooks.
+   allowConversationAccess=true` (both plugin ids,
+   `buildOpenclawConfigBatch`) was applied **and**
+   `validateOpenclawConfigFile` confirmed the persisted config is valid —
+   the exact precondition a conversation-scoped hook's registration checks
+   (traced into `registry-B8eQDFB4.js`'s `isConversationHookName` branch).
+
+Neither signal alone fully replicates what `openclaw plugins inspect`
+used to report (module-loaded status is proven live; hook registration is
+proven by construction rather than re-observed — hook-registration-
+blocked diagnostics are pushed only into an in-memory `registry.
+diagnostics` array in the real Gateway process, never printed anywhere,
+so there is no stdout signal for it to observe even in principle).
+Together they cover the same failure modes the CLI's `typedHooks`
+enumeration covered — a missing/broken plugin file, or a genuinely
+misconfigured `allowConversationAccess` — without a second concurrent
+runtime instantiation.
+
+The supervisor persists what it derives to
+`$HOME/.openclaw/repodiet-plugin-activation.json`
+(`pluginActivationProofPath`) once, at boot, right after both required
+plugins are confirmed active from the Gateway's own stdout — the same
+point `verifyPluginActive` used to gate on the CLI's exit code.
+`scripts/seller-production-readiness.ts`, an independent on-demand SSH
+diagnostic that does not itself spawn the Gateway child and therefore has
+no stdout to watch, reads this file instead of re-invoking the CLI
+itself — the same fix, applied at both call sites.
+
+**A second, unrelated instance of the same class of bug, caught in the
+same pass.** `scripts/seller-production-readiness.ts`'s own
+`openclaw_gateway_authenticated` check still called `openclaw gateway
+status --require-rpc --json` directly — Incident #7's fix only ever
+touched `seller-runtime-supervisor.ts`'s boot-time gate, so this
+independent script had been carrying the exact same proven-to-hang CLI
+RPC transport the whole time, just never exercised in a way that surfaced
+it. Fixed the same way Incident #7 fixed the supervisor: it now calls
+`probeGatewayRpc` (`src/lib/okx-runtime/gateway-rpc-probe.ts`) directly,
+in-process.
 
 ## One-time CLI authentication
 

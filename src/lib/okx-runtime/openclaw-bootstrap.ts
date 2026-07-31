@@ -61,6 +61,11 @@ export function bootstrapMarkerPath(env: NodeJS.ProcessEnv): string {
   return path.join(openclawHomeDir(env), ".openclaw", "repodiet-bootstrap-marker.json");
 }
 
+/** See src/lib/okx-runtime/plugin-activation-proof.ts (Incident #8) for what this file proves and why it replaced a second `openclaw` CLI process. */
+export function pluginActivationProofPath(env: NodeJS.ProcessEnv): string {
+  return path.join(openclawHomeDir(env), ".openclaw", "repodiet-plugin-activation.json");
+}
+
 // --- Exclusive bootstrap lock --------------------------------------------
 
 const STALE_LOCK_MS = 5 * 60_000;

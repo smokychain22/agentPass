@@ -94,9 +94,13 @@
  *      (src/lib/okx-runtime/gateway-rpc-probe.ts) until it genuinely
  *      succeeds. Only that RPC result — never the stdout milestone alone —
  *      gates readiness.
- *   8. Verify BOTH okx-a2a and repodiet-a2a-bridge are genuinely loaded and
- *      active (`openclaw plugins inspect <id> --runtime --json`) — a
- *      plugin file existing on disk is never accepted as proof.
+ *   8. Verify BOTH okx-a2a and repodiet-a2a-bridge are genuinely loaded,
+ *      from the live Gateway's own real "http server listening (N
+ *      plugins: ...)" startup line (src/lib/okx-runtime/plugin-activation-
+ *      proof.ts) — a plugin file existing on disk is never accepted as
+ *      proof. Persists a proof file so scripts/seller-production-
+ *      readiness.ts can re-verify without spawning a second `openclaw`
+ *      process (see Incident #8).
  *   9. Only then start scripts/repodiet-seller-runtime.ts.
  *
  * A second, independently-discovered fix from the earlier revision still
@@ -114,7 +118,6 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { runProcess, type ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
-import { parsePluginInspection } from "../src/lib/okx-runtime/plugin-inspection";
 import { buildCommandFailureDiagnostics } from "../src/lib/okx-runtime/command-diagnostics";
 import { probeGatewayRpc, type GatewayProbeResult } from "../src/lib/okx-runtime/gateway-rpc-probe";
 import {
@@ -124,6 +127,7 @@ import {
   bootstrapMarkerPath,
   computeConfigSchemaHash,
   openclawConfigPath,
+  pluginActivationProofPath,
   quarantineInvalidConfig,
   readBootstrapMarker,
   releaseBootstrapLock,
@@ -131,6 +135,10 @@ import {
   writeBootstrapMarker,
   type BootstrapVersions,
 } from "../src/lib/okx-runtime/openclaw-bootstrap";
+import {
+  parseGatewayListeningPluginIds,
+  writePluginActivationProof,
+} from "../src/lib/okx-runtime/plugin-activation-proof";
 
 export const OPENCLAW_GATEWAY_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
 export const OPENCLAW_GATEWAY_URL = `ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}`;
@@ -220,6 +228,8 @@ const GATEWAY_RPC_CONNECT_TIMEOUT_MS = Number(
 const GATEWAY_STDOUT_PRELIMINARY_WAIT_MS = Number(
   process.env.REPODIET_OPENCLAW_GATEWAY_STDOUT_PRELIMINARY_WAIT_MS || 30_000
 );
+/** Bounded wait, AFTER the RPC probe already proves the Gateway live, for its own "http server listening (...)" plugin-list line to have been captured — see Incident #8. In practice this line prints before the WS server ever becomes connectable, so this should resolve almost immediately; the bound exists only to fail closed rather than hang if that ordering assumption is ever wrong. */
+const GATEWAY_PLUGIN_LIST_WAIT_MS = Number(process.env.REPODIET_OPENCLAW_GATEWAY_PLUGIN_LIST_WAIT_MS || 10_000);
 const GATEWAY_STDOUT_READY_MARKER = "gateway ready";
 const CHILD_SHUTDOWN_GRACE_MS = 15_000;
 
@@ -478,55 +488,32 @@ async function gatewayAuthenticatedRpc(env: NodeJS.ProcessEnv): Promise<GatewayP
   });
 }
 
-/**
- * Proves a plugin is genuinely loaded and its documented hook is
- * registered — not merely that its file exists on disk. `openclaw plugins
- * inspect <id> --runtime --json` is the documented command for this
- * ("shows registered hooks and diagnostics from a module-loaded
- * inspection pass", docs/cli/plugins.md). Fails closed (returns false) on
- * any non-zero exit, unparseable output, or output that does not report
- * the plugin loaded/activated with the expected hook.
- */
-export async function verifyPluginActive(
-  env: NodeJS.ProcessEnv,
-  pluginId: string,
-  requiredHook: string
-): Promise<boolean> {
-  const result = await runProcess("openclaw", ["plugins", "inspect", pluginId, "--runtime", "--json"], {
-    env,
-    timeoutMs: 20_000,
-  });
-  if (!result.ok) return false;
-  return parsePluginInspection(result.stdout, pluginId, requiredHook);
-}
-
-/** Retained for backward-compatible test imports. */
-export async function verifyBridgePluginActive(
-  env: NodeJS.ProcessEnv,
-  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
-): Promise<boolean> {
-  return verifyPluginActive(env, pluginId, REPODIET_BRIDGE_PLUGIN_HOOK);
-}
-
-export function parseBridgePluginInspection(
-  stdout: string,
-  pluginId: string = REPODIET_BRIDGE_PLUGIN_ID
-): boolean {
-  return parsePluginInspection(stdout, pluginId, REPODIET_BRIDGE_PLUGIN_HOOK);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Module-level state for the real Gateway child's stdout, watched only for the preliminary "gateway ready" milestone (see Incident #7). */
+/** Module-level state for the real Gateway child's stdout, watched for two independent milestones (see Incident #7 and Incident #8 above). */
 let gatewayStdoutReadyObserved = false;
+/** The Gateway's own reported loaded-plugin-id list, once its "http server listening (...)" line has been observed — null until then, [] for a genuine zero-plugins boot. See plugin-activation-proof.ts. */
+let gatewayLoadedPluginIds: string[] | null = null;
+/** Small rolling tail of recent stdout so the "http server listening (...)" line is still recognized even when a chunk boundary lands mid-line. */
+let gatewayStdoutTail = "";
+const GATEWAY_STDOUT_TAIL_MAX_LEN = 4_096;
 
 /** Wired to the real gateway child's stdout — see spawnManaged's onStdoutData hook and its call site in main(). */
 export function observeGatewayStdoutChunk(chunk: string): void {
   if (!gatewayStdoutReadyObserved && chunk.includes(GATEWAY_STDOUT_READY_MARKER)) {
     gatewayStdoutReadyObserved = true;
     log("gateway_stdout_ready_observed", {});
+  }
+  if (gatewayLoadedPluginIds === null) {
+    const combined = gatewayStdoutTail + chunk;
+    const ids = parseGatewayListeningPluginIds(combined);
+    if (ids !== null) {
+      gatewayLoadedPluginIds = ids;
+      log("gateway_stdout_plugin_list_observed", { pluginIds: ids });
+    }
+    gatewayStdoutTail = combined.slice(-GATEWAY_STDOUT_TAIL_MAX_LEN);
   }
 }
 
@@ -540,12 +527,52 @@ export function isGatewayStdoutReadyObservedForTests(): boolean {
   return gatewayStdoutReadyObserved;
 }
 
+/** Exposed for tests only — resets the module-level loaded-plugin-id state between test cases. */
+export function resetGatewayLoadedPluginIdsForTests(): void {
+  gatewayLoadedPluginIds = null;
+  gatewayStdoutTail = "";
+}
+
+/** Exposed for tests only. */
+export function getGatewayLoadedPluginIdsForTests(): string[] | null {
+  return gatewayLoadedPluginIds;
+}
+
+/**
+ * Proves a plugin is genuinely loaded — not merely that its file exists on
+ * disk — without spawning a second `openclaw` process. See Incident #8
+ * (plugin-activation-proof.ts's module docblock) for why the previous
+ * `openclaw plugins inspect <id> --runtime --json` CLI-spawn approach was
+ * replaced: proven live to starve the Gateway's own CPU budget on this
+ * Machine's shared vCPU. `requiredHook` is checked against what THIS
+ * boot's bootstrap actually configured (buildOpenclawConfigBatch), not
+ * re-derived from the live process — see plugin-activation-proof.ts for
+ * why that combination is still a fail-closed, non-weakened check.
+ */
+export function verifyPluginActive(pluginId: string, requiredHook: string): boolean {
+  if (gatewayLoadedPluginIds === null || !gatewayLoadedPluginIds.includes(pluginId)) return false;
+  const configuredHooks: Record<string, string> = {
+    [OKX_A2A_PLUGIN_ID]: OKX_A2A_PLUGIN_HOOK,
+    [REPODIET_BRIDGE_PLUGIN_ID]: REPODIET_BRIDGE_PLUGIN_HOOK,
+  };
+  return configuredHooks[pluginId] === requiredHook;
+}
+
 async function waitForGatewayStdoutReadyMarkerOrTimeout(): Promise<"observed" | "timed_out"> {
   const deadline = Date.now() + GATEWAY_STDOUT_PRELIMINARY_WAIT_MS;
   while (!gatewayStdoutReadyObserved && Date.now() < deadline) {
     await sleep(250);
   }
   return gatewayStdoutReadyObserved ? "observed" : "timed_out";
+}
+
+/** Bounded wait for the Gateway's own plugin-list stdout line — see Incident #8 and GATEWAY_PLUGIN_LIST_WAIT_MS above. */
+async function waitForGatewayPluginListOrTimeout(): Promise<"observed" | "timed_out"> {
+  const deadline = Date.now() + GATEWAY_PLUGIN_LIST_WAIT_MS;
+  while (gatewayLoadedPluginIds === null && Date.now() < deadline) {
+    await sleep(100);
+  }
+  return gatewayLoadedPluginIds === null ? "timed_out" : "observed";
 }
 
 export interface GatewayReadinessDeps {
@@ -737,15 +764,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  const okxA2aActive = await verifyPluginActive(env, OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK);
+  const pluginListOutcome = await waitForGatewayPluginListOrTimeout();
+  log("gateway_plugin_list_wait_complete", { outcome: pluginListOutcome, pluginIds: gatewayLoadedPluginIds ?? [] });
+
+  const okxA2aActive = verifyPluginActive(OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK);
   log("plugin_verified", { ok: okxA2aActive, pluginId: OKX_A2A_PLUGIN_ID });
-  const bridgeActive = await verifyPluginActive(env, REPODIET_BRIDGE_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_HOOK);
+  const bridgeActive = verifyPluginActive(REPODIET_BRIDGE_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_HOOK);
   log("plugin_verified", { ok: bridgeActive, pluginId: REPODIET_BRIDGE_PLUGIN_ID });
   if (!okxA2aActive || !bridgeActive) {
     log("startup_failed", { reason: "required_plugin_not_active", okxA2aActive, bridgeActive });
     await shutdown("required_plugin_not_active", 1);
     return;
   }
+
+  const proofPath = pluginActivationProofPath(env);
+  writePluginActivationProof(proofPath, {
+    writtenAt: new Date().toISOString(),
+    loadedPluginIds: gatewayLoadedPluginIds ?? [],
+    configuredHooks: {
+      [OKX_A2A_PLUGIN_ID]: OKX_A2A_PLUGIN_HOOK,
+      [REPODIET_BRIDGE_PLUGIN_ID]: REPODIET_BRIDGE_PLUGIN_HOOK,
+    },
+  });
+  log("plugin_activation_proof_written", { path: proofPath });
 
   // Communication prerequisites (gateway live + authenticated) AND both
   // required plugins (loaded and active, not merely present on disk) are
