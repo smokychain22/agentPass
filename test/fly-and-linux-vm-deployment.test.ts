@@ -115,9 +115,10 @@ function run() {
     );
   });
 
-  test("fly.toml documents how to measure real memory usage before finalizing the initial 512mb candidate", () => {
+  test("fly.toml's memory value matches the live Machine's actual scale, set after a real observed OOM kill of the openclaw-gateway process at 512mb", () => {
     const toml = read("fly.toml");
-    assert.ok(/memory\s*=\s*"512mb"/.test(toml));
+    assert.ok(/memory\s*=\s*"1024mb"/.test(toml));
+    assert.ok(!/memory\s*=\s*"512mb"/.test(toml), "the pre-OOM 512mb value must not linger");
     const runbook = read("docs/SELLER_RUNTIME_DEPLOYMENT.md");
     assert.ok(/measur/i.test(runbook) && /memory/i.test(runbook), "the runbook must document a memory-measurement procedure");
   });
