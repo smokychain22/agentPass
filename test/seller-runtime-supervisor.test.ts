@@ -407,22 +407,46 @@ function run() {
     assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
   });
 
-  test("readiness is checked via the documented auth-resolving probe (gateway status --require-rpc), never by passing the token on argv", () => {
+  test("Incident #7: readiness no longer depends on the openclaw CLI's RPC transport at all — gatewayHealthy and gatewayAuthenticatedAndReady call the Gateway's own HTTP server directly, never spawning the openclaw CLI (which was proven, live, to hang indefinitely regardless of timeout)", () => {
     const src = supervisorSource();
-    assert.ok(src.includes('"gateway", "status", "--require-rpc", "--json"'));
+    assert.ok(
+      !/runProcess\("openclaw",\s*\[\s*"gateway"/.test(src),
+      "no code path may spawn `openclaw gateway ...` any more — that CLI subprocess was proven to hang"
+    );
+    const healthFnMatch = src.match(/async function gatewayHealthy[\s\S]*?\n}\n/);
+    const authFnMatch = src.match(/async function gatewayAuthenticatedAndReady[\s\S]*?\n}\n/);
+    assert.ok(healthFnMatch, "gatewayHealthy function must exist");
+    assert.ok(authFnMatch, "gatewayAuthenticatedAndReady function must exist");
+    assert.ok(healthFnMatch![0].includes('fetchGatewayProbe("/health"'), "liveness must be checked via GET /health");
+    assert.ok(authFnMatch![0].includes('fetchGatewayProbe(\n    "/ready"') || authFnMatch![0].includes('fetchGatewayProbe("/ready"'), "auth-readiness must be checked via GET /ready");
+  });
+
+  test("gatewayAuthenticatedAndReady attaches the real bearer token as an Authorization header, never on a command line or argv", () => {
+    const src = supervisorSource();
+    assert.ok(src.includes("Authorization: `Bearer ${token}`") || src.includes('Authorization: `Bearer'));
+    assert.ok(src.includes("env.OPENCLAW_GATEWAY_TOKEN"));
     assert.ok(!/--token["'`]?,?\s*(token|env\.OPENCLAW_GATEWAY_TOKEN)/.test(src));
   });
 
-  test("the readiness probes' own per-call timeouts are generous enough to survive a cold openclaw CLI start under the Machine's resource limit — 10s/15s were shorter than the ~8-12s cold-start cost already measured for this exact CLI (Incident #4), so every gateway health poll timed out before the process could ever respond", () => {
+  test("gatewayAuthenticatedAndReady fails closed when the HTTP response's ready field is not exactly true, even if the HTTP status itself was OK", () => {
     const src = supervisorSource();
-    const healthFnMatch = src.match(/async function gatewayHealthy[\s\S]{0,300}?\n}/);
-    const authFnMatch = src.match(/async function gatewayAuthenticatedAndReady[\s\S]{0,300}?\n}/);
-    assert.ok(healthFnMatch, "gatewayHealthy function must exist");
-    assert.ok(authFnMatch, "gatewayAuthenticatedAndReady function must exist");
+    assert.ok(src.includes("parsed.ready === true"), "must check the parsed body's ready field explicitly, not just HTTP status");
+    assert.ok(src.includes("{ ...result, ok: false }"), "a non-ready or unparseable body must flip ok to false");
+  });
+
+  test("the readiness probes' own per-call timeouts (used as fetch AbortController timeouts, not subprocess timeouts, since Incident #7) are still the generous, tunable values from Incident #6, not the original too-short 10s/15s", () => {
+    const src = supervisorSource();
+    const healthFnMatch = src.match(/async function gatewayHealthy[\s\S]*?\n}\n/);
+    const authFnMatch = src.match(/async function gatewayAuthenticatedAndReady[\s\S]*?\n}\n/);
     assert.ok(healthFnMatch![0].includes("GATEWAY_HEALTH_PROBE_TIMEOUT_MS"));
     assert.ok(!/timeoutMs:\s*10_000/.test(healthFnMatch![0]), "the old, too-short health-probe timeout must not remain");
     assert.ok(authFnMatch![0].includes("GATEWAY_AUTH_PROBE_TIMEOUT_MS"));
     assert.ok(!/timeoutMs:\s*15_000/.test(authFnMatch![0]), "the old, too-short auth-probe timeout must not remain");
+  });
+
+  test("verifyPluginActive still uses the openclaw CLI (plugins inspect --runtime), unlike the gateway readiness probes — traced to a purely local runtime-registry-load code path in the real CLI source that does not share Incident #7's RPC-transport hang", () => {
+    const src = supervisorSource();
+    assert.ok(src.includes('"plugins", "inspect", pluginId, "--runtime", "--json"'));
   });
 
   test("the overall gateway-ready deadline was raised alongside the per-call probe timeouts, so the polling loop still gets multiple real attempts instead of exhausting itself on 1-2 cold starts", () => {
