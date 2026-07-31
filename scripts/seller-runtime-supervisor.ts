@@ -389,12 +389,11 @@ async function runBootstrap(env: NodeJS.ProcessEnv): Promise<boolean> {
   }
 }
 
-async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const result = await runProcess("openclaw", ["gateway", "health", "--port", String(OPENCLAW_GATEWAY_PORT), "--json"], {
+async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<ProcessRunResult> {
+  return runProcess("openclaw", ["gateway", "health", "--port", String(OPENCLAW_GATEWAY_PORT), "--json"], {
     env,
     timeoutMs: 10_000,
   });
-  return result.ok;
 }
 
 /**
@@ -405,12 +404,11 @@ async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<boolean> {
  * on a command line (contrast: `--url` mode requires an explicit
  * `--token`, which this deliberately avoids).
  */
-async function gatewayAuthenticatedAndReady(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const result = await runProcess("openclaw", ["gateway", "status", "--require-rpc", "--json"], {
+async function gatewayAuthenticatedAndReady(env: NodeJS.ProcessEnv): Promise<ProcessRunResult> {
+  return runProcess("openclaw", ["gateway", "status", "--require-rpc", "--json"], {
     env,
     timeoutMs: 15_000,
   });
-  return result.ok;
 }
 
 /**
@@ -454,20 +452,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Every failed poll is logged with full, redacted, categorized diagnostics
+ * (see command-diagnostics.ts) — not a bare boolean. Built after this exact
+ * gap cost an entire investigation cycle live on repodiet-agent-9636: five
+ * consecutive boots each hit `openclaw_gateway_not_ready_within_timeout`
+ * with zero information about which of the two probes was failing or why.
+ */
 async function waitForGatewayReady(env: NodeJS.ProcessEnv): Promise<boolean> {
   const deadline = Date.now() + GATEWAY_READY_TIMEOUT_MS;
   let healthy = false;
   while (Date.now() < deadline) {
     if (!healthy) {
-      healthy = await gatewayHealthy(env);
-      if (healthy) log("gateway_health_ok", {});
+      const startedAt = Date.now();
+      const result = await gatewayHealthy(env);
+      if (result.ok) {
+        healthy = true;
+        log("gateway_health_ok", {});
+      } else {
+        logCommandFailure(
+          "gateway_health_not_ready_yet",
+          "openclaw gateway health --port <port> --json",
+          result,
+          Date.now() - startedAt,
+          "will_retry"
+        );
+      }
     } else {
-      const authReady = await gatewayAuthenticatedAndReady(env);
-      if (authReady) {
+      const startedAt = Date.now();
+      const result = await gatewayAuthenticatedAndReady(env);
+      if (result.ok) {
         log("gateway_auth_ready", { url: OPENCLAW_GATEWAY_URL });
         return true;
       }
-      log("gateway_auth_not_ready_yet", {});
+      logCommandFailure(
+        "gateway_auth_not_ready_yet",
+        "openclaw gateway status --require-rpc --json",
+        result,
+        Date.now() - startedAt,
+        "will_retry"
+      );
     }
     await sleep(GATEWAY_READY_POLL_MS);
   }
