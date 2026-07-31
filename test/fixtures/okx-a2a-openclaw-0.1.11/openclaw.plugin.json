@@ -2,7 +2,7 @@
   "id": "okx-a2a",
   "name": "OKX A2A",
   "description": "E2E encrypted wallet-to-agent communication via A2A protocol",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "activation": {
     "onStartup": true
   },

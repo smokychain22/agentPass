@@ -6,7 +6,7 @@
  * Why this exists: okx-a2a's own OpenClaw plugin (@okxweb3/a2a-openclaw)
  * turns every inbound XMTP message into a normal OpenClaw agent turn (its
  * `before_agent_run` hook just queues the message into the agent-run
- * pipeline — verified directly in the installed 0.1.10 plugin bundle, see
+ * pipeline — verified directly in the installed 0.1.11 plugin bundle, see
  * scripts/seller-runtime-supervisor.ts's module docblock). Left alone, that
  * agent turn would be answered by whatever model OpenClaw has configured —
  * which is exactly the prohibited "Claude/Codex/Cursor acting as RepoDiet"

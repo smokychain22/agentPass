@@ -115,10 +115,12 @@ function run() {
     );
   });
 
-  test("fly.toml's memory value matches the live Machine's actual scale, set after a real observed OOM kill of the openclaw-gateway process at 512mb", () => {
+  test("fly.toml's memory value matches the live Machine's actual scale, set after real observed OOM kills of the openclaw-gateway process at both 512mb and 1024mb", () => {
     const toml = read("fly.toml");
-    assert.ok(/memory\s*=\s*"1024mb"/.test(toml));
+    assert.ok(/memory\s*=\s*"2048mb"/.test(toml));
     assert.ok(!/memory\s*=\s*"512mb"/.test(toml), "the pre-OOM 512mb value must not linger");
+    assert.ok(!/memory\s*=\s*"1024mb"/.test(toml), "the superseded 1024mb value must not linger");
+    assert.ok(/size\s*=\s*"shared-cpu-1x"/.test(toml), "only memory was scaled — CPU count/size must remain unchanged");
     const runbook = read("docs/SELLER_RUNTIME_DEPLOYMENT.md");
     assert.ok(/measur/i.test(runbook) && /memory/i.test(runbook), "the runbook must document a memory-measurement procedure");
   });

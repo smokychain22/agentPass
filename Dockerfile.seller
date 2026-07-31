@@ -35,7 +35,7 @@ COPY src ./src
 # Pinned deliberately: an unpinned agent CLI must not change under a live
 # marketplace listing. The build FAILS if it is unavailable — a container
 # missing a required executable must never reach production.
-ARG OKX_A2A_VERSION=0.1.10
+ARG OKX_A2A_VERSION=0.1.11
 RUN npm install -g "@okxweb3/a2a-node@${OKX_A2A_VERSION}"  && okx-a2a --version
 
 # OnchainOS — official Linux release, pinned and checksum-verified.
@@ -121,7 +121,7 @@ COPY openclaw-plugins ./openclaw-plugins
 # Fetched via `npm pack` (same trusted resolution path as the other pinned
 # CLIs above) and cross-checked against the exact sha512 integrity npm's own
 # registry publishes for this pinned version — verified directly with `npm
-# view @okxweb3/a2a-openclaw@0.1.10 dist.integrity`, not guessed. The build
+# view @okxweb3/a2a-openclaw@0.1.11 dist.integrity`, not guessed. The build
 # fails closed on any mismatch, missing tarball, or extraction failure.
 #
 # Extracted to a plain image path (like the bridge plugin above), NOT
@@ -131,8 +131,8 @@ COPY openclaw-plugins ./openclaw-plugins
 # the real volume mounts). Instead this is loaded at boot via
 # `plugins.load.paths` alongside the bridge plugin, and must stay
 # root-owned for the same plugin-loader ownership check.
-ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION=0.1.10
-ARG OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY=sha512-4vkJw1ae+ZtOyIQricVN8Ek/pptLFaROr1B12o7UzRPenSOkFRTYr6+sDhJ0vsn+AnWTy+uN4pQuWvQmT1HqBQ==
+ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION=0.1.11
+ARG OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY=sha512-Qc/TkdqVouIvAumR8wVbyeEk4/+oYBZAWYk3oEvffXINNFoh5LbIPjWZz/9R2jOfjq7uhz7uQOodxPJnEYPhdQ==
 RUN set -eu; \
     cd /tmp; \
     npm pack "@okxweb3/a2a-openclaw@${OKX_A2A_OPENCLAW_PLUGIN_VERSION}" --silent >/tmp/pack-name.txt; \

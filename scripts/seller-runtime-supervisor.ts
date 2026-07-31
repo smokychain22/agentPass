@@ -162,9 +162,9 @@ export const REPODIET_BRIDGE_PLUGIN_PATH = "/app/openclaw-plugins/repodiet-a2a-b
 // the Dockerfile without a matching bump here would silently make the
 // marker never invalidate.
 export const ONCHAINOS_VERSION = "4.4.1";
-export const OKX_A2A_VERSION = "0.1.10";
+export const OKX_A2A_VERSION = "0.1.11";
 export const OPENCLAW_VERSION = "2026.7.1-2";
-export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.1.10";
+export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.1.11";
 
 /**
  * === Incident #6 (superseded): raised `gateway health`/`gateway status

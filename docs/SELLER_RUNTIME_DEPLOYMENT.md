@@ -945,6 +945,88 @@ it. Fixed the same way Incident #7 fixed the supervisor: it now calls
 `probeGatewayRpc` (`src/lib/okx-runtime/gateway-rpc-probe.ts`) directly,
 in-process.
 
+### Incident #9: sustained OOM at 512MB and 1GB, an `onchainos wallet login` persistence bug in `fly ssh console` sessions, and the `okx-a2a` CLI's own version-freshness gate
+
+Three related production-stability findings from the same live investigation
+window, after Incident #8's fix let first boot genuinely succeed for the
+first time.
+
+**Memory: 512MB was not enough for sustained operation, and 1GB was still
+not fully enough.** The first live boot after Incident #8's fix ran clean
+for ~15 minutes, then the kernel OOM-killed `openclaw-gateway`
+(`anon-rss:200848kB`), causing a full supervisor shutdown and VM reboot —
+not a boot-time spike, real operational pressure once the Gateway, the
+seller runtime, and XMTP are all genuinely active together. Scaled to 1GB
+(`fly scale memory 1024`, `fly.toml` updated to match so a later deploy
+cannot silently revert it): boot times improved dramatically (Gateway
+ready + first authenticated RPC round trip in under a second vs. 15-77s
+under the 512MB pressure), and the Machine ran ~65 minutes before a second
+OOM killed the Gateway again. Scaled again to 2GB for the same reason,
+same Machine (`7845320c476008`), same volume
+(`vol_4qld9gg6y2x567wr`), CPU count left at 1 both times — see the "First
+real measurement" section above for the original 512MB baseline this
+traces back to.
+
+**`onchainos wallet login` run via a plain `fly ssh console` session
+writes its session/keyring state to the wrong, non-persistent path.**
+`fly ssh console` sessions run as `root` with `HOME=/root` — confirmed
+live by `whoami`/`id` inside the session, and by finding
+`/.fly-upper-layer/root/.onchainos` (an OverlayFS upper-layer path,
+i.e. not the `/persistent` volume) alongside it — not the Dockerfile's
+`ENV HOME=/persistent/home`, which only applies to the tini→supervisor
+process tree the container's own `ENTRYPOINT`/`CMD` starts, not a
+separately-spawned SSH shell. A completed `onchainos wallet login
+--phase init` + browser step run this way writes real `keyring.enc`,
+`session.json`, and `machine-identity` files under `/root/.onchainos`
+(ephemeral, wiped independently of the volume) — invisible to, and never
+seen by, the actual production runtime, which reads
+`/persistent/home/.onchainos` (matching its own inherited `HOME`). The
+CLI's own `--phase poll` timeout (5 minutes, confirmed from
+`/root/.onchainos/audit.jsonl`: `"duration_ms":303009`) is itself working
+as designed with a clear, actionable error — the real defect is purely the
+HOME mismatch, the same class of bug as the `gosu`-discarded-`HOME`
+incident earlier in this document, just triggered by Fly's SSH mechanism
+instead of `gosu`. Fix: always invoke interactive `onchainos`/`okx-a2a`
+commands over SSH with the persistent HOME explicit, matching exactly what
+the entrypoint asserts for the supervised process tree:
+
+```bash
+fly ssh console --app repodiet-agent-9636 \
+  -C "gosu node env HOME=/persistent/home onchainos wallet login --phase init"
+```
+
+No code change was needed for this one — it's an operational-procedure
+fix, not a supervisor defect (the supervisor and seller runtime themselves
+already run with the correct `HOME` via the Dockerfile's `ENV`).
+
+**The `okx-a2a` CLI's own `agent gate-check`/`doctor` treats "not the
+latest published version" as a `required`-severity failure, blocking
+`ready`.** Live on `@okxweb3/a2a-node@0.1.10`, `okx-a2a doctor --fix
+--json`'s `cli_version` check reported `"0.1.10 installed; latest stable
+is 0.1.11"` and attempted its own auto-fix
+(`npm install -g @okxweb3/a2a-node@latest`), which correctly failed with
+`EACCES` — the runtime user has no write access to the root-owned global
+install directory, by design, matching this deployment's "no network
+installs at runtime" architecture (Incident #2). This is a genuine tension
+between OKX's own tooling (wants to always self-update) and this
+deployment's deliberately pinned, checksum-verified model — not a bug to
+route around, but a real, intentional version bump the project needed to
+make. Verified end to end before bumping: fetched the real
+`@okxweb3/a2a-openclaw@0.1.11` and `@okxweb3/a2a-node@0.1.11` tarballs via
+`npm pack`, confirmed both integrities against the npm registry's own
+published `dist.integrity`, and confirmed the token-resolver bug patched
+in Incident #4/the original patch writeup still exists byte-for-byte in
+0.1.11 — only the minified function name changed (`Ue` → `ze`); the buggy
+logic itself is identical. `scripts/patch-okx-a2a-openclaw-token-resolver.ts`
+was re-pinned against 0.1.11's real `dist/index.js` (new whole-file
+SHA-256, new exact resolver source/patched source under the new function
+name) rather than blindly re-applied — exactly the safety behavior the
+checksum guard exists for. Also confirmed byte-identical across versions
+before relying on it further: the `session.dmScope`/
+`allowConversationAccess` config-path constants
+`buildOpenclawConfigBatch()` depends on, and the plugin's own
+`@sentry/node@^7.74.1` runtime dependency (Incident #5).
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
