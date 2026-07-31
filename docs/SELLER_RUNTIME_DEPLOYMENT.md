@@ -150,6 +150,37 @@ plugin install), then compare observed peak RSS against 512 MB with
 headroom (aim for peak usage under ~70% of the configured limit) before
 either lowering the candidate or raising it in `fly.toml`.
 
+**First real measurement** (local Docker, `--memory=512m --cpus=1`,
+matching the Machine's `shared-cpu-1x`/512MB spec, `docker stats
+--no-stream` during Gateway startup + plugin pre-warm — the documented
+highest-memory moment): peak observed **486.8 MiB / 512 MiB (95.09%)**,
+settling to ~474 MiB shortly after. This is well above the ~70%
+(~358 MiB) headroom this doc recommends aiming for, and close enough to
+the hard limit that it is a genuine, live-measured risk of an OOM-kill
+under any additional memory pressure (a slower host, a larger config, a
+concurrent build step) — not yet observed to actually OOM, but worth
+raising `fly.toml`'s `memory` candidate before or shortly after this
+lands, rather than treating 512 MB as adequately proven.
+
+That same near-limit pressure produced one observed, real symptom: on
+one of two second-boot idempotency runs (`bootstrap_skipped_marker_match`,
+proving the marker/config-skip path itself worked), `verifyPluginActive`
+for `repodiet-a2a-bridge` came back `false` after `okx-a2a` had already
+verified successfully — `openclaw plugins inspect repodiet-a2a-bridge
+--runtime --json` (a 20s-timeout CLI cold start) evidently did not
+complete in time under the same tight memory/CPU budget the Gateway
+itself was competing for. The supervisor did exactly what it is designed
+to do: logged `startup_failed: reason:"required_plugin_not_active"` and
+shut down cleanly rather than starting in a falsely-ready state — this is
+not a logic bug, and nothing about the readiness-probe or plugin-patch
+changes in this PR touched `verifyPluginActive` or its timeout. A second
+retry of the same second-boot scenario, immediately after, succeeded
+cleanly end to end. Recorded here rather than silently retried away: it
+is a second, independent data point (alongside the 95% peak memory
+figure above) that 512 MB is genuinely tight for this Machine size, worth
+weighing when the memory candidate is revisited — not a claim that this
+PR fixed or needs to fix it.
+
 ### Permanent Linux VM deployment (host-neutral, long-term)
 
 See `deploy/README.md` for the full runbook. Summary: the same
@@ -629,6 +660,173 @@ one or two cold starts. All three are still configurable via
 `REPODIET_OPENCLAW_GATEWAY_AUTH_PROBE_TIMEOUT_MS`, and
 `REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS` if the Machine's real-world
 cold-start cost turns out to need further tuning.
+
+### Incident #7: Incident #6's fix was still wrong — the CLI's RPC transport hangs indefinitely, not slowly; plus a separate, confirmed plugin auth bug
+
+Incident #6's fix shipped and was re-tested live on the next boot of
+`repodiet-agent-9636`. It did not help: every single
+`gateway_health_not_ready_yet` poll still timed out, now at the full 60s
+instead of 10s. To rule out any remaining doubt, a direct, bounded
+diagnostic was run independently of the supervisor's own polling loop:
+
+```bash
+fly ssh console --app repodiet-agent-9636 \
+  -C "timeout 120 openclaw gateway health --port 18789 --json"
+```
+
+Zero stdout, zero stderr, exit status 124 (killed by the shell's own
+`timeout`, not by the CLI). Cold-start slowness was independently ruled
+out (the same command reproduces in 8-12s in an isolated
+`--memory=512m --cpus=1` container matching the Machine's spec). This is
+an indefinite hang, not a slow cold start.
+
+**Root cause of the hang.** Traced directly into the real `openclaw`
+2026.7.1-2 package source (extracted locally, not guessed). Both
+`gateway health` and `gateway status --require-rpc` funnel through the
+same `callGateway` → `callGatewayCli` → `callGatewayWithScopes` RPC
+client, which does carry its own internal `setTimeout`-based safety net
+around the connect-and-handshake sequence — yet that safety net never
+fired either, on a live 120-second wait. Whatever is wrong sits in the
+CLI's own wrapper below that layer (config loading/discovery, before a
+`GatewayClient` is even constructed), not inside `GatewayClient` itself.
+This was not conclusively pinned down inside third-party minified code
+after a genuine multi-layer tracing attempt; further static analysis was
+deliberately stopped once it hit diminishing returns.
+
+**The fix.** Stop depending on the CLI's RPC transport for readiness at
+all, rather than continue guessing at its internals.
+`openclaw/plugin-sdk/gateway-runtime` — a real, documented, publicly
+exported subpath of the pinned `openclaw` npm package — exports
+`GatewayClient`, the exact same client class the CLI itself constructs
+internally. `openclaw` is now a real pinned dependency of this repo
+(`package.json`, exact version `2026.7.1-2` matching
+`Dockerfile.seller`'s `ARG OPENCLAW_VERSION`), and
+`src/lib/okx-runtime/gateway-rpc-probe.ts` uses that real client directly,
+in-process — no subprocess spawned, nothing left to hang the same way. A
+`GET /health` HTTP-only shortcut was considered and deliberately
+rejected: the Gateway's own HTTP probe routes (`/health`, `/ready`)
+bypass authentication entirely for local callers
+(`isLocalDirectRequest`), so they cannot prove genuine token
+authentication the way a real WebSocket "connect" RPC round-trip can —
+there is no such bypass at the protocol level; reaching `hello-ok` at all
+already proves the configured token was accepted.
+
+`gatewayHealthy`/`gatewayAuthenticatedAndReady` are gone, replaced by one
+`gatewayAuthenticatedRpc` calling the real `"status"` RPC method (the
+same method `gateway status --require-rpc` itself called, traced from
+the CLI's own `probeGatewayStatus`). The Gateway child's own conditional
+`"gateway ready"` stdout line (`if (sidecarStartup === "defer")
+log.info("gateway ready")` in the real Gateway source — genuinely
+conditional, not guaranteed to print) is watched only as a **preliminary**
+signal via a bounded wait (`GATEWAY_STDOUT_PRELIMINARY_WAIT_MS`, default
+30s) before RPC-polling begins — never as a substitute for the RPC probe
+succeeding. `waitForGatewayReadyWithDeps` is dependency-injected
+specifically so this ordering is behaviorally provable:
+`test/seller-runtime-gateway-readiness.test.ts` injects a fake stdout
+signal observed instantly, paired with an RPC probe that never succeeds,
+and asserts readiness still comes back `false`.
+
+`verifyPluginActive` (`openclaw plugins inspect <id> --runtime --json`)
+is deliberately left calling the CLI: traced into the real
+`plugins-inspect-command`, `--runtime` mode performs a purely local
+"runtime plugin registry load" inside the CLI's own process — it never
+calls `callGateway`, so it does not share this bug.
+
+**A separate, previously-suspected-but-unproven bug, now confirmed and
+fixed.** The `@okxweb3/a2a-openclaw` plugin's *own* internal Gateway
+client (unrelated to this supervisor's readiness probe — it is the
+plugin's separate connection for its own message dispatch) had also been
+seen logging `AUTH_TOKEN_MISSING`/`tokenConfigured:false` in earlier
+diagnostics, but this had never been proven, only suspected as "likely
+non-blocking." Traced end to end this time: the plugin's manifest
+declares an **empty** `configSchema` (no plugin-specific config field
+exists at all), and its `dist/index.js` always reads the token from the
+same shared `gateway.auth.token` this supervisor configures, through its
+own resolver:
+
+```
+function Ue(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"
+&&e!==null&&"env"in e)return process.env[e.env]||void 0}}
+```
+
+`Ue` only understands a plain string or the plugin-native `{env:"VAR"}`
+shorthand — never OpenClaw core's actual `{provider,source,id}` SecretRef
+shape this supervisor's `buildOpenclawConfigBatch()` writes for
+`gateway.auth.token`. For that shape, `"env" in e` is false, so `Ue`
+silently returns `undefined` — confirmed directly, not assumed, by
+extracting and evaluating the real function against the real shape (see
+`test/patch-okx-a2a-openclaw-token-resolver.test.ts`). There is no
+plugin-specific field to redirect the token through instead — the
+plugin's manifest and its entire 72,924-byte `dist/index.js` were read
+end to end to confirm this before reaching for a patch.
+
+Fix: `scripts/patch-okx-a2a-openclaw-token-resolver.ts`, a narrow,
+additive, checksum-guarded build-time patch, wired into
+`Dockerfile.seller` immediately after the plugin is extracted and before
+the existing plugin-load verification step. It refuses to run — failing
+the Docker build — unless the target file's SHA-256 matches exactly what
+the patch was written and reviewed against
+(`d6fab7cb845563d046c62e4870b1feee311bd01f04a136d12c16716c04453396`,
+independently confirmed to correspond to the same tarball integrity
+Dockerfile.seller already pins,
+`sha512-4vkJw1ae+ZtOyIQricVN8Ek/pptLFaROr1B12o7UzRPenSOkFRTYr6+sDhJ0vsn+AnWTy+uN4pQuWvQmT1HqBQ==`),
+and unless the known original resolver source occurs exactly once. The
+patch adds exactly one new branch — resolving `process.env[e.id]` when
+`e.source === "env"`, mirroring OpenClaw core's own env-source
+resolution semantics exactly (confirmed against
+`openclaw/dist/plugin-sdk/secret-ref-runtime.js`) — the two original
+branches are left byte-identical.
+
+**A second bug, caught only by live-in-Docker testing, not by unit tests
+against a fake server — and one whose first fix attempt was itself
+wrong, corrected only by further live testing.** The readiness probe's
+original design chained a `"status"` RPC call after hello-ok, reasoning
+that "connect" alone might not fully demonstrate an authenticated RPC
+round trip. The first real container boot showed `gateway_rpc_not_ready_yet`
+repeating forever: `message:"missing scope: operator.read"`
+(`errorCode=INVALID_REQUEST`) — the probe authenticated successfully
+(reached `hello_ok`) but the follow-up call was rejected.
+
+The first fix attempt assumed the probe simply wasn't requesting the
+right scopes, and added an explicit `scopes: [...CLI_DEFAULT_OPERATOR_SCOPES]`
+list to the "connect" params (`operator.admin`, `operator.read`,
+`operator.write`, `operator.approvals`, `operator.pairing`,
+`operator.talk.secrets` — real values traced from
+`src/gateway/method-scopes.ts` / `operator-scopes.ts`). Rebuilt and
+re-tested live: **identical failure.** Direct empirical testing against
+the running Gateway (a small throwaway script run inside the container,
+trying four different requested-scope combinations — admin-only,
+read-only, all six, and none at all) showed `hello-ok.auth.scopes` came
+back `[]` in every single case. Traced into the real server source
+(`server-methods-*.js`, `core-descriptors-*.js`): `gateway.auth.mode:
+"token"` unconditionally grants an empty operator-scope set regardless of
+what the client requests, and both `"status"` and `"health"` require
+`operator.read` — there is no scope token auth can be granted here that
+would ever let either call succeed. (A live sighting of a *different*
+scoped call succeeding — `sessions.create`, inside the okx-a2a plugin's
+own separate connection — turned out to be explained by that method being
+marked `startup: true` in the same descriptor table, a time-boxed
+startup-grace exemption having nothing to do with scopes.)
+
+Given that, the real fix was to stop chaining a further RPC call at all:
+`probeGatewayRpc` now treats a validated `hello-ok` as sufficient on its
+own. This is not a downgrade — "connect" is itself a genuine RPC request/
+response round trip in the exact same frame format as any other method,
+matched by the client-generated `id` and validated
+(`validateHelloOk`) for a real Gateway/runtime identity, and it is the
+strongest signal this auth mode can produce. The scope list is still
+requested on connect (for forward compatibility with an auth mode that
+might one day grant some of it) but success no longer depends on any of
+it being honored. `test/gateway-rpc-probe.test.ts` and
+`test/fixtures/fake-openclaw-gateway.ts` were rewritten to match — the
+fake server only needs to model the connect handshake now, and an
+explicit test asserts an empty `auth.scopes` in hello-ok still counts as
+success, matching the real, live-observed behavior rather than assuming
+a more generous one. This whole detour — two live rebuild-and-reboot
+cycles to find and then correctly fix — is the concrete reason the plan
+required testing against the real pinned Gateway inside Docker: neither
+bug, nor the fact that the first fix attempt didn't work, was visible
+from fake-server unit tests alone.
 
 ## One-time CLI authentication
 

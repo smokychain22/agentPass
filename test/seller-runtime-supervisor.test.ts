@@ -319,7 +319,7 @@ function run() {
   test("bootstrap completes before the Gateway process is spawned", () => {
     const src = supervisorSource();
     const bootstrapIndex = src.indexOf("const bootstrapped = await runBootstrap(env)");
-    const spawnGatewayIndex = src.indexOf('spawnManaged("openclaw-gateway"');
+    const spawnGatewayIndex = src.search(/spawnManaged\(\s*"openclaw-gateway"/);
     assert.ok(bootstrapIndex > -1 && spawnGatewayIndex > -1);
     assert.ok(bootstrapIndex < spawnGatewayIndex, "bootstrap (config + plugin registration) must complete before the gateway starts");
   });
@@ -407,46 +407,57 @@ function run() {
     assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
   });
 
-  test("readiness is checked via the documented auth-resolving probe (gateway status --require-rpc), never by passing the token on argv", () => {
+  test("Incident #7: the openclaw CLI's RPC transport (proven, live, to hang indefinitely) is never spawned for readiness any more — the real Gateway is probed directly, in-process, via gateway-rpc-probe.ts's authenticated WebSocket client", () => {
     const src = supervisorSource();
-    assert.ok(src.includes('"gateway", "status", "--require-rpc", "--json"'));
-    assert.ok(!/--token["'`]?,?\s*(token|env\.OPENCLAW_GATEWAY_TOKEN)/.test(src));
+    assert.ok(
+      !/runProcess\("openclaw",\s*\[\s*"gateway"/.test(src),
+      "no code path may spawn `openclaw gateway ...` any more — that CLI subprocess was proven to hang"
+    );
+    assert.ok(src.includes('import { probeGatewayRpc, type GatewayProbeResult } from "../src/lib/okx-runtime/gateway-rpc-probe"'));
+    assert.ok(src.includes("async function gatewayAuthenticatedRpc"));
+    assert.ok(!/--token["'`]?,?\s*(token|env\.OPENCLAW_GATEWAY_TOKEN)/.test(src), "the token must never be passed on a command line/argv");
   });
 
-  test("the readiness probes' own per-call timeouts are generous enough to survive a cold openclaw CLI start under the Machine's resource limit — 10s/15s were shorter than the ~8-12s cold-start cost already measured for this exact CLI (Incident #4), so every gateway health poll timed out before the process could ever respond", () => {
+  test("the Gateway child's own stdout \"gateway ready\" milestone is watched only as a preliminary, bounded signal — never a substitute for the authenticated RPC probe succeeding", () => {
     const src = supervisorSource();
-    const healthFnMatch = src.match(/async function gatewayHealthy[\s\S]{0,300}?\n}/);
-    const authFnMatch = src.match(/async function gatewayAuthenticatedAndReady[\s\S]{0,300}?\n}/);
-    assert.ok(healthFnMatch, "gatewayHealthy function must exist");
-    assert.ok(authFnMatch, "gatewayAuthenticatedAndReady function must exist");
-    assert.ok(healthFnMatch![0].includes("GATEWAY_HEALTH_PROBE_TIMEOUT_MS"));
-    assert.ok(!/timeoutMs:\s*10_000/.test(healthFnMatch![0]), "the old, too-short health-probe timeout must not remain");
-    assert.ok(authFnMatch![0].includes("GATEWAY_AUTH_PROBE_TIMEOUT_MS"));
-    assert.ok(!/timeoutMs:\s*15_000/.test(authFnMatch![0]), "the old, too-short auth-probe timeout must not remain");
+    assert.ok(src.includes("GATEWAY_STDOUT_READY_MARKER"));
+    assert.ok(src.includes("GATEWAY_STDOUT_PRELIMINARY_WAIT_MS"));
+    assert.ok(src.includes("export function observeGatewayStdoutChunk"));
+    // waitForGatewayReadyWithDeps must call waitForStdoutReadyMarker() and then decide
+    // readiness purely from probeOnce()'s own result — never short-circuit on the stdout
+    // outcome alone. The strongest proof of this is the dedicated behavioral regression
+    // test in test/seller-runtime-gateway-readiness.test.ts (dependency-injected, not
+    // source-text matching), but the wiring itself is confirmed here.
+    const fnMatch = src.match(/export async function waitForGatewayReadyWithDeps[\s\S]*?\n}\n/);
+    assert.ok(fnMatch, "waitForGatewayReadyWithDeps must exist and be exported for direct behavioral testing");
+    assert.ok(fnMatch![0].includes("deps.waitForStdoutReadyMarker()"));
+    assert.ok(fnMatch![0].includes("deps.probeOnce()"));
+    assert.ok(fnMatch![0].includes("if (result.ok)"), "readiness must be gated on the probe result, not the stdout outcome");
   });
 
-  test("the overall gateway-ready deadline was raised alongside the per-call probe timeouts, so the polling loop still gets multiple real attempts instead of exhausting itself on 1-2 cold starts", () => {
+  test("the readiness probe's connect timeout is configurable via an env var, matching the established pattern for this file's other tunable timeouts — there is only one now (no separate post-hello request phase, since the probe stops at hello-ok; see gateway-rpc-probe.ts)", () => {
+    const src = supervisorSource();
+    assert.ok(src.includes("REPODIET_OPENCLAW_GATEWAY_RPC_CONNECT_TIMEOUT_MS"));
+    assert.ok(!src.includes("REPODIET_OPENCLAW_GATEWAY_RPC_REQUEST_TIMEOUT_MS"), "the removed post-hello request-phase timeout must not linger");
+  });
+
+  test("the overall gateway-ready deadline remains generous (5 minutes), so the polling loop still gets many real attempts even though each individual attempt is now fast (an in-process WS round-trip, not a CLI cold start)", () => {
     const src = supervisorSource();
     assert.ok(
       src.includes("REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 300_000"),
-      "the overall readiness deadline must scale with the new, more realistic per-call probe timeouts"
+      "the overall readiness deadline must remain generous"
     );
   });
 
-  test("a failed readiness poll is logged with full diagnostics, not a silent retry — five real boots on repodiet-agent-9636 hit a 120s timeout with zero information about which probe failed or why", () => {
+  test("a failed readiness poll is logged with the probe's own categorized, already-redacted diagnostics, not a silent retry", () => {
     const src = supervisorSource();
-    assert.ok(src.includes("gateway_health_not_ready_yet"));
-    assert.ok(src.includes("gateway_auth_not_ready_yet"));
-    const healthFailIndex = src.indexOf("gateway_health_not_ready_yet");
-    const authFailIndex = src.indexOf("gateway_auth_not_ready_yet");
-    assert.ok(
-      src.slice(Math.max(0, healthFailIndex - 300), healthFailIndex).includes("logCommandFailure("),
-      "the health probe failure must be logged via logCommandFailure, not silently swallowed"
-    );
-    assert.ok(
-      src.slice(Math.max(0, authFailIndex - 300), authFailIndex).includes("logCommandFailure("),
-      "the auth probe failure must be logged via logCommandFailure, not silently swallowed"
-    );
+    assert.ok(src.includes("gateway_rpc_not_ready_yet"));
+    const failIndex = src.indexOf("gateway_rpc_not_ready_yet");
+    const logCallStart = src.lastIndexOf("log(", failIndex);
+    assert.ok(logCallStart > -1 && logCallStart < failIndex, "the failure must be logged via log(), not silently swallowed");
+    const logCallSlice = src.slice(logCallStart, failIndex + 200);
+    assert.ok(logCallSlice.includes("category"), "the probe's failure category must be logged");
+    assert.ok(logCallSlice.includes("message"), "the probe's redacted failure message must be logged");
   });
 
   // --- Signal forwarding and child-process cleanup (regression) ---------
@@ -483,7 +494,7 @@ function run() {
 
   test("both the gateway and the seller runtime are registered as required children", () => {
     const src = supervisorSource();
-    const gatewaySpawn = src.match(/spawnManaged\("openclaw-gateway"[\s\S]{0,200}?\btrue\);/);
+    const gatewaySpawn = src.match(/spawnManaged\(\s*"openclaw-gateway"[\s\S]{0,300}?\btrue,?[\s\S]{0,80}?\);/);
     const sellerSpawn = src.match(/spawnManaged\(\s*"repodiet-seller-runtime"[\s\S]{0,200}?\btrue\s*\);/);
     assert.ok(gatewaySpawn, "the gateway child must be spawned as required");
     assert.ok(sellerSpawn, "the seller-runtime child must be spawned as required");

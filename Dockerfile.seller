@@ -151,6 +151,21 @@ RUN set -eu; \
     rm -f "${tarball}" /tmp/pack-name.txt; \
     test -f /app/openclaw-plugins/okx-a2a-openclaw/openclaw.plugin.json
 
+# The extracted plugin's OWN internal Gateway client (a separate, unrelated
+# connection from the one this supervisor makes) resolves gateway.auth.token
+# through its own resolver, which only understands a plain string or the
+# plugin-native {env:"VAR"} shorthand — never the {provider,source,id}
+# SecretRef shape OpenClaw core (and this image's config) actually uses,
+# confirmed by reading the plugin's real dist/index.js end to end: no
+# plugin-specific token field exists to redirect through instead. This is a
+# narrow, additive, checksum-guarded patch — see
+# scripts/patch-okx-a2a-openclaw-token-resolver.ts for the full root-cause
+# writeup and safety guarantees (it refuses to run, failing this build, if
+# the plugin's dist/index.js does not match the exact sha256 this patch was
+# written and reviewed against).
+RUN node_modules/.bin/tsx scripts/patch-okx-a2a-openclaw-token-resolver.ts \
+    /app/openclaw-plugins/okx-a2a-openclaw/dist/index.js
+
 # Build-time proof that both plugins actually load and activate, not just
 # that their files exist. Root cause this exists for: @okxweb3/a2a-openclaw
 # declares a real runtime dependency on @sentry/node (see its own
