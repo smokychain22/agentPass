@@ -151,10 +151,32 @@ export const OKX_A2A_VERSION = "0.1.10";
 export const OPENCLAW_VERSION = "2026.7.1-2";
 export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.1.10";
 
+/**
+ * Live on repodiet-agent-9636, `openclaw gateway health` and `gateway
+ * status --require-rpc` each spawn a fresh Node.js CLI process — the exact
+ * same cold-start cost already measured for `openclaw config set` under
+ * this Machine's shared-cpu-1x/512MB limit (~8-12s per cold start,
+ * reproduced locally under a matching `--memory=512m --cpus=1` constraint
+ * in Incident #4). The readiness probes' own per-call timeouts (10s / 15s)
+ * were shorter than that measured cold-start cost, so `gateway health`
+ * timed out on literally every single poll across multiple full boot
+ * cycles — never once succeeding, and never even reaching the auth-ready
+ * probe. See docs/SELLER_RUNTIME_DEPLOYMENT.md ("Incident #6") for the
+ * full writeup, including the redacted diagnostic evidence that pinned
+ * this down (each failure: category "timeout", empty stderr, ~10s
+ * duration — the probe process itself never got a chance to respond,
+ * not an auth or connectivity failure).
+ */
 const GATEWAY_READY_TIMEOUT_MS = Number(
-  process.env.REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 120_000
+  process.env.REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 300_000
 );
 const GATEWAY_READY_POLL_MS = Number(process.env.REPODIET_OPENCLAW_GATEWAY_READY_POLL_MS || 3_000);
+const GATEWAY_HEALTH_PROBE_TIMEOUT_MS = Number(
+  process.env.REPODIET_OPENCLAW_GATEWAY_HEALTH_PROBE_TIMEOUT_MS || 60_000
+);
+const GATEWAY_AUTH_PROBE_TIMEOUT_MS = Number(
+  process.env.REPODIET_OPENCLAW_GATEWAY_AUTH_PROBE_TIMEOUT_MS || 60_000
+);
 const CHILD_SHUTDOWN_GRACE_MS = 15_000;
 
 type LogFields = Record<string, unknown>;
@@ -392,7 +414,7 @@ async function runBootstrap(env: NodeJS.ProcessEnv): Promise<boolean> {
 async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<ProcessRunResult> {
   return runProcess("openclaw", ["gateway", "health", "--port", String(OPENCLAW_GATEWAY_PORT), "--json"], {
     env,
-    timeoutMs: 10_000,
+    timeoutMs: GATEWAY_HEALTH_PROBE_TIMEOUT_MS,
   });
 }
 
@@ -407,7 +429,7 @@ async function gatewayHealthy(env: NodeJS.ProcessEnv): Promise<ProcessRunResult>
 async function gatewayAuthenticatedAndReady(env: NodeJS.ProcessEnv): Promise<ProcessRunResult> {
   return runProcess("openclaw", ["gateway", "status", "--require-rpc", "--json"], {
     env,
-    timeoutMs: 15_000,
+    timeoutMs: GATEWAY_AUTH_PROBE_TIMEOUT_MS,
   });
 }
 

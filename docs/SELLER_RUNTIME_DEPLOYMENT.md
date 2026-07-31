@@ -592,6 +592,44 @@ real supervisor's own batch/plugin/hook definitions and the same
 `parsePluginInspection` parser the supervisor's own runtime verification
 uses — not a second, hand-maintained copy that could drift.
 
+### Incident #6: the Gateway readiness probes' own timeouts were shorter than a cold `openclaw` CLI start
+
+After Incident #5's fix let both plugins genuinely load, the next several
+live boots on `repodiet-agent-9636` still each hit
+`openclaw_gateway_not_ready_within_timeout` after the full 120s — even
+though the OpenClaw Gateway process itself reliably logged `ready`
+internally. A prior pass (the readiness-diagnostics fix) added redacted
+failure logging to every poll, and that immediately revealed the real
+cause: every single `gateway_health_not_ready_yet` log line showed
+`category: "timeout"`, an **empty** `stderrTail`, and a `durationMs` right
+at the probe's own 10-second timeout — the `openclaw gateway health`
+CLI invocation itself was never getting a chance to respond before this
+supervisor killed it, on every single poll, across multiple full boot
+cycles. It never even reached the second probe (`gateway status
+--require-rpc`).
+
+Root cause: `gateway health` and `gateway status --require-rpc` each spawn
+a **fresh Node.js CLI cold start** — the exact same cost already measured
+for `openclaw config set` in Incident #4 (~8-12s per cold start under a
+`--memory=512m --cpus=1` constraint matching this Machine's
+`shared-cpu-1x`/512MB spec). The readiness probes' own per-call timeouts
+(10s for health, 15s for auth) were shorter than that already-measured
+cold-start cost — on the live Machine, where the Gateway process itself is
+*also* concurrently competing for the same single vCPU, the probes never
+had a real chance to succeed.
+
+Fix: raised `gatewayHealthy`'s timeout from 10s to 60s and
+`gatewayAuthenticatedAndReady`'s from 15s to 60s, matching the same
+generous scale already applied to the batch config-set call in Incident
+#4. The overall `GATEWAY_READY_TIMEOUT_MS` deadline was raised from 120s to
+300s alongside them, so the polling loop still gets several real attempts
+at the new, more realistic per-call pace instead of exhausting itself on
+one or two cold starts. All three are still configurable via
+`REPODIET_OPENCLAW_GATEWAY_HEALTH_PROBE_TIMEOUT_MS`,
+`REPODIET_OPENCLAW_GATEWAY_AUTH_PROBE_TIMEOUT_MS`, and
+`REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS` if the Machine's real-world
+cold-start cost turns out to need further tuning.
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential

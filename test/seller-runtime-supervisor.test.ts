@@ -413,6 +413,26 @@ function run() {
     assert.ok(!/--token["'`]?,?\s*(token|env\.OPENCLAW_GATEWAY_TOKEN)/.test(src));
   });
 
+  test("the readiness probes' own per-call timeouts are generous enough to survive a cold openclaw CLI start under the Machine's resource limit — 10s/15s were shorter than the ~8-12s cold-start cost already measured for this exact CLI (Incident #4), so every gateway health poll timed out before the process could ever respond", () => {
+    const src = supervisorSource();
+    const healthFnMatch = src.match(/async function gatewayHealthy[\s\S]{0,300}?\n}/);
+    const authFnMatch = src.match(/async function gatewayAuthenticatedAndReady[\s\S]{0,300}?\n}/);
+    assert.ok(healthFnMatch, "gatewayHealthy function must exist");
+    assert.ok(authFnMatch, "gatewayAuthenticatedAndReady function must exist");
+    assert.ok(healthFnMatch![0].includes("GATEWAY_HEALTH_PROBE_TIMEOUT_MS"));
+    assert.ok(!/timeoutMs:\s*10_000/.test(healthFnMatch![0]), "the old, too-short health-probe timeout must not remain");
+    assert.ok(authFnMatch![0].includes("GATEWAY_AUTH_PROBE_TIMEOUT_MS"));
+    assert.ok(!/timeoutMs:\s*15_000/.test(authFnMatch![0]), "the old, too-short auth-probe timeout must not remain");
+  });
+
+  test("the overall gateway-ready deadline was raised alongside the per-call probe timeouts, so the polling loop still gets multiple real attempts instead of exhausting itself on 1-2 cold starts", () => {
+    const src = supervisorSource();
+    assert.ok(
+      src.includes("REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS || 300_000"),
+      "the overall readiness deadline must scale with the new, more realistic per-call probe timeouts"
+    );
+  });
+
   test("a failed readiness poll is logged with full diagnostics, not a silent retry — five real boots on repodiet-agent-9636 hit a 120s timeout with zero information about which probe failed or why", () => {
     const src = supervisorSource();
     assert.ok(src.includes("gateway_health_not_ready_yet"));
