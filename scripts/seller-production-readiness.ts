@@ -15,11 +15,18 @@
  *   - OnchainOS wallet loggedIn=true          -> onchainos gate-check: wallet.ok
  *   - Agent 9636 selected                     -> onchainos gate-check: identity.agentId
  *   - correct communication address           -> onchainos gate-check: communication.ok
- *   - OpenClaw gateway authenticated          -> openclaw gateway status --require-rpc
- *   - okx-a2a plugin active                   -> openclaw plugins inspect okx-a2a --runtime --json
- *   - repodiet-a2a-bridge plugin active       -> openclaw plugins inspect repodiet-a2a-bridge --runtime --json
- *     (module-loaded inspection — a plugin FILE existing on disk is not
- *     readiness; this must report the plugin genuinely loaded)
+ *   - OpenClaw gateway authenticated          -> direct in-process authenticated Gateway RPC
+ *     probe (src/lib/okx-runtime/gateway-rpc-probe.ts) — never the `openclaw
+ *     gateway status --require-rpc` CLI, proven (Incident #7) to hang
+ *     indefinitely on the real Fly Machine
+ *   - okx-a2a plugin active                   -> scripts/seller-runtime-supervisor.ts's own
+ *     persisted plugin-activation proof (src/lib/okx-runtime/plugin-
+ *     activation-proof.ts) — never `openclaw plugins inspect --runtime
+ *     --json`, proven (Incident #8) to starve the live Gateway's CPU on
+ *     this Machine's shared vCPU rather than return in any usable bound
+ *   - repodiet-a2a-bridge plugin active       -> same persisted proof, for repodiet-a2a-bridge
+ *     (a plugin FILE existing on disk is not readiness; the proof only
+ *     exists once the live Gateway genuinely reported the plugin loaded)
  *   - A2A daemon running                      -> okx-a2a daemon status
  *   - XMTP communication active               -> okx-a2a agent refresh --json
  *   - communication.ok=true / ready=true      -> onchainos gate-check
@@ -41,17 +48,24 @@
  */
 import { getRuntimePaths, readLivePid, OKX_RUNTIME_IDENTITIES } from "../src/lib/okx-runtime/runtime-layout";
 import { runProcess } from "../src/lib/okx-runtime/process-runner";
-import { parsePluginInspection } from "../src/lib/okx-runtime/plugin-inspection";
+import { pluginActivationProofPath } from "../src/lib/okx-runtime/openclaw-bootstrap";
+import { readPluginActivationProof, isPluginActivationProven } from "../src/lib/okx-runtime/plugin-activation-proof";
+import { probeGatewayRpc } from "../src/lib/okx-runtime/gateway-rpc-probe";
 
 const SELLER = OKX_RUNTIME_IDENTITIES.seller;
 const BASE_URL = (process.env.REPODIET_PRODUCTION_URL || "https://skillswap-virid-kappa.vercel.app").replace(/\/$/, "");
 const E2E_REPO = { owner: "velz-cmd", repo: "repodiet-e2e-test" };
 // Must match scripts/seller-runtime-supervisor.ts's OKX_A2A_PLUGIN_ID /
-// REPODIET_BRIDGE_PLUGIN_ID exactly. Kept as separate literals (not a
-// shared import) so this script never pulls in that module's top-level
-// SIGTERM/SIGINT handlers as an unwanted side effect of a plugin-id import.
+// REPODIET_BRIDGE_PLUGIN_ID / OPENCLAW_GATEWAY_PORT exactly. Kept as
+// separate literals (not a shared import) so this script never pulls in
+// that module's top-level SIGTERM/SIGINT handlers as an unwanted side
+// effect of a plugin-id import.
 const OKX_A2A_PLUGIN_ID = "okx-a2a";
+const OKX_A2A_PLUGIN_HOOK = "before_agent_run";
 const REPODIET_BRIDGE_PLUGIN_ID = "repodiet-a2a-bridge";
+const REPODIET_BRIDGE_PLUGIN_HOOK = "before_agent_reply";
+const OPENCLAW_GATEWAY_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
+const OPENCLAW_GATEWAY_URL = `ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}`;
 
 interface Check {
   id: string;
@@ -100,46 +114,65 @@ async function checkOnchainOsGate(): Promise<void> {
   }
 }
 
+/**
+ * Direct, in-process authenticated Gateway RPC probe — same mechanism as
+ * scripts/seller-runtime-supervisor.ts's gatewayAuthenticatedRpc
+ * (src/lib/okx-runtime/gateway-rpc-probe.ts). Previously this shelled out
+ * to `openclaw gateway status --require-rpc --json`, the exact CLI RPC
+ * transport Incident #7 (seller-runtime-supervisor.ts's module docblock)
+ * proved hangs indefinitely on the real Fly Machine — that fix only
+ * touched the supervisor's own boot-time gate, never this independent
+ * on-demand diagnostic, so this script inherited the same hang. Fixed the
+ * same way: never spawn the CLI's RPC transport at all.
+ */
 async function checkOpenclawGatewayAuthenticated(): Promise<void> {
-  const result = await runProcess("openclaw", ["gateway", "status", "--require-rpc", "--json"], { timeoutMs: 15_000 });
+  const result = await probeGatewayRpc({
+    url: OPENCLAW_GATEWAY_URL,
+    token: process.env.OPENCLAW_GATEWAY_TOKEN ?? "",
+    connectTimeoutMs: 15_000,
+  });
   record(
     "openclaw_gateway_authenticated",
     true,
     result.ok,
-    "openclaw gateway status --require-rpc (exits non-zero on any auth/read failure)"
+    result.ok
+      ? `authenticated Gateway RPC hello-ok (serverVersion=${result.serverVersion})`
+      : `authenticated Gateway RPC failed: ${result.category}`
   );
 }
 
 /**
- * "A plugin file merely existing on disk is not readiness" — this uses the
- * documented module-loaded inspection command (docs/cli/plugins.md:
- * "openclaw plugins inspect <id> --runtime --json ... shows registered
- * hooks and diagnostics from a module-loaded inspection pass"), the same
- * check scripts/seller-runtime-supervisor.ts's verifyBridgePluginActive
- * performs at startup — re-run here so the readiness gate does not merely
- * trust that startup-time check happened correctly.
+ * "A plugin file merely existing on disk is not readiness" — reads the
+ * proof scripts/seller-runtime-supervisor.ts's own boot-time gate persists
+ * (src/lib/okx-runtime/plugin-activation-proof.ts) once it has genuinely
+ * observed the live Gateway's own "http server listening (...)" startup
+ * line reporting the plugin loaded, combined with this boot's own bootstrap
+ * having configured the required hook's conversation access.
+ *
+ * Previously this re-invoked `openclaw plugins inspect <id> --runtime
+ * --json` directly — the exact command proven, live via direct /proc
+ * inspection (Incident #8, plugin-activation-proof.ts's module docblock),
+ * to starve the live Gateway of CPU on this Machine's shared vCPU rather
+ * than return in any reasonable bound. Reading the supervisor's own
+ * already-proven-fresh-this-boot proof file avoids spawning that second
+ * `openclaw` process entirely, here as well as at boot.
  */
-async function checkPluginActive(pluginId: string, requiredHookName: string): Promise<boolean> {
-  const result = await runProcess("openclaw", ["plugins", "inspect", pluginId, "--runtime", "--json"], {
-    timeoutMs: 20_000,
-  });
-  return result.ok && parsePluginInspection(result.stdout, pluginId, requiredHookName);
-}
-
-async function checkPluginsActive(): Promise<void> {
-  const okxA2aActive = await checkPluginActive(OKX_A2A_PLUGIN_ID, "before_agent_run");
+function checkPluginsActive(): void {
+  const env = process.env;
+  const proof = readPluginActivationProof(pluginActivationProofPath(env));
+  const okxA2aActive = isPluginActivationProven(proof, OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK);
   record(
     "okx_a2a_plugin_active",
     true,
     okxA2aActive,
-    "openclaw plugins inspect okx-a2a --runtime --json (module-loaded inspection, not file existence)"
+    `plugin-activation proof at ${pluginActivationProofPath(env)}: okx-a2a loaded + before_agent_run configured this boot`
   );
-  const bridgeActive = await checkPluginActive(REPODIET_BRIDGE_PLUGIN_ID, "before_agent_reply");
+  const bridgeActive = isPluginActivationProven(proof, REPODIET_BRIDGE_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_HOOK);
   record(
     "repodiet_a2a_bridge_plugin_active",
     true,
     bridgeActive,
-    "openclaw plugins inspect repodiet-a2a-bridge --runtime --json (module-loaded inspection, not file existence)"
+    `plugin-activation proof at ${pluginActivationProofPath(env)}: repodiet-a2a-bridge loaded + before_agent_reply configured this boot`
   );
 }
 
@@ -308,7 +341,7 @@ function checkSingleInstance(): void {
 async function main(): Promise<void> {
   await checkOnchainOsGate();
   await checkOpenclawGatewayAuthenticated();
-  await checkPluginsActive();
+  checkPluginsActive();
   await checkA2aDaemon();
   await checkXmtpActive();
   await checkVercelHeartbeatAndDispatcher();

@@ -21,7 +21,10 @@ import {
   buildSupervisorEnv,
   buildOpenclawConfigBatch,
   computeExpectedBootstrapVersions,
-  parseBridgePluginInspection,
+  verifyPluginActive,
+  observeGatewayStdoutChunk,
+  resetGatewayLoadedPluginIdsForTests,
+  getGatewayLoadedPluginIdsForTests,
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_GATEWAY_URL,
   OKX_A2A_PLUGIN_ID,
@@ -35,6 +38,7 @@ import {
   OKX_A2A_VERSION,
   OPENCLAW_VERSION,
 } from "../scripts/seller-runtime-supervisor";
+import { parseGatewayListeningPluginIds } from "../src/lib/okx-runtime/plugin-activation-proof";
 
 function test(name: string, fn: () => void) {
   try {
@@ -335,76 +339,71 @@ function run() {
   test("BOTH plugins' real activation is verified after the gateway is ready and before the seller runtime starts", () => {
     const src = supervisorSource();
     const waitIndex = src.indexOf("const ready = await waitForGatewayReady(env)");
-    const okxVerifyIndex = src.indexOf("const okxA2aActive = await verifyPluginActive(env, OKX_A2A_PLUGIN_ID");
-    const bridgeVerifyIndex = src.indexOf("const bridgeActive = await verifyPluginActive(env, REPODIET_BRIDGE_PLUGIN_ID");
+    const pluginListWaitIndex = src.indexOf("const pluginListOutcome = await waitForGatewayPluginListOrTimeout()");
+    const okxVerifyIndex = src.indexOf("const okxA2aActive = verifyPluginActive(OKX_A2A_PLUGIN_ID");
+    const bridgeVerifyIndex = src.indexOf("const bridgeActive = verifyPluginActive(REPODIET_BRIDGE_PLUGIN_ID");
     const sellerSpawnIndex = src.indexOf('spawnManaged(\n    "repodiet-seller-runtime"');
-    assert.ok(waitIndex > -1 && okxVerifyIndex > -1 && bridgeVerifyIndex > -1 && sellerSpawnIndex > -1);
-    assert.ok(waitIndex < okxVerifyIndex && waitIndex < bridgeVerifyIndex, "the gateway must be ready before checking plugin activation against it");
+    assert.ok(waitIndex > -1 && pluginListWaitIndex > -1 && okxVerifyIndex > -1 && bridgeVerifyIndex > -1 && sellerSpawnIndex > -1);
+    assert.ok(waitIndex < pluginListWaitIndex, "the gateway must be ready before waiting for its own plugin-list stdout line");
+    assert.ok(pluginListWaitIndex < okxVerifyIndex && pluginListWaitIndex < bridgeVerifyIndex, "the plugin list must be awaited before checking activation against it");
     assert.ok(
       okxVerifyIndex < sellerSpawnIndex && bridgeVerifyIndex < sellerSpawnIndex,
       "a plugin file existing on disk is not readiness — genuine activation of BOTH plugins must be proven before the seller runtime starts"
     );
   });
 
-  test("verifyPluginActive uses the documented module-loaded inspection command, not a file-existence check", () => {
+  test("Incident #8: verifyPluginActive never spawns a second openclaw process — plugin activation is derived from the live Gateway's own stdout, not a CLI re-invocation proven to starve it of CPU", () => {
     const src = supervisorSource();
-    assert.ok(src.includes('"plugins", "inspect", pluginId, "--runtime", "--json"'));
-    assert.ok(!/existsSync.*openclaw-plugins/.test(src), "must not treat file presence as proof of activation");
-  });
-
-  // --- Plugin inspection parsing, against a REAL captured fixture --------
-
-  test("parseBridgePluginInspection accepts the real captured fixture: status=loaded, activated=true, before_agent_reply registered", () => {
-    const fixture = fs.readFileSync(
-      path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
-      "utf8"
+    assert.ok(
+      !/runProcess\("openclaw",\s*\[\s*"plugins"/.test(src),
+      "no code path may spawn `openclaw plugins ...` any more — proven live to starve the Gateway's CPU budget"
     );
-    assert.equal(parseBridgePluginInspection(fixture), true);
-    const parsed = JSON.parse(fixture);
-    assert.equal(parsed.plugin.status, "loaded");
-    assert.equal(parsed.plugin.activated, true);
-    assert.equal(parsed.shape, "hook-only");
-    assert.deepEqual(parsed.typedHooks, [{ name: "before_agent_reply" }]);
+    assert.ok(src.includes("export function verifyPluginActive(pluginId: string, requiredHook: string): boolean"));
+    assert.ok(src.includes("parseGatewayListeningPluginIds"));
+    assert.ok(src.includes("writePluginActivationProof"));
   });
 
-  test("parseBridgePluginInspection rejects a plugin that is present but not activated", () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(
-        path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
-        "utf8"
-      )
+  test("parseGatewayListeningPluginIds correctly parses the real traced Gateway startup-line format, including duration suffixes and the zero-plugin case", () => {
+    assert.deepEqual(
+      parseGatewayListeningPluginIds('{"msg":"http server listening (2 plugins: okx-a2a, repodiet-a2a-bridge; 1.2s)"}'),
+      ["okx-a2a", "repodiet-a2a-bridge"]
     );
-    fixture.plugin.activated = false;
-    fixture.plugin.status = "blocked";
-    assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
-  });
-
-  test("parseBridgePluginInspection rejects output where the hook did not actually register", () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(
-        path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
-        "utf8"
-      )
+    assert.deepEqual(
+      parseGatewayListeningPluginIds("http server listening (2 plugins: okx-a2a, repodiet-a2a-bridge)"),
+      ["okx-a2a", "repodiet-a2a-bridge"]
     );
-    fixture.typedHooks = [];
-    fixture.hookCount = 0;
-    assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
+    assert.deepEqual(parseGatewayListeningPluginIds("http server listening (1 plugin: okx-a2a)"), ["okx-a2a"]);
+    assert.deepEqual(parseGatewayListeningPluginIds("http server listening (0 plugins)"), []);
+    assert.deepEqual(parseGatewayListeningPluginIds("http server listening (0 plugins, 0.4s)"), []);
+    assert.equal(parseGatewayListeningPluginIds("some unrelated startup log line"), null);
   });
 
-  test("parseBridgePluginInspection rejects unparseable output instead of defaulting to true", () => {
-    assert.equal(parseBridgePluginInspection("not json"), false);
-    assert.equal(parseBridgePluginInspection(""), false);
+  test("parseGatewayListeningPluginIds survives a chunk boundary landing mid-line, via observeGatewayStdoutChunk's rolling tail", () => {
+    resetGatewayLoadedPluginIdsForTests();
+    assert.equal(getGatewayLoadedPluginIdsForTests(), null);
+    observeGatewayStdoutChunk('{"msg":"http server listening (2 plugins: okx-a2a, repo');
+    assert.equal(getGatewayLoadedPluginIdsForTests(), null, "must not guess from a partial line");
+    observeGatewayStdoutChunk('diet-a2a-bridge; 1.2s)"}\n');
+    assert.deepEqual(getGatewayLoadedPluginIdsForTests(), ["okx-a2a", "repodiet-a2a-bridge"]);
   });
 
-  test("parseBridgePluginInspection rejects a plugin id mismatch — the id must actually match, not just appear somewhere in output", () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(
-        path.join(REPO_ROOT, "test", "fixtures", "openclaw-plugins-inspect-repodiet-a2a-bridge.real-output.json"),
-        "utf8"
-      )
-    );
-    fixture.plugin.id = "some-other-plugin";
-    assert.equal(parseBridgePluginInspection(JSON.stringify(fixture)), false);
+  test("verifyPluginActive requires both the plugin to appear in the observed loaded-plugin list AND the hook to match what this boot's bootstrap actually configured", () => {
+    resetGatewayLoadedPluginIdsForTests();
+    assert.equal(verifyPluginActive(OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK), false, "must fail closed before the plugin list is ever observed");
+    observeGatewayStdoutChunk("http server listening (2 plugins: okx-a2a, repodiet-a2a-bridge)\n");
+    assert.equal(verifyPluginActive(OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK), true);
+    assert.equal(verifyPluginActive(REPODIET_BRIDGE_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_HOOK), true);
+    assert.equal(verifyPluginActive("some-other-plugin", OKX_A2A_PLUGIN_HOOK), false, "a plugin not in the observed list is never active");
+    assert.equal(verifyPluginActive(OKX_A2A_PLUGIN_ID, "some-other-hook"), false, "a hook name that does not match what this boot configured must fail closed");
+    resetGatewayLoadedPluginIdsForTests();
+  });
+
+  test("a genuine zero-plugin Gateway boot (the real '0 plugins' line) is distinguished from 'not observed yet' — both plugins correctly fail closed rather than being silently skipped", () => {
+    resetGatewayLoadedPluginIdsForTests();
+    observeGatewayStdoutChunk("http server listening (0 plugins)\n");
+    assert.deepEqual(getGatewayLoadedPluginIdsForTests(), []);
+    assert.equal(verifyPluginActive(OKX_A2A_PLUGIN_ID, OKX_A2A_PLUGIN_HOOK), false);
+    resetGatewayLoadedPluginIdsForTests();
   });
 
   test("Incident #7: the openclaw CLI's RPC transport (proven, live, to hang indefinitely) is never spawned for readiness any more — the real Gateway is probed directly, in-process, via gateway-rpc-probe.ts's authenticated WebSocket client", () => {

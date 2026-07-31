@@ -79,10 +79,25 @@ function run() {
     }
   });
 
-  test("plugin-active checks use the module-loaded inspection command, never file existence", () => {
+  test("Incident #8: plugin-active checks read the supervisor's persisted proof file, never re-spawn `openclaw plugins inspect` (proven live to starve the Gateway's CPU on this Machine's shared vCPU)", () => {
     const src = source();
-    assert.ok(src.includes('"plugins", "inspect", pluginId, "--runtime", "--json"'));
+    assert.ok(
+      !/runProcess\("openclaw",\s*\[\s*"plugins"/.test(src),
+      "must not spawn a second openclaw process for plugin activation — see Incident #8"
+    );
+    assert.ok(src.includes("readPluginActivationProof(pluginActivationProofPath(env))"));
+    assert.ok(src.includes("isPluginActivationProven"));
     assert.ok(!/existsSync.*openclaw-plugins/.test(src), "must not treat a plugin file existing on disk as readiness");
+  });
+
+  test("Incident #7 applies here too: the gateway-authenticated check never spawns `openclaw gateway status --require-rpc`, the CLI RPC transport proven to hang indefinitely — it uses the same in-process probe as the supervisor's own boot-time gate", () => {
+    const src = source();
+    assert.ok(
+      !/runProcess\("openclaw",\s*\[\s*"gateway"/.test(src),
+      "must not spawn `openclaw gateway ...` — that CLI subprocess was proven to hang"
+    );
+    assert.ok(src.includes('import { probeGatewayRpc } from "../src/lib/okx-runtime/gateway-rpc-probe"'));
+    assert.ok(src.includes("await probeGatewayRpc({"));
   });
 
   test("the real 37347/37348 dispatcher checks reuse the bridge's own dispatch.js rather than a duplicated implementation", () => {
