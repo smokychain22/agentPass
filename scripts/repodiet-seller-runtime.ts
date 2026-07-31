@@ -183,7 +183,7 @@ interface DoctorResult {
 /**
  * Runs the official readiness/repair command once at startup.
  *
- * Schema verified directly against the real pinned 0.1.10 CLI (not assumed):
+ * Schema verified directly against the real pinned 0.1.11 CLI (not assumed):
  * `okx-a2a doctor --fix --json` writes progress/log lines to STDERR only and
  * exactly one JSON object to STDOUT — `{ ok, ready, summary: { pass, warn,
  * fail, ... }, ... }`. The counts are nested under `summary`, not top-level.
