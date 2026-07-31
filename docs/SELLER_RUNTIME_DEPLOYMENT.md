@@ -630,6 +630,95 @@ one or two cold starts. All three are still configurable via
 `REPODIET_OPENCLAW_GATEWAY_READY_TIMEOUT_MS` if the Machine's real-world
 cold-start cost turns out to need further tuning.
 
+### Incident #7: Incident #6's fix was still wrong — the CLI's RPC transport hangs indefinitely, not slowly
+
+Incident #6's fix shipped, was merged, and was re-tested live on the next
+boot of `repodiet-agent-9636`. It did not help: every single
+`gateway_health_not_ready_yet` poll still timed out, now at the full 60s
+instead of 10s, `category: "timeout"` and an empty `stderrTail` on every
+attempt — the same signature as before, just slower to fail. To rule out
+any remaining doubt that this was a probe-side timeout artifact rather
+than a genuine hang, a direct, bounded diagnostic was run over SSH against
+the live Machine, independent of the supervisor's own polling loop:
+
+```bash
+fly ssh console --app repodiet-agent-9636 \
+  -C "timeout 120 openclaw gateway health --port 18789 --json"
+```
+
+This produced **zero stdout and zero stderr** and exited with status 124
+(killed by the shell's own `timeout`, not by the CLI). Cold-start slowness
+was independently ruled out: the same `openclaw gateway health` cold start
+was reproduced locally in an isolated `docker run --memory=512m --cpus=1`
+container (matching the Machine's `shared-cpu-1x`/512MB spec exactly) and
+completed in 8-12s, consistent with Incident #4's measurement. A 120-second
+hang against a Gateway that was independently confirmed healthy (logging
+its own `ready` state, both plugins loaded and activated,
+`"http server listening (2 plugins: okx-a2a, repodiet-a2a-bridge; ...)"`
+printed) is not a cold start — it is an indefinite hang, immune to
+however long the caller is willing to wait.
+
+Root cause: traced directly into the real `openclaw` 2026.7.1-2 package
+source (extracted locally, not guessed —
+`dist/gateway-cli-PS4Ci4HD.js`, `dist/call-DE3i_Hr1.js`,
+`dist/call-Bj6Erfmh.js`). Both `gateway health` and
+`gateway status --require-rpc` funnel through the same
+`callGateway` → `callGatewayCli` → `callGatewayWithScopes` RPC client.
+That client does carry its own internal timeout machinery
+(`resolveGatewayCallTimeout`, backing a real `setTimeout`-based safety net
+around the WebSocket connect-and-handshake sequence in
+`executeGatewayRequestWithScopes`) — but that safety net never fired
+either, on a live 120-second wait. Whatever is wrong sits below the layer
+that machinery is meant to guard. This was not conclusively pinned down
+inside third-party minified code after a genuine, multi-layer tracing
+attempt; further static analysis hit diminishing returns and was
+deliberately stopped rather than continued indefinitely.
+
+Fix: stop depending on that RPC transport for readiness at all, rather
+than continue guessing at its internals. The same source tracing surfaced
+a completely different, working code path: the Gateway's own HTTP server
+(`src/gateway/server-http.ts`, `httpServer.listen(port, bindHost)` — the
+identical `--port` value, confirmed via `GATEWAY_PROBE_STATUS_BY_PATH`
+mapping `/health`/`/healthz` → `"live"` and `/ready`/`/readyz` → `"ready"`)
+serves plain, unauthenticated GET requests for both, handled by
+`handleGatewayProbeRequest` before any WebSocket/RPC machinery is
+involved. `/ready`'s status code (200 vs 503) is backed by a real
+`createReadinessChecker` — startup-pending sidecars, gateway-draining
+state, per-channel health, event-loop health — not a bare "process
+started" flag.
+
+`gatewayHealthy` and `gatewayAuthenticatedAndReady`
+(`scripts/seller-runtime-supervisor.ts`) now call this HTTP server
+directly via Node's native `fetch()`, in-process, with no subprocess
+spawned at all:
+
+- `gatewayHealthy` → `GET http://127.0.0.1:<port>/health` (unauthenticated
+  liveness).
+- `gatewayAuthenticatedAndReady` → `GET http://127.0.0.1:<port>/ready`
+  with `Authorization: Bearer <OPENCLAW_GATEWAY_TOKEN>` attached, checking
+  the parsed body's `ready` field explicitly (not just the HTTP status).
+  Note: the Gateway's own `isLocalDirectRequest` bypass means a local
+  caller's status code does not actually depend on the token being
+  correct, so this cannot exercise auth *enforcement* the way
+  `--require-rpc` once aimed to — but it does exercise the real internal
+  readiness state, which is what actually gates whether it is safe to
+  start `repodiet-seller-runtime.ts`. The token is still attached as
+  defense-in-depth and so the response shape stays meaningful if that
+  local-bypass policy ever changes upstream.
+
+`verifyPluginActive` (`openclaw plugins inspect <id> --runtime --json`)
+was deliberately left unchanged and still spawns the CLI: traced into
+`dist/plugins-inspect-command-DRp1IKYf.js`, `--runtime` mode performs a
+purely local "runtime plugin registry load" inside the CLI's own process.
+It never imports or calls `callGateway`, so it does not share this bug —
+confirmed by reading its imports directly, not inferred from the fact
+that it happened to keep working in earlier boots.
+
+Both timeout constants (`GATEWAY_HEALTH_PROBE_TIMEOUT_MS`,
+`GATEWAY_AUTH_PROBE_TIMEOUT_MS`) are unchanged from Incident #6 — they now
+bound a `fetch()` `AbortController` instead of a subprocess, but "how long
+is one probe attempt allowed to take" is the same question either way.
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
