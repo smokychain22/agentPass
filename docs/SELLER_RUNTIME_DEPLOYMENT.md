@@ -1027,6 +1027,42 @@ before relying on it further: the `session.dmScope`/
 `buildOpenclawConfigBatch()` depends on, and the plugin's own
 `@sentry/node@^7.74.1` runtime dependency (Incident #5).
 
+### Incident #10: a stale PID lock false-positived after a Fly deploy reset the container's PID counter, exhausting the restart budget
+
+The first boot on the Machine after the Incident #9 deploy (0.1.11 +
+2GB) refused to start the seller runtime at all:
+`startup_failed: "another_seller_runtime_is_already_live", pid: 724`,
+repeated on every one of the restart policy's 3 attempts until the
+Machine settled into `stopped`.
+
+**Root cause.** A container reboot resets the kernel's PID counter, so
+early-boot PIDs are drawn from a small, low, largely deterministic range
+every single time. The persisted `runtime.pid` lock file on the
+`/persistent` volume survives across reboots by design (so a genuinely
+still-running process is correctly detected as already-live) — but this
+specific boot's `openclaw-gateway` child happened to land on PID 724, the
+exact same number a PREVIOUS boot's seller-runtime had recorded in that
+lock file. `readLivePid()`'s only check, `process.kill(pid, 0)`, cannot
+tell these two situations apart: it only proves *a* process with that PID
+number currently exists, never that it is *the same* process the lock
+was written for.
+
+**Fix.** `src/lib/okx-runtime/runtime-layout.ts`'s `writePid`/`readLivePid`
+now pair the PID with the OS's own process start time
+(`/proc/<pid>/stat` field 22, clock ticks since boot) — recorded once
+when the lock is written, and re-read and compared on every check. A PID
+reused by a genuinely different process will not share the exact same
+start-time tick as the process the lock was originally written for — the
+same technique real process supervisors use to guard against this exact
+PID-reuse race. Degrades safely to the plain liveness check alone when
+`/proc` is unavailable (non-Linux local development) or the lock file
+predates this fix (a bare integer, no recorded start time) — never a
+regression, only a strengthening, and `readLivePid` still self-clears any
+lock it determines to be stale either way. See
+`test/runtime-layout-pid-lock.test.ts` for the direct regression test
+(including reproducing the exact false-positive shape: our own genuinely
+live PID, paired with a deliberately wrong recorded start time).
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
