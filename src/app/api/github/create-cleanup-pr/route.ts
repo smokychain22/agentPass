@@ -18,6 +18,14 @@ export async function POST(request: Request) {
       mode?: "safe_only" | "report_only";
       demo?: boolean;
       githubToken?: string;
+      /**
+       * Repository-relative paths the caller explicitly approves for
+       * deletion beyond the operator-safe default set (archive/backup-style
+       * paths). Never independently creates an operation — see
+       * normalizeApprovedPaths and resolveValidatedDeliveryOps for the full
+       * chain of checks an approved path must still pass.
+       */
+      approvedPaths?: string[];
     };
 
     if (body.confirmation !== true) {
@@ -127,6 +135,7 @@ export async function POST(request: Request) {
       demo: body.demo,
       githubToken: body.githubToken,
       sessionKey,
+      approvedPaths: body.approvedPaths,
     });
 
     return NextResponse.json({

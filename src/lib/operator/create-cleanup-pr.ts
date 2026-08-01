@@ -12,7 +12,7 @@ import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
 import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
 import { resolvePrRepairStrategy, type PrRepairResolution } from "./pr-repair";
-import { resolveValidatedDeliveryOps } from "./delivery-operations";
+import { resolveValidatedDeliveryOps, normalizeApprovedPaths } from "./delivery-operations";
 import {
   buildMaintenanceOutcome,
   type MaintenanceOutcome,
@@ -225,9 +225,15 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const buckets = classifyFindingsForPatch(findings);
   const validatedChanges = patchKit.summary.validatedChanges ?? 0;
   const validatedEdits = patchKit.validatedEdits ?? [];
+  // Normalized once, centrally, for every caller of createCleanupPullRequest
+  // (the manual route, the A2A orchestrator, phase3, and the ASP executor) —
+  // see delivery-operations.ts's normalizeApprovedPaths docblock. Runs before
+  // the mode check so a malformed approvedPaths input fails loudly even in
+  // report_only mode, rather than being silently ignored.
+  const normalizedApprovedPaths = normalizeApprovedPaths(input.approvedPaths);
   const deliveryOps =
     mode === "safe_only"
-      ? resolveValidatedDeliveryOps(patchKit, validatedEdits, input.approvedPaths)
+      ? resolveValidatedDeliveryOps(patchKit, validatedEdits, normalizedApprovedPaths)
       : { contentEdits: [], deletePaths: [], skippedDeletePaths: [] };
   const plannedDeletes = deliveryOps.deletePaths.length;
   const plannedEdits = deliveryOps.contentEdits.length;

@@ -25,7 +25,7 @@ const EXTRA_BLOCKED: RegExp[] = [
   /(^|\/)\.github\/workflows\//,
 ];
 
-function normalizePath(filePath: string): string {
+export function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
