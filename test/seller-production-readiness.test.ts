@@ -154,6 +154,56 @@ function run() {
     assert.ok(src.includes("Boolean(token)"), "the token must only be used for a boolean truthiness check");
   });
 
+  // --- Incident #13 follow-up: this script carried the same too-short
+  // gate-check bound the runtime did, plus a provider check that grepped
+  // output which never contains the provider -----------------------------
+
+  test("Incident #13: the gate-check bound fits the command's real measured duration, and is still bounded", () => {
+    const src = source();
+    const match = src.match(/GATE_CHECK_TIMEOUT_MS\s*=\s*([0-9_]+)/);
+    assert.ok(match, "the bound must be a named constant, not an inline literal");
+    const ms = Number(match![1].replace(/_/g, ""));
+    assert.ok(
+      ms > 90_000,
+      "the real gate-check was still running when killed at a hard 90s bound under load; a smaller bound reports false negatives for wallet/agent/communication/ready"
+    );
+    assert.ok(
+      src.includes("timeoutMs: GATE_CHECK_TIMEOUT_MS"),
+      "the gate-check call must use the constant — an unbounded call would hang the script instead"
+    );
+    const gateFnStart = src.indexOf("async function checkOnchainOsGate(");
+    assert.ok(gateFnStart > -1);
+    const gateFnBody = src.slice(gateFnStart, src.indexOf("\n}\n", gateFnStart));
+    assert.ok(
+      !/timeoutMs:\s*\d/.test(gateFnBody),
+      "the gate-check must not carry an inline numeric bound — that is how the 20s false-negative regression happened"
+    );
+  });
+
+  test("provider binding is read from the command that actually reports it, not grepped from daemon status", () => {
+    const src = source();
+    assert.ok(
+      src.includes('["ai-provider", "status", "--json"]'),
+      "okx-a2a ai-provider status --json is the documented command that reports the stored default provider"
+    );
+    assert.ok(
+      !/\/openclaw\/i\.test\(result\.stdout\)/.test(src),
+      "`daemon status` prints only `running|stale pid=<n>` and never names the provider, so grepping it for the provider is a permanent false negative"
+    );
+    assert.ok(
+      src.includes("boundProvider === EXPECTED_A2A_PROVIDER"),
+      "the check must compare the real reported provider against the expected one — never hardcode success"
+    );
+  });
+
+  test("the provider check fails closed when its command errors or returns unparseable output", () => {
+    const src = source();
+    assert.ok(
+      src.includes("boundProvider = undefined") && src.includes("?? \"unreadable\""),
+      "an unreadable provider must surface as not-ready with a diagnostic, never as a pass"
+    );
+  });
+
   console.log("seller-production-readiness: all passed");
 }
 

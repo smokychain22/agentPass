@@ -66,6 +66,20 @@ const REPODIET_BRIDGE_PLUGIN_ID = "repodiet-a2a-bridge";
 const REPODIET_BRIDGE_PLUGIN_HOOK = "before_agent_reply";
 const OPENCLAW_GATEWAY_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
 const OPENCLAW_GATEWAY_URL = `ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}`;
+// Must stay consistent with GATE_CHECK_TIMEOUT_MS in
+// scripts/repodiet-seller-runtime.ts — see Incident #13. The real
+// `onchainos agent gate-check --role asp` was measured at ~30s on a quiet
+// runtime and was still running when killed at a hard 90s bound under
+// steady-state load, because it shells out to `okx-a2a doctor` and makes
+// live OKX-backend and XMTP calls. The previous 20s bound here was below
+// even the fast path, so this script reported four false negatives
+// (wallet/agent/communication/ready) that the runtime's own gate-check
+// simultaneously proved true. Bounding the call is still required — an
+// unbounded call hangs the script — but the bound must fit the command.
+const GATE_CHECK_TIMEOUT_MS = 150_000;
+// The provider the supervisor binds; see REPODIET_OKX_A2A_PROVIDER in
+// scripts/seller-runtime-supervisor.ts.
+const EXPECTED_A2A_PROVIDER = (process.env.REPODIET_OKX_A2A_PROVIDER?.trim() || "openclaw").toLowerCase();
 
 interface Check {
   id: string;
@@ -81,7 +95,9 @@ function record(id: string, requiredForProduction: boolean, ready: boolean, deta
 }
 
 async function checkOnchainOsGate(): Promise<void> {
-  const result = await runProcess("onchainos", ["agent", "gate-check", "--role", "asp"], { timeoutMs: 20_000 });
+  const result = await runProcess("onchainos", ["agent", "gate-check", "--role", "asp"], {
+    timeoutMs: GATE_CHECK_TIMEOUT_MS,
+  });
   if (!result.ok) {
     record("onchainos_wallet_logged_in", true, false, "gate-check did not exit cleanly");
     record("agent_9636_selected", true, false, "gate-check did not exit cleanly");
@@ -236,11 +252,35 @@ async function checkA2aDaemon(): Promise<void> {
   const result = await runProcess("okx-a2a", ["daemon", "status"], { timeoutMs: 20_000 });
   const running = result.ok && (/\brunning\b/i.test(result.stdout) || /\bready\b/i.test(result.stdout));
   record("a2a_daemon_running", true, running, "okx-a2a daemon status");
+
+  // `daemon status` prints only liveness — verified directly against the
+  // pinned 0.1.11 CLI, its entire stdout is `running pid=<n>` (or `stale
+  // pid=<n>`). It never names the provider, so the previous
+  // `/openclaw/i.test(daemonStatusOutput)` could never be true and this
+  // check reported a permanent false negative while the provider was in
+  // fact correctly bound. The documented command that reports it is
+  // `okx-a2a ai-provider status --json` ("Show the stored default
+  // provider", confirmed via `okx-a2a ai-provider --help`), which returns
+  // `{"ok":true,"provider":"openclaw","detection":{…}}`.
+  const providerResult = await runProcess("okx-a2a", ["ai-provider", "status", "--json"], {
+    timeoutMs: 20_000,
+  });
+  let boundProvider: string | undefined;
+  if (providerResult.ok) {
+    try {
+      const parsed = JSON.parse(providerResult.stdout.trim().split("\n").pop() ?? "{}");
+      if (parsed?.ok === true && typeof parsed?.provider === "string") {
+        boundProvider = parsed.provider.toLowerCase();
+      }
+    } catch {
+      boundProvider = undefined;
+    }
+  }
   record(
     "okx_a2a_provider_configured",
     true,
-    running && /openclaw/i.test(result.stdout),
-    "okx-a2a daemon status reports the openclaw provider bound"
+    boundProvider === EXPECTED_A2A_PROVIDER,
+    `okx-a2a ai-provider status --json: provider (expected ${EXPECTED_A2A_PROVIDER}, got ${boundProvider ?? "unreadable"})`
   );
 }
 
