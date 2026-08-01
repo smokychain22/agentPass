@@ -8,6 +8,7 @@ import {
   filterFindingsBySelection,
   filterFindingsByValidatedSelection,
 } from "../src/lib/patch-kit/filter-findings";
+import { assertOperationsWithinAuthorizedScope } from "../src/lib/patch-kit/patch-kit-engine";
 import type { Finding, FindingsPayload } from "../src/lib/findings/types";
 
 function test(name: string, fn: () => void) {
@@ -257,6 +258,148 @@ test("continue gate enables with exactly one valid selection", () => {
   const canContinue = selectedCount > 0 && cleanupEligible > 0;
   assert.equal(selectedCount, 1);
   assert.equal(canContinue, true);
+});
+
+// --- Cleanup-scope enforcement -----------------------------------------
+//
+// Reproduces the live defect: a request selecting ONE finding produced file
+// operations for five, because the engine's main entry point dropped
+// `selectedFindingIds` whenever findings were not inlined. These lock the
+// selection contract and the independent final scope boundary.
+
+test("selecting one finding keeps exactly that finding — no unselected finding survives", () => {
+  const p = payload([
+    finding({ id: "keep", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, files: ["src/unused/confirmed-unused.ts"] }),
+    finding({ id: "other1", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, files: ["src/lib/orphan-a.ts"] }),
+    finding({ id: "other2", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, files: ["src/config/runtime-hook.ts"] }),
+  ]);
+  const filtered = filterFindingsByValidatedSelection(p, ["keep"], { expectedScanId: "scan_test" });
+  const all = [
+    ...filtered.duplicates,
+    ...filtered.unused.files,
+    ...filtered.unused.dependencies,
+    ...filtered.unused.exports,
+    ...filtered.orphans,
+    ...filtered.slopSignals,
+  ];
+  assert.equal(all.length, 1, "exactly one finding may enter patch generation");
+  assert.equal(all[0].id, "keep");
+  assert.ok(
+    !all.some((f) => f.files.includes("src/config/runtime-hook.ts")),
+    "an unselected path must never be reachable — this is the must-keep file the live defect would have deleted"
+  );
+});
+
+test("a finding id from a different scan is rejected, not silently re-resolved", () => {
+  const p = payload([finding({ id: "a", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, })]);
+  assert.throws(
+    () => filterFindingsByValidatedSelection(p, ["a"], { expectedScanId: "scan_other" }),
+    (err: unknown) =>
+      err instanceof FindingSelectionValidationError && err.code === "FINDING_SCAN_MISMATCH"
+  );
+});
+
+test("an unknown or stale finding id fails clearly instead of widening scope", () => {
+  const p = payload([finding({ id: "a", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, })]);
+  assert.throws(
+    () => filterFindingsByValidatedSelection(p, ["does-not-exist"], { expectedScanId: "scan_test" }),
+    (err: unknown) => err instanceof FindingSelectionValidationError
+  );
+});
+
+test("an empty selection fails clearly rather than defaulting to everything", () => {
+  const p = payload([finding({ id: "a", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, })]);
+  assert.throws(
+    () => assertValidCleanupSelection({ findings: p, selectedFindingIds: [] }),
+    (err: unknown) => err instanceof FindingSelectionValidationError
+  );
+});
+
+test("submitting a protected or review-only finding by id does not authorize executing it", () => {
+  const p = payload([
+    finding({ id: "protected", action: "do_not_touch", files: ["middleware.ts"] }),
+    finding({ id: "reviewy", action: "review_first", files: ["src/lib/orphan-b.ts"] }),
+  ]);
+  for (const id of ["protected", "reviewy"]) {
+    assert.throws(
+      () => assertValidCleanupSelection({ findings: p, selectedFindingIds: [id] }),
+      (err: unknown) => err instanceof FindingSelectionValidationError,
+      `${id} must fail closed`
+    );
+  }
+});
+
+test("scope broadening is detected and rejected even if an upstream stage emits an extra path", () => {
+  const authorized = [
+    finding({ id: "keep", action: "safe_candidate", files: ["src/unused/confirmed-unused.ts"] }),
+  ];
+  // Attributed to the authorized finding, in-scope path -> allowed.
+  assert.doesNotThrow(() =>
+    assertOperationsWithinAuthorizedScope({
+      authorizedFindings: authorized,
+      operations: [
+        { filePath: "src/unused/confirmed-unused.ts", findingIds: ["keep"], type: "delete" },
+      ],
+    })
+  );
+  // An operation attributed to a finding the caller never authorized.
+  assert.throws(
+    () =>
+      assertOperationsWithinAuthorizedScope({
+        authorizedFindings: authorized,
+        operations: [
+          { filePath: "src/unused/confirmed-unused.ts", findingIds: ["keep"], type: "delete" },
+          { filePath: "src/config/runtime-hook.ts", findingIds: ["other"], type: "delete" },
+        ],
+      }),
+    (err: unknown) =>
+      err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
+  );
+  // An unattributed operation is scope broadening too.
+  assert.throws(
+    () =>
+      assertOperationsWithinAuthorizedScope({
+        authorizedFindings: authorized,
+        operations: [{ filePath: "src/anything.ts", findingIds: [], type: "edit" }],
+      }),
+    (err: unknown) =>
+      err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
+  );
+});
+
+test("a repair may EDIT a companion file it must rewrite, but may never DELETE an unauthorized path", () => {
+  // Consolidating a duplicate has to rewrite the callers that import the
+  // removed module, or the tree stops compiling. That edit is attributed to
+  // the authorized finding and must be allowed.
+  const authorized = [
+    finding({
+      id: "dup",
+      action: "safe_candidate",
+      type: "duplicate_code",
+      files: ["src/components/StatusCard.tsx", "src/components/StatusCardCopy.tsx"],
+    }),
+  ];
+  assert.doesNotThrow(() =>
+    assertOperationsWithinAuthorizedScope({
+      authorizedFindings: authorized,
+      operations: [
+        { filePath: "src/components/StatusCardCopy.tsx", findingIds: ["dup"], type: "delete" },
+        { filePath: "src/components/LegacyStatusPanel.tsx", findingIds: ["dup"], type: "edit" },
+      ],
+    })
+  );
+  // The same finding may NOT delete a path outside its own file list.
+  assert.throws(
+    () =>
+      assertOperationsWithinAuthorizedScope({
+        authorizedFindings: authorized,
+        operations: [
+          { filePath: "src/config/runtime-hook.ts", findingIds: ["dup"], type: "delete" },
+        ],
+      }),
+    (err: unknown) =>
+      err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
+  );
 });
 
 console.log("finding-selection: all passed");

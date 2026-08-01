@@ -6,6 +6,11 @@ import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { runFindingsEngine } from "@/lib/findings/findings-engine";
 import { runBasicScan } from "@/lib/scanner/run-scan";
 import type { Finding, FindingsPayload } from "@/lib/findings/types";
+import {
+  FindingSelectionValidationError,
+  flattenFindingsPayload,
+} from "@/lib/findings/selection";
+import { getStoredFindings } from "@/lib/findings/findings-store";
 import { isEligibleFinding } from "@/lib/findings/actionability-signals";
 import { runFreeCleanupCore } from "@/lib/execution/run-cleanup-core";
 import {
@@ -77,23 +82,126 @@ import type {
   TransformerResult,
 } from "./types";
 
+/**
+ * Single authority for turning a generate request into the findings that may
+ * enter patch generation.
+ *
+ * === Cleanup-scope defect ===
+ * `runPatchKitEngine` previously inlined its own variant of this logic:
+ *
+ *     let findings = body.findings
+ *       ? filterFindingsBySelection(body.findings, body.selectedFindingIds)
+ *       : await runFindingsEngine(repoUrl, branch);
+ *
+ * The `else` arm dropped `selectedFindingIds` entirely. A request that
+ * identified its findings by `scanId` (rather than inlining the whole
+ * payload) therefore had its authorization silently widened from the
+ * selected findings to *every* cleanup-eligible finding in a freshly-run
+ * scan. Reproduced against the controlled repository: a request selecting
+ * one finding produced file operations for five, including a path the
+ * repository's own fixture contract marks as must-keep.
+ *
+ * `body.scanId` was also accepted by the request schema but never used to
+ * resolve findings, so the re-scan could return findings pinned to a
+ * different commit than the caller authorized.
+ *
+ * Both entry points now resolve through here, and selection is validated —
+ * never merely filtered — whenever ids are supplied. Validation rejects an
+ * empty selection, ids from another scan or repository, unknown/stale ids,
+ * and ids that are not cleanup-eligible (protected or review-only), so
+ * submitting an id cannot by itself authorize executing it.
+ */
 async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayload> {
   const { filterFindingsByValidatedSelection } = await import("./filter-findings");
-  if (body.findings?.scanId && body.findings?.repo?.owner) {
-    if (body.selectedFindingIds?.length) {
-      return filterFindingsByValidatedSelection(body.findings, body.selectedFindingIds, {
-        expectedScanId: body.findings.scanId,
-      });
-    }
-    return filterFindingsBySelection(body.findings, body.selectedFindingIds);
+
+  const selectedFindingIds = normalizeSelectedFindingIds(body.selectedFindingIds);
+
+  const inline =
+    body.findings?.scanId && body.findings?.repo?.owner ? body.findings : undefined;
+
+  // A caller that supplies `scanId` gets the stored findings for exactly that
+  // scan. Re-scanning here would silently repoint the request at a different
+  // commit's findings than the one whose ids the caller authorized.
+  const stored =
+    !inline && body.scanId ? await getStoredFindings(body.scanId) : undefined;
+
+  if (!inline && body.scanId && !stored) {
+    throw new FindingSelectionValidationError(
+      "FINDING_UNKNOWN",
+      "Findings for the requested scan are no longer available. Re-run the scan before generating a cleanup."
+    );
   }
-  const full = await runFindingsEngine(body.repoUrl, body.branch);
-  if (body.selectedFindingIds?.length) {
-    return filterFindingsByValidatedSelection(full, body.selectedFindingIds, {
-      expectedScanId: full.scanId,
+
+  const source = inline ?? stored ?? (await runFindingsEngine(body.repoUrl, body.branch));
+
+  if (selectedFindingIds.length) {
+    return filterFindingsByValidatedSelection(source, selectedFindingIds, {
+      expectedScanId: body.scanId ?? source.scanId,
     });
   }
-  return filterFindingsBySelection(full, body.selectedFindingIds);
+  return filterFindingsBySelection(source, selectedFindingIds);
+}
+
+/** Deduplicates and trims caller-supplied ids without silently widening scope. */
+function normalizeSelectedFindingIds(ids: string[] | undefined): string[] {
+  if (!ids?.length) return [];
+  const seen = new Set<string>();
+  for (const raw of ids) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (id) seen.add(id);
+  }
+  return [...seen];
+}
+
+/**
+ * Final scope boundary, independent of how the operations were produced.
+ *
+ * Everything upstream (selection validation, eligibility, transformer
+ * preflight) can be correct and a later stage — reconciliation, path
+ * rewriting, a future transformer — could still emit an operation outside
+ * what the caller authorized. This asserts the generated operations are a
+ * strict subset of the authorized findings' own file paths, and fails
+ * closed rather than delivering a broadened cleanup.
+ */
+export function assertOperationsWithinAuthorizedScope(input: {
+  authorizedFindings: Finding[];
+  operations: Array<{ filePath: string; findingIds?: string[]; type?: string }>;
+}): void {
+  const authorizedIds = new Set(input.authorizedFindings.map((f) => f.id));
+  const authorizedPaths = new Set<string>();
+  for (const finding of input.authorizedFindings) {
+    for (const file of finding.files ?? []) {
+      if (typeof file === "string" && file.trim()) authorizedPaths.add(file.trim());
+    }
+  }
+
+  for (const op of input.operations) {
+    const attributed = (op.findingIds ?? []).filter((id) => authorizedIds.has(id));
+
+    // Every operation must trace back to a finding the caller authorized.
+    // An operation attributed to nothing, or to some other finding, is
+    // scope broadening no matter which stage produced it.
+    if (!attributed.length) {
+      throw new FindingSelectionValidationError(
+        "FINDING_SCOPE_BROADENED",
+        `Cleanup scope broadened beyond the authorized selection: ${op.filePath}`
+      );
+    }
+
+    // Deletions are held to the stricter path rule. A repair may legitimately
+    // EDIT a file outside the finding's own file list — consolidating a
+    // duplicate has to rewrite the callers that import the removed module, or
+    // the tree stops compiling — but it may never DELETE a path the caller
+    // did not authorize. That asymmetry is the safety property that matters:
+    // the defect this boundary exists to stop removed an unauthorized
+    // must-keep file.
+    if (op.type === "delete" && !authorizedPaths.has(op.filePath)) {
+      throw new FindingSelectionValidationError(
+        "FINDING_SCOPE_BROADENED",
+        `Cleanup attempted to delete a path outside the authorized selection: ${op.filePath}`
+      );
+    }
+  }
 }
 
 async function resolveRepoContext(
@@ -251,9 +359,9 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
   const cleanupRunId = `patchkit_${nanoid(12)}`;
 
   try {
-    let findings = body.findings
-      ? filterFindingsBySelection(body.findings, body.selectedFindingIds)
-      : await runFindingsEngine(repoUrl, branch);
+    // Both entry points resolve through the same authority — see
+    // resolveFindings' docblock for the scope defect this replaced.
+    let findings = await resolveFindings(body);
 
     const workspaceSource = workspace.repo.workspaceSource ?? "github_zip";
     const isLocalMaterialization =
@@ -661,6 +769,16 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
 
     const generatedChanges = changeOperations.length;
     const changedPaths = changeOperations.map((op) => op.filePath);
+
+    // Final scope boundary — independent of every upstream stage. Only
+    // enforced when the caller explicitly authorized a selection; an
+    // unscoped run legitimately covers all eligible findings.
+    if (normalizeSelectedFindingIds(body.selectedFindingIds).length) {
+      assertOperationsWithinAuthorizedScope({
+        authorizedFindings: flattenFindingsPayload(findings),
+        operations: changeOperations,
+      });
+    }
     const mergedPatch =
       patchBundle.patch && patchBundle.patch !== EMPTY_CLEANUP_PATCH
         ? ensurePatchTrailingNewline(patchBundle.patch)
