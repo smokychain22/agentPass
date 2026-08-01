@@ -7,7 +7,11 @@ export type FindingSelectionErrorCode =
   | "FINDING_SCAN_MISMATCH"
   | "FINDING_REPOSITORY_MISMATCH"
   | "FINDING_PROTECTED"
-  | "FINDING_REVIEW_FIRST";
+  | "FINDING_REVIEW_FIRST"
+  // Raised by the final scope boundary when generated operations reach a
+  // path outside the authorized selection, regardless of which stage
+  // introduced it.
+  | "FINDING_SCOPE_BROADENED";
 
 export class FindingSelectionValidationError extends Error {
   readonly code: FindingSelectionErrorCode;
