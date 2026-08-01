@@ -1253,6 +1253,70 @@ Read the logs instead.
 See `test/seller-runtime-portability.test.ts`'s "Incident #13" tests for the
 regression coverage.
 
+### Incident #14: the gate-check cadence was still too aggressive for what the command costs
+
+Incident #13 moved the gate-check off the 60-second heartbeat tick onto its
+own 180-second timer, which fixed the immediate "withheld forever" symptom.
+It was not enough. Twenty minutes of continuous observation with **zero
+operator contact** showed the agent still going offline, with the
+gate-check's own duration climbing steadily:
+
+| Time (UTC) | Duration | Result |
+|---|---|---|
+| 16:00:23 | 22,371ms | pass |
+| 16:06:38 | 14,366ms | pass |
+| 16:10:15 | 51,327ms | pass |
+| 16:14:08 | 104,820ms | pass |
+| 16:17:53 | 150,010ms | **fail (bound)** |
+| 16:20:53 | 150,059ms | **fail (bound)** |
+
+Two consecutive failures exhausted the 420s freshness window, and Agent
+9636 dropped to `agentOnline: false` roughly 20 minutes after a clean boot.
+
+**Root cause.** Machine resources were *not* exhausted at the moment of
+failure — load 2.70, 904MB free, 6 node processes, no stray `onchainos`
+processes, all better than during an earlier *healthy* period. So this is
+not a local leak. `onchainos agent gate-check --role asp` shells out to a
+full `okx-a2a doctor`, whose checks include a live npm-registry version
+lookup (measured at **29 seconds** on its own) plus several OKX-backend and
+XMTP calls. That cost is externally variable and, on a single shared vCPU,
+swings between ~14s and past 150s. Running it every 180s meant ~20 doctor
+invocations per hour, each able to outlive its own bound — the agent's
+online status was effectively hostage to the slowest external dependency
+inside an expensive diagnostic command.
+
+**Fix.**
+
+- `GATE_CHECK_REFRESH_MS` 180s → **900s**, treating the full gate-check as
+  the periodic deep audit it actually is (~5x fewer doctor invocations).
+- `GATE_CHECK_FRESHNESS_MS` 420s → **2700s**, sized to survive at least two
+  consecutive slow-or-failed refreshes — exactly the pattern that took the
+  agent offline — while still bounding how old a proof may be.
+- The proof timestamp is now persisted to the runtime volume, so a restart
+  reuses a still-valid proof instead of re-proving from cold during a slow
+  window. It is re-validated against the same freshness bound on read, and
+  an unparseable, corrupt, or future-dated value is discarded rather than
+  trusted — a restart can never resurrect an expired proof.
+
+**This does not weaken the online claim.** The heartbeat still verifies the
+daemon and the XMTP client live on *every* tick (both consistently sub-10s),
+and still refuses to publish unless a real gate-check genuinely passed
+within the freshness window. A stale or missing proof fails closed exactly
+as before. What changed is how long a genuine proof stays valid, never
+whether one is required.
+
+**Diagnostic lesson.** An earlier round of this investigation wrongly
+concluded the slowness was operator-inflicted, because SSH probes running
+`okx-a2a doctor` / `npm view` / a second `gate-check` on the same single
+vCPU genuinely did make it worse, and a load reading taken *during* those
+probes (5.53) was mistaken for a baseline. The probes were a real
+aggravator but never the cause: the degradation reproduced cleanly with no
+contact at all. Measure this runtime by reading logs and the public health
+endpoint, never by running its own diagnostic commands alongside it.
+
+See `test/seller-runtime-portability.test.ts`'s "Incident #14" tests for the
+regression coverage.
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential

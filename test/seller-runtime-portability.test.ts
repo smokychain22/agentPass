@@ -589,6 +589,55 @@ function run() {
     );
   });
 
+  // --- Incident #14: the gate-check cadence was still too aggressive for
+  // what the command costs, so the agent could not hold uptime ----------
+
+  test("Incident #14: the expensive gate-check runs on a deep-audit cadence, not a tight loop", () => {
+    const src = entrypointSource();
+    const refresh = Number(src.match(/GATE_CHECK_REFRESH_MS\s*=\s*([0-9_]+)/)![1].replace(/_/g, ""));
+    const fresh = Number(src.match(/GATE_CHECK_FRESHNESS_MS\s*=\s*([0-9_]+)/)![1].replace(/_/g, ""));
+    const timeout = Number(src.match(/GATE_CHECK_TIMEOUT_MS\s*=\s*([0-9_]+)/)![1].replace(/_/g, ""));
+    assert.ok(
+      refresh >= 600_000,
+      "measured live: this command shells out to a full okx-a2a doctor (including a ~29s npm-registry lookup) and ranged 14s to past 150s on one shared vCPU — running it every few minutes makes uptime hostage to its slowest external dependency"
+    );
+    assert.ok(
+      fresh >= refresh + 2 * timeout,
+      "the freshness window must survive at least two consecutive slow or failed refreshes; two in a row is exactly what took the agent offline"
+    );
+  });
+
+  test("Incident #14: a persisted proof is re-validated against the same freshness bound, never blindly trusted", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("function loadPersistedGateProof(");
+    assert.ok(start > -1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    assert.ok(
+      body.includes("GATE_CHECK_FRESHNESS_MS"),
+      "a restart must not resurrect an expired proof"
+    );
+    assert.ok(
+      body.includes("passedAtMs > Date.now()"),
+      "a future-dated proof (clock skew or tampering) must be discarded, not trusted"
+    );
+    assert.ok(
+      body.includes("Number.isFinite(passedAtMs)"),
+      "an unparseable or corrupt proof must fail closed"
+    );
+  });
+
+  test("Incident #14: a successful gate-check persists its proof so a restart need not re-prove from cold", () => {
+    const src = entrypointSource();
+    assert.ok(
+      src.includes("persistGateProof(lastGateCheckPassedAtMs)"),
+      "the proof must be written when the check genuinely passes"
+    );
+    assert.ok(
+      /loadPersistedGateProof\(\);\s*\n\s*if \(!gateProofIsFresh\(\)\) \{\s*\n\s*await refreshOfficialGateCheck\(\);/.test(src),
+      "startup must restore first and still block on a real check whenever the restored proof is not fresh"
+    );
+  });
+
   // --- Single bootstrap owner (Incident #2 remediation) ------------------
   //
   // scripts/seller-runtime-supervisor.ts is now the SOLE owner of OpenClaw

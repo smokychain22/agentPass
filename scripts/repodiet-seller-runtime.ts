@@ -116,9 +116,55 @@ let consecutiveHeartbeatFailures = 0;
  * larger than GATE_CHECK_REFRESH_MS so a single slow refresh cannot flap
  * the agent offline, but far short of indefinite.
  */
+/**
+ * === Incident #14: the gate-check cadence was still far too aggressive for
+ * what the command actually costs, so the agent could not hold uptime ===
+ *
+ * Incident #13 moved the gate-check off the 60s heartbeat tick onto its own
+ * 180s timer, which fixed the immediate "withheld forever" symptom. But 20
+ * minutes of continuous observation with zero operator contact showed the
+ * agent still going offline, with gate-check duration climbing steadily:
+ *
+ *   16:00:23  22,371ms  pass
+ *   16:06:38  14,366ms  pass
+ *   16:10:15  51,327ms  pass
+ *   16:14:08 104,820ms  pass
+ *   16:17:53 150,010ms  FAIL (bound)
+ *   16:20:53 150,059ms  FAIL (bound)
+ *
+ * Two consecutive failures exhausted the 420s freshness window and the
+ * agent dropped to offline ~20 minutes after a clean boot.
+ *
+ * Machine resources were NOT exhausted when this happened (load 2.70, 904MB
+ * free, 6 node processes — all better than during an earlier healthy
+ * period), so this is not a local leak. `onchainos agent gate-check` shells
+ * out to a full `okx-a2a doctor`, whose checks include a live npm-registry
+ * version lookup (measured at 29s on its own) plus several OKX-backend and
+ * XMTP calls. That cost is externally variable and, on a single shared
+ * vCPU, swings between ~14s and past 150s.
+ *
+ * Running that every 180s means ~20 doctor runs per hour, each capable of
+ * outliving its own bound — the agent's online status ends up hostage to
+ * the slowest external dependency in an expensive diagnostic command.
+ *
+ * Fix, without weakening the online claim:
+ *   - Run the full gate-check far less often (GATE_CHECK_REFRESH_MS), as
+ *     the periodic deep audit it actually is, cutting doctor invocations
+ *     ~5x.
+ *   - Widen the freshness window to comfortably survive several consecutive
+ *     slow or failed refreshes, while still bounding how old a proof may be.
+ *   - Persist the proof's timestamp to the runtime volume so a restart does
+ *     not discard it and force a cold re-prove during a slow window.
+ *
+ * The heartbeat still verifies the daemon and the XMTP client live on every
+ * single tick — both consistently sub-10s — and still refuses to publish
+ * unless a real gate-check genuinely passed within the freshness window. A
+ * stale or missing proof fails closed exactly as before; this changes how
+ * long a real proof stays valid, never whether one is required.
+ */
 const GATE_CHECK_TIMEOUT_MS = 150_000;
-const GATE_CHECK_REFRESH_MS = 180_000;
-const GATE_CHECK_FRESHNESS_MS = 420_000;
+const GATE_CHECK_REFRESH_MS = 900_000;
+const GATE_CHECK_FRESHNESS_MS = 2_700_000;
 let gateCheckTimer: NodeJS.Timeout | undefined;
 let gateCheckInFlight = false;
 let heartbeatCycleInFlight = false;
@@ -126,6 +172,40 @@ let lastGateCheckPassedAtMs = 0;
 
 function gateProofIsFresh(nowMs: number = Date.now()): boolean {
   return lastGateCheckPassedAtMs > 0 && nowMs - lastGateCheckPassedAtMs < GATE_CHECK_FRESHNESS_MS;
+}
+
+/**
+ * The proof timestamp survives a process restart via the runtime volume —
+ * a gate-check that genuinely passed four minutes ago is still evidence
+ * four minutes later, whether or not this process is the one that ran it.
+ * Freshness is re-evaluated against the same bound on read, so a restart
+ * can never resurrect an expired proof, and any unreadable/corrupt/
+ * future-dated value is discarded rather than trusted.
+ */
+function gateProofFile(): string {
+  return path.join(resolveRuntimeRoot(), "seller-9636", "gate-check-proof.json");
+}
+
+function persistGateProof(passedAtMs: number): void {
+  try {
+    fs.writeFileSync(gateProofFile(), JSON.stringify({ passedAtMs }), "utf8");
+  } catch {
+    // Best-effort — losing the cache must never break the runtime.
+  }
+}
+
+function loadPersistedGateProof(): void {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(gateProofFile(), "utf8"));
+    const passedAtMs = Number(parsed?.passedAtMs);
+    if (!Number.isFinite(passedAtMs) || passedAtMs <= 0) return;
+    if (passedAtMs > Date.now()) return; // clock skew / tampering — never trust
+    if (Date.now() - passedAtMs >= GATE_CHECK_FRESHNESS_MS) return; // already stale
+    lastGateCheckPassedAtMs = passedAtMs;
+    log("gate_proof_restored", { ageMs: Date.now() - passedAtMs });
+  } catch {
+    // No usable proof — start with none and fail closed until one passes.
+  }
 }
 
 /**
@@ -253,7 +333,10 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
       parsed?.data?.identity?.agentId === SELLER.agentId &&
       parsed?.data?.communication?.ok === true &&
       parsed?.data?.wallet?.ok === true;
-    if (passed) lastGateCheckPassedAtMs = Date.now();
+    if (passed) {
+      lastGateCheckPassedAtMs = Date.now();
+      persistGateProof(lastGateCheckPassedAtMs);
+    }
     log("gate_check_result", { passed, durationMs: Date.now() - startedAtMs });
     return passed;
   } catch {
@@ -622,7 +705,14 @@ async function main(): Promise<void> {
   // Incident #13: establish a real gate-check proof before the first
   // heartbeat, then keep it refreshed on its own slower cadence so the
   // 60-second tick never blocks on a command that can outlive it.
-  await refreshOfficialGateCheck();
+  // Incident #14: a still-fresh proof persisted by a previous process is
+  // reused, so a restart does not have to re-prove from cold while the
+  // command happens to be slow. Only skips the blocking initial run when
+  // the restored proof is genuinely still within the freshness bound.
+  loadPersistedGateProof();
+  if (!gateProofIsFresh()) {
+    await refreshOfficialGateCheck();
+  }
   gateCheckTimer = setInterval(() => {
     if (shuttingDown) return;
     void refreshOfficialGateCheck();
