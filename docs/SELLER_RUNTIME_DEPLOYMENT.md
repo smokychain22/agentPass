@@ -1144,6 +1144,48 @@ cleanup function being called both before and after the doctor call and
 again before every daemon-start attempt, and the cleanup function itself
 never spawning a process — the exact hang class it exists to prevent).
 
+### Incident #12: unbounded per-heartbeat-tick CLI calls silently hung the whole heartbeat loop forever
+
+Found live on `repodiet-agent-9636` during the controlled post-Incident-#11
+verification boot, on the very first heartbeat cycle. Sequence observed:
+
+- The Incident #11 fix was confirmed working: `a2a_daemon_ready: true`,
+  daemon started in ~1s (vs. 90+s hangs before).
+- The first `publishHeartbeat` cycle ran end-to-end and logged
+  `heartbeat_rejected` with `status: 401` — a separate, pre-existing
+  backend-auth issue, not caused by this fix, and out of scope for this
+  incident.
+- No further heartbeat cycle — accepted, rejected, or even withheld — was
+  logged for 7+ minutes afterward, despite the 60-second interval. Direct
+  inspection over SSH confirmed both the container process (`pid=725`, the
+  same PID from `instance_lock_acquired`) and the `okx-a2a` daemon
+  (`pid=872`) were still alive and the Machine had not restarted — the
+  heartbeat loop itself was stuck mid-call, silently, with no crash to
+  trigger process supervision.
+
+**Root cause**: of the five `execFileAsync` calls in
+`scripts/repodiet-seller-runtime.ts`, only `officialGateCheckPasses`'s
+`onchainos agent gate-check --role asp` call and `xmtpClientActive`'s
+`okx-a2a agent refresh --json` call — the two run on *every* heartbeat
+tick — passed no `timeout` option. Every other call in the file (`doctor
+--fix` at 240s, `daemon status` at 20s, `daemon start` at 60s) was already
+bounded. Both unbounded commands are known from prior incidents in this
+document to be able to stall indefinitely on a slow backend/network
+response (see the `onchainos wallet login --phase poll` hang precedent
+above). Once either call stalled, the `Promise.all` awaited inside
+`publishHeartbeat` never settled, so no heartbeat log line of any kind —
+including the intentional `heartbeat_withheld` fail-closed path — was ever
+produced again.
+
+**Fix**: added `{ timeout: 45_000 }` to both calls, matching this file's
+existing pattern for every other CLI invocation. A timed-out call already
+resolves to `false` via the existing `catch` block, so a stall now
+correctly withholds that one heartbeat cycle and the next scheduled tick
+tries again 60s later, instead of hanging the loop forever.
+
+See `test/seller-runtime-portability.test.ts`'s "Incident #12" tests for
+the direct regression coverage (both calls carry the explicit timeout).
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
