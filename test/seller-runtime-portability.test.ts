@@ -120,8 +120,14 @@ function run() {
       "a failing gate-check must withhold the heartbeat"
     );
     assert.ok(
-      src.includes("officialGateCheckPasses") && src.includes("xmtpClientActive"),
+      src.includes("refreshOfficialGateCheck") && src.includes("xmtpClientActive"),
       "both the official gate-check and XMTP readiness must be required"
+    );
+    // Incident #13 moved the gate-check onto its own timer, so the tick reads
+    // a cached proof — that proof must still be a real pass, and still expire.
+    assert.ok(
+      src.includes("gateProofIsFresh") && src.includes("GATE_CHECK_FRESHNESS_MS"),
+      "the cached gate-check proof must be freshness-bounded, never assumed valid indefinitely"
     );
     // TTL-based expiry is what makes a dead runtime observable as offline.
     assert.ok(src.includes("ttlSeconds"), "heartbeats must carry a TTL");
@@ -493,14 +499,14 @@ function run() {
   // the whole heartbeat loop forever, with no crash and no further log
   // output, once one of them stalled on a slow backend/network call -------
 
-  test("Incident #12: officialGateCheckPasses bounds its onchainos gate-check call with a timeout", () => {
+  test("Incident #12: the onchainos gate-check call is bounded by an explicit timeout", () => {
     const src = entrypointSource();
-    const start = src.indexOf("async function officialGateCheckPasses(");
-    assert.ok(start > -1);
+    const start = src.indexOf("async function refreshOfficialGateCheck(");
+    assert.ok(start > -1, "the gate-check runner must exist");
     const body = src.slice(start, src.indexOf("\n}\n", start));
     assert.ok(
-      body.includes('"onchainos"') && body.includes("timeout: 45_000"),
-      "every heartbeat-tick CLI call must be bounded — an unbounded call that stalls hangs publishHeartbeat's Promise.all forever, silently, with no further heartbeat log line ever produced again"
+      body.includes('"onchainos"') && body.includes("timeout: GATE_CHECK_TIMEOUT_MS"),
+      "every CLI call must be bounded — an unbounded call that stalls hangs the awaiting cycle forever, silently, with no further log line ever produced again"
     );
   });
 
@@ -512,6 +518,74 @@ function run() {
     assert.ok(
       body.includes('"okx-a2a"') && body.includes("timeout: 45_000"),
       "matches this file's existing pattern for every other execFileAsync call (doctor --fix, daemon status, daemon start), all of which are already bounded"
+    );
+  });
+
+  // --- Incident #13: the gate-check is slower than the heartbeat tick, so
+  // running it inline every tick could never succeed and overlapping ticks
+  // piled up contending subprocesses ------------------------------------
+
+  test("Incident #13: the 60s heartbeat tick never runs the slow gate-check inline — it reads the cached proof instead", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("async function publishHeartbeat(");
+    assert.ok(start > -1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    assert.ok(
+      !body.includes("refreshOfficialGateCheck("),
+      "publishHeartbeat must not invoke the gate-check inline — measured live at >90s against a 60s tick interval, which withholds every heartbeat and stacks contending subprocesses"
+    );
+    assert.ok(
+      body.includes("gateProofIsFresh()"),
+      "the tick must read the cached proof recorded by the separate refresh timer"
+    );
+  });
+
+  test("Incident #13: a stale gate-check proof fails closed rather than being assumed valid", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("function gateProofIsFresh(");
+    assert.ok(start > -1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    assert.ok(
+      body.includes("lastGateCheckPassedAtMs > 0") &&
+        body.includes("GATE_CHECK_FRESHNESS_MS"),
+      "freshness must require a real recorded pass AND bound its age — never default to true"
+    );
+  });
+
+  test("Incident #13: freshness window exceeds the refresh interval so one slow refresh cannot flap the agent offline", () => {
+    const src = entrypointSource();
+    const refresh = src.match(/GATE_CHECK_REFRESH_MS\s*=\s*([0-9_]+)/);
+    const fresh = src.match(/GATE_CHECK_FRESHNESS_MS\s*=\s*([0-9_]+)/);
+    const timeout = src.match(/GATE_CHECK_TIMEOUT_MS\s*=\s*([0-9_]+)/);
+    assert.ok(refresh && fresh && timeout, "all three gate-check timings must be declared as named constants");
+    const refreshMs = Number(refresh![1].replace(/_/g, ""));
+    const freshMs = Number(fresh![1].replace(/_/g, ""));
+    const timeoutMs = Number(timeout![1].replace(/_/g, ""));
+    assert.ok(freshMs > refreshMs, "a proof must stay valid longer than the gap between refreshes");
+    assert.ok(timeoutMs > 90_000, "the bound must exceed the >90s the gate-check was measured taking live");
+    assert.ok(freshMs >= refreshMs + timeoutMs, "one full slow refresh must fit inside the freshness window");
+  });
+
+  test("Incident #13: both the heartbeat cycle and the gate-check refresh guard against overlapping runs", () => {
+    const src = entrypointSource();
+    assert.ok(
+      src.includes("heartbeatCycleInFlight") && src.includes("heartbeat_cycle_skipped_still_running"),
+      "setInterval fires regardless of whether the previous cycle finished; without a guard slow cycles stack and contend"
+    );
+    assert.ok(
+      src.includes("gateCheckInFlight") && src.includes("gate_check_skipped_still_running"),
+      "a gate-check that outlives its own refresh interval must not stack either"
+    );
+  });
+
+  test("Incident #13: the gate-check refresh timer is cleared on shutdown alongside the heartbeat timer", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("function shutdown(");
+    assert.ok(start > -1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    assert.ok(
+      body.includes("clearInterval(gateCheckTimer)"),
+      "a leaked interval keeps the process alive past shutdown"
     );
   });
 
