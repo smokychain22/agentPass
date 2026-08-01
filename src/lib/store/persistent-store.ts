@@ -31,6 +31,7 @@ export type PersistentCollection =
   | "repository_jobs"
   | "worker_instances"
   | "pr_delivery_monitors"
+  | "cleanup_pr_deliveries"
   | "maintenance_contracts"
   | "green_pr_attestations"
   | "green_pr_receipts"
@@ -76,6 +77,7 @@ export interface DurableDb {
   repository_jobs: Record<string, unknown>;
   worker_instances: Record<string, unknown>;
   pr_delivery_monitors: Record<string, unknown>;
+  cleanup_pr_deliveries: Record<string, unknown>;
   maintenance_contracts: Record<string, unknown>;
   green_pr_attestations: Record<string, unknown>;
   green_pr_receipts: Record<string, unknown>;
@@ -120,6 +122,7 @@ const DEFAULT_DB: DurableDb = {
   repository_jobs: {},
   worker_instances: {},
   pr_delivery_monitors: {},
+  cleanup_pr_deliveries: {},
   maintenance_contracts: {},
   green_pr_attestations: {},
   green_pr_receipts: {},
@@ -198,6 +201,7 @@ function loadLocalDb(): DurableDb {
       repository_jobs: parsed.repository_jobs ?? {},
       worker_instances: parsed.worker_instances ?? {},
       pr_delivery_monitors: parsed.pr_delivery_monitors ?? {},
+      cleanup_pr_deliveries: parsed.cleanup_pr_deliveries ?? {},
       maintenance_contracts: parsed.maintenance_contracts ?? {},
       green_pr_attestations: parsed.green_pr_attestations ?? {},
       green_pr_receipts: parsed.green_pr_receipts ?? {},
