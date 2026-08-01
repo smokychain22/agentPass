@@ -1186,6 +1186,73 @@ tries again 60s later, instead of hanging the loop forever.
 See `test/seller-runtime-portability.test.ts`'s "Incident #12" tests for
 the direct regression coverage (both calls carry the explicit timeout).
 
+### Incident #13: the official gate-check is slower than the heartbeat tick, so running it inline could never succeed
+
+Found live on `repodiet-agent-9636` immediately after Incident #12's bound
+was deployed. The runtime was genuinely healthy — `daemonOk: true`,
+`xmtpOk: true`, wallet logged in, both plugins active — yet every heartbeat
+after the first was withheld with `gateOk: false`, indefinitely.
+
+Measured directly in the container, with the runtime otherwise untouched:
+
+```
+timeout 90 onchainos agent gate-check --role asp
+→ DURATION=90s EXIT=124        # killed at the bound, still running
+```
+
+The same command completed in roughly 20 seconds on a freshly-booted, quiet
+runtime (`heartbeat_accepted` landed 34s after startup). It shells out to
+`okx-a2a doctor`, which makes live OKX-backend and XMTP calls, so its
+latency is genuinely variable — it is slow, not hung.
+
+**Root cause** — two compounding structural mismatches:
+
+1. Incident #12 bounded that call at 45s and it was invoked inline on every
+   60-second heartbeat tick. A gate-check that legitimately needs 60-90s can
+   never finish inside a 45s bound, so `gateOk` was false on every tick and
+   the heartbeat was withheld forever despite a healthy runtime. Incident
+   #12's bound was correct in principle — an unbounded call hangs the loop —
+   but the value was chosen from the fast-path observation alone.
+2. `setInterval` fires the next tick regardless of whether the previous one
+   finished, and there was no in-flight guard. Worst-case cycle cost is
+   ~145s (`daemon status` 20s + `daemon start` 60s + `daemon status` 20s +
+   gate-check 45s) against a 60s interval, so slow cycles overlapped and
+   stacked concurrent `onchainos`/`okx-a2a` subprocesses contending over the
+   same local state — making each one slower still. This is the same
+   concurrent-CLI contention class already documented for OpenClaw config
+   writes, and it is self-reinforcing: it explains why an operator running a
+   single manual `gate-check` over SSH while the loop was live saw that call
+   exceed 300s.
+
+**Fix** — separate the two cadences rather than tune one number:
+
+- The heavy gate-check runs on its own timer (`GATE_CHECK_REFRESH_MS`,
+  180s) with a bound it can actually finish inside
+  (`GATE_CHECK_TIMEOUT_MS`, 150s), and records *when it last genuinely
+  passed*.
+- The 60-second heartbeat tick reads that recorded proof via
+  `gateProofIsFresh()` instead of re-running the command. The tick now only
+  performs consistently sub-10s work (`daemon status`, `agent refresh`), so
+  it comfortably fits its interval.
+- Both the heartbeat cycle and the gate-check refresh carry in-flight
+  guards, so neither can stack on itself.
+
+This does **not** weaken the "never claim online without proof" rule. The
+heartbeat still requires a real gate-check that genuinely passed, and treats
+it as valid only while fresh; a stale proof fails closed exactly like a
+failed check. `GATE_CHECK_FRESHNESS_MS` (420s) is deliberately larger than
+`GATE_CHECK_REFRESH_MS + GATE_CHECK_TIMEOUT_MS` so that one slow refresh
+cannot flap the agent offline, and far short of indefinite.
+
+**Operator note:** do not run `onchainos agent gate-check` or
+`okx-a2a daemon start` over SSH while the seller runtime is live. Those
+commands contend with the runtime's own calls over shared local state and
+will both slow the runtime and corrupt whatever you were trying to measure.
+Read the logs instead.
+
+See `test/seller-runtime-portability.test.ts`'s "Incident #13" tests for the
+regression coverage.
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
