@@ -78,22 +78,105 @@ export function buildIsolatedRuntimeEnv(
   };
 }
 
-export function readLivePid(pidFile: string): number | undefined {
-  if (!fs.existsSync(pidFile)) return undefined;
-  const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
-  if (!Number.isSafeInteger(pid) || pid <= 0) {
-    fs.rmSync(pidFile, { force: true });
-    return undefined;
-  }
+/**
+ * `/proc/<pid>/stat`'s field 22 ("starttime", clock ticks since boot) —
+ * parsed by finding the LAST ")" (the kernel-supplied `comm` field is
+ * parenthesized and may itself contain spaces or parens, so a naive
+ * whitespace split from the start would misalign every later field).
+ * Returns undefined when `/proc` is unavailable (any non-Linux host,
+ * e.g. local Windows development) or the pid has already exited.
+ */
+function readProcessStartTime(pid: number): string | undefined {
   try {
-    process.kill(pid, 0);
-    return pid;
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const afterComm = stat.slice(stat.lastIndexOf(")") + 2).trim();
+    const fields = afterComm.split(/\s+/);
+    // fields[0] is state (stat field 3); starttime is stat field 22, i.e. index 19 here.
+    return fields[19];
   } catch {
-    fs.rmSync(pidFile, { force: true });
     return undefined;
   }
 }
 
+interface PidFileContents {
+  pid: number;
+  /** /proc/<pid>/stat's own starttime at the moment this file was written — see readProcessStartTime. Absent when /proc was unavailable. */
+  startTime?: string;
+}
+
+function parsePidFileContents(raw: string): PidFileContents | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  // Legacy/plain format: a bare PID with nothing else — still accepted, just
+  // without the stronger start-time check below.
+  if (/^\d+$/.test(trimmed)) {
+    const pid = Number(trimmed);
+    return Number.isSafeInteger(pid) && pid > 0 ? { pid } : undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<PidFileContents>;
+    if (typeof parsed.pid !== "number" || !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0) return undefined;
+    return { pid: parsed.pid, startTime: typeof parsed.startTime === "string" ? parsed.startTime : undefined };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Proves a recorded PID is genuinely still the SAME process this lock file
+ * was written for — not merely that some process now holds that PID number.
+ *
+ * === Real production incident this fixes ===
+ * A container reboot resets the kernel's PID counter, so early-boot PIDs
+ * are drawn from a small, low, largely deterministic range every time.
+ * Live on repodiet-agent-9636: after a Fly deploy restarted the Machine, a
+ * fresh boot's `openclaw-gateway` child happened to land on the exact same
+ * PID (724) a PREVIOUS boot's seller-runtime had recorded in this
+ * persisted lock file — `process.kill(pid, 0)` alone cannot tell these
+ * apart, since it only proves "a process with this PID exists right now",
+ * not "it is the same process". The false positive made every subsequent
+ * boot attempt refuse to start ("another_seller_runtime_is_already_live"),
+ * exhausting the Machine's full restart budget and leaving it stopped.
+ *
+ * Fix: pair the PID with the OS's own process start time
+ * (`/proc/<pid>/stat` field 22, clock ticks since boot — read once when the
+ * lock is written, re-read and compared on every check). A PID reused by a
+ * genuinely different process will, for all practical purposes, never
+ * share the exact same start-time tick as the original — the same
+ * technique real init systems and process supervisors use to guard against
+ * this exact PID-reuse race. Degrades to the plain liveness check alone
+ * when `/proc` is unavailable (non-Linux) or no start time was recorded
+ * (an older lock file written before this fix) — never a regression from
+ * previous behavior, only a strengthening of it.
+ */
+function isRecordedProcessStillTheSameOne(contents: PidFileContents): boolean {
+  if (!contents.startTime) return true; // nothing stronger to check against — trust the liveness check alone
+  const currentStartTime = readProcessStartTime(contents.pid);
+  if (currentStartTime === undefined) return true; // /proc unavailable on this platform — cannot verify further
+  return currentStartTime === contents.startTime;
+}
+
+export function readLivePid(pidFile: string): number | undefined {
+  if (!fs.existsSync(pidFile)) return undefined;
+  const contents = parsePidFileContents(fs.readFileSync(pidFile, "utf8"));
+  if (!contents) {
+    fs.rmSync(pidFile, { force: true });
+    return undefined;
+  }
+  try {
+    process.kill(contents.pid, 0);
+  } catch {
+    fs.rmSync(pidFile, { force: true });
+    return undefined;
+  }
+  if (!isRecordedProcessStillTheSameOne(contents)) {
+    fs.rmSync(pidFile, { force: true });
+    return undefined;
+  }
+  return contents.pid;
+}
+
 export function writePid(pidFile: string, pid: number): void {
-  fs.writeFileSync(pidFile, `${pid}\n`, { encoding: "utf8", flag: "wx" });
+  const contents: PidFileContents = { pid, startTime: readProcessStartTime(pid) };
+  fs.writeFileSync(pidFile, JSON.stringify(contents), { encoding: "utf8", flag: "wx" });
 }

@@ -12,7 +12,7 @@
     "okx:runtime": "tsx scripts/okx-runtime-manager.ts",
     "seller:production-readiness": "tsx scripts/seller-production-readiness.ts",
     "okx:a2mcp-canary": "tsx scripts/a2mcp-production-canary.ts",
-    "test:okx-runtime": "tsx test/okx-runtime-process.test.ts && tsx test/okx-runtime-policy.test.ts && tsx test/okx-runtime-isolation-replay.test.ts && tsx test/okx-runtime-payment-client.test.ts && tsx test/okx-service-binding-route.test.ts && tsx test/okx-agent-runtime-heartbeat.test.ts",
+    "test:okx-runtime": "tsx test/okx-runtime-process.test.ts && tsx test/okx-runtime-policy.test.ts && tsx test/okx-runtime-isolation-replay.test.ts && tsx test/runtime-layout-pid-lock.test.ts && tsx test/okx-runtime-payment-client.test.ts && tsx test/okx-service-binding-route.test.ts && tsx test/okx-agent-runtime-heartbeat.test.ts",
     "generate:demo": "curl -sf \"http://localhost:3000/api/demo/stats?refresh=1\" && curl -sf \"http://localhost:3000/api/demo/sample-bundle\" -o public/demo/repodiet-demo-sample-bundle.zip",
     "api": "node server.js",
     "agentpass:start": "node agentpass/server.js",
