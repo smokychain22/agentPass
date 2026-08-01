@@ -116,6 +116,18 @@ async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayl
 
   const selectedFindingIds = normalizeSelectedFindingIds(body.selectedFindingIds);
 
+  // A caller that supplied a selection but whose ids all normalize away
+  // (empty strings, whitespace) must NOT silently fall through to the
+  // unscoped path — that reinstates exactly the broadening this module
+  // exists to prevent. Reproduced in production: `selectedFindingIds: ["   "]`
+  // returned a five-path cleanup including a must-keep file.
+  if (Array.isArray(body.selectedFindingIds) && body.selectedFindingIds.length > 0 && !selectedFindingIds.length) {
+    throw new FindingSelectionValidationError(
+      "FINDING_UNKNOWN",
+      "A cleanup selection was supplied but contained no usable finding ids."
+    );
+  }
+
   const inline =
     body.findings?.scanId && body.findings?.repo?.owner ? body.findings : undefined;
 
@@ -143,6 +155,10 @@ async function resolveFindings(body: PatchKitGenerateBody): Promise<FindingsPayl
 }
 
 /** Deduplicates and trims caller-supplied ids without silently widening scope. */
+export function normalizeSelectedFindingIdsForTest(ids: string[] | undefined): string[] {
+  return normalizeSelectedFindingIds(ids);
+}
+
 function normalizeSelectedFindingIds(ids: string[] | undefined): string[] {
   if (!ids?.length) return [];
   const seen = new Set<string>();
