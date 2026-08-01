@@ -76,6 +76,41 @@ async function resolvePatchKit(
 
 const PR_TITLE_PREFIX = "RepoDiet: repair";
 
+/**
+ * Classifies a single requested-delete outcome. Exported and pure so the
+ * idempotency fix below is directly unit-testable without mocking
+ * GitHubClient or exercising the surrounding network-calling function.
+ *
+ * `deleted === false` means the path was already absent on that branch.
+ * On a freshly created branch that is a genuine anomaly (the delete
+ * `resolveValidatedDeliveryOps` validated isn't actually there). On a
+ * REUSED branch it is exactly what a repeat delivery looks like — a prior
+ * attempt already removed it — and must be classified as satisfied, not
+ * as evidence nothing was ever approved.
+ */
+export function classifyDeleteOutcome(
+  deleted: boolean,
+  reuseExistingBranch: boolean
+): "applied" | "already_satisfied" | "not_found" {
+  if (deleted) return "applied";
+  return reuseExistingBranch ? "already_satisfied" : "not_found";
+}
+
+/**
+ * Whether a "no approved cleanup operation was applied" delivery failure
+ * is genuine. Reproduced live: an identical retry of a delivery already
+ * present on a reused branch threw NO_SAFE_CANDIDATES because this check
+ * only ever counted NEWLY-applied edits/deletes — never paths a prior
+ * delivery had already satisfied on that same branch.
+ */
+export function hasNoDeliverableChange(counts: {
+  editedCount: number;
+  deletedCount: number;
+  alreadySatisfiedCount: number;
+}): boolean {
+  return counts.editedCount === 0 && counts.deletedCount === 0 && counts.alreadySatisfiedCount === 0;
+}
+
 function buildCleanupBranchName(): string {
   const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   return `repodiet/cleanup-${ymd}-${nanoid(6)}`;
@@ -379,6 +414,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
 
   let filesDeleted = 0;
   const deletedPathsApplied: string[] = [];
+  const alreadySatisfiedPaths: string[] = [];
 
   const artifacts = patchKit.artifacts;
   const artifactEntries: Array<{ path: string; content: string; message: string }> = [
@@ -461,17 +497,31 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
         cleanupBranch,
         `RepoDiet: remove safe candidate ${path}`
       );
-      if (deleted) {
-        filesDeleted += 1;
-        deletedPathsApplied.push(path);
-      } else {
-        warnings.push(`Safe candidate not found on branch and was skipped: ${path}`);
+      switch (classifyDeleteOutcome(deleted, reuseExistingBranch)) {
+        case "applied":
+          filesDeleted += 1;
+          deletedPathsApplied.push(path);
+          break;
+        case "already_satisfied":
+          alreadySatisfiedPaths.push(path);
+          warnings.push(`Already applied on the reused branch from a prior delivery: ${path}`);
+          break;
+        case "not_found":
+          warnings.push(`Safe candidate not found on branch and was skipped: ${path}`);
+          break;
       }
     }
   }
 
   const editedPaths = deliveryOps.contentEdits.map((e) => e.path);
-  if (mode === "safe_only" && editedPaths.length === 0 && deletedPathsApplied.length === 0) {
+  if (
+    mode === "safe_only" &&
+    hasNoDeliverableChange({
+      editedCount: editedPaths.length,
+      deletedCount: deletedPathsApplied.length,
+      alreadySatisfiedCount: alreadySatisfiedPaths.length,
+    })
+  ) {
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
       "No approved cleanup operation was applied. RepoDiet did not create an artifacts-only pull request.",
@@ -479,7 +529,7 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
     );
   }
   const deliveredPathSet = new Set(
-    [...editedPaths, ...deletedPathsApplied].map((filePath) =>
+    [...editedPaths, ...deletedPathsApplied, ...alreadySatisfiedPaths].map((filePath) =>
       filePath.replace(/\\/g, "/").replace(/^\.\//, "")
     )
   );
