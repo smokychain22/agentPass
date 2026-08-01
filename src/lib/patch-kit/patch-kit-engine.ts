@@ -165,8 +165,9 @@ function normalizeSelectedFindingIds(ids: string[] | undefined): string[] {
  */
 export function assertOperationsWithinAuthorizedScope(input: {
   authorizedFindings: Finding[];
-  changedPaths: string[];
+  operations: Array<{ filePath: string; findingIds?: string[]; type?: string }>;
 }): void {
+  const authorizedIds = new Set(input.authorizedFindings.map((f) => f.id));
   const authorizedPaths = new Set<string>();
   for (const finding of input.authorizedFindings) {
     for (const file of finding.files ?? []) {
@@ -174,12 +175,32 @@ export function assertOperationsWithinAuthorizedScope(input: {
     }
   }
 
-  const outOfScope = input.changedPaths.filter((p) => !authorizedPaths.has(p));
-  if (outOfScope.length) {
-    throw new FindingSelectionValidationError(
-      "FINDING_SCOPE_BROADENED",
-      `Cleanup scope broadened beyond the authorized selection: ${outOfScope.join(", ")}`
-    );
+  for (const op of input.operations) {
+    const attributed = (op.findingIds ?? []).filter((id) => authorizedIds.has(id));
+
+    // Every operation must trace back to a finding the caller authorized.
+    // An operation attributed to nothing, or to some other finding, is
+    // scope broadening no matter which stage produced it.
+    if (!attributed.length) {
+      throw new FindingSelectionValidationError(
+        "FINDING_SCOPE_BROADENED",
+        `Cleanup scope broadened beyond the authorized selection: ${op.filePath}`
+      );
+    }
+
+    // Deletions are held to the stricter path rule. A repair may legitimately
+    // EDIT a file outside the finding's own file list — consolidating a
+    // duplicate has to rewrite the callers that import the removed module, or
+    // the tree stops compiling — but it may never DELETE a path the caller
+    // did not authorize. That asymmetry is the safety property that matters:
+    // the defect this boundary exists to stop removed an unauthorized
+    // must-keep file.
+    if (op.type === "delete" && !authorizedPaths.has(op.filePath)) {
+      throw new FindingSelectionValidationError(
+        "FINDING_SCOPE_BROADENED",
+        `Cleanup attempted to delete a path outside the authorized selection: ${op.filePath}`
+      );
+    }
   }
 }
 
@@ -755,7 +776,7 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
     if (normalizeSelectedFindingIds(body.selectedFindingIds).length) {
       assertOperationsWithinAuthorizedScope({
         authorizedFindings: flattenFindingsPayload(findings),
-        changedPaths,
+        operations: changeOperations,
       });
     }
     const mergedPatch =

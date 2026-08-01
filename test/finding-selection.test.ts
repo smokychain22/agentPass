@@ -331,21 +331,71 @@ test("submitting a protected or review-only finding by id does not authorize exe
 
 test("scope broadening is detected and rejected even if an upstream stage emits an extra path", () => {
   const authorized = [
-    finding({ id: "keep", action: "safe_candidate", evidence: { summary: "t", signals: ["inboundImports=0","routeLike=false","analyzer=knip","inbound_refs=0","strategyId=remove_file","evidenceGrade=strong","classificationState=supported","classificationLabel=eligible_for_removal","autoFixAllowed=true","classification=actionable_candidate","preflight=actionable_candidate"] }, files: ["src/unused/confirmed-unused.ts"] }),
+    finding({ id: "keep", action: "safe_candidate", files: ["src/unused/confirmed-unused.ts"] }),
   ];
-  // In-scope only → passes.
+  // Attributed to the authorized finding, in-scope path -> allowed.
   assert.doesNotThrow(() =>
     assertOperationsWithinAuthorizedScope({
       authorizedFindings: authorized,
-      changedPaths: ["src/unused/confirmed-unused.ts"],
+      operations: [
+        { filePath: "src/unused/confirmed-unused.ts", findingIds: ["keep"], type: "delete" },
+      ],
     })
   );
-  // A path the caller never authorized → must fail closed.
+  // An operation attributed to a finding the caller never authorized.
   assert.throws(
     () =>
       assertOperationsWithinAuthorizedScope({
         authorizedFindings: authorized,
-        changedPaths: ["src/unused/confirmed-unused.ts", "src/config/runtime-hook.ts"],
+        operations: [
+          { filePath: "src/unused/confirmed-unused.ts", findingIds: ["keep"], type: "delete" },
+          { filePath: "src/config/runtime-hook.ts", findingIds: ["other"], type: "delete" },
+        ],
+      }),
+    (err: unknown) =>
+      err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
+  );
+  // An unattributed operation is scope broadening too.
+  assert.throws(
+    () =>
+      assertOperationsWithinAuthorizedScope({
+        authorizedFindings: authorized,
+        operations: [{ filePath: "src/anything.ts", findingIds: [], type: "edit" }],
+      }),
+    (err: unknown) =>
+      err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
+  );
+});
+
+test("a repair may EDIT a companion file it must rewrite, but may never DELETE an unauthorized path", () => {
+  // Consolidating a duplicate has to rewrite the callers that import the
+  // removed module, or the tree stops compiling. That edit is attributed to
+  // the authorized finding and must be allowed.
+  const authorized = [
+    finding({
+      id: "dup",
+      action: "safe_candidate",
+      type: "duplicate_code",
+      files: ["src/components/StatusCard.tsx", "src/components/StatusCardCopy.tsx"],
+    }),
+  ];
+  assert.doesNotThrow(() =>
+    assertOperationsWithinAuthorizedScope({
+      authorizedFindings: authorized,
+      operations: [
+        { filePath: "src/components/StatusCardCopy.tsx", findingIds: ["dup"], type: "delete" },
+        { filePath: "src/components/LegacyStatusPanel.tsx", findingIds: ["dup"], type: "edit" },
+      ],
+    })
+  );
+  // The same finding may NOT delete a path outside its own file list.
+  assert.throws(
+    () =>
+      assertOperationsWithinAuthorizedScope({
+        authorizedFindings: authorized,
+        operations: [
+          { filePath: "src/config/runtime-hook.ts", findingIds: ["dup"], type: "delete" },
+        ],
       }),
     (err: unknown) =>
       err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
