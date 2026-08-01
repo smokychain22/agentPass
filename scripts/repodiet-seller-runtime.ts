@@ -81,6 +81,54 @@ let heartbeatTimer: NodeJS.Timeout | undefined;
 let consecutiveHeartbeatFailures = 0;
 
 /**
+ * === Incident #13: the official gate-check is far slower than the heartbeat
+ * tick, so running it inline on every tick can never succeed ===
+ *
+ * Measured live on repodiet-agent-9636: `onchainos agent gate-check --role
+ * asp` completed in ~20s on a quiet runtime, but was still running when
+ * killed at a hard 90s bound once the runtime was under its own steady-state
+ * load (`DURATION=90s EXIT=124`). It shells out to `okx-a2a doctor`, which
+ * makes live OKX backend + XMTP calls, so its latency is genuinely variable
+ * — not a hang, just slow.
+ *
+ * That is structurally incompatible with calling it inline every
+ * HEARTBEAT_INTERVAL_MS (60s) under Incident #12's 45s bound:
+ *   - a real 60-90s gate-check always exceeds the 45s bound, so `gateOk`
+ *     is false on every tick and the heartbeat is withheld forever, even
+ *     though the runtime is genuinely healthy (daemonOk/xmtpOk both true);
+ *   - `setInterval` fires the next tick regardless of whether the previous
+ *     one finished, so slow cycles overlap and pile up concurrent
+ *     onchainos/okx-a2a subprocesses contending over the same local state,
+ *     which makes each one slower still — a self-reinforcing spiral that
+ *     matches the observed "one accepted heartbeat, then permanently
+ *     gateOk:false" trace exactly.
+ *
+ * Fix: separate the two cadences. The heavy gate-check runs on its own
+ * background timer with a bound it can actually finish inside, and caches
+ * its last SUCCESSFUL result with a timestamp. The 60s heartbeat tick reads
+ * that cached proof instead of re-running the command, so it stays fast
+ * (only `daemon status` + `agent refresh`, both consistently sub-10s).
+ *
+ * This does NOT weaken the "never claim online without proof" rule: the
+ * heartbeat still requires a real gate-check that genuinely passed, and
+ * treats it as valid only while it is fresh. A stale proof fails closed
+ * exactly like a failed check. GATE_CHECK_FRESHNESS_MS is deliberately
+ * larger than GATE_CHECK_REFRESH_MS so a single slow refresh cannot flap
+ * the agent offline, but far short of indefinite.
+ */
+const GATE_CHECK_TIMEOUT_MS = 150_000;
+const GATE_CHECK_REFRESH_MS = 180_000;
+const GATE_CHECK_FRESHNESS_MS = 420_000;
+let gateCheckTimer: NodeJS.Timeout | undefined;
+let gateCheckInFlight = false;
+let heartbeatCycleInFlight = false;
+let lastGateCheckPassedAtMs = 0;
+
+function gateProofIsFresh(nowMs: number = Date.now()): boolean {
+  return lastGateCheckPassedAtMs > 0 && nowMs - lastGateCheckPassedAtMs < GATE_CHECK_FRESHNESS_MS;
+}
+
+/**
  * Identity gate. The runtime refuses to represent anything other than the
  * canonical seller, so a misconfigured deployment fails closed instead of
  * impersonating another agent.
@@ -178,22 +226,45 @@ function acquireSingleInstanceLock(pidFile: string): void {
  * withholds that one cycle and tries again on the next tick, instead of
  * hanging forever.
  */
-async function officialGateCheckPasses(): Promise<boolean> {
+/**
+ * Runs the real gate-check and, on success, records when it passed. Called
+ * from its own slower timer (see Incident #13 above), never inline from the
+ * 60-second heartbeat tick. Self-guards against overlapping runs so a
+ * refresh that outlives its own interval can never stack.
+ */
+async function refreshOfficialGateCheck(): Promise<boolean> {
+  if (gateCheckInFlight) {
+    log("gate_check_skipped_still_running", {
+      note: "previous gate-check has not finished; not stacking another",
+    });
+    return gateProofIsFresh();
+  }
+  gateCheckInFlight = true;
+  const startedAtMs = Date.now();
   try {
     const { stdout } = await execFileAsync(
       "onchainos",
       ["agent", "gate-check", "--role", "asp"],
-      { timeout: 45_000 }
+      { timeout: GATE_CHECK_TIMEOUT_MS }
     );
     const parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "{}");
-    return (
+    const passed =
       parsed?.data?.ready === true &&
       parsed?.data?.identity?.agentId === SELLER.agentId &&
       parsed?.data?.communication?.ok === true &&
-      parsed?.data?.wallet?.ok === true
-    );
+      parsed?.data?.wallet?.ok === true;
+    if (passed) lastGateCheckPassedAtMs = Date.now();
+    log("gate_check_result", { passed, durationMs: Date.now() - startedAtMs });
+    return passed;
   } catch {
+    log("gate_check_result", {
+      passed: false,
+      durationMs: Date.now() - startedAtMs,
+      note: "gate-check failed or exceeded its bound; last successful proof still applies until it goes stale",
+    });
     return false;
+  } finally {
+    gateCheckInFlight = false;
   }
 }
 
@@ -445,7 +516,11 @@ async function establishCommunicationReadiness(): Promise<void> {
  */
 async function publishHeartbeat(): Promise<void> {
   const daemonOk = await ensureDaemonRunning();
-  const [gateOk, xmtpOk] = await Promise.all([officialGateCheckPasses(), xmtpClientActive()]);
+  // Incident #13: the gate-check runs on its own slower timer; this tick
+  // reads the proof it recorded rather than re-running a command that can
+  // outlive the tick interval.
+  const gateOk = gateProofIsFresh();
+  const xmtpOk = await xmtpClientActive();
   if (xmtpOk) log("xmtp_ready", { ok: true });
 
   if (!daemonOk || !gateOk || !xmtpOk) {
@@ -507,6 +582,7 @@ function shutdown(signal: string): void {
   shuttingDown = true;
   log("shutdown_started", { signal });
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (gateCheckTimer) clearInterval(gateCheckTimer);
 
   const paths = getRuntimePaths(resolveRuntimeRoot(), "seller");
   try {
@@ -543,10 +619,28 @@ async function main(): Promise<void> {
 
   await establishCommunicationReadiness();
 
+  // Incident #13: establish a real gate-check proof before the first
+  // heartbeat, then keep it refreshed on its own slower cadence so the
+  // 60-second tick never blocks on a command that can outlive it.
+  await refreshOfficialGateCheck();
+  gateCheckTimer = setInterval(() => {
+    if (shuttingDown) return;
+    void refreshOfficialGateCheck();
+  }, GATE_CHECK_REFRESH_MS);
+
   await publishHeartbeat();
   heartbeatTimer = setInterval(() => {
     if (shuttingDown) return;
-    void publishHeartbeat();
+    if (heartbeatCycleInFlight) {
+      log("heartbeat_cycle_skipped_still_running", {
+        note: "previous heartbeat cycle has not finished; not stacking another",
+      });
+      return;
+    }
+    heartbeatCycleInFlight = true;
+    void publishHeartbeat().finally(() => {
+      heartbeatCycleInFlight = false;
+    });
   }, HEARTBEAT_INTERVAL_MS);
 
   log("running", { note: "foreground supervisor active; awaiting signals" });
