@@ -1063,6 +1063,87 @@ lock it determines to be stale either way. See
 (including reproducing the exact false-positive shape: our own genuinely
 live PID, paired with a deliberately wrong recorded start time).
 
+### Incident #11: `okx-a2a`'s own "OS autostart" mechanism is incompatible with this container and, once triggered, permanently breaks every future `daemon start` attempt
+
+The first deploy after Incident #10's fix (PID lock start-time check)
+reached `running` cleanly on every boot attempt, but the A2A daemon never
+successfully came up: `communication_ready` and `a2a_daemon_ready` both
+reported `ok:false` on every boot, heartbeat cycles stretched to 4-8+
+minutes (vs. the expected 60s), and — worst of all — a second OOM kill
+hit at only ~26 minutes of 2GB uptime, *faster* than the ~65 minutes
+observed at half the memory (1GB), the opposite of what more memory
+should produce.
+
+**Root cause, traced directly into the real pinned `@okxweb3/a2a-node@0.1.11`
+CLI source (not assumed).** Two independent, unrelated code paths both
+delegate to the same broken mechanism:
+
+1. `okx-a2a doctor --fix`'s own "autostart" check has `fix.kind: "auto"` —
+   every `doctor --fix` run, on a fresh volume where autostart is not yet
+   "installed" (a bare `fs.existsSync` check on a service-unit path), fully
+   automatically attempts to write a systemd user unit
+   (`~/.config/systemd/user/okx-a2a.service`) and run `systemctl --user
+   enable --now`. This container (`node:22-bookworm-slim`, tini + this
+   supervisor as the only process supervision — see Incident #1's
+   `systemctl --user, which does not exist here` note above) has no
+   systemd/D-Bus user session. Each `systemctl --user ...` call carries its
+   own internal 30-second timeout (`execFileAsync("systemctl", [...],
+   {timeout: 30_000})`) and hangs for the *full* duration rather than
+   failing fast.
+2. The unit **file** is written before `systemctl` is ever invoked
+   (`writeFile(servicePath, ...)` precedes both systemctl calls in
+   `installSystemdAutostart()`), so it persists on the volume regardless of
+   whether systemctl succeeds, fails, or times out. From that moment on,
+   `isAutostartInstalled()` returns true forever, and *both* `okx-a2a
+   daemon start`'s own CLI handler (`handleStart`, when `--no-autostart` is
+   not passed) *and* `doctor --fix`'s own separate `daemon_running`
+   auto-fix (`ensureDaemonReady` → `startDaemonRespectingSupervisor`, an
+   internal library call with no flag to opt out) unconditionally route
+   through `systemctl --user restart ...` next — the identical hang, now on
+   every single future attempt, including once per heartbeat tick via
+   `ensureDaemonRunning`. This is a self-perpetuating, permanent breakage
+   from a single triggering boot: exactly the same *shape* of bug as
+   Incident #2's `okx-a2a setup openclaw --release latest` (an official
+   CLI convenience feature that assumes an OS-level service manager this
+   container deliberately does not have), just in a different command. The
+   accelerating OOM is explained the same way Incident #9's memory
+   escalation was suspected but not yet proven: each timed-out
+   `execFileAsync` call spawns a real `systemctl --user` child process,
+   and repeated invocations (once per boot via doctor, then once per
+   *heartbeat tick* forever after since the daemon never successfully
+   starts) compound resource usage over time.
+
+**Fix, two parts, in `scripts/repodiet-seller-runtime.ts`:**
+
+- `okx-a2a daemon start` has a documented `--no-autostart` flag. Traced
+  into `handleStart` (the actual CLI handler for this command): the flag
+  is checked *before* anything else, and when present the entire
+  autostart-install branch is skipped unconditionally — never even
+  checking whether the unit file exists — going straight to the plain,
+  bounded `startDaemon()` path. Now always passed. This alone eliminates
+  the recurring, unbounded, once-per-heartbeat-tick risk entirely.
+- `doctor --fix`'s own internal `daemon_running` auto-fix has no
+  equivalent flag (`ensureDaemonReady` is called as a library function,
+  never through CLI argument parsing) — the only available lever is
+  keeping the unit file itself absent, since `isAutostartInstalled()` is a
+  bare file-existence check. `disableOkxA2aOsAutostart()` (a pure,
+  bounded `fs.rmSync(..., {force:true})` — deliberately never shells out
+  to `okx-a2a daemon autostart uninstall`, which would invoke the same
+  hanging `systemctl` call) removes the unit file immediately before *and*
+  after the one-time `doctor --fix` call this process makes at startup.
+  This bounds — it cannot fully eliminate, since doctor's own "autostart"
+  check will still attempt exactly one ~30-60s install/hang per fresh boot
+  before the post-call cleanup runs — the one-time startup cost to the
+  already-generous 240-second timeout `runDoctorFix` already had, while
+  guaranteeing the file never persists to poison every later call the way
+  it did before this fix.
+
+See `test/seller-runtime-portability.test.ts`'s "Incident #11" tests for
+the direct regression coverage (the `--no-autostart` flag's presence, the
+cleanup function being called both before and after the doctor call and
+again before every daemon-start attempt, and the cleanup function itself
+never spawning a process — the exact hang class it exists to prevent).
+
 ## One-time CLI authentication
 
 The `onchainos` and `okx-a2a` CLIs authenticate through their own credential
