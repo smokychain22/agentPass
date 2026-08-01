@@ -433,6 +433,62 @@ function run() {
     );
   });
 
+  // --- Incident #11: okx-a2a's own OS-autostart mechanism is incompatible
+  // with this systemd-less container and, once triggered, permanently
+  // breaks every future `daemon start` call -----------------------------
+
+  test("Incident #11: every daemon start call passes --no-autostart, the documented flag that skips okx-a2a's own systemd/launchd install-and-restart path entirely", () => {
+    const src = entrypointSource();
+    assert.ok(
+      src.includes('["daemon", "start", "--provider", A2A_PROVIDER, "--no-autostart"]'),
+      "daemon start must always pass --no-autostart — without it, every call unconditionally attempts an OS autostart install/restart that hangs for ~30-60s per systemctl call in this systemd-less container, and once the unit file is left behind, every future call (including doctor's own internal daemon_running fix, which has no equivalent flag) is permanently routed through the same broken path"
+    );
+  });
+
+  test("Incident #11: the poisoning autostart unit file is proactively removed before AND after the one-time doctor --fix call, and again before every daemon start attempt", () => {
+    const src = entrypointSource();
+    assert.ok(
+      src.includes("function disableOkxA2aOsAutostart"),
+      "must define the defensive cleanup — doctor --fix's own internal daemon_running auto-fix has no --no-autostart-equivalent flag, so keeping the unit file absent is the only available lever"
+    );
+    const doctorFixIndex = src.indexOf("async function runDoctorFix(");
+    const doctorFixOnceIndex = src.indexOf("async function runDoctorFixOnce(");
+    const ensureDaemonRunningIndex = src.indexOf("async function ensureDaemonRunning(");
+    assert.ok(doctorFixIndex > -1 && doctorFixOnceIndex > -1 && ensureDaemonRunningIndex > -1);
+    const runDoctorFixBody = src.slice(doctorFixIndex, doctorFixOnceIndex);
+    assert.ok(
+      (runDoctorFixBody.match(/disableOkxA2aOsAutostart\(\)/g) ?? []).length >= 2,
+      "runDoctorFix must call the cleanup both before and after the doctor --fix call (try/finally), not just once"
+    );
+    const ensureDaemonRunningBody = src.slice(ensureDaemonRunningIndex, src.indexOf("\n}\n", ensureDaemonRunningIndex));
+    assert.ok(
+      ensureDaemonRunningBody.includes("disableOkxA2aOsAutostart()"),
+      "ensureDaemonRunning must also defensively clean up before every daemon start attempt, belt-and-braces alongside --no-autostart"
+    );
+  });
+
+  test("Incident #11: the autostart-cleanup function never spawns a process — pure, bounded filesystem operations only, so it can never itself hang", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("function disableOkxA2aOsAutostart");
+    const braceStart = src.indexOf("{", start);
+    let depth = 0;
+    let end = -1;
+    for (let i = braceStart; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    assert.ok(end > -1, "must be able to isolate the function body");
+    const body = src.slice(start, end + 1);
+    assert.ok(!body.includes("execFile"), "must never shell out — a hung subprocess is exactly the bug this function exists to avoid");
+    assert.ok(body.includes("fs.rmSync") && body.includes("force: true"), "must remove the unit file unconditionally, never failing if it is already absent");
+  });
+
   // --- Single bootstrap owner (Incident #2 remediation) ------------------
   //
   // scripts/seller-runtime-supervisor.ts is now the SOLE owner of OpenClaw
