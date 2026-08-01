@@ -13,6 +13,7 @@ import { nanoid } from "nanoid";
 import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
 import { resolvePrRepairStrategy, type PrRepairResolution } from "./pr-repair";
 import { resolveValidatedDeliveryOps, normalizeApprovedPaths } from "./delivery-operations";
+import { getCleanupPrDelivery, recordCleanupPrDelivery } from "./cleanup-pr-delivery-ledger";
 import {
   buildMaintenanceOutcome,
   type MaintenanceOutcome,
@@ -324,15 +325,37 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   warnings.push(...deliveryContext.warnings);
 
   const baseSha = deliveryContext.liveBaseSha;
-  const requestedBranch = input.cleanupBranch?.trim() || buildCleanupBranchName();
+
+  // Idempotency: a caller retrying the exact same patch kit — same
+  // patchKitId, therefore the same authorized scope — must be routed back
+  // to whatever it delivered last time, not handed a fresh branch name.
+  // Only engages when the caller has no tracking of its own; the paid A2A
+  // orchestrator, phase3, and the ASP executor already pass their own
+  // existingPrNumber/cleanupBranch and take priority over this lookup. See
+  // cleanup-pr-delivery-ledger.ts for the defect this closes.
+  let resolvedExistingPrNumber = input.existingPrNumber;
+  let resolvedCleanupBranch = input.cleanupBranch;
+  if (
+    mode === "safe_only" &&
+    resolvedExistingPrNumber === undefined &&
+    !resolvedCleanupBranch?.trim()
+  ) {
+    const priorDelivery = await getCleanupPrDelivery(patchKit.id);
+    if (priorDelivery && priorDelivery.owner === parsed.owner && priorDelivery.repo === parsed.repo) {
+      resolvedExistingPrNumber = priorDelivery.prNumber;
+      resolvedCleanupBranch = priorDelivery.branch;
+    }
+  }
+
+  const requestedBranch = resolvedCleanupBranch?.trim() || buildCleanupBranchName();
 
   let repair: PrRepairResolution | undefined;
-  if (input.existingPrNumber !== undefined) {
+  if (resolvedExistingPrNumber !== undefined) {
     repair = await resolvePrRepairStrategy(client, {
       owner: parsed.owner,
       repo: parsed.repo,
       cleanupBranch: requestedBranch,
-      existingPrNumber: input.existingPrNumber,
+      existingPrNumber: resolvedExistingPrNumber,
     });
     if (repair.reason) warnings.push(repair.reason);
   }
@@ -496,6 +519,22 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
             maintenanceOutcome
           )
         );
+
+  if (mode === "safe_only") {
+    // Best-effort — a ledger write failure must never fail an otherwise
+    // successful delivery; it only means the NEXT retry falls back to
+    // creating a fresh branch instead of reusing this one.
+    try {
+      await recordCleanupPrDelivery(patchKit.id, {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        prNumber: pr.number,
+        branch: cleanupBranch,
+      });
+    } catch {
+      // See comment above.
+    }
+  }
 
   return {
     data: {
