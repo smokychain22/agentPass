@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { parseInstallCallbackParams } from "../src/lib/github-app/install-callback";
 import { installationIdLastFour } from "../src/lib/github-app/authoritative-access";
 import { canonicalAppOrigin } from "../src/lib/payment/canonical-app-url";
@@ -49,6 +51,54 @@ test("canonical production fallback matches REPODIET_PRODUCTION_FALLBACK_URL", (
     if (prevVercel === undefined) delete process.env.VERCEL_ENV;
     else process.env.VERCEL_ENV = prevVercel;
   }
+});
+
+// --- Incident #15: app-level requests were never authenticated, so
+// installation discovery always reported a genuinely-installed repository
+// as "not_installed" ---------------------------------------------------
+
+test("Incident #15: app-level Octokit uses the documented authStrategy form, not the raw strategy as `auth`", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "src", "lib", "github-app", "octokit.ts"),
+    "utf8"
+  );
+  const start = src.indexOf("export function getAppOctokit(");
+  assert.ok(start > -1);
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  assert.ok(
+    body.includes("authStrategy: createAppAuth"),
+    "@octokit/auth-app requires authStrategy alongside auth; without it the strategy is never invoked and every app-level request goes out unauthenticated"
+  );
+  assert.ok(
+    !/new Octokit\(\{\s*auth\s*\}\)/.test(body),
+    "passing the strategy instance as `auth` is the exact defect that made apps.listInstallations fail"
+  );
+  assert.ok(
+    body.includes("appId") && body.includes("privateKey"),
+    "auth must carry the app credentials as strategy options"
+  );
+});
+
+test("Incident #15: a failed installation scan is reported, never silently turned into 'not installed'", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "src", "lib", "github-app", "authoritative-repository-access.ts"),
+    "utf8"
+  );
+  const start = src.indexOf("async function paginateInstallationForRepository(");
+  assert.ok(start > -1);
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  assert.ok(
+    !/\}\s*catch\s*\{\s*\n\s*return undefined;/.test(body),
+    "a bare catch made a broken auth config indistinguishable from an uninstalled repository"
+  );
+  assert.ok(
+    body.includes("installation_scan_failed"),
+    "the failure must surface a diagnostic event"
+  );
+  assert.ok(
+    !body.includes("${err}") && body.includes("err instanceof Error ? err.message"),
+    "only the error message may be logged — never a serialized error that could carry token or key material"
+  );
 });
 
 console.log("authoritative-github-access: all passed");
