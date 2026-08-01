@@ -181,6 +181,75 @@ interface DoctorResult {
 }
 
 /**
+ * === Incident #11: `okx-a2a`'s own "OS autostart" mechanism is fundamentally
+ * incompatible with this container and, once triggered, permanently breaks
+ * every future `daemon start` attempt ===
+ *
+ * Traced directly from the real pinned `@okxweb3/a2a-node@0.1.11` CLI
+ * source (not assumed). Two independent, unrelated code paths both delegate
+ * to it:
+ *
+ *   1. `okx-a2a doctor --fix`'s own "autostart" check has `fix.kind: "auto"`
+ *      — every doctor --fix run at boot, on a fresh volume, silently
+ *      attempts to install a systemd user unit
+ *      (`~/.config/systemd/user/okx-a2a.service`) and run
+ *      `systemctl --user enable --now`. This container (Dockerfile.seller,
+ *      `node:22-bookworm-slim`, tini + this supervisor as the only process
+ *      supervision — see Incident #1's "systemctl --user, which does not
+ *      exist here" note elsewhere in this repo) has no systemd/D-Bus user
+ *      session. Each `systemctl --user ...` call carries its own internal
+ *      30-second timeout (traced: `execFileAsync("systemctl", [...], {
+ *      timeout: 30_000 })`) and hangs for the full duration rather than
+ *      failing fast.
+ *   2. The unit FILE is written (`writeFile(servicePath, ...)`) *before*
+ *      `systemctl` is ever invoked, so it persists on the volume regardless
+ *      of whether systemctl succeeds, fails, or times out. From that point
+ *      on, `isAutostartInstalled()` (a bare `fs.existsSync` check) returns
+ *      true forever, and both `okx-a2a daemon start`'s own "restart via
+ *      supervisor" fallback *and* doctor's own separate `daemon_running`
+ *      auto-fix (`ensureDaemonReady` -> `startDaemonRespectingSupervisor`)
+ *      unconditionally route through `systemctl --user restart ...` next —
+ *      the exact same hang, now on every single future attempt, including
+ *      once per heartbeat tick via `ensureDaemonRunning` below. Live on
+ *      repodiet-agent-9636: this produced multi-minute heartbeat cycles,
+ *      100% reproducible across independent reboots, and accelerating
+ *      memory pressure (OOM at ~26 minutes on 2GB vs ~65 minutes on 1GB)
+ *      from the repeated timed-out subprocess spawns.
+ *
+ * Fix, two parts:
+ *   - `okx-a2a daemon start` has a documented `--no-autostart` flag whose
+ *     CLI handler (`handleStart`) skips the autostart branch entirely based
+ *     purely on that flag — never checking file state — so it always takes
+ *     the fast, bounded, plain `startDaemon()` path. Always passed below;
+ *     this alone eliminates the recurring, unbounded, per-heartbeat-tick
+ *     risk entirely.
+ *   - `okx-a2a doctor --fix`'s own internal `daemon_running` auto-fix has
+ *     no equivalent flag (`ensureDaemonReady` is called as a library
+ *     function, never through CLI arg parsing) — the only lever available
+ *     is keeping the unit file absent so `isAutostartInstalled()` stays
+ *     false. `disableOkxA2aOsAutostart()` proactively removes it
+ *     immediately before and after the one-time doctor --fix call this
+ *     process makes at startup, bounding (not eliminating — doctor's own
+ *     "autostart" check will still attempt one ~60s install/hang per fresh
+ *     boot before this function's post-call cleanup runs) the one-time
+ *     startup cost to the existing generous timeout below, while
+ *     guaranteeing the file never persists to poison later calls.
+ */
+function disableOkxA2aOsAutostart(): void {
+  const platformPaths =
+    process.platform === "darwin"
+      ? [path.join(os.homedir(), "Library", "LaunchAgents", "com.okx.a2a.plist")]
+      : [path.join(os.homedir(), ".config", "systemd", "user", "okx-a2a.service")];
+  for (const unitPath of platformPaths) {
+    try {
+      fs.rmSync(unitPath, { force: true });
+    } catch {
+      // Best-effort — must never block startup over a diagnostic cleanup.
+    }
+  }
+}
+
+/**
  * Runs the official readiness/repair command once at startup.
  *
  * Schema verified directly against the real pinned 0.1.11 CLI (not assumed):
@@ -204,6 +273,20 @@ interface DoctorResult {
  * so the real diagnostic JSON is read from there rather than discarded.
  */
 async function runDoctorFix(): Promise<DoctorResult> {
+  disableOkxA2aOsAutostart();
+  try {
+    return await runDoctorFixOnce();
+  } finally {
+    // See Incident #11 above: doctor's own "autostart" auto-fix (and, if
+    // that already left the unit file behind, its separate daemon_running
+    // auto-fix too) may have just recreated the poisoning unit file during
+    // the call above — removed again here so it never persists past this
+    // one bounded, one-time startup cost.
+    disableOkxA2aOsAutostart();
+  }
+}
+
+async function runDoctorFixOnce(): Promise<DoctorResult> {
   let stdout: string;
   try {
     stdout = (await execFileAsync("okx-a2a", ["doctor", "--fix", "--json"], { timeout: 240_000 }))
@@ -265,17 +348,29 @@ async function daemonIsRunning(): Promise<boolean> {
  * Called once per heartbeat tick, so a daemon that dies gets one restart
  * attempt per HEARTBEAT_INTERVAL_MS — a bounded-backoff restart tied to the
  * existing heartbeat cadence rather than a separate fast retry loop.
+ *
+ * `--no-autostart` is required, not optional — see Incident #11 above.
+ * Traced directly into the real CLI's `handleStart` (the `daemon start`
+ * command handler): without this flag, EVERY call unconditionally attempts
+ * to install/restart an OS-level (systemd) autostart service first, which
+ * hangs for ~30-60s per attempt in this systemd-less container and, once
+ * it leaves its unit file behind, permanently routes every subsequent call
+ * through the same broken path — exactly the failure this once-per-
+ * heartbeat-tick call would otherwise reproduce forever.
  */
 async function ensureDaemonRunning(): Promise<boolean> {
   if (await daemonIsRunning()) return true;
+  disableOkxA2aOsAutostart();
   try {
     // Verified against the real `okx-a2a daemon --help`: `daemon start`
     // documents only [--provider] [--ai-provider] [--no-autostart] — no
     // --json. Success is confirmed below via the documented `daemon status`
     // check rather than by parsing start's own output.
-    await execFileAsync("okx-a2a", ["daemon", "start", "--provider", A2A_PROVIDER], {
-      timeout: 60_000,
-    });
+    await execFileAsync(
+      "okx-a2a",
+      ["daemon", "start", "--provider", A2A_PROVIDER, "--no-autostart"],
+      { timeout: 60_000 }
+    );
   } catch {
     return false;
   }
