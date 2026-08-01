@@ -79,7 +79,22 @@ async function paginateInstallationForRepository(
         return installationId;
       }
     }
-  } catch {
+  } catch (err) {
+    // Incident #15: this catch previously swallowed every failure into a
+    // bare `return undefined`, which the caller reports as
+    // "installation_required". A broken app-level auth config therefore
+    // looked identical to a genuinely uninstalled repository, and stayed
+    // invisible until someone compared it against an explicit
+    // installation-id lookup. Never silent again — message only, so no
+    // token, JWT, or key material can reach a log.
+    console.error(
+      JSON.stringify({
+        component: "github-app",
+        event: "installation_scan_failed",
+        repository: `${owner}/${repo}`,
+        message: err instanceof Error ? err.message : "unknown_error",
+      })
+    );
     return undefined;
   }
   return undefined;
