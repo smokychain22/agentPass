@@ -148,9 +148,43 @@ function acquireSingleInstanceLock(pidFile: string): void {
   log("instance_lock_acquired", { pid: process.pid, pidFile });
 }
 
+/**
+ * === Incident #12: unbounded per-heartbeat-tick CLI calls silently hung the
+ * whole heartbeat loop forever ===
+ *
+ * Live on repodiet-agent-9636 after the Incident #11 fix was verified
+ * working (daemon started in ~1s, first heartbeat cycle ran end-to-end and
+ * was rejected 401 by the backend — a separate, expected issue). No further
+ * heartbeat cycle (accepted, rejected, OR withheld) was logged for 7+
+ * minutes afterward despite the 60s interval and the process/daemon both
+ * confirmed still alive via direct inspection — i.e. `publishHeartbeat`
+ * itself hung mid-call, not the daemon or the process.
+ *
+ * Root cause: of the five `execFileAsync` calls in this file, only these
+ * two — the ones run on EVERY heartbeat tick — pass no `timeout` option.
+ * `okx-a2a doctor --fix` (240s), `daemon status` (20s), and `daemon start`
+ * (60s) are all bounded; `onchainos agent gate-check` and
+ * `okx-a2a agent refresh --json` were not. Both shell out to CLIs known
+ * from prior incidents to block indefinitely on a stalled backend/network
+ * call (see the `onchainos wallet login --phase poll` hang precedent) with
+ * no internal timeout of their own. Once either call stalls, the awaiting
+ * `Promise.all` in `publishHeartbeat` never settles, so no heartbeat log
+ * line (withheld, rejected, or accepted) is ever produced again — the
+ * failure is silent, not a crash, so process supervision never intervenes.
+ *
+ * Fix: bound both calls, matching this file's existing pattern for every
+ * other CLI invocation. A rejected/timed-out promise here already resolves
+ * to `false` via the existing catch block, so `publishHeartbeat` correctly
+ * withholds that one cycle and tries again on the next tick, instead of
+ * hanging forever.
+ */
 async function officialGateCheckPasses(): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync("onchainos", ["agent", "gate-check", "--role", "asp"]);
+    const { stdout } = await execFileAsync(
+      "onchainos",
+      ["agent", "gate-check", "--role", "asp"],
+      { timeout: 45_000 }
+    );
     const parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "{}");
     return (
       parsed?.data?.ready === true &&
@@ -165,7 +199,9 @@ async function officialGateCheckPasses(): Promise<boolean> {
 
 async function xmtpClientActive(): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync("okx-a2a", ["agent", "refresh", "--json"]);
+    const { stdout } = await execFileAsync("okx-a2a", ["agent", "refresh", "--json"], {
+      timeout: 45_000,
+    });
     const parsed = JSON.parse(stdout.trim());
     return parsed?.ok === true && (parsed?.payload?.activeClients ?? 0) >= 1;
   } catch {
