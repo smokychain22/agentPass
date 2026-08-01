@@ -489,6 +489,32 @@ function run() {
     assert.ok(body.includes("fs.rmSync") && body.includes("force: true"), "must remove the unit file unconditionally, never failing if it is already absent");
   });
 
+  // --- Incident #12: unbounded per-heartbeat-tick CLI calls silently hung
+  // the whole heartbeat loop forever, with no crash and no further log
+  // output, once one of them stalled on a slow backend/network call -------
+
+  test("Incident #12: officialGateCheckPasses bounds its onchainos gate-check call with a timeout", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("async function officialGateCheckPasses(");
+    assert.ok(start > -1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    assert.ok(
+      body.includes('"onchainos"') && body.includes("timeout: 45_000"),
+      "every heartbeat-tick CLI call must be bounded — an unbounded call that stalls hangs publishHeartbeat's Promise.all forever, silently, with no further heartbeat log line ever produced again"
+    );
+  });
+
+  test("Incident #12: xmtpClientActive bounds its okx-a2a agent refresh call with a timeout", () => {
+    const src = entrypointSource();
+    const start = src.indexOf("async function xmtpClientActive(");
+    assert.ok(start > -1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    assert.ok(
+      body.includes('"okx-a2a"') && body.includes("timeout: 45_000"),
+      "matches this file's existing pattern for every other execFileAsync call (doctor --fix, daemon status, daemon start), all of which are already bounded"
+    );
+  });
+
   // --- Single bootstrap owner (Incident #2 remediation) ------------------
   //
   // scripts/seller-runtime-supervisor.ts is now the SOLE owner of OpenClaw
