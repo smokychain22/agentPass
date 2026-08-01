@@ -8,7 +8,10 @@ import {
   filterFindingsBySelection,
   filterFindingsByValidatedSelection,
 } from "../src/lib/patch-kit/filter-findings";
-import { assertOperationsWithinAuthorizedScope } from "../src/lib/patch-kit/patch-kit-engine";
+import {
+  assertOperationsWithinAuthorizedScope,
+  normalizeSelectedFindingIdsForTest,
+} from "../src/lib/patch-kit/patch-kit-engine";
 import type { Finding, FindingsPayload } from "../src/lib/findings/types";
 
 function test(name: string, fn: () => void) {
@@ -400,6 +403,14 @@ test("a repair may EDIT a companion file it must rewrite, but may never DELETE a
     (err: unknown) =>
       err instanceof FindingSelectionValidationError && err.code === "FINDING_SCOPE_BROADENED"
   );
+});
+
+test("a supplied selection whose ids all normalize away fails instead of running unscoped", () => {
+  // Reproduced in production: selectedFindingIds: ["   "] returned success and
+  // generated a five-path cleanup including a must-keep file, because the
+  // whitespace id trimmed to nothing and fell through to the unscoped path.
+  assert.equal(normalizeSelectedFindingIdsForTest(["   ", ""]).length, 0);
+  assert.ok(normalizeSelectedFindingIdsForTest([" a ", "a"]).length === 1, "duplicates normalize to one");
 });
 
 console.log("finding-selection: all passed");
