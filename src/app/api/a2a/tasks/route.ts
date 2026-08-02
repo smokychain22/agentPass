@@ -12,6 +12,7 @@ import {
   isInformationalQuery,
   isMarketplaceDiscoveryMessage,
   resolveIntakeRepositoryUrl,
+  inferCleanupTaskTypeFromText,
 } from "@/lib/a2a/marketplace-intake";
 import { nanoid } from "nanoid";
 import {
@@ -80,12 +81,18 @@ export async function POST(request: Request) {
       });
     }
 
+    // A counterparty states intent in prose, not as a `type` field. Without
+    // the last fallback, "The task is: type=create_cleanup_pr" answered
+    // INVALID_TASK_TYPE — OKX rejection class #6, reproduced live on
+    // 2026-08-02. Inferring only a stated cleanup intent (never a discovery
+    // question) yields the accurate SCOPE_REQUIRED answer instead.
     const type =
       typeof body.type === "string" && VALID_TYPES.includes(body.type as A2ATaskType)
         ? (body.type as A2ATaskType)
         : repoUrl
           ? ("repository.safe_cleanup" as A2ATaskType)
-          : (body.type as A2ATaskType);
+          : ((inferCleanupTaskTypeFromText(message) as A2ATaskType | undefined) ??
+            (body.type as A2ATaskType));
     if (!VALID_TYPES.includes(type)) {
       return NextResponse.json(
         {
