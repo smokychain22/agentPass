@@ -20,7 +20,43 @@
 import { dispatchAnalyzeRepository, dispatchCreateTask } from "./dispatch.js";
 import { getRecordedDispatch, recordDispatch } from "./idempotency.js";
 
-export const SELLER_SESSION_PATTERN = /^my:9636:to:(.+)$/;
+/**
+ * Real seller sessionKeys are job-scoped and are NOT bare `my:...` strings.
+ * Verified against production gateway logs on Machine 7845320c476008:
+ *
+ *   dispatchSessionMessage sessionKey=job:0xe7ca8d67…:my:9636:to:8178
+ *   sessionKey=job:0x438e701c…:my:9636:to:1791
+ *   sessionKey=backup:0x74e4c2b1…            <- buyer-side, myAgentId 5295
+ *
+ * The previous pattern was anchored `^my:` and therefore could never match a
+ * real inbound seller message. decideReply() returned undefined, OpenClaw fell
+ * through to the built-in default model, and that model does not exist in this
+ * deployment ("Unknown model: openai/gpt-5.5") — so the run ended `state=error`
+ * and no reply was ever transmitted. That is the exact "sent a task but
+ * received no response before timeout" the OKX review reported: reviewer agent
+ * 8178 ("sandbox") sent five messages on 2026-08-01 and received silence.
+ *
+ * The `(?:^|:)` prefix accepts both the job-scoped form and a bare
+ * `my:9636:to:<peer>` form, while the required `:my:9636:to:` segment keeps
+ * `backup:…`, `system-notification`, and other agents' sessions unclaimed.
+ */
+export const SELLER_SESSION_PATTERN = /(?:^|:)my:9636:to:([^:]+)$/;
+
+/**
+ * The okx-a2a plugin carries TWO distinct identifiers for the same exchange,
+ * and logs both on every inbound message:
+ *
+ *   sessionKey=job:0xe7ca8d67…:my:9636:to:8178
+ *   gatewaySessionKey=agent:main:okx-a2a:group:okx-xmtp:my=9636&to=8178&job=0xe7ca8d67…
+ *
+ * `before_agent_reply` is an OpenClaw hook, so `ctx.sessionKey` may carry the
+ * gateway-encoded form (`my=9636&to=…`) rather than the A2A colon form. Which
+ * one arrives is a detail of the plugin/gateway boundary that we must not
+ * guess at — guessing that it was the colon form is precisely what produced
+ * the outage this module is fixing. Accepting both encodings is correct under
+ * either contract and cannot silently regress if the boundary changes.
+ */
+export const SELLER_GATEWAY_SESSION_PATTERN = /[:&?]my=9636&to=([^&]+)/;
 
 const GITHUB_URL_PATTERN = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/i;
 
@@ -32,7 +68,23 @@ const ANALYSIS_ONLY_PATTERNS = [/\banaly[sz]e[sd]?\b/i, /\bdiagnos(e|is|tic)/i, 
 const CLEANUP_PATTERNS = [/\bclean[\s-]?up\b/i, /\bpull\s*request\b/i, /\b(open|create)\s+(a\s+)?pr\b/i, /\bfix\s+(it|this|the)\b/i, /\bcreate\s+a\s+(repository\s+)?cleanup\s+task\b/i];
 
 export function isSellerSession(sessionKey) {
-  return typeof sessionKey === "string" && SELLER_SESSION_PATTERN.test(sessionKey);
+  if (typeof sessionKey !== "string") return false;
+  return (
+    SELLER_SESSION_PATTERN.test(sessionKey) || SELLER_GATEWAY_SESSION_PATTERN.test(sessionKey)
+  );
+}
+
+/**
+ * Diagnostic for the failure mode that made this outage invisible: an
+ * unclaimed session produces no bridge log at all, falls through to the model,
+ * and dies as an opaque `state=error` with no indication that the bridge
+ * declined it. Logging the declined key means any future key-format change
+ * shows up directly in the runtime log instead of as silence.
+ */
+export function describeUnclaimedSession(sessionKey) {
+  return `repodiet-a2a-bridge: declined sessionKey=${
+    typeof sessionKey === "string" ? sessionKey : typeof sessionKey
+  } (not an Agent 9636 seller exchange) — falling through to the model`;
 }
 
 export function extractRepositoryUrl(text) {
@@ -121,7 +173,9 @@ export function formatTaskDispatchResult(result) {
  */
 export async function decideReply(event, ctx, deps = {}) {
   if (!isSellerSession(ctx?.sessionKey)) {
-    return undefined; // Not an Agent 9636 seller exchange — not this plugin's concern.
+    // Not an Agent 9636 seller exchange — not this plugin's concern.
+    (deps.log ?? console.warn)(describeUnclaimedSession(ctx?.sessionKey));
+    return undefined;
   }
 
   const fetchImpl = deps.fetch;
