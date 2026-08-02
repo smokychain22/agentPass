@@ -42,6 +42,22 @@ import { getRecordedDispatch, recordDispatch } from "./idempotency.js";
  */
 export const SELLER_SESSION_PATTERN = /(?:^|:)my:9636:to:([^:]+)$/;
 
+/**
+ * The okx-a2a plugin carries TWO distinct identifiers for the same exchange,
+ * and logs both on every inbound message:
+ *
+ *   sessionKey=job:0xe7ca8d67…:my:9636:to:8178
+ *   gatewaySessionKey=agent:main:okx-a2a:group:okx-xmtp:my=9636&to=8178&job=0xe7ca8d67…
+ *
+ * `before_agent_reply` is an OpenClaw hook, so `ctx.sessionKey` may carry the
+ * gateway-encoded form (`my=9636&to=…`) rather than the A2A colon form. Which
+ * one arrives is a detail of the plugin/gateway boundary that we must not
+ * guess at — guessing that it was the colon form is precisely what produced
+ * the outage this module is fixing. Accepting both encodings is correct under
+ * either contract and cannot silently regress if the boundary changes.
+ */
+export const SELLER_GATEWAY_SESSION_PATTERN = /[:&?]my=9636&to=([^&]+)/;
+
 const GITHUB_URL_PATTERN = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/i;
 
 // Routing only — decides WHICH real endpoint to call, never what to say.
@@ -52,7 +68,23 @@ const ANALYSIS_ONLY_PATTERNS = [/\banaly[sz]e[sd]?\b/i, /\bdiagnos(e|is|tic)/i, 
 const CLEANUP_PATTERNS = [/\bclean[\s-]?up\b/i, /\bpull\s*request\b/i, /\b(open|create)\s+(a\s+)?pr\b/i, /\bfix\s+(it|this|the)\b/i, /\bcreate\s+a\s+(repository\s+)?cleanup\s+task\b/i];
 
 export function isSellerSession(sessionKey) {
-  return typeof sessionKey === "string" && SELLER_SESSION_PATTERN.test(sessionKey);
+  if (typeof sessionKey !== "string") return false;
+  return (
+    SELLER_SESSION_PATTERN.test(sessionKey) || SELLER_GATEWAY_SESSION_PATTERN.test(sessionKey)
+  );
+}
+
+/**
+ * Diagnostic for the failure mode that made this outage invisible: an
+ * unclaimed session produces no bridge log at all, falls through to the model,
+ * and dies as an opaque `state=error` with no indication that the bridge
+ * declined it. Logging the declined key means any future key-format change
+ * shows up directly in the runtime log instead of as silence.
+ */
+export function describeUnclaimedSession(sessionKey) {
+  return `repodiet-a2a-bridge: declined sessionKey=${
+    typeof sessionKey === "string" ? sessionKey : typeof sessionKey
+  } (not an Agent 9636 seller exchange) — falling through to the model`;
 }
 
 export function extractRepositoryUrl(text) {
@@ -141,7 +173,9 @@ export function formatTaskDispatchResult(result) {
  */
 export async function decideReply(event, ctx, deps = {}) {
   if (!isSellerSession(ctx?.sessionKey)) {
-    return undefined; // Not an Agent 9636 seller exchange — not this plugin's concern.
+    // Not an Agent 9636 seller exchange — not this plugin's concern.
+    (deps.log ?? console.warn)(describeUnclaimedSession(ctx?.sessionKey));
+    return undefined;
   }
 
   const fetchImpl = deps.fetch;

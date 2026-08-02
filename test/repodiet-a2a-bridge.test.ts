@@ -114,6 +114,45 @@ async function run() {
     assert.equal(isSellerSession("job:0xabc:my:1791:to:9636"), false);
   });
 
+  /**
+   * okx-a2a logs a second, gateway-encoded identifier for the very same
+   * exchange. Since `before_agent_reply` is an OpenClaw hook, ctx.sessionKey
+   * may carry this form instead. Both must be claimed — assuming only one
+   * encoding is what caused the outage.
+   */
+  await test("isSellerSession matches the gateway-encoded form of the same reviewer exchange", () => {
+    assert.equal(
+      isSellerSession(
+        "agent:main:okx-a2a:group:okx-xmtp:my=9636&to=8178&job=0xe7ca8d6782605ed3a4a5417e276d5f1dfc37714e74895ec69d008048e1147adf"
+      ),
+      true
+    );
+  });
+
+  await test("the gateway-encoded matcher does not claim another agent's exchange", () => {
+    assert.equal(
+      isSellerSession("agent:main:okx-a2a:group:okx-xmtp:my=5295&to=9636&job=0xabc"),
+      false,
+      "9636 as the peer is a buyer-side session and must not be answered as the seller"
+    );
+    assert.equal(
+      isSellerSession("agent:main:okx-a2a:group:okx-xmtp:my=1791&to=8178&job=0xabc"),
+      false
+    );
+  });
+
+  await test("a declined session is logged rather than failing silently", async () => {
+    const logged: string[] = [];
+    const result = await decideReply(
+      { cleanedBody: "hello" },
+      { sessionKey: "system-notification" },
+      { ...fakeIdempotency(), log: (m: string) => logged.push(m) }
+    );
+    assert.equal(result, undefined);
+    assert.equal(logged.length, 1, "an unclaimed session must leave a diagnostic trace");
+    assert.ok(logged[0].includes("system-notification"));
+  });
+
   await test("decideReply answers a real job-scoped reviewer session instead of falling through to the model", async () => {
     const result = await decideReply(
       { cleanedBody: "   " },
