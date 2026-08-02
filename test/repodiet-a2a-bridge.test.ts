@@ -35,9 +35,30 @@ function test(name: string, fn: () => void | Promise<void>) {
 
 function fakeIdempotency() {
   const store = new Map<string, unknown>();
+  const publications = new Map<string, { ok: true; messageId?: string }>();
+  // Every publish is captured, never executed: the real implementation spawns
+  // the okx-a2a CLI, which must never run from a unit test.
+  const sent: Array<{ transportSessionKey?: string; text?: string }> = [];
+  let publishOutcome: { ok: boolean; messageId?: string; failureCode?: string; error?: string } = {
+    ok: true,
+    messageId: "outbound-test-0001",
+  };
   return {
     getRecordedDispatch: (key: string, text: string) => store.get(`${key}:${text}`),
     recordDispatch: (key: string, text: string, value: unknown) => store.set(`${key}:${text}`, value),
+    getPublication: (key: string) => publications.get(key),
+    recordPublication: (key: string, result: { ok: true; messageId?: string }) =>
+      publications.set(key, result),
+    publishReply: async (input: { transportSessionKey?: string; text?: string }) => {
+      sent.push(input);
+      return publishOutcome;
+    },
+    emit: () => {},
+    sent,
+    publications,
+    setPublishOutcome: (o: typeof publishOutcome) => {
+      publishOutcome = o;
+    },
   };
 }
 

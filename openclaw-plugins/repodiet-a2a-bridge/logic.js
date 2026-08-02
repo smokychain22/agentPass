@@ -18,7 +18,34 @@
  * must not be.
  */
 import { dispatchAnalyzeRepository, dispatchCreateTask } from "./dispatch.js";
-import { getRecordedDispatch, recordDispatch } from "./idempotency.js";
+import {
+  deriveInboundIdentity,
+  getPublication,
+  getRecordedDispatch,
+  recordDispatch,
+  recordPublication,
+} from "./idempotency.js";
+import { publishReply } from "./publish.js";
+import {
+  describeSessionKeyShape,
+  parseSessionKey,
+  toTransportSessionKey,
+} from "./session-key.js";
+
+/**
+ * Structured, single-line observability for the seller response path. Emits
+ * only non-secret routing metadata — never wallet keys, gateway tokens, API
+ * keys, session secrets, payment signatures, or repository contents. The
+ * reply text itself is deliberately NOT logged: it can quote private
+ * repository data back to the operator log.
+ *
+ * Before this existed, a reviewer message that produced no answer left no
+ * trace at all, which is why the outage stayed invisible through an entire
+ * rejection cycle.
+ */
+export function emitSellerResponseEvent(fields, log = console.warn) {
+  log(`repodiet-a2a-bridge ${JSON.stringify(fields)}`);
+}
 
 /**
  * Real seller sessionKeys are job-scoped and are NOT bare `my:...` strings.
@@ -171,13 +198,7 @@ export function formatTaskDispatchResult(result) {
  * model call — but what it returns is always either a real dispatch
  * result or a real, field-derived protocol error, never a fixed template.
  */
-export async function decideReply(event, ctx, deps = {}) {
-  if (!isSellerSession(ctx?.sessionKey)) {
-    // Not an Agent 9636 seller exchange — not this plugin's concern.
-    (deps.log ?? console.warn)(describeUnclaimedSession(ctx?.sessionKey));
-    return undefined;
-  }
-
+async function generateReply(event, ctx, deps = {}) {
   const fetchImpl = deps.fetch;
   const analyzeRepository = deps.dispatchAnalyzeRepository ?? dispatchAnalyzeRepository;
   const createTask = deps.dispatchCreateTask ?? dispatchCreateTask;
@@ -232,4 +253,89 @@ export async function decideReply(event, ctx, deps = {}) {
   }
 
   return { handled: true, reply: { text: replyText }, reason };
+}
+
+/**
+ * Real decision + dispatch + PUBLICATION entry point.
+ *
+ * Returning `{ handled: true, reply }` is necessary but NOT sufficient:
+ * OpenClaw honours it and records the reply in the session transcript, but
+ * nothing in the okx-a2a plugin publishes a hook-handled reply back onto XMTP
+ * (see publish.js for the full trace). So the reply is also published here,
+ * explicitly, through the daemon's documented `xmtp-send` interface.
+ *
+ * Publication is keyed on the inbound transport message identity, so:
+ *   - each distinct reviewer follow-up under one job gets exactly one reply,
+ *   - an exact redelivery of the same envelope never produces a second reply,
+ *   - a transport failure leaves nothing recorded and stays retryable.
+ */
+export async function decideReply(event, ctx, deps = {}) {
+  const started = Date.now();
+  const log = deps.log ?? console.warn;
+
+  if (!isSellerSession(ctx?.sessionKey)) {
+    log(describeUnclaimedSession(ctx?.sessionKey));
+    return undefined;
+  }
+
+  const emit = deps.emit ?? emitSellerResponseEvent;
+  const publish = deps.publishReply ?? publishReply;
+  const readPublication = deps.getPublication ?? getPublication;
+  const writePublication = deps.recordPublication ?? recordPublication;
+
+  const parsed = parseSessionKey(ctx?.sessionKey);
+  const transportSessionKey = toTransportSessionKey(parsed);
+  const inbound = deriveInboundIdentity(event?.cleanedBody, ctx);
+
+  const alreadyPublished = readPublication(inbound.key);
+  if (alreadyPublished) {
+    // The reply for THIS inbound transport message is already on the wire.
+    // Still claim the turn so it cannot fall through to the model, but never
+    // publish a second copy.
+    const replayed = await generateReply(event, ctx, deps);
+    emit(
+      {
+        event: "seller_response",
+        outcome: "already_published",
+        inboundIdentitySource: inbound.source,
+        sessionKeyShape: describeSessionKeyShape(ctx?.sessionKey),
+        claimed: true,
+        peerAgentId: parsed?.peerAgentId,
+        localAgentId: parsed?.myAgentId,
+        outboundMessageId: alreadyPublished.messageId,
+        publicationStatus: "suppressed_duplicate",
+        elapsedMs: Date.now() - started,
+      },
+      log
+    );
+    return replayed;
+  }
+
+  const result = await generateReply(event, ctx, deps);
+  const replyText = result?.reply?.text;
+
+  const publication = await publish({ transportSessionKey, text: replyText }, deps);
+  if (publication.ok) writePublication(inbound.key, publication);
+
+  emit(
+    {
+      event: "seller_response",
+      outcome: publication.ok ? "published" : "publish_failed",
+      inboundIdentitySource: inbound.source,
+      sessionKeyShape: describeSessionKeyShape(ctx?.sessionKey),
+      claimed: true,
+      localAgentId: parsed?.myAgentId,
+      peerAgentId: parsed?.peerAgentId,
+      classification: result?.reason,
+      responseGenerated: Boolean(replyText),
+      outboundSendAttempted: true,
+      outboundMessageId: publication.messageId,
+      publicationStatus: publication.ok ? "published" : "failed",
+      failureCode: publication.failureCode,
+      elapsedMs: Date.now() - started,
+    },
+    log
+  );
+
+  return result;
 }
