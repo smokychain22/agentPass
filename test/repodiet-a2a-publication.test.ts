@@ -248,6 +248,47 @@ async function run() {
     assert.equal(r.messageId, "outbound-d1272f15");
   });
 
+  /**
+   * Live loop with OKX reviewer 8178 at 2026-08-02T15:29: they wrote "The task
+   * is: type=create_cleanup_pr", the intake saw no `type` field and answered
+   * "could not map it to a cleanup task type", so they restated it and we
+   * denied it again. Intent stated in prose must reach the intake as a type.
+   */
+  await test("a stated cleanup intent is forwarded as a task type, ending the INVALID_TASK_TYPE loop", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const d = {
+      ...deps().d,
+      dispatchCreateTask: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { status: 400, body: { message: "Provide the repository URL." } };
+      },
+    };
+    await decideReply(
+      { cleanedBody: "The task is: type=create_cleanup_pr. Awaiting the repository URL." },
+      { sessionKey: REVIEWER_8178_GATEWAY, jobId: "j" },
+      d
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].type, "repository.safe_cleanup");
+  });
+
+  await test("a discovery question is NOT coerced into a cleanup task type", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const d = {
+      ...deps().d,
+      dispatchCreateTask: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { status: 200, body: { message: "RepoDiet is online." } };
+      },
+    };
+    await decideReply(
+      { cleanedBody: "Hello, what services do you offer?" },
+      { sessionKey: REVIEWER_8178_GATEWAY, jobId: "j" },
+      d
+    );
+    assert.equal(calls[0].type, undefined, "discovery must still reach the informational path");
+  });
+
   await test("no model is ever consulted for a seller session — publication needs no provider", async () => {
     const { d } = deps();
     const result = await decideReply(
