@@ -10,6 +10,7 @@ import {
   EntitlementDeniedError,
   gateA2mcpCall,
   PaymentRequiredError,
+  type CommerceGateResult,
 } from "@/lib/okx/commerce-gateway";
 import { resolveBindingFromBody } from "@/lib/okx/a2mcp-adapter";
 import { getA2mcpService } from "@/lib/okx/services";
@@ -33,6 +34,21 @@ export interface Phase3RouteOptions {
   paid?: boolean;
   operation?: CommerceOperation;
   timeoutMs?: number;
+  /**
+   * Set when the official OKX Payment Seller SDK has ALREADY verified payment
+   * for this request at the route boundary (see
+   * src/lib/payment/okx-official-x402.ts). The custom commerce gate is then
+   * skipped entirely rather than being consulted as a second opinion.
+   *
+   * OKX rejected listing 9636 on 2026-08-02 for not using the official SDK, so
+   * for the registered A2MCP service the official SDK is the only payment
+   * authority; leaving the hand-rolled gate in the production path as a
+   * fallback is exactly what must not happen.
+   */
+  officialSdkVerifiedPayment?: {
+    paymentReference?: string;
+    requestHash?: string;
+  };
 }
 
 function resultDigest(payload: unknown): string {
@@ -114,13 +130,22 @@ export async function runPhase3ToolRoute(
         }
       }
 
-      const gate = await gateA2mcpCall({
-        request,
-        serviceId: tool,
-        body,
-        taskId,
-        binding,
-      });
+      // When the official OKX SDK has already verified payment at the route
+      // boundary, it is the sole payment authority for this request: the
+      // hand-rolled gate is not consulted at all.
+      const gate = options?.officialSdkVerifiedPayment
+        ? ({
+            requestHash: options.officialSdkVerifiedPayment.requestHash ?? "",
+            paymentReference: options.officialSdkVerifiedPayment.paymentReference,
+            officialSdkVerified: true,
+          } as CommerceGateResult & { officialSdkVerified: true })
+        : await gateA2mcpCall({
+            request,
+            serviceId: tool,
+            body,
+            taskId,
+            binding,
+          });
       if (gate.samplingAuthenticated) {
         // Authenticated OKX Sampling Call (§7.7): execute the bounded service
         // below, but never treat this like a paid quote — no gateQuoteId, no
