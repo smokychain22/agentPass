@@ -33,6 +33,95 @@ function extractOfficialPaymentReference(paymentPayload: unknown): string | unde
   return typeof nested === "string" && nested.trim() ? nested.trim() : undefined;
 }
 
+type OfficialBoundaryResult =
+  | { kind: "verified"; paymentPayload: unknown; paymentRequirements: unknown; declaredExtensions?: Record<string, unknown> }
+  | { kind: "halted"; response: NextResponse };
+
+/**
+ * The single official-SDK payment boundary for this endpoint. Both operations
+ * served here go through it, so the retired custom gate is unreachable in
+ * production on this route.
+ */
+async function runOfficialPaymentBoundary(
+  request: Request,
+  body: Record<string, unknown>,
+  taskId: string
+): Promise<OfficialBoundaryResult> {
+  let payment: Awaited<ReturnType<typeof processOfficialPayment>>;
+  try {
+    payment = await processOfficialPayment(request, body);
+  } catch (error) {
+    // The official SDK could not run (missing/invalid OKX Developer Portal
+    // credentials, or the facilitator is unreachable). Two things must NOT
+    // happen here: serving the analysis for free, and silently falling back to
+    // the retired custom gate. Fail closed and say so plainly.
+    return {
+      kind: "halted",
+      response: NextResponse.json(
+        buildToolErrorResponse(
+          "analyze_repository",
+          taskId,
+          "PAYMENT_BOUNDARY_UNAVAILABLE",
+          error instanceof OfficialX402ConfigError
+            ? error.message
+            : "The official OKX payment boundary is temporarily unavailable."
+        ),
+        { status: 503 }
+      ),
+    };
+  }
+
+  if (payment.kind === "unpaid") {
+    // The SDK's own PAYMENT-REQUIRED challenge, returned verbatim.
+    return {
+      kind: "halted",
+      response: new NextResponse(
+        payment.body === undefined ? null : JSON.stringify(payment.body),
+        { status: payment.status, headers: payment.headers }
+      ),
+    };
+  }
+
+  return {
+    kind: "verified",
+    paymentPayload: payment.paymentPayload,
+    paymentRequirements: payment.paymentRequirements,
+    declaredExtensions: payment.declaredExtensions,
+  };
+}
+
+/**
+ * Settles through the official SDK only after the service actually succeeded,
+ * so a failed execution never settles a payment, and attaches the settlement
+ * headers (including PAYMENT-RESPONSE) to the successful response.
+ */
+async function attachOfficialSettlement(
+  executed: NextResponse,
+  payment: Extract<OfficialBoundaryResult, { kind: "verified" }>
+): Promise<NextResponse> {
+  if (executed.status < 200 || executed.status >= 300) return executed;
+  try {
+    const settled = await settleOfficialPayment(
+      payment.paymentPayload,
+      payment.paymentRequirements,
+      payment.declaredExtensions
+    );
+    for (const [key, value] of Object.entries(settled.headers ?? {})) {
+      executed.headers.set(key, value);
+    }
+    if (!settled.success) {
+      // Surface the real settlement failure rather than implying success.
+      executed.headers.set("x-repodiet-settlement-error", settled.errorReason ?? "unknown");
+    }
+  } catch (error) {
+    executed.headers.set(
+      "x-repodiet-settlement-error",
+      error instanceof Error ? error.name : "settlement_failed"
+    );
+  }
+  return executed;
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -138,17 +227,28 @@ export async function POST(request: Request) {
   const requestedOperation = body.operation;
 
   if (isGreenPrVerificationOperation(requestedOperation)) {
+    // This operation shares the registered endpoint and the same 0.03 USDT
+    // rail, so it must go through the official SDK too — otherwise the retired
+    // custom gate would still be reachable in production on this route.
+    const greenPrPayment = await runOfficialPaymentBoundary(request, body, taskId);
+    if (greenPrPayment.kind !== "verified") return greenPrPayment.response;
+
     const forwardedRequest = new Request(request.url, {
       method: "POST",
       headers: request.headers,
       body: rawBody,
     });
-    // Preserve the existing paid A2MCP listing/service and its 0.03 USDT rail.
-    return runPhase3ToolRoute(
+    const greenPrResult = await runPhase3ToolRoute(
       "analyze_repository",
       forwardedRequest,
-      executeGreenPrVerification
+      executeGreenPrVerification,
+      {
+        officialSdkVerifiedPayment: {
+          paymentReference: extractOfficialPaymentReference(greenPrPayment.paymentPayload),
+        },
+      }
     );
+    return attachOfficialSettlement(greenPrResult, greenPrPayment);
   }
   const branch = typeof body.branch === "string" ? body.branch.trim() : undefined;
   const maximumFindingsRaw = body.maximumFindings;
@@ -196,34 +296,8 @@ export async function POST(request: Request) {
   // the official SDK. From here the SDK is the only thing that mints the 402
   // and the only thing that verifies payment; the hand-rolled gate is bypassed
   // (see Phase3RouteOptions.officialSdkVerifiedPayment).
-  let payment: Awaited<ReturnType<typeof processOfficialPayment>>;
-  try {
-    payment = await processOfficialPayment(request, body);
-  } catch (error) {
-    // The official SDK could not run (missing/invalid OKX Developer Portal
-    // credentials, or the facilitator is unreachable). Two things must NOT
-    // happen here: serving the analysis for free, and silently falling back to
-    // the retired custom gate. Fail closed and say so plainly.
-    return NextResponse.json(
-      buildToolErrorResponse(
-        "analyze_repository",
-        taskId,
-        "PAYMENT_BOUNDARY_UNAVAILABLE",
-        error instanceof OfficialX402ConfigError
-          ? error.message
-          : "The official OKX payment boundary is temporarily unavailable."
-      ),
-      { status: 503 }
-    );
-  }
-
-  if (payment.kind === "unpaid") {
-    // The SDK's own PAYMENT-REQUIRED challenge, returned verbatim.
-    return new NextResponse(
-      payment.body === undefined ? null : JSON.stringify(payment.body),
-      { status: payment.status, headers: payment.headers }
-    );
-  }
+  const payment = await runOfficialPaymentBoundary(request, body, taskId);
+  if (payment.kind !== "verified") return payment.response;
 
   const forwardedRequest = new Request(request.url, {
     method: "POST",
@@ -273,31 +347,6 @@ export async function POST(request: Request) {
     }
   );
 
-  // Settle through the official SDK only after the real analysis succeeded, so
-  // a failed analysis never settles a payment. Settlement headers (including
-  // PAYMENT-RESPONSE) are attached to the successful response.
-  if (executed.status >= 200 && executed.status < 300) {
-    try {
-      const settled = await settleOfficialPayment(
-        payment.paymentPayload,
-        payment.paymentRequirements,
-        payment.declaredExtensions
-      );
-      for (const [key, value] of Object.entries(settled.headers ?? {})) {
-        executed.headers.set(key, value);
-      }
-      if (!settled.success) {
-        // Surface the real settlement failure rather than implying success.
-        executed.headers.set("x-repodiet-settlement-error", settled.errorReason ?? "unknown");
-      }
-    } catch (error) {
-      executed.headers.set(
-        "x-repodiet-settlement-error",
-        error instanceof Error ? error.name : "settlement_failed"
-      );
-    }
-  }
-
-  return executed;
+  return attachOfficialSettlement(executed, payment);
 }
 

@@ -207,6 +207,38 @@ async function run() {
     );
   });
 
+  await test("BOTH operations on the registered endpoint go through the official boundary", async () => {
+    const fs = await import("node:fs");
+    const route = fs.readFileSync("src/app/api/a2mcp/quick-triage/route.ts", "utf8");
+    const calls = route.match(/runOfficialPaymentBoundary\(/g) ?? [];
+    // One definition + two call sites (green-pr verification and quick triage).
+    assert.ok(
+      calls.length >= 3,
+      `the green_pr_verification branch shares this endpoint and its 0.03 rail, so it must not bypass the official SDK (found ${calls.length} references)`
+    );
+    // The green-pr branch must not reach runPhase3ToolRoute before the boundary.
+    const greenPrBranch = route.slice(
+      route.indexOf("isGreenPrVerificationOperation(requestedOperation)"),
+      route.indexOf("const branch =")
+    );
+    assert.match(greenPrBranch, /runOfficialPaymentBoundary/);
+    assert.ok(
+      greenPrBranch.indexOf("runOfficialPaymentBoundary") <
+        greenPrBranch.indexOf("runPhase3ToolRoute"),
+      "payment must be settled by the official SDK before execution, not after"
+    );
+  });
+
+  await test("settlement only happens on a successful execution", async () => {
+    const fs = await import("node:fs");
+    const route = fs.readFileSync("src/app/api/a2mcp/quick-triage/route.ts", "utf8");
+    assert.match(
+      route,
+      /executed\.status < 200 \|\| executed\.status >= 300\) return executed/,
+      "a failed execution must never settle a payment"
+    );
+  });
+
   console.log("okx-official-x402-sdk: all passed");
 }
 
