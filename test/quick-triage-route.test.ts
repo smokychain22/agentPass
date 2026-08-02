@@ -7,6 +7,7 @@ import {
   touchAgentRuntimeHealth,
 } from "../src/lib/a2a/agent-runtime-health";
 import { runPhase3ToolRoute } from "../src/lib/a2mcp/phase3-route";
+import { isOfficialBoundaryConfigured } from "../src/lib/payment/okx-official-x402";
 
 function test(name: string, fn: () => Promise<void>) {
   return fn()
@@ -118,6 +119,28 @@ async function run() {
           }),
         })
       );
+      // Since the migration to the official OKX Payment Seller SDK, the 402 is
+      // minted by the SDK, and the SDK's initialize() is a live round-trip to
+      // the OKX facilitator ("no supported payment kinds loaded from any
+      // facilitator" when it cannot reach one). CI has no OKX Developer Portal
+      // credentials, so the boundary cannot come up there.
+      //
+      // The guarantee this test actually protects is "an unpaid request never
+      // gets the service, and never triggers remote repository resolution".
+      // That holds in both configurations, so assert it in both rather than
+      // reintroducing a hand-rolled 402 just to keep the old assertion green —
+      // that fallback is exactly what OKX rejected the listing for.
+      if (!isOfficialBoundaryConfigured()) {
+        assert.equal(
+          response.status,
+          503,
+          "with no OKX credentials the boundary must fail closed, never serve the analysis"
+        );
+        const body = (await response.json()) as { error?: { code?: string } };
+        assert.equal(body.error?.code, "PAYMENT_BOUNDARY_UNAVAILABLE");
+        return;
+      }
+
       assert.equal(response.status, 402);
       assert.ok(response.headers.get("PAYMENT-REQUIRED"));
       const challenge = (await response.json()) as {

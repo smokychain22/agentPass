@@ -46,6 +46,24 @@ export const OKX_X402_NETWORK = "eip155:196";
 /** The registered A2MCP endpoint, exactly as listed for service 37347. */
 export const A2MCP_ROUTE_PATTERN = "POST /api/a2mcp/quick-triage";
 
+const INITIALIZE_ATTEMPTS = 3;
+const INITIALIZE_RETRY_DELAY_MS = 250;
+
+/**
+ * True when the OKX Developer Portal credentials and payee are all present.
+ * Used to distinguish "the payment boundary is not configured here" (CI, local
+ * dev) from "the boundary is configured but the facilitator is unreachable".
+ */
+export function isOfficialBoundaryConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    readOfficialX402Credentials(env);
+    readPayToAddress(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class OfficialX402ConfigError extends Error {
   readonly missing: string[];
   constructor(missing: string[]) {
@@ -173,11 +191,31 @@ export async function getOfficialResourceServer(
   const httpServer = new x402HTTPResourceServer(resourceServer, {
     [A2MCP_ROUTE_PATTERN]: route,
   });
-  await httpServer.initialize();
 
-  cachedServer = httpServer;
-  cachedServerKey = key;
-  return httpServer;
+  // initialize() is a live round-trip to the OKX facilitator: it loads the
+  // supported payment kinds and throws "no supported payment kinds loaded from
+  // any facilitator" if that call fails. On a serverless cold start a single
+  // transient network blip would therefore take the registered endpoint from
+  // "402 payment required" to "503" for a reviewer. A short bounded retry
+  // removes that failure mode without ever weakening verification — if every
+  // attempt fails we still fail closed rather than serving the service free.
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= INITIALIZE_ATTEMPTS; attempt++) {
+    try {
+      await httpServer.initialize();
+      cachedServer = httpServer;
+      cachedServerKey = key;
+      return httpServer;
+    } catch (error) {
+      lastError = error;
+      if (attempt < INITIALIZE_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, INITIALIZE_RETRY_DELAY_MS * attempt));
+      }
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Failed to initialize the official OKX payment boundary.");
 }
 
 /** Test seam: drop the memoized server so config changes take effect. */

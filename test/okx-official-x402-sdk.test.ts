@@ -239,6 +239,45 @@ async function run() {
     );
   });
 
+  await test("configured-state detection distinguishes 'not configured' from 'facilitator down'", async () => {
+    const { isOfficialBoundaryConfigured } = await import("../src/lib/payment/okx-official-x402");
+    assert.equal(isOfficialBoundaryConfigured({} as unknown as NodeJS.ProcessEnv), false);
+    assert.equal(
+      isOfficialBoundaryConfigured({
+        OKX_API_KEY: "k",
+        OKX_SECRET_KEY: "s",
+        OKX_PASSPHRASE: "p",
+      } as unknown as NodeJS.ProcessEnv),
+      false,
+      "credentials without a payee are still not a usable boundary"
+    );
+    assert.equal(
+      isOfficialBoundaryConfigured({
+        OKX_API_KEY: "k",
+        OKX_SECRET_KEY: "s",
+        OKX_PASSPHRASE: "p",
+        PAY_TO_ADDRESS: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+      } as unknown as NodeJS.ProcessEnv),
+      true
+    );
+  });
+
+  await test("initialization is retried, because it is a live facilitator round-trip", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync("src/lib/payment/okx-official-x402.ts", "utf8");
+    assert.match(src, /INITIALIZE_ATTEMPTS\s*=\s*[2-9]/, "a single cold-start blip must not 503 the endpoint");
+    assert.match(
+      src,
+      /for \(let attempt = 1; attempt <= INITIALIZE_ATTEMPTS/,
+      "initialize() must be retried, not called once"
+    );
+    assert.match(
+      src,
+      /throw lastError/,
+      "after exhausting retries it must still fail closed, never serve the service free"
+    );
+  });
+
   console.log("okx-official-x402-sdk: all passed");
 }
 
