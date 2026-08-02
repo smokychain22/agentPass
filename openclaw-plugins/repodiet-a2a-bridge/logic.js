@@ -92,7 +92,20 @@ const GITHUB_URL_PATTERN = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/i;
 // to the real intake endpoint, which already classifies discovery /
 // informational / scope-required messages dynamically on the server.
 const ANALYSIS_ONLY_PATTERNS = [/\banaly[sz]e[sd]?\b/i, /\bdiagnos(e|is|tic)/i, /\bquick\s*triage\b/i, /\binspect\b/i];
-const CLEANUP_PATTERNS = [/\bclean[\s-]?up\b/i, /\bpull\s*request\b/i, /\b(open|create)\s+(a\s+)?pr\b/i, /\bfix\s+(it|this|the)\b/i, /\bcreate\s+a\s+(repository\s+)?cleanup\s+task\b/i];
+const CLEANUP_PATTERNS = [
+  /\bclean[\s-]?up\b/i,
+  /\bpull\s*request\b/i,
+  /\b(open|create)\s+(a\s+)?pr\b/i,
+  /\bfix\s+(it|this|the)\b/i,
+  /\bcreate\s+a\s+(repository\s+)?cleanup\s+task\b/i,
+  // Counterparties name the service/type verbatim, and the underscores defeat
+  // the \bclean[\s-]?up\b rule above ("_" is a word character, so there is no
+  // word boundary inside "create_cleanup_pr"). OKX reviewer 8178 wrote exactly
+  // "The task is: type=create_cleanup_pr" on 2026-08-02 and was told RepoDiet
+  // "could not map it to a cleanup task type".
+  /create_cleanup_pr/i,
+  /repository\.(safe_cleanup|verified_cleanup|cleanup_pr)/i,
+];
 
 export function isSellerSession(sessionKey) {
   if (typeof sessionKey !== "string") return false;
@@ -243,7 +256,28 @@ async function generateReply(event, ctx, deps = {}) {
     // the real intake endpoint — for "unspecified" this deliberately lets
     // the real backend's own discovery/informational classification
     // decide, rather than this plugin guessing or templating a reply.
-    const result = await createTask({ message: text, repoUrl: repositoryUrl }, fetchImpl);
+    // A counterparty states its intent in prose ("The task is:
+    // type=create_cleanup_pr"), never as a JSON field, so without this the
+    // intake sees no `type`, no `repoUrl`, and answers INVALID_TASK_TYPE:
+    // "could not map it to a cleanup task type" — which flatly contradicts a
+    // reviewer who just named the type. Observed live with OKX reviewer 8178
+    // at 2026-08-02T15:29 and it loops: they restate the type, we deny it.
+    //
+    // We already classified the intent, so forward it. The value is the same
+    // type the intake itself infers once a repoUrl is present, so execution
+    // semantics are unchanged — this only replaces the false rejection with
+    // the accurate SCOPE_REQUIRED / WAITING_FOR_REPOSITORY answer that tells
+    // the caller exactly what is still missing. Deliberately NOT sent for
+    // "unspecified" intent, so real discovery questions keep reaching the
+    // informational path instead of being coerced into a cleanup task.
+    const result = await createTask(
+      {
+        message: text,
+        repoUrl: repositoryUrl,
+        type: intent === "create_cleanup_pr" ? "repository.safe_cleanup" : undefined,
+      },
+      fetchImpl
+    );
     replyText = formatTaskDispatchResult(result);
     reason = `repodiet_a2a_dispatch_status_${result.status}`;
   }
