@@ -20,7 +20,27 @@
 import { dispatchAnalyzeRepository, dispatchCreateTask } from "./dispatch.js";
 import { getRecordedDispatch, recordDispatch } from "./idempotency.js";
 
-export const SELLER_SESSION_PATTERN = /^my:9636:to:(.+)$/;
+/**
+ * Real seller sessionKeys are job-scoped and are NOT bare `my:...` strings.
+ * Verified against production gateway logs on Machine 7845320c476008:
+ *
+ *   dispatchSessionMessage sessionKey=job:0xe7ca8d67…:my:9636:to:8178
+ *   sessionKey=job:0x438e701c…:my:9636:to:1791
+ *   sessionKey=backup:0x74e4c2b1…            <- buyer-side, myAgentId 5295
+ *
+ * The previous pattern was anchored `^my:` and therefore could never match a
+ * real inbound seller message. decideReply() returned undefined, OpenClaw fell
+ * through to the built-in default model, and that model does not exist in this
+ * deployment ("Unknown model: openai/gpt-5.5") — so the run ended `state=error`
+ * and no reply was ever transmitted. That is the exact "sent a task but
+ * received no response before timeout" the OKX review reported: reviewer agent
+ * 8178 ("sandbox") sent five messages on 2026-08-01 and received silence.
+ *
+ * The `(?:^|:)` prefix accepts both the job-scoped form and a bare
+ * `my:9636:to:<peer>` form, while the required `:my:9636:to:` segment keeps
+ * `backup:…`, `system-notification`, and other agents' sessions unclaimed.
+ */
+export const SELLER_SESSION_PATTERN = /(?:^|:)my:9636:to:([^:]+)$/;
 
 const GITHUB_URL_PATTERN = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/i;
 

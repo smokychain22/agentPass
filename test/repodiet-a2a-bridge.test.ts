@@ -77,6 +77,57 @@ async function run() {
     assert.equal(isSellerSession(undefined), false);
   });
 
+  /**
+   * Regression for the review-blocking outage: every sessionKey used above is
+   * a bare `my:...` string, a shape that never actually occurs in production.
+   * The suite therefore stayed green while the agent was mute to every real
+   * reviewer. These keys are copied verbatim from the gateway logs on Machine
+   * 7845320c476008 for the sessions OKX reviewer agent 8178 ("sandbox") and
+   * agent 1791 opened on 2026-08-01.
+   */
+  await test("isSellerSession matches the REAL job-scoped seller sessionKey emitted by okx-a2a", () => {
+    assert.equal(
+      isSellerSession(
+        "job:0xe7ca8d6782605ed3a4a5417e276d5f1dfc37714e74895ec69d008048e1147adf:my:9636:to:8178"
+      ),
+      true,
+      "the reviewer session that timed out must be claimed by this plugin"
+    );
+    assert.equal(
+      isSellerSession(
+        "job:0x438e701cc9ae08e3632a7c2ef2eea378310200ae66d7cc42ede1922c1f31fce3:my:9636:to:1791"
+      ),
+      true
+    );
+  });
+
+  await test("isSellerSession does NOT over-claim sessions that are not Agent 9636 seller exchanges", () => {
+    // Buyer-side backup session (myAgentId 5295) seen in the same live logs.
+    assert.equal(
+      isSellerSession("backup:0x74e4c2b16caabf3c07883147c022344daf9dcf1eb992721a28c3a61a09022e1a"),
+      false
+    );
+    assert.equal(isSellerSession("system-notification"), false);
+    // Another agent's job-scoped session must never be answered as 9636.
+    assert.equal(isSellerSession("job:0xabc:my:5295:to:9636"), false);
+    // 9636 as the PEER, not as the local agent, is a buyer-side session.
+    assert.equal(isSellerSession("job:0xabc:my:1791:to:9636"), false);
+  });
+
+  await test("decideReply answers a real job-scoped reviewer session instead of falling through to the model", async () => {
+    const result = await decideReply(
+      { cleanedBody: "   " },
+      {
+        sessionKey:
+          "job:0xe7ca8d6782605ed3a4a5417e276d5f1dfc37714e74895ec69d008048e1147adf:my:9636:to:8178",
+      },
+      fakeIdempotency()
+    );
+    assert.ok(result, "must not return undefined — undefined is what caused the reviewer timeout");
+    assert.equal(result!.handled, true);
+    assert.ok(result!.reply?.text);
+  });
+
   await test("decideReply ignores sessions that are not an Agent 9636 seller exchange", async () => {
     const result = await decideReply({ cleanedBody: "hello" }, { sessionKey: "my:1234:to:5295" });
     assert.equal(result, undefined);
