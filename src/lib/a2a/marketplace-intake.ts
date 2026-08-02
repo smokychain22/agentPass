@@ -27,6 +27,13 @@ const INFORMATIONAL_PATTERNS = [
   /does\s+repodiet\s+(support|create|open|deliver)\s+(a\s+)?(cleanup\s+)?pull\s+request/i,
   /what\s+services?\s+(are|is)\s+available/i,
   /what\s+services?\s+does\s+repodiet\s+(offer|provide|have)/i,
+  // The "you"-form. Every pattern above names RepoDiet explicitly, so a
+  // reviewer addressing the agent directly ("What services do you offer?")
+  // fell through to INVALID_TASK_TYPE and got HTTP 400 — verified live against
+  // production on 2026-08-02. It is one of OKX's standard discovery prompts.
+  /what\s+(services?|can)\s+(do\s+)?you\s+(offer|provide|have|do)/i,
+  /what\s+do\s+you\s+do\b/i,
+  /which\s+services?\s+do\s+you\s+(offer|provide|support)/i,
   /can\s+repodiet\s+(inspect|analy[sz]e|scan|review|diagnose)\s+(my\s+)?repository/i,
   /what\s+information\s+do\s+you\s+need/i,
   /what\s+(info|information)\s+is\s+(required|needed)/i,
@@ -61,6 +68,43 @@ export function isInformationalQuery(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   return INFORMATIONAL_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+/**
+ * Cleanup intent stated in prose rather than as a `type` field.
+ *
+ * OKX rejection class #6 was exactly this: a reviewer wrote "The task is:
+ * type=create_cleanup_pr" and RepoDiet answered "could not map it to a cleanup
+ * task type". The bridge (openclaw-plugins/repodiet-a2a-bridge) was taught to
+ * classify intent and forward a `type` in PR #141, but that only covers XMTP
+ * traffic routed through the bridge — the intake endpoint itself still could
+ * not read prose, so any other caller got the same wrong answer. Verified live
+ * on 2026-08-02: "The task is: type=create_cleanup_pr." and "I need a safe
+ * cleanup pull request for my JavaScript repository." both returned HTTP 400.
+ *
+ * Note `\b` cannot be used around "cleanup" inside "create_cleanup_pr" because
+ * "_" is a word character — the same trap that defeated the bridge's original
+ * pattern.
+ */
+const CLEANUP_INTENT_PATTERNS = [
+  /\bclean[\s-]?up\b/i,
+  /\bpull\s*request\b/i,
+  /\b(open|create)\s+(a\s+)?pr\b/i,
+  /create_cleanup_pr/i,
+  /repository\.(safe_cleanup|verified_cleanup|cleanup_pr)/i,
+];
+
+/**
+ * Returns the canonical task type when the text states a cleanup intent.
+ * Deliberately returns undefined otherwise, so a genuine discovery question is
+ * never coerced into a task.
+ */
+export function inferCleanupTaskTypeFromText(text: string | undefined): string | undefined {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return undefined;
+  return CLEANUP_INTENT_PATTERNS.some((pattern) => pattern.test(trimmed))
+    ? "repository.safe_cleanup"
+    : undefined;
 }
 
 /** Extract a GitHub repository URL from free-form reviewer / marketplace text. */
