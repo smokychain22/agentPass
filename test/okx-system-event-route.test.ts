@@ -17,6 +17,7 @@
 import assert from "node:assert/strict";
 
 import {
+  actionAlreadyCompleted,
   classifyInbound,
   authorizeAction,
   mayAcknowledge,
@@ -227,19 +228,54 @@ test("a fetched instruction is NOT acknowledgeable — next-action exiting 0 is 
   assert.equal(mayAcknowledge("action_authorized"), false);
 });
 
-test("only a confirmed action or an honest terminal failure may be acknowledged", () => {
-  assert.equal(mayAcknowledge("action_confirmed"), true);
+test("only a fully finished event or an honest terminal failure may be acknowledged", () => {
+  assert.equal(mayAcknowledge("acknowledged"), true);
   assert.equal(mayAcknowledge("terminal_failure"), true);
+});
+
+// A landed on-chain action is not the end of the turn — the buyer still has to
+// be told. Acknowledging at action_confirmed would drop the XMTP status
+// whenever publication failed.
+test("a confirmed action is NOT yet acknowledgeable — the buyer still has to be told", () => {
+  assert.equal(mayAcknowledge("action_confirmed"), false);
+  assert.equal(mayAcknowledge("response_pending"), false);
 });
 
 test("a retryable failure stays unacknowledged so it is replayed", () => {
   assert.equal(mayAcknowledge("retryable_failure"), false);
 });
 
-test("a broadcast action is never acknowledged and must be reconciled, not blind-retried", () => {
+test("a broadcast or pending action is never acknowledged and must be reconciled, not blind-retried", () => {
   assert.equal(mayAcknowledge("action_broadcast"), false);
   assert.equal(requiresReconciliation("action_broadcast"), true);
+  assert.equal(requiresReconciliation("action_pending"), true);
   assert.equal(requiresReconciliation("retryable_failure"), false);
+});
+
+// The property that lets a lost XMTP response retry safely: once the action has
+// landed, every downstream state still reports it as done, so the executor
+// resumes at publication instead of re-running the action.
+test("every post-action state reports the action as already completed", () => {
+  for (const state of [
+    "action_confirmed",
+    "response_pending",
+    "response_published",
+    "acknowledged",
+  ] as const) {
+    assert.equal(actionAlreadyCompleted(state), true, `${state} must report action done`);
+  }
+});
+
+test("pre-action states do not report the action as completed", () => {
+  for (const state of [
+    "discovered",
+    "instruction_fetched",
+    "action_authorized",
+    "action_broadcast",
+    "retryable_failure",
+  ] as const) {
+    assert.equal(actionAlreadyCompleted(state), false, `${state} must not report action done`);
+  }
 });
 
 // --- bounded retry ----------------------------------------------------------

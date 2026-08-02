@@ -80,6 +80,7 @@ function deps(overrides: Partial<ExecuteDeps> = {}): ExecuteDeps {
     runModel: async () => ({ ok: true, invocationId: "inv-1", actions: [DELIVER] }),
     runAction: async () => ({ ok: true, transactionRef: "0xtx", broadcast: true }),
     reconcile: async () => ({ completed: false }),
+    publishStatus: async () => ({ ok: true, messageId: "xmtp-1" }),
     ...overrides,
   };
 }
@@ -114,13 +115,52 @@ async function run() {
     const ledger = new MemoryLedger();
     const result = await executeSystemEvent(EVENT_ID, ENVELOPE, deps({ ledger }));
 
-    assert.equal(result.state, "action_confirmed");
+    assert.equal(result.state, "acknowledged");
     assert.equal(result.acknowledged, true);
-    // Last durable write is the confirmation, so a crash before the caller
-    // acknowledges still leaves a complete record.
-    const last = ledger.writes[ledger.writes.length - 1];
-    assert.equal(last.state, "action_confirmed");
-    assert.equal(last.transactionRef, "0xtx");
+
+    // action_confirmed must be durable strictly before acknowledgement, so a
+    // crash in between replays into the publication path, not the action path.
+    const states = ledger.writes.map((w) => w.state);
+    const confirmedAt = states.indexOf("action_confirmed");
+    const acknowledgedAt = states.indexOf("acknowledged");
+    assert.ok(confirmedAt >= 0, "action_confirmed must be persisted");
+    assert.ok(confirmedAt < acknowledgedAt, "evidence must precede acknowledgement");
+    assert.equal(ledger.writes[acknowledgedAt].transactionRef, "0xtx");
+    assert.equal(ledger.writes[acknowledgedAt].xmtpMessageId, "xmtp-1");
+  });
+
+  await test("a failed XMTP publication leaves the event unacknowledged but does NOT repeat the action", async () => {
+    const ledger = new MemoryLedger();
+    let actionRuns = 0;
+    const failing = deps({
+      ledger,
+      runAction: async () => {
+        actionRuns += 1;
+        return { ok: true, transactionRef: "0xtx", broadcast: true };
+      },
+      publishStatus: async () => ({ ok: false, error: "xmtp_down" }),
+    });
+
+    const first = await executeSystemEvent(EVENT_ID, ENVELOPE, failing);
+    assert.equal(first.state, "response_pending");
+    assert.equal(first.acknowledged, false);
+    assert.equal(actionRuns, 1);
+
+    // Replay after the transport recovers: publication retries, action does not.
+    const recovered = deps({
+      ledger,
+      runAction: async () => {
+        actionRuns += 1;
+        return { ok: true, transactionRef: "0xtx", broadcast: true };
+      },
+      publishStatus: async () => ({ ok: true, messageId: "xmtp-2" }),
+    });
+    const second = await executeSystemEvent(EVENT_ID, ENVELOPE, recovered);
+
+    assert.equal(actionRuns, 1, "the on-chain action must never run twice");
+    assert.equal(second.state, "acknowledged");
+    assert.equal(second.reason, "resumed_at_publication");
+    assert.equal(second.evidence?.xmtpMessageId, "xmtp-2");
   });
 
   await test("a duplicate event does not execute twice", async () => {
@@ -161,7 +201,9 @@ async function run() {
     );
 
     assert.equal(actionRuns, 0, "must not rebroadcast");
-    assert.equal(result.state, "action_confirmed");
+    // Reconciliation adopts the existing transaction and then continues the
+    // turn through publication rather than stopping at action_confirmed.
+    assert.equal(result.state, "acknowledged");
     assert.equal(result.reason, "reconciled_existing_action");
     assert.equal(result.evidence?.transactionRef, "0xexisting");
   });

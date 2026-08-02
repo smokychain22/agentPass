@@ -227,16 +227,32 @@ export function authorizeAction(
  */
 export type EventLifecycleState =
   | "discovered"
+  | "classified"
+  | "instruction_fetching"
   | "instruction_fetched"
+  | "model_pending"
+  | "action_proposed"
   | "action_authorized"
+  | "action_rejected"
   | "action_broadcast"
+  | "action_pending"
   | "action_confirmed"
+  | "response_pending"
+  | "response_published"
+  | "acknowledged"
   | "retryable_failure"
   | "terminal_failure";
 
-/** States that are safe to mark the event acknowledged and stop replaying it. */
+/**
+ * Only a fully-finished event may stop being replayed.
+ *
+ * Note `action_confirmed` is deliberately NOT here. The on-chain action having
+ * landed is not the end of the turn — the buyer still has to be told, honestly,
+ * what happened. Acknowledging at action_confirmed would drop the XMTP status
+ * on the floor whenever publication failed.
+ */
 const ACKNOWLEDGEABLE: ReadonlySet<EventLifecycleState> = new Set([
-  "action_confirmed",
+  "acknowledged",
   "terminal_failure",
 ]);
 
@@ -245,13 +261,30 @@ export function mayAcknowledge(state: EventLifecycleState): boolean {
 }
 
 /**
- * `action_broadcast` means an action was signed and sent but its outcome is
- * unknown (process died, transport dropped). Re-running it could double-submit
- * an on-chain action, so recovery must RECONCILE by reading authoritative
- * state, never blind-retry.
+ * States in which the required on-chain action has definitively already
+ * happened. Re-running the action from any of these would double-submit, so the
+ * executor resumes at the publication step instead.
+ *
+ * This is what makes "a lost XMTP response must not repeat the action" true.
+ */
+const ACTION_ALREADY_DONE: ReadonlySet<EventLifecycleState> = new Set([
+  "action_confirmed",
+  "response_pending",
+  "response_published",
+  "acknowledged",
+]);
+
+export function actionAlreadyCompleted(state: EventLifecycleState): boolean {
+  return ACTION_ALREADY_DONE.has(state);
+}
+
+/**
+ * The action was signed and sent but its outcome is unknown (process died,
+ * transport dropped). Re-running could double-submit an on-chain action, so
+ * recovery must RECONCILE against authoritative state, never blind-retry.
  */
 export function requiresReconciliation(state: EventLifecycleState): boolean {
-  return state === "action_broadcast";
+  return state === "action_broadcast" || state === "action_pending";
 }
 
 export interface RetryDecision {

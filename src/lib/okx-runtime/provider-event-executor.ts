@@ -31,6 +31,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  actionAlreadyCompleted,
   authorizeAction,
   classifyInbound,
   decideRetry,
@@ -105,6 +106,16 @@ export type Reconciler = (input: {
   action: ProposedAction;
 }) => Promise<{ completed: boolean; transactionRef?: string }>;
 
+/**
+ * Publishes the buyer-facing status over XMTP. Separate from the action so a
+ * failed publication retries the MESSAGE only — never the on-chain action.
+ */
+export type StatusPublisher = (input: {
+  jobId: string;
+  state: EventLifecycleState;
+  transactionRef?: string;
+}) => Promise<{ ok: boolean; messageId?: string; error?: string }>;
+
 export interface ExecuteDeps {
   ledger: ActionLedger;
   fetchInstruction: InstructionFetcher;
@@ -112,6 +123,7 @@ export interface ExecuteDeps {
   runModel: ModelTurn;
   runAction: ActionRunner;
   reconcile: Reconciler;
+  publishStatus: StatusPublisher;
 }
 
 export interface ExecuteResult {
@@ -166,23 +178,31 @@ export async function executeSystemEvent(
       };
     }
 
+    // The action already landed in an earlier run, but the turn did not finish
+    // (status never published). Resume at PUBLICATION — never re-run the
+    // action. This is what makes a lost XMTP response safe to retry.
+    if (prior && actionAlreadyCompleted(prior.state)) {
+      return publishAndAcknowledge(deps, eventId, jobId, prior, "resumed_at_publication");
+    }
+
     // Crash after broadcast: the action may or may not have landed. Reconcile
     // against authoritative state — never blind-retry an on-chain action.
     if (prior && requiresReconciliation(prior.state) && prior.action) {
       const outcome = await deps.reconcile({ jobId, action: prior.action });
       if (outcome.completed) {
-        const evidence: ActionEvidence = {
+        const confirmed: ActionEvidence = {
           ...prior,
           state: "action_confirmed",
           transactionRef: outcome.transactionRef ?? prior.transactionRef,
         };
-        deps.ledger.put(eventId, evidence);
-        return {
-          state: "action_confirmed",
-          acknowledged: true,
-          reason: "reconciled_existing_action",
-          evidence,
-        };
+        deps.ledger.put(eventId, confirmed);
+        return publishAndAcknowledge(
+          deps,
+          eventId,
+          jobId,
+          confirmed,
+          "reconciled_existing_action"
+        );
       }
       // Genuinely did not land — fall through and retry from a known state.
     }
@@ -292,12 +312,66 @@ export async function executeSystemEvent(
       transactionRef: lastTransactionRef,
       attempts,
     };
-    // Evidence first, acknowledgement second — never the reverse.
+    // Evidence first, acknowledgement second — never the reverse. If the
+    // process dies here, the resume path above picks up at publication and
+    // does NOT re-run the action.
     deps.ledger.put(eventId, evidence);
-    return { state: "action_confirmed", acknowledged: true, reason: "action_completed", evidence };
+    return publishAndAcknowledge(deps, eventId, jobId, evidence, "action_completed");
   } finally {
     deps.ledger.unlock(eventId);
   }
+}
+
+/**
+ * Publishes the buyer-facing status, then acknowledges.
+ *
+ * A publication failure is retryable and leaves the event UNacknowledged, so it
+ * is replayed — but it replays into the `actionAlreadyCompleted` branch, which
+ * skips straight back here. The action can therefore never run twice no matter
+ * how many times publication fails.
+ */
+async function publishAndAcknowledge(
+  deps: ExecuteDeps,
+  eventId: string,
+  jobId: string,
+  evidence: ActionEvidence,
+  reason: string
+): Promise<ExecuteResult> {
+  deps.ledger.put(eventId, { ...evidence, state: "response_pending" });
+
+  const published = await deps.publishStatus({
+    jobId,
+    state: "action_confirmed",
+    transactionRef: evidence.transactionRef,
+  });
+
+  if (!published.ok) {
+    const pending: ActionEvidence = {
+      ...evidence,
+      state: "response_pending",
+      error: published.error ?? "xmtp_publish_failed",
+    };
+    deps.ledger.put(eventId, pending);
+    return {
+      state: "response_pending",
+      acknowledged: false,
+      reason: "status_publication_failed_action_preserved",
+      evidence: pending,
+    };
+  }
+
+  const acknowledged: ActionEvidence = {
+    ...evidence,
+    state: "acknowledged",
+    xmtpMessageId: published.messageId,
+  };
+  deps.ledger.put(eventId, acknowledged);
+  return {
+    state: "acknowledged",
+    acknowledged: mayAcknowledge("acknowledged"),
+    reason,
+    evidence: acknowledged,
+  };
 }
 
 function persistRetryable(
