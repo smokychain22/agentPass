@@ -163,10 +163,74 @@ function run() {
     assert.deepEqual(entry, { path: "session.dmScope", value: "per-channel-peer" });
   });
 
-  test("plugins.allow explicitly allows BOTH trusted plugin ids by default (PluginsConfig.allow: string[])", () => {
+  test("plugins.allow explicitly allows the trusted plugin ids by default (PluginsConfig.allow: string[])", () => {
     const batch = buildOpenclawConfigBatch();
     const entry = batch.find((e) => e.path === "plugins.allow");
-    assert.deepEqual(entry, { path: "plugins.allow", value: ["okx-a2a", "repodiet-a2a-bridge"] });
+    assert.deepEqual(entry, {
+      path: "plugins.allow",
+      value: ["okx-a2a", "repodiet-a2a-bridge", "google"],
+    });
+  });
+
+  // Regression: the bundled @openclaw/google-plugin (id "google") was absent
+  // from this list, so every boot rewrote plugins.allow to the two-entry form
+  // and the provider plugin stayed disabled with activationReason "not in
+  // allowlist". Live production symptom: a valid auth.profiles["google:manual"]
+  // existed, `openclaw models list` returned no google models, and every
+  // session unclaimed by repodiet-a2a-bridge died on the stock default
+  // openai/gpt-5.5 with `model_not_found / next=none`.
+  //
+  // Setting it by hand is NOT a fix: buildOpenclawConfigBatch is re-applied on
+  // every boot, so a manual `openclaw config set plugins.allow` survives only
+  // until the next restart. It has to come from this list.
+  test("plugins.allow includes the bundled google provider plugin — without it the plugin is disabled as 'not in allowlist'", () => {
+    const entry = buildOpenclawConfigBatch().find((e) => e.path === "plugins.allow");
+    assert.ok(
+      (entry?.value as string[]).includes("google"),
+      "google must be allowlisted or the Gemini system-event route cannot resolve a model"
+    );
+  });
+
+  // google is a *bundled* provider plugin shipped inside openclaw's own
+  // dist/extensions (confirmed: `openclaw plugins inspect google` reports
+  // Origin: bundled, Source: stock:google/index.js). Adding it to load.paths
+  // would point the loader at a directory that does not exist in the image.
+  test("the google provider plugin is NOT added to plugins.load.paths — it is bundled, not a path plugin", () => {
+    const entry = buildOpenclawConfigBatch().find((e) => e.path === "plugins.load.paths");
+    assert.deepEqual(entry?.value, [
+      "/app/openclaw-plugins/okx-a2a-openclaw",
+      "/app/openclaw-plugins/repodiet-a2a-bridge",
+    ]);
+  });
+
+  // Conversation-hook access is granted only to the two hook plugins. google
+  // is a provider plugin with no hooks; granting it conversation access would
+  // widen its reach over session content for no functional reason.
+  test("the google provider plugin is NOT granted conversation-hook access", () => {
+    const paths = buildOpenclawConfigBatch().map((e) => e.path);
+    assert.ok(
+      !paths.some((p) => p.startsWith("plugins.entries.google.")),
+      "google must not receive plugins.entries.google.* grants"
+    );
+  });
+
+  // Allowlisting a provider plugin makes google/* resolvable; it must never
+  // also select it. The global default stays openai/gpt-5.5 and the narrow
+  // OKX system-event route pins its own model per turn.
+  test("the batch never writes a default-model path — allowlisting google must not change model selection", () => {
+    const paths = buildOpenclawConfigBatch().map((e) => e.path);
+    assert.ok(
+      !paths.some((p) => p === "models.default" || p.startsWith("models.")),
+      "buildOpenclawConfigBatch must not set any models.* path"
+    );
+  });
+
+  // The bootstrap marker is keyed on the plugin id list, so adding google
+  // changes computeExpectedBootstrapVersions()'s hash. That is what forces the
+  // supervisor to re-apply the config batch on the deploy that ships this fix
+  // instead of skipping bootstrap against a stale marker.
+  test("computeExpectedBootstrapVersions carries google, so the deploy re-applies the config batch", () => {
+    assert.ok(computeExpectedBootstrapVersions("openclaw").pluginIds.includes("google"));
   });
 
   test("plugins.allow accepts an explicit override list", () => {

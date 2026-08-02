@@ -155,6 +155,33 @@ export const REPODIET_BRIDGE_PLUGIN_ID = "repodiet-a2a-bridge";
 export const REPODIET_BRIDGE_PLUGIN_HOOK = "before_agent_reply";
 // Matches Dockerfile.seller's WORKDIR (/app) + COPY of openclaw-plugins/.
 export const REPODIET_BRIDGE_PLUGIN_PATH = "/app/openclaw-plugins/repodiet-a2a-bridge";
+// `@openclaw/google-plugin`'s id, confirmed from the installed
+// openclaw@2026.7.1-2 stock extension table (`openclaw plugins list` ->
+// "@openclaw/google-plugin | google | stock:google/index.js"), not guessed.
+//
+// This is a *bundled provider plugin*, not a loaded path plugin: it ships
+// inside openclaw's own dist/extensions, so it needs no `plugins.load.paths`
+// entry and no `plugins.entries.<id>` hook grant. It only needs to survive
+// `plugins.allow`.
+//
+// Why it must be here rather than set once by hand: `plugins.allow` below is
+// rewritten from this list on EVERY boot (buildOpenclawConfigBatch ->
+// `openclaw config set --batch-json`). A manual `openclaw config set
+// plugins.allow` therefore survives exactly until the next restart, then gets
+// clobbered back to the two-entry list. Live production proof of the failure
+// this caused: /persistent/home/.openclaw/openclaw.json held a valid
+// `auth.profiles["google:manual"]` (provider google, mode api_key) while
+// `plugins.allow` was ["okx-a2a","repodiet-a2a-bridge"], so the google
+// provider plugin stayed disabled with activationReason "not in allowlist",
+// `openclaw models list` returned no google models, and every unclaimed
+// session died on the stock default `openai/gpt-5.5` with
+// `model_not_found / next=none`.
+//
+// Allowlisting a provider plugin does NOT select it: `models.default` stays
+// openai/gpt-5.5 and ordinary buyer chat is still owned by the deterministic
+// repodiet-a2a-bridge. It only makes google/* resolvable for the narrowly
+// scoped OKX system-event route, which pins its model per-turn.
+export const GOOGLE_PROVIDER_PLUGIN_ID = "google";
 
 // Pinned component versions. Must match Dockerfile.seller's ARG defaults
 // exactly (test/seller-runtime-supervisor.test.ts asserts this) — these
@@ -322,7 +349,11 @@ export interface OpenclawBatchEntry {
  * (or its network-dependent version-drift/install logic) at all.
  */
 export function buildOpenclawConfigBatch(
-  trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID],
+  trustedPluginIds: string[] = [
+    OKX_A2A_PLUGIN_ID,
+    REPODIET_BRIDGE_PLUGIN_ID,
+    GOOGLE_PROVIDER_PLUGIN_ID,
+  ],
   bridgePluginId: string = REPODIET_BRIDGE_PLUGIN_ID,
   bridgePluginPath: string = REPODIET_BRIDGE_PLUGIN_PATH,
   okxA2aPluginId: string = OKX_A2A_PLUGIN_ID,
@@ -346,7 +377,11 @@ export function buildOpenclawConfigBatch(
 /** Non-secret metadata this boot's bootstrap would produce — compared against the persisted marker to decide whether to skip config-set. */
 export function computeExpectedBootstrapVersions(
   provider: string,
-  trustedPluginIds: string[] = [OKX_A2A_PLUGIN_ID, REPODIET_BRIDGE_PLUGIN_ID]
+  trustedPluginIds: string[] = [
+    OKX_A2A_PLUGIN_ID,
+    REPODIET_BRIDGE_PLUGIN_ID,
+    GOOGLE_PROVIDER_PLUGIN_ID,
+  ]
 ): BootstrapVersions {
   const configPaths = buildOpenclawConfigBatch().map((e) => e.path);
   return {
