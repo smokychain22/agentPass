@@ -126,6 +126,62 @@ async function run() {
     assert.match(String(body.message), /repository URL/i);
   });
 
+  /**
+   * Reproduced live against production on 2026-08-03, AFTER the earlier
+   * unmappable-type fixes shipped: naming a REGISTERED SERVICE still returned
+   * HTTP 400 INVALID_TASK_TYPE — "could not map it to a cleanup task type" — to
+   * a caller who had just named the service by its marketplace name. Asking how
+   * to authorize a repository failed the same way. Both are standard pre-work
+   * reviewer prompts and both are the rejection class OKX raised twice.
+   */
+  await test("naming a registered service is answered, never rejected as unmappable", async () => {
+    for (const message of [
+      "I would like RepoDiet Quick Triage",
+      "I would like RepoDiet Verified Cleanup",
+      "Please run analyze_repository",
+      "service 37347 please",
+    ]) {
+      const { status, body } = await post({ message });
+      assert.notEqual(body.code, "INVALID_TASK_TYPE", `must not reject: ${message}`);
+      assert.equal(status, 200, `must answer: ${message}`);
+      assert.equal(body.acknowledged, true);
+    }
+  });
+
+  await test("Quick Triage is answered as A2MCP 37347, never coerced into a cleanup task", async () => {
+    const { body } = await post({ message: "I would like RepoDiet Quick Triage" });
+    // Quick Triage is a read-only A2MCP service. Mapping it to the escrow-backed
+    // cleanup type would misprice and misrepresent it.
+    assert.notEqual(body.taskType, "repository.safe_cleanup");
+    assert.match(String(body.message), /37347|quick\s*triage/i);
+  });
+
+  await test("a repository-authorization question gets a deterministic answer", async () => {
+    for (const message of [
+      "How do I authorize a repository?",
+      "How can I grant you access?",
+      "What permissions do you need?",
+    ]) {
+      const { status, body } = await post({ message });
+      assert.equal(status, 200, `must answer: ${message}`);
+      assert.notEqual(body.code, "INVALID_TASK_TYPE", `must not reject: ${message}`);
+    }
+  });
+
+  await test("a real cleanup request with a repository still becomes a task", async () => {
+    // The informational branches are guarded on `!repoUrl`, so widening them
+    // must not swallow genuine work. This is the regression that would matter.
+    const { body } = await post({
+      message: "I would like RepoDiet Verified Cleanup for https://github.com/velz-cmd/repodiet-e2e-test",
+    });
+    assert.notEqual(body.code, "INVALID_TASK_TYPE");
+    assert.notEqual(
+      body.marketplaceLifecycle,
+      "AVAILABLE",
+      "a request carrying a repository must not be answered as mere discovery"
+    );
+  });
+
   await test("genuinely unmappable input is still refused — the gate is not simply removed", async () => {
     const { body } = await post({ message: "banana" });
     assert.equal(

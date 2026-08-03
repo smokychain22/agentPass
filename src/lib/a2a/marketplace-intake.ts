@@ -40,6 +40,29 @@ const INFORMATIONAL_PATTERNS = [
   /how\s+much\s+(do|does)\s+(the\s+)?services?\s+cost/i,
   /what\s+(is|are)\s+the\s+(price|cost|fee)s?/i,
   /how\s+much\s+(is|does)\s+repodiet\s+cost/i,
+
+  // Naming a REGISTERED SERVICE is a request for that service, not an
+  // unmappable message. Verified live against production on 2026-08-03:
+  // "I would like RepoDiet Quick Triage" returned HTTP 400 INVALID_TASK_TYPE —
+  // "could not map it to a cleanup task type" — to a caller who had just named
+  // the service by its registered marketplace name. That is the same rejection
+  // class OKX raised twice already (#141, #143): telling a reviewer we cannot
+  // understand a request that names our own product. Quick Triage is A2MCP
+  // 37347, so it must NOT be coerced into a cleanup task type; answering
+  // informatively describes both services with their real ids and prices.
+  /\bquick\s*triage\b/i,
+  /\banaly[sz]e_repository\b/i,
+  /\bverified\s+cleanup\b/i,
+  /\bservice\s*(id\s*)?3734[78]\b/i,
+
+  // Repository authorization. A reviewer asking how to grant access was told
+  // its question was an invalid task type (live, 2026-08-03, HTTP 400). This
+  // is a standard pre-work question and must get a deterministic answer.
+  /how\s+(do|can)\s+(i|we|you)\s+.{0,30}\bauthor(i[sz]e|isation|ization)\b/i,
+  /\bauthor(i[sz]e|isation|ization)\b.{0,30}\brepositor(y|ies)\b/i,
+  /how\s+(do|can)\s+(i|we)\s+.{0,30}\b(grant|give)\s+(you\s+)?access\b/i,
+  /how\s+(do|can)\s+(i|we)\s+.{0,20}\bconnect\b.{0,30}\b(github|repositor(y|ies))\b/i,
+  /what\s+(access|permissions?)\s+do\s+you\s+need/i,
 ];
 
 export function extractUserMessage(body: Record<string, unknown>): string | undefined {
