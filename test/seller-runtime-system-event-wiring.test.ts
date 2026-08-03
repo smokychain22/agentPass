@@ -14,11 +14,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildSystemEventDeps, runSystemEventCycle } from "../scripts/repodiet-seller-runtime";
+import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
 import {
   OKX_SYSTEM_EVENT_AGENT_ID,
   OKX_SYSTEM_EVENT_MODEL,
-} from "../scripts/seller-runtime-supervisor";
-import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
+} from "../src/lib/okx-runtime/system-event-agent";
 import { spoolSystemEvent, systemEventInboxPath } from "../src/lib/okx-runtime/system-event-intake";
 import {
   ALLOWED_COMMANDS,
@@ -139,6 +139,23 @@ async function run() {
   await test("the runtime binds the ledger to the mounted volume's data directory", () => {
     assert.ok(/buildSystemEventDeps\(paths\.data\)/.test(source));
     assert.ok(/actionLedgerPath\(paths\.data\)/.test(source));
+  });
+
+  await test("the runtime does not drag the Gateway client into its startup path", () => {
+    // scripts/seller-runtime-supervisor.ts reaches
+    // `openclaw/plugin-sdk/gateway-runtime` through gateway-rpc-probe, whose
+    // bundled undici calls `webidl.util.markAsUncloneable` — Node 22+ only.
+    // Importing it here for two string constants crashed the Node 20 CI job
+    // outright and coupled this process to the Gateway for no reason.
+    assert.doesNotMatch(source, /from\s+["']\.\/seller-runtime-supervisor["']/);
+    // Import specifiers only. The bare string "openclaw" is legitimate here —
+    // it is the configured okx-a2a provider name, not a module.
+    assert.doesNotMatch(source, /from\s+["']openclaw/);
+    assert.doesNotMatch(source, /require\(\s*["']openclaw/);
+    assert.ok(
+      /from\s+["']\.\.\/src\/lib\/okx-runtime\/system-event-agent["']/.test(source),
+      "the isolated agent id must come from the dependency-free module"
+    );
   });
 
   await test("a newly received official event runs through the same executor", async () => {

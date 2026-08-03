@@ -184,29 +184,21 @@ export const REPODIET_BRIDGE_PLUGIN_PATH = "/app/openclaw-plugins/repodiet-a2a-b
 export const GOOGLE_PROVIDER_PLUGIN_ID = "google";
 
 /**
- * The isolated OpenClaw agent that executes official OKX system-event turns —
- * and the ONLY identity in this deployment bound to a model.
+ * The isolated system-event agent's identity and pinned model.
  *
- * Why isolated rather than just setting a default: `next-action`'s output is an
- * instruction prompt for a reasoning agent, so the OKX lifecycle genuinely needs
- * a model. Ordinary buyer chat does not, and must not get one — RepoDiet's
- * deterministic bridge owns repository negotiation, findings, exact-file
- * approval and PR delivery. `openclaw agents add --model` binds a model to this
- * agent alone, leaving the `main` agent's global default untouched at
- * openai/gpt-5.5, so there is no path by which a buyer message can reach Gemini.
+ * Defined in src/lib/okx-runtime/system-event-agent.ts — a dependency-free
+ * module — and re-exported here so existing importers are unaffected. They
+ * cannot live in this file: the seller runtime needs them too, and this
+ * module's import graph reaches `openclaw/plugin-sdk/gateway-runtime`, which
+ * requires Node 22+. Importing this file for two constants pulled the Gateway
+ * client into the runtime's startup path and broke Node 20 CI jobs outright.
  */
-export const OKX_SYSTEM_EVENT_AGENT_ID = "okx-system-events";
+import {
+  OKX_SYSTEM_EVENT_AGENT_ID,
+  OKX_SYSTEM_EVENT_MODEL,
+} from "../src/lib/okx-runtime/system-event-agent";
 
-/**
- * Pinned per-agent, never as a global default.
- *
- * gemini-2.5-flash is deliberately NOT used: verified live against the
- * production credential, Google returns
- * `404 ... models/gemini-2.5-flash is no longer available to new users`.
- * 3.5-flash is the current flash tier and returned a real 200 with correct
- * instruction-following and tool use from this machine.
- */
-export const OKX_SYSTEM_EVENT_MODEL = "google/gemini-3.5-flash";
+export { OKX_SYSTEM_EVENT_AGENT_ID, OKX_SYSTEM_EVENT_MODEL };
 
 // Pinned component versions. Must match Dockerfile.seller's ARG defaults
 // exactly (test/seller-runtime-supervisor.test.ts asserts this) — these

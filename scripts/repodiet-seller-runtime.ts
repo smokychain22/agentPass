@@ -53,7 +53,11 @@ import {
   recoverPendingEvents,
   type ReconcilerDeps,
 } from "../src/lib/okx-runtime/system-event-reconciler";
-import { OKX_SYSTEM_EVENT_AGENT_ID } from "./seller-runtime-supervisor";
+// Deliberately NOT from ./seller-runtime-supervisor: that module's import graph
+// reaches `openclaw/plugin-sdk/gateway-runtime`, which needs Node 22+. Reading
+// two constants from it would drag the whole Gateway client into this process's
+// startup path for no reason.
+import { OKX_SYSTEM_EVENT_AGENT_ID } from "../src/lib/okx-runtime/system-event-agent";
 
 const execFileAsync = promisify(execFile);
 
