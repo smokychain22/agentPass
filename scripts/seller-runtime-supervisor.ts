@@ -183,6 +183,31 @@ export const REPODIET_BRIDGE_PLUGIN_PATH = "/app/openclaw-plugins/repodiet-a2a-b
 // scoped OKX system-event route, which pins its model per-turn.
 export const GOOGLE_PROVIDER_PLUGIN_ID = "google";
 
+/**
+ * The isolated OpenClaw agent that executes official OKX system-event turns —
+ * and the ONLY identity in this deployment bound to a model.
+ *
+ * Why isolated rather than just setting a default: `next-action`'s output is an
+ * instruction prompt for a reasoning agent, so the OKX lifecycle genuinely needs
+ * a model. Ordinary buyer chat does not, and must not get one — RepoDiet's
+ * deterministic bridge owns repository negotiation, findings, exact-file
+ * approval and PR delivery. `openclaw agents add --model` binds a model to this
+ * agent alone, leaving the `main` agent's global default untouched at
+ * openai/gpt-5.5, so there is no path by which a buyer message can reach Gemini.
+ */
+export const OKX_SYSTEM_EVENT_AGENT_ID = "okx-system-events";
+
+/**
+ * Pinned per-agent, never as a global default.
+ *
+ * gemini-2.5-flash is deliberately NOT used: verified live against the
+ * production credential, Google returns
+ * `404 ... models/gemini-2.5-flash is no longer available to new users`.
+ * 3.5-flash is the current flash tier and returned a real 200 with correct
+ * instruction-following and tool use from this machine.
+ */
+export const OKX_SYSTEM_EVENT_MODEL = "google/gemini-3.5-flash";
+
 // Pinned component versions. Must match Dockerfile.seller's ARG defaults
 // exactly (test/seller-runtime-supervisor.test.ts asserts this) — these
 // are the values the bootstrap marker is keyed on, so a version bump in
@@ -389,7 +414,14 @@ export function computeExpectedBootstrapVersions(
     okxA2aVersion: OKX_A2A_VERSION,
     openclawVersion: OPENCLAW_VERSION,
     okxA2aOpenclawPluginVersion: OKX_A2A_OPENCLAW_PLUGIN_VERSION,
-    pluginIds: [...trustedPluginIds, `provider:${provider}`],
+    // The system-event agent binding is part of the marker so that changing the
+    // pinned model forces a redeploy to re-run bootstrap rather than silently
+    // skipping against a stale marker and leaving the old model bound.
+    pluginIds: [
+      ...trustedPluginIds,
+      `provider:${provider}`,
+      `agent:${OKX_SYSTEM_EVENT_AGENT_ID}=${OKX_SYSTEM_EVENT_MODEL}`,
+    ],
     configSchemaHash: computeConfigSchemaHash(configPaths),
   };
 }
@@ -425,6 +457,85 @@ async function configureOpenclaw(env: NodeJS.ProcessEnv): Promise<boolean> {
  * CLI's own --help text and implementation (a PATH check plus a write to
  * a local SQLite session store; no network call).
  */
+/**
+ * Paths for the isolated system-event agent, kept on the mounted volume so its
+ * sessions and ledger survive restarts and redeploys.
+ */
+export function systemEventAgentPaths(persistRoot = "/persistent"): {
+  workspace: string;
+  agentDir: string;
+} {
+  const base = `${persistRoot}/home/.openclaw/agents/${OKX_SYSTEM_EVENT_AGENT_ID}`;
+  return { workspace: `${base}/workspace`, agentDir: `${base}/agent` };
+}
+
+/** argv for provisioning the isolated agent — argument array, never a shell string. */
+export function buildSystemEventAgentArgs(persistRoot = "/persistent"): string[] {
+  const { workspace, agentDir } = systemEventAgentPaths(persistRoot);
+  return [
+    "agents",
+    "add",
+    OKX_SYSTEM_EVENT_AGENT_ID,
+    "--model",
+    OKX_SYSTEM_EVENT_MODEL,
+    "--workspace",
+    workspace,
+    "--agent-dir",
+    agentDir,
+    "--non-interactive",
+    "--json",
+  ];
+}
+
+/**
+ * Creates the isolated system-event agent if absent. Idempotent by design: when
+ * the agent already exists the CLI reports so and this returns true without
+ * recreating it, because recreating would discard the agent's persisted session
+ * state — and with it the continuity of an in-flight job's turn.
+ */
+async function ensureSystemEventAgent(env: NodeJS.ProcessEnv): Promise<boolean> {
+  const listed = await runProcess("openclaw", ["agents", "list", "--json"], {
+    env,
+    timeoutMs: 30_000,
+  });
+  if (listed.ok && listed.stdout.includes(OKX_SYSTEM_EVENT_AGENT_ID)) {
+    log("system_event_agent_present", {
+      agentId: OKX_SYSTEM_EVENT_AGENT_ID,
+      model: OKX_SYSTEM_EVENT_MODEL,
+    });
+    return true;
+  }
+
+  const startedAt = Date.now();
+  const created = await runProcess("openclaw", buildSystemEventAgentArgs(), {
+    env,
+    timeoutMs: 60_000,
+  });
+  if (created.ok) {
+    log("system_event_agent_created", {
+      agentId: OKX_SYSTEM_EVENT_AGENT_ID,
+      model: OKX_SYSTEM_EVENT_MODEL,
+    });
+    return true;
+  }
+
+  // Treat a concurrent/duplicate creation as success — two boots racing must
+  // not fail the bootstrap.
+  if (/already exists|duplicate/i.test(`${created.stdout}${created.stderr}`)) {
+    log("system_event_agent_present", { agentId: OKX_SYSTEM_EVENT_AGENT_ID, note: "raced" });
+    return true;
+  }
+
+  logCommandFailure(
+    "system_event_agent_create_failed",
+    `openclaw ${buildSystemEventAgentArgs().join(" ")}`,
+    created,
+    Date.now() - startedAt,
+    "fatal"
+  );
+  return false;
+}
+
 async function setAiProvider(env: NodeJS.ProcessEnv, provider: string): Promise<boolean> {
   const startedAt = Date.now();
   const result = await runProcess("okx-a2a", ["ai-provider", "set", "--provider", provider, "--json"], {
@@ -481,6 +592,14 @@ async function runBootstrap(env: NodeJS.ProcessEnv): Promise<boolean> {
     const configured = await configureOpenclaw(env);
     const providerSet = configured && (await setAiProvider(env, provider));
     if (!configured || !providerSet) {
+      return false;
+    }
+
+    // Provision the isolated system-event agent. Idempotent: an existing agent
+    // is left alone rather than recreated, so a redeploy never disturbs its
+    // persisted session state on the volume.
+    if (!(await ensureSystemEventAgent(env))) {
+      log("bootstrap_failed", { reason: "system_event_agent_not_provisioned" });
       return false;
     }
 
