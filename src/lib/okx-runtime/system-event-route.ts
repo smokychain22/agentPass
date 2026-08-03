@@ -293,7 +293,8 @@ export interface RetryDecision {
   reason: string;
 }
 
-const MAX_ATTEMPTS = 5;
+/** Exported so tests assert against the real bound rather than a duplicated literal. */
+export const MAX_ATTEMPTS = 15;
 const BASE_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
 
@@ -305,6 +306,25 @@ const MAX_BACKOFF_MS = 60_000;
  * provider requests in under 4 seconds. Under a 429 that amplifies the exact
  * condition being rate-limited, so this route owns its own policy and honours
  * server-supplied retry-after rather than inheriting that behaviour.
+ *
+ * MAX_ATTEMPTS was raised from 5 to 15 after a SECOND real observation: this
+ * `decideRetry`'s own `delayMs` is informational only — nothing in the executor
+ * or the seller runtime sleeps on it (verified by inspection: no caller reads
+ * the field). The actual retry cadence is entirely paced by the outer
+ * `runSystemEventCycle` poll loop (SYSTEM_EVENT_POLL_MS, 60s in production), so
+ * the real resilience window was `MAX_ATTEMPTS × ~60-90s` — about 4-5 minutes.
+ * Live in production on 2026-08-03 (job 0x22a216415e2b1176d2111b136584e42f…,
+ * a genuine paid A2A test, Fly logs on repodiet-agent-9636), a real Gemini 503
+ * outage lasted ~4m10s (17:51:38Z first failure to 17:55:48Z
+ * `max_attempts_exhausted`) and the event was marked `terminal_failure` —
+ * exhausting the retry budget by roughly the width of the outage itself, not
+ * because the failure was permanent. A well-formed, correctly-authorized event
+ * was lost to a transient upstream blip the retry budget was too tight to
+ * survive. 15 attempts at the same ~60-90s external cadence gives roughly
+ * 15-25 minutes of resilience — enough margin for a realistic provider outage —
+ * while still bounded and never infinite; genuinely permanent failures (401/
+ * 403/404/400) are already terminal on the first attempt regardless of this
+ * constant, so this only widens the window for transient ones.
  */
 export function decideRetry(input: {
   status?: number;
