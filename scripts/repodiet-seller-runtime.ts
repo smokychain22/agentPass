@@ -35,11 +35,14 @@ import {
 import {
   createActionRunner,
   createInstructionFetcher,
-  createModelTurn,
   createReconciler,
   createStatusPublisher,
   createTaskReader,
 } from "../src/lib/okx-runtime/system-event-adapters";
+import {
+  createDeterministicTurn,
+  type DeterministicTurnOptions,
+} from "../src/lib/okx-runtime/deterministic-turn";
 import {
   LedgerActionStore,
   pendingSystemEvents,
@@ -740,7 +743,16 @@ export function buildSystemEventDeps(
    * runner); tests inject a fake so the genuine dependency construction and the
    * genuine cycle can be exercised without invoking the official CLIs.
    */
-  runner?: typeof runProcess
+  runner?: typeof runProcess,
+  /**
+   * Pipeline seam for the one step the deterministic turn cannot fake with a
+   * process runner: preparing the actual cleanup deliverable. Production
+   * always uses the real `createCleanupPullRequest` (the same function the
+   * ASP job executor and the paid A2MCP tools use); tests inject a fake so
+   * `job_accepted`'s full path can be exercised without cloning a real
+   * repository or calling GitHub.
+   */
+  createCleanupPr?: DeterministicTurnOptions["createCleanupPr"]
 ): ReconcilerDeps & { ledgerFile: FileActionLedger } {
   const ledgerFile = new FileActionLedger(actionLedgerPath(dataDirectory), SELLER.agentId);
   const adapterOptions = {
@@ -750,12 +762,17 @@ export function buildSystemEventDeps(
     runner,
   };
 
+  const readTask = createTaskReader(adapterOptions);
+
   return {
     ledgerFile,
     ledger: new LedgerActionStore(ledgerFile),
     fetchInstruction: createInstructionFetcher(adapterOptions),
-    readTask: createTaskReader(adapterOptions),
-    runModel: createModelTurn(adapterOptions),
+    readTask,
+    // Deterministic, not model-backed — see deterministic-turn.ts. The
+    // mandatory OKX protocol path (acknowledge / apply / accept / deliver)
+    // must not depend on a rate-limited, quota-capped third-party LLM.
+    runModel: createDeterministicTurn({ ...adapterOptions, readTask, createCleanupPr }),
     runAction: createActionRunner(adapterOptions),
     reconcile: createReconciler(adapterOptions),
     // The buyer is resolved from authoritative task detail inside the adapter.

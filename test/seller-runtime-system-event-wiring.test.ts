@@ -15,10 +15,6 @@ import path from "node:path";
 
 import { buildSystemEventDeps, runSystemEventCycle } from "../scripts/repodiet-seller-runtime";
 import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
-import {
-  OKX_SYSTEM_EVENT_AGENT_ID,
-  OKX_SYSTEM_EVENT_MODEL,
-} from "../src/lib/okx-runtime/system-event-agent";
 import { spoolSystemEvent, systemEventInboxPath } from "../src/lib/okx-runtime/system-event-intake";
 import {
   ALLOWED_COMMANDS,
@@ -61,10 +57,49 @@ const STATUS_STDOUT = [
   "  asp: 9636",
 ].join("\n");
 
-const MODEL_STDOUT = JSON.stringify({
-  runId: "run-1",
-  repodietActions: [{ command: "agent deliver", args: [JOB, "--agent-id", "9636"] }],
-});
+/**
+ * Verbatim-shaped `next-action` output for `job_accepted` (see
+ * `next-action-playbook.ts`'s real captured fixtures) — this is what proves
+ * the deterministic turn, not Gemini, drives the production wiring now.
+ */
+const NEXT_ACTION_JOB_ACCEPTED_STDOUT = `[Current state] job_accepted (User Agent has confirmed the apply)
+
+**Load task context first**:
+\`\`\`bash
+onchainos agent common context ${JOB} --role asp --agent-id 9636
+\`\`\`
+
+**Step 1 — Notify the user (apply accepted) via \`onchainos agent user-notify\`**:
+\`\`\`bash
+onchainos agent user-notify --content "<localized content shown below>"
+\`\`\`
+content:
+    [Job Accepted] Job ${JOB} has been accepted.
+    - Title: <title>
+    - Negotiated price: <tokenAmount> <tokenSymbol>
+
+**Step 2 — Autonomously execute the task and prepare the deliverable**:
+Pick the right tool / capability for the task content to get the work done.
+
+**Step 3 — Deliver**:
+\`\`\`bash
+onchainos agent deliver ${JOB} --file "<local file path>" --agent-id 9636
+\`\`\`
+`;
+
+const COMMON_CONTEXT_STDOUT =
+  "title: RepoDiet Verified Cleanup\nserviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n";
+
+/** Fake pipeline seam — the deterministic turn's one non-CLI dependency. */
+function fakeCreateCleanupPr() {
+  return (async (input: { repoUrl: string }) => ({
+    data: {
+      pullRequest: { number: 1, url: `${input.repoUrl}/pull/1` },
+      actionSummary: {},
+      repo: { cleanupBranch: "repodiet/cleanup-test" },
+    },
+  })) as never;
+}
 
 interface Invocation {
   bin: string;
@@ -94,10 +129,10 @@ function recordingRunner(overrides: Record<string, ProcessRunResult> = {}) {
     for (const key of [`${bin} ${argv[0]} ${argv[1] ?? ""}`.trim(), `${bin} ${argv[0]}`.trim()]) {
       if (overrides[key]) return overrides[key];
     }
-    if (bin === "onchainos" && argv[1] === "next-action") return ok("[Step 1] Deliver the result.");
+    if (bin === "onchainos" && argv[1] === "next-action") return ok(NEXT_ACTION_JOB_ACCEPTED_STDOUT);
+    if (bin === "onchainos" && argv[1] === "common") return ok(COMMON_CONTEXT_STDOUT);
     if (bin === "onchainos" && argv[1] === "status") return ok(STATUS_STDOUT);
     if (bin === "onchainos" && argv[1] === "deliver") return ok(`{"txHash":"0x${"a".repeat(64)}"}`);
-    if (bin === "openclaw") return ok(MODEL_STDOUT);
     if (bin === "okx-a2a") return ok('{"messageId":"xmtp-1"}');
     return ok("");
   };
@@ -161,15 +196,17 @@ async function run() {
   await test("a newly received official event runs through the same executor", async () => {
     const { data, inbox } = workspace();
     const { calls, runner } = recordingRunner();
-    const deps = buildSystemEventDeps(data, TEST_ENV, runner);
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeCreateCleanupPr());
 
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
     await runSystemEventCycle(deps, inbox);
 
-    // The full official sequence, through the real adapters.
+    // The full official sequence, through the real adapters — deterministic,
+    // never through Gemini/openclaw.
     assert.equal(ran(calls, "onchainos", "next-action").length, 1);
+    assert.equal(ran(calls, "onchainos", "common").length, 1, "must load task context per next-action's own Step 0");
     assert.equal(ran(calls, "onchainos", "deliver").length, 1);
-    assert.equal(calls.filter((c) => c.bin === "openclaw").length, 1);
+    assert.equal(calls.filter((c) => c.bin === "openclaw").length, 0);
     assert.equal(calls.filter((c) => c.bin === "okx-a2a").length, 1);
     assert.equal(deps.ledgerFile.get("todo_1")?.state, "acknowledged");
     assert.equal(deps.ledgerFile.get("todo_1")?.acknowledged, true);
@@ -181,19 +218,19 @@ async function run() {
     assert.deepEqual(deps.ledgerFile.get("todo_1")?.envelope, ENVELOPE);
   });
 
-  await test("the model turn goes to the isolated agent, pinned to gemini-3.5-flash", async () => {
+  await test("the mandatory protocol path never calls a model provider — a Gemini outage cannot stop event acknowledgement", async () => {
     const { data, inbox } = workspace();
     const { calls, runner } = recordingRunner();
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
-    await runSystemEventCycle(buildSystemEventDeps(data, TEST_ENV, runner), inbox);
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeCreateCleanupPr());
+    await runSystemEventCycle(deps, inbox);
 
-    const modelCall = calls.find((c) => c.bin === "openclaw");
-    assert.ok(modelCall);
-    const agentIndex = modelCall.argv.indexOf("--agent");
-    assert.equal(modelCall.argv[agentIndex + 1], OKX_SYSTEM_EVENT_AGENT_ID);
-    assert.equal(OKX_SYSTEM_EVENT_AGENT_ID, "okx-system-events");
-    assert.equal(OKX_SYSTEM_EVENT_MODEL, "google/gemini-3.5-flash");
-    assert.notEqual(OKX_SYSTEM_EVENT_MODEL, "google/gemini-2.5-flash");
+    assert.equal(
+      calls.some((c) => c.bin === "openclaw"),
+      false,
+      "acknowledging job_accepted must never depend on a model-provider call"
+    );
+    assert.equal(deps.ledgerFile.get("todo_1")?.state, "acknowledged");
   });
 
   await test("the global default model is never written by the seller runtime", () => {
@@ -284,7 +321,7 @@ async function run() {
     const { data, inbox } = workspace();
     const failedSend: ProcessRunResult = { ...ok(""), ok: false, exitCode: 1, stderr: "xmtp down" };
     const { calls, runner } = recordingRunner({ "okx-a2a xmtp-send": failedSend });
-    const deps = buildSystemEventDeps(data, TEST_ENV, runner);
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeCreateCleanupPr());
 
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
     await runSystemEventCycle(deps, inbox);
