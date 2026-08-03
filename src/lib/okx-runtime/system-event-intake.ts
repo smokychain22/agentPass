@@ -139,6 +139,30 @@ export function deriveEventId(envelope: InboundEnvelope, transportId?: string): 
   return `evt-${createHash("sha256").update(JSON.stringify(envelope)).digest("hex").slice(0, 32)}`;
 }
 
+/**
+ * True when a terminal_failure record shows genuine evidence that an action
+ * was proposed, authorized, refused, or broadcast — as opposed to failing
+ * purely because the retry budget was exhausted before any action ever
+ * reached that stage.
+ *
+ * Reproduced LIVE in production on 2026-08-03/04: a genuine paid A2A job
+ * (0x22a216415e2b1176d2111b136584e42fd949f7c0cfca48c657a7d1ca8e6927c6) hit a
+ * transient Gemini 503 outage, exhausted the then-current retry budget with
+ * `model_turn_terminal:max_attempts_exhausted`, and was correctly marked
+ * terminal_failure — with `authorizedAction` and `transactionRef` both never
+ * set, because the model turn itself never completed even once. Re-arming
+ * the job (`onchainos agent set-asp`, which explicitly re-triggers
+ * `job_asp_selected` — a documented, official mechanism) produced a genuinely
+ * fresh delivery under the same semantic key, and `registerObservedEvent`
+ * refused it as a duplicate — permanently, since there is no path back from
+ * `duplicate_semantic_key` short of editing the ledger by hand. A
+ * correctly-authorized, unfunded, harmless job would have been stuck forever
+ * despite the underlying retry-budget defect already being fixed.
+ */
+function priorTerminalTookAction(record: LedgerRecord): boolean {
+  return Boolean(record.authorizedAction || record.proposedAction || record.transactionRef);
+}
+
 /** Drops undefined-valued keys so a patch never erases previously stored evidence. */
 function defined<T extends object>(patch: T): T {
   for (const key of Object.keys(patch)) {
@@ -243,13 +267,46 @@ export function registerObservedEvent(
   }
 
   const sameWork = ledger.findBySemanticKey(semanticKey);
-  if (sameWork && (sameWork.acknowledged || sameWork.state === "terminal_failure")) {
+  if (sameWork && sameWork.acknowledged) {
+    // Genuinely finished — the required work completed and was told to the
+    // buyer. A fresh delivery of the same semantic work must never re-run it.
     options.log?.("system_event_duplicate_semantic_key", {
       eventId,
       priorEventId: sameWork.eventId,
       state: sameWork.state,
     });
     return { accepted: false, reason: "duplicate_semantic_key" };
+  }
+  if (sameWork && sameWork.state === "terminal_failure" && priorTerminalTookAction(sameWork)) {
+    // Terminal AND some action was proposed, authorized, refused, or
+    // broadcast. Re-registering under the same semantic key risks re-running
+    // (or re-authorizing) that same action — refused exactly once, on
+    // purpose, per action-ledger.ts's own module docblock, is not something a
+    // fresh delivery gets to retry.
+    options.log?.("system_event_duplicate_semantic_key", {
+      eventId,
+      priorEventId: sameWork.eventId,
+      state: sameWork.state,
+      terminalReason: sameWork.terminalReason ?? sameWork.lastError,
+    });
+    return { accepted: false, reason: "duplicate_semantic_key" };
+  }
+  if (sameWork && sameWork.state === "terminal_failure") {
+    // Terminal, but genuinely nothing was ever proposed, authorized, or
+    // broadcast — the prior attempt was killed purely by exhausting the
+    // retry budget (e.g. a transient provider outage wider than the budget;
+    // see MAX_ATTEMPTS's own docblock in system-event-route.ts for the real
+    // production incident this covers). There is no action to duplicate, so
+    // a genuinely fresh delivery of the same semantic work is allowed to try
+    // again from a clean record rather than being permanently stuck. This is
+    // NOT a general amnesty for terminal_failure — the branch above still
+    // hard-blocks any record that shows real proposed/authorized/refused/
+    // broadcast evidence.
+    options.log?.("system_event_semantic_key_retried_after_actionless_terminal", {
+      eventId,
+      priorEventId: sameWork.eventId,
+      priorTerminalReason: sameWork.terminalReason ?? sameWork.lastError,
+    });
   }
 
   ledger.put(eventId, {
