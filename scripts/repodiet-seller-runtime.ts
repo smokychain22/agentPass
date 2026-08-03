@@ -35,11 +35,11 @@ import {
 import {
   createActionRunner,
   createInstructionFetcher,
-  createModelTurn,
   createReconciler,
   createStatusPublisher,
   createTaskReader,
 } from "../src/lib/okx-runtime/system-event-adapters";
+import { createDeterministicTurn } from "../src/lib/okx-runtime/deterministic-turn";
 import {
   LedgerActionStore,
   pendingSystemEvents,
@@ -750,12 +750,17 @@ export function buildSystemEventDeps(
     runner,
   };
 
+  const readTask = createTaskReader(adapterOptions);
+
   return {
     ledgerFile,
     ledger: new LedgerActionStore(ledgerFile),
     fetchInstruction: createInstructionFetcher(adapterOptions),
-    readTask: createTaskReader(adapterOptions),
-    runModel: createModelTurn(adapterOptions),
+    readTask,
+    // Deterministic, not Gemini-backed — see deterministic-turn.ts. The
+    // mandatory OKX protocol path (acknowledge / apply / accept / deliver)
+    // must not depend on a rate-limited, quota-capped third-party model.
+    runModel: createDeterministicTurn({ ...adapterOptions, readTask }),
     runAction: createActionRunner(adapterOptions),
     reconcile: createReconciler(adapterOptions),
     // The buyer is resolved from authoritative task detail inside the adapter.
