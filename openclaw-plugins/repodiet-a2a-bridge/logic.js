@@ -160,14 +160,22 @@ export function buildProtocolError(service, missingFields) {
 export function formatAnalysisDispatchResult(result) {
   const body = result?.body ?? {};
   if (result?.status === 402) {
-    const accept = Array.isArray(body.accepts) ? body.accepts[0] : undefined;
+    // The official SDK carries the quote in the `Payment-Required` header and
+    // returns an empty body, so the header is authoritative. The body is kept
+    // as a fallback for any deployment that still inlines the quote.
+    const quote = result?.paymentRequired ?? body;
+    const accept = Array.isArray(quote.accepts) ? quote.accepts[0] : undefined;
     const parts = [
       `amount=${accept?.amount ?? "unknown"}`,
       `asset=${accept?.extra?.name ?? accept?.asset ?? "unknown"}`,
       `network=${accept?.network ?? "unknown"}`,
       `payTo=${accept?.payTo ?? "unknown"}`,
-      `quoteId=${body.quoteId ?? "unknown"}`,
     ];
+    if (accept?.scheme) parts.push(`scheme=${accept.scheme}`);
+    if (quote.x402Version !== undefined) parts.push(`x402Version=${quote.x402Version}`);
+    // Only reported when the deployment actually issues one — an invented
+    // "quoteId=unknown" told a counterparty nothing and looked like a fault.
+    if (quote.quoteId) parts.push(`quoteId=${quote.quoteId}`);
     return `PAYMENT_REQUIRED service=analyze_repository(37347) ${parts.join(" ")}. Complete payment via the standard x402 flow, then resubmit.`;
   }
   if (result?.status === 200) {
