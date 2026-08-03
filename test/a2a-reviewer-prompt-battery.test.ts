@@ -191,6 +191,53 @@ async function run() {
     );
   });
 
+  /**
+   * Reproduced live against production on 2026-08-03, using the buyer's own
+   * genuine test account: "What is the current status of my task?" — one of
+   * the standard reviewer prompts this project's own instructions have always
+   * listed for testing — returned HTTP 400 INVALID_TASK_TYPE. It had never
+   * actually been exercised against production before that session.
+   */
+  await test("a task-status question is answered, never rejected as unmappable", async () => {
+    for (const message of [
+      "What is the current status of my task?",
+      "What's the status of my task?",
+      "Can you check the task status?",
+      "current status please",
+    ]) {
+      const { status, body } = await post({ message });
+      assert.notEqual(body.code, "INVALID_TASK_TYPE", `must not reject: ${message}`);
+      assert.equal(status, 200, `must answer: ${message}`);
+      assert.equal(body.acknowledged, true);
+    }
+  });
+
+  await test("a status question with no taskId explains how to supply one, never fabricates a status", async () => {
+    const { body } = await post({ message: "What is the current status of my task?" });
+    assert.equal(body.taskId, null);
+    assert.match(String(body.message), /task id|taskId/i);
+    assert.doesNotMatch(String(body.message), /\b(DELIVERED|ACCEPTED|EXECUTING|VALIDATING)\b/);
+  });
+
+  await test("a status question WITH a taskId points at the real per-task endpoint", async () => {
+    const { body } = await post({ message: "What is the status of my task?", taskId: "task_abc123" });
+    assert.equal(body.taskId, "task_abc123");
+    assert.match(String(body.statusUrl), /\/api\/a2a\/tasks\/task_abc123$/);
+    assert.match(String(body.message), /task_abc123/);
+  });
+
+  await test("a status question with a repository still becomes a real task, not a status answer", async () => {
+    const { body } = await post({
+      message: "What is the status of my task? Please clean up https://github.com/velz-cmd/repodiet-e2e-test",
+    });
+    assert.notEqual(body.code, "INVALID_TASK_TYPE");
+    assert.notEqual(
+      body.marketplaceLifecycle,
+      "AVAILABLE",
+      "a request carrying a repository must not be answered as mere discovery/status guidance"
+    );
+  });
+
   console.log("a2a-reviewer-prompt-battery: all passed");
 }
 

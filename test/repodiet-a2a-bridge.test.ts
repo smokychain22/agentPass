@@ -162,16 +162,49 @@ async function run() {
     );
   });
 
-  await test("a declined session is logged rather than failing silently", async () => {
+  /**
+   * Reproduced LIVE in production on 2026-08-03 (Fly logs, repodiet-agent-9636,
+   * 16:10:04Z): sessionKey `agent:main:okx-a2a:group:backup:0x74e4c2b1…` (a
+   * documented buyer-side notification channel) was declined here exactly as
+   * this test exercises, `decideReply` returned bare `undefined`, OpenClaw
+   * fell through to its default model, and that model does not exist in this
+   * deployment: `FailoverError: Unknown model: openai/gpt-5.5` / "Embedded
+   * agent failed before reply." No reply was ever published — the "Agent did
+   * not respond" failure mode, proven to recur on ANY unclaimed session shape,
+   * not only the specific ones this test suite had exercised before.
+   *
+   * `decideReply` must now CLAIM every session it does not recognise
+   * (`handled: true`, no reply) so it can never fall through to a model that
+   * this project's own architecture never intended to use — while still
+   * leaving the same diagnostic trace, so an unexpected new session-key shape
+   * remains visible in the runtime log exactly as before.
+   */
+  await test("a declined session is claimed (never falls through to the model) and still logged", async () => {
     const logged: string[] = [];
     const result = await decideReply(
       { cleanedBody: "hello" },
       { sessionKey: "system-notification" },
       { ...fakeIdempotency(), log: (m: string) => logged.push(m) }
     );
-    assert.equal(result, undefined);
+    assert.ok(result, "must not return undefined — undefined is what let the model crash live in production");
+    assert.equal(result!.handled, true);
+    assert.equal(result!.reply, undefined, "no reply is published — silence is correct for a non-seller session");
     assert.equal(logged.length, 1, "an unclaimed session must leave a diagnostic trace");
     assert.ok(logged[0].includes("system-notification"));
+  });
+
+  await test("the exact production backup-channel session that crashed live is now safely claimed", async () => {
+    const result = await decideReply(
+      { cleanedBody: "" },
+      {
+        sessionKey:
+          "agent:main:okx-a2a:group:backup:0x74e4c2b16caabf3c07883147c022344daf9dcf1eb992721a28c3a61a09022e1a",
+      },
+      fakeIdempotency()
+    );
+    assert.ok(result);
+    assert.equal(result!.handled, true);
+    assert.equal(result!.reply, undefined);
   });
 
   await test("decideReply answers a real job-scoped reviewer session instead of falling through to the model", async () => {
@@ -188,9 +221,11 @@ async function run() {
     assert.ok(result!.reply?.text);
   });
 
-  await test("decideReply ignores sessions that are not an Agent 9636 seller exchange", async () => {
+  await test("decideReply claims (but never replies to) sessions that are not an Agent 9636 seller exchange", async () => {
     const result = await decideReply({ cleanedBody: "hello" }, { sessionKey: "my:1234:to:5295" });
-    assert.equal(result, undefined);
+    assert.ok(result, "must not return undefined — that is the fall-through-to-a-broken-model path");
+    assert.equal(result!.handled, true);
+    assert.equal(result!.reply, undefined);
   });
 
   // --- Protocol-level validation errors are dynamic, not fixed prose -------

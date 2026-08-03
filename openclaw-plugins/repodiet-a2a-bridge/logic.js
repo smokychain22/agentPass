@@ -117,15 +117,17 @@ export function isSellerSession(sessionKey) {
 
 /**
  * Diagnostic for the failure mode that made this outage invisible: an
- * unclaimed session produces no bridge log at all, falls through to the model,
- * and dies as an opaque `state=error` with no indication that the bridge
- * declined it. Logging the declined key means any future key-format change
- * shows up directly in the runtime log instead of as silence.
+ * unclaimed session used to produce no bridge log at all, fall through to the
+ * model, and die as an opaque `state=error` with no indication that the
+ * bridge had declined it. It is now claimed and silently no-op'd instead (see
+ * decideReply) — this log line is what keeps that silent, correct outcome
+ * observable, so a future key-format change still shows up in the runtime log
+ * rather than as silence.
  */
 export function describeUnclaimedSession(sessionKey) {
   return `repodiet-a2a-bridge: declined sessionKey=${
     typeof sessionKey === "string" ? sessionKey : typeof sessionKey
-  } (not an Agent 9636 seller exchange) — falling through to the model`;
+  } (not an Agent 9636 seller exchange) — claimed and silently ignored, never reaching the model`;
 }
 
 export function extractRepositoryUrl(text) {
@@ -359,9 +361,41 @@ export async function decideReply(event, ctx, deps = {}) {
     return { handled: true, reply: undefined, reason: "repodiet_system_event_spooled" };
   }
 
+  /**
+   * A session this bridge does not own is claimed silently, never left to
+   * fall through to OpenClaw's default model.
+   *
+   * Reproduced LIVE in production on 2026-08-03 (Fly logs,
+   * repodiet-agent-9636, 16:10:04Z): sessionKey
+   * `agent:main:okx-a2a:group:backup:0x74e4c2b1…` (a documented buyer-side
+   * notification channel — see the SELLER_GATEWAY_SESSION_PATTERN docblock
+   * above) was correctly declined here, `return undefined` let OpenClaw
+   * attempt the normal model turn, and that turn crashed:
+   * `FailoverError: Unknown model: openai/gpt-5.5` / "Embedded agent failed
+   * before reply." No reply was ever published — exactly the "Agent did not
+   * respond" failure mode OKX's review already flagged, now proven to
+   * recur on ANY session shape the bridge does not recognise, not only the
+   * seller-exchange shapes this project has explicitly tested.
+   *
+   * The project's own architecture already establishes that NOTHING outside
+   * the isolated system-event route is meant to reach a model — buyer chat is
+   * 100% deterministic, by design (see this file's own module docblock and
+   * system-event-route.ts's SELLER_AGENT_ID boundary). There is therefore no
+   * legitimate case where falling through to the global default model is
+   * correct; every such fall-through was always going to hit the same
+   * "Unknown model" crash. Claiming here, silently, converts a guaranteed
+   * crash into the same safe, observable no-op already used for spooled
+   * system events (line ~359) — the diagnostic log line still fires, so an
+   * unexpected new session-key shape remains visible in the runtime log
+   * exactly as before; only the broken model attempt is removed.
+   *
+   * The global default model is deliberately NOT changed here or anywhere
+   * else — that is an explicit, standing constraint. This fix removes the
+   * only path that ever depended on it existing.
+   */
   if (!isSellerSession(ctx?.sessionKey)) {
     log(describeUnclaimedSession(ctx?.sessionKey));
-    return undefined;
+    return { handled: true, reply: undefined, reason: "declined_not_a_seller_session" };
   }
 
   const emit = deps.emit ?? emitSellerResponseEvent;
