@@ -22,12 +22,30 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { EventLifecycleState, ProposedAction } from "./system-event-route";
+import type { EventLifecycleState, InboundEnvelope, ProposedAction } from "./system-event-route";
 
 export interface LedgerRecord {
   eventId: string;
   semanticKey: string;
   jobId: string;
+  /**
+   * The ORIGINAL validated official system-event envelope, exactly as it was
+   * accepted at the boundary.
+   *
+   * Recovery after a restart has to re-run the event, and re-running it means
+   * re-deriving the instruction from the same envelope `onchainos agent
+   * next-action --message` was given the first time. Reconstructing that
+   * envelope from the flattened record fields would be a guess, and a guessed
+   * envelope is an unauthenticated one — so the accepted bytes are kept.
+   *
+   * It is re-validated on the way OUT as well as on the way in (see
+   * system-event-intake.validateOfficialEnvelope): a record whose stored
+   * envelope is absent, malformed, oversized or not provably ours can neither
+   * execute nor be acknowledged. Anything written here has already passed that
+   * same validation, so it carries no secret material — system envelopes are
+   * routing metadata (agentId, event, jobId, task fields), never credentials.
+   */
+  envelope?: InboundEnvelope;
   sessionKey?: string;
   buyerAgentId?: string;
   providerAgentId: string;
@@ -48,6 +66,8 @@ export interface LedgerRecord {
   retryAfterIso?: string;
   acknowledged: boolean;
   terminalReason?: string;
+  /** Most recent failure text. Retained on retryable failures too, unlike terminalReason. */
+  lastError?: string;
   createdAt: string;
   updatedAt: string;
 }

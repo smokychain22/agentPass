@@ -227,11 +227,22 @@ function extractBalancedArray(source: string, start: number): string | undefined
   return undefined;
 }
 
-/** Splits an allowlisted "binary subcommand" pair into an executable + argv. */
+/**
+ * Splits an allowlisted command into an executable + argv.
+ *
+ * The allowlist mixes two shapes: `okx-a2a xmtp-send`, where the head IS the
+ * binary, and `agent deliver`, where the head is onchainos's first SUBCOMMAND
+ * (the real CLI is `onchainos agent deliver <jobId>` — verified against
+ * `onchainos agent --help`). An earlier revision stripped the head in both
+ * cases, which silently turned every provider action into `onchainos deliver
+ * …` — not a valid command, so no delivery could ever have landed. The head is
+ * therefore dropped only when it is genuinely the binary name.
+ */
 export function resolveExecutable(action: ProposedAction): { bin: string; argv: string[] } {
-  const [head, ...rest] = action.command.split(/\s+/);
-  const bin = head === OKX_A2A ? OKX_A2A : ONCHAINOS;
-  return { bin, argv: [...rest, ...action.args] };
+  const parts = action.command.trim().split(/\s+/);
+  const bin = parts[0] === OKX_A2A ? OKX_A2A : ONCHAINOS;
+  const subcommands = parts[0] === bin ? parts.slice(1) : parts;
+  return { bin, argv: [...subcommands, ...action.args] };
 }
 
 export function createActionRunner(options: AdapterOptions): ActionRunner {

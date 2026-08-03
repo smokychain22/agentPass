@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DurableEventStore } from "../src/lib/okx-runtime/event-store";
-import { acknowledgeProviderEvent } from "../src/lib/okx-runtime/provider-worker";
 import { runProcess } from "../src/lib/okx-runtime/process-runner";
 
 async function run() {
@@ -44,58 +43,33 @@ async function run() {
     "9636",
     "0xaa895234c3fc31c40018eef975db6ac79bf87f1a"
   );
-  let calls = 0;
-  const event = {
-    eventId: "event-1",
-    event: "job_created",
-    jobId: "0xjob",
-    cursor: "cursor-1",
-    payload: { title: unicode, serviceId: "37348" },
-  };
-  const first = await acknowledgeProviderEvent(event, {
-    executable: "onchainos",
-    agentId: "9636",
-    store,
-    runner: async (_exe, args) => {
-      calls += 1;
-      assert.deepEqual(args.slice(0, 6), [
-        "agent",
-        "next-action",
-        "--role",
-        "asp",
-        "--agentId",
-        "9636",
-      ]);
-      assert.equal(args[6], "--message");
-      assert.equal(JSON.parse(args[7]).serviceId, "37348");
-      return {
-        ok: true,
-        exitCode: 0,
-        signal: null,
-        stdout: "application acknowledged",
-        stderr: "",
-        timedOut: false,
-        cancelled: false,
-      };
-    },
-  });
-  assert.equal(first.ok, true);
-  assert.ok(first.latencyMs < 10_000);
-
-  const duplicate = await acknowledgeProviderEvent(
-    { ...event, eventId: "event-2" },
-    {
-      executable: "onchainos",
-      agentId: "9636",
-      store,
-      runner: async () => {
-        throw new Error("duplicate must not execute");
-      },
-    }
-  );
+  // Semantic-key deduplication: the same work delivered under a second event id
+  // must be recognised as a duplicate and never claimed twice.
+  const semanticKey = "job_created:0xjob";
+  const first = store.begin({ eventId: "event-1", semanticKey, jobId: "0xjob" });
+  assert.equal(first.duplicate, false);
+  store.acknowledge("event-1", "cursor-1");
+  const duplicate = store.begin({ eventId: "event-2", semanticKey, jobId: "0xjob" });
   assert.equal(duplicate.duplicate, true);
-  assert.equal(calls, 1);
   assert.equal(store.read().lastCursor, "cursor-1");
+
+  /**
+   * The defective acknowledgement-only path is GONE, not merely unused.
+   *
+   * `provider-worker.acknowledgeProviderEvent` acknowledged an event whenever
+   * `onchainos agent next-action` exited 0 — which only ever proved the CLI had
+   * printed an instruction, never that anything executed it. Because
+   * acknowledgement suppresses replay, every system event was permanently
+   * marked done having accomplished nothing. Its replacement is
+   * provider-event-executor.executeSystemEvent, reached from the real runtime
+   * (scripts/repodiet-seller-runtime.ts). This asserts the old module cannot
+   * come back as a second, weaker way to finish an event.
+   */
+  assert.equal(
+    fs.existsSync("src/lib/okx-runtime/provider-worker.ts"),
+    false,
+    "the acknowledgement-only provider worker must not exist"
+  );
 
   assert.doesNotMatch(
     fs.readFileSync("src/lib/okx-runtime/process-runner.ts", "utf8"),

@@ -186,9 +186,17 @@ async function run() {
   });
 
   await test("an allowlisted command resolves to the right binary and argv", () => {
+    // `agent` is onchainos's first SUBCOMMAND, not the binary — the real CLI is
+    // `onchainos agent deliver <jobId>` (onchainos agent --help). Stripping it
+    // produced `onchainos deliver …`, which is not a command, so no provider
+    // action could ever have landed.
     assert.deepEqual(resolveExecutable({ command: "agent deliver", args: [JOB] }), {
       bin: "onchainos",
-      argv: ["deliver", JOB],
+      argv: ["agent", "deliver", JOB],
+    });
+    assert.deepEqual(resolveExecutable({ command: "agent payment", args: [JOB] }), {
+      bin: "onchainos",
+      argv: ["agent", "payment", JOB],
     });
     assert.deepEqual(resolveExecutable({ command: "okx-a2a xmtp-send", args: ["--job-id", JOB] }), {
       bin: "okx-a2a",

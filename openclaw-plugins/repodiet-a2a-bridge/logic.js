@@ -26,6 +26,7 @@ import {
   recordPublication,
 } from "./idempotency.js";
 import { publishReply } from "./publish.js";
+import { parseOfficialSystemEnvelope, spoolSystemEvent } from "./system-event-spool.js";
 import {
   describeSessionKeyShape,
   parseSessionKey,
@@ -306,6 +307,49 @@ async function generateReply(event, ctx, deps = {}) {
 export async function decideReply(event, ctx, deps = {}) {
   const started = Date.now();
   const log = deps.log ?? console.warn;
+
+  /**
+   * Official system events are claimed BEFORE the seller-session check.
+   *
+   * They do not arrive on a `my:9636:to:<peer>` session key, so the check below
+   * would decline them and OpenClaw would hand them to the model — the exact
+   * path that made the official lifecycle silently stall. They are spooled to
+   * the seller runtime instead, which owns next-action, the authorization
+   * boundary, the durable ledger and any on-chain action. Claimed with no
+   * reply: silence is correct here, because the runtime publishes the real
+   * buyer-facing status itself once the work genuinely succeeded.
+   */
+  const parseSystemEvent = deps.parseOfficialSystemEnvelope ?? parseOfficialSystemEnvelope;
+  const spool = deps.spoolSystemEvent ?? spoolSystemEvent;
+  const systemEnvelope = parseSystemEvent(event?.cleanedBody);
+  if (systemEnvelope) {
+    let spooled;
+    let failure;
+    try {
+      spooled = spool(systemEnvelope, {
+        transportId: ctx?.messageId ?? ctx?.idempotencyKey,
+        directory: deps.systemEventInbox,
+      });
+    } catch (err) {
+      failure = err instanceof Error ? err.message : "spool_failed";
+    }
+    emitSellerResponseEvent(
+      {
+        event: "system_event_spooled",
+        outcome: spooled ? "spooled" : "spool_failed",
+        jobId: systemEnvelope.message?.jobId,
+        systemEvent: systemEnvelope.message?.event,
+        claimed: true,
+        failureCode: failure,
+        elapsedMs: Date.now() - started,
+      },
+      log
+    );
+    // Claimed either way. A spool failure must NOT fall through to the model —
+    // the event stays undelivered and the protocol redelivers it, which is
+    // recoverable; a model turn answering a system event is not.
+    return { handled: true, reply: undefined, reason: "repodiet_system_event_spooled" };
+  }
 
   if (!isSellerSession(ctx?.sessionKey)) {
     log(describeUnclaimedSession(ctx?.sessionKey));
