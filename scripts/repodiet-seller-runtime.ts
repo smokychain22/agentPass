@@ -58,7 +58,6 @@ import { OKX_SYSTEM_EVENT_AGENT_ID } from "./seller-runtime-supervisor";
 const execFileAsync = promisify(execFile);
 
 const SELLER = OKX_RUNTIME_IDENTITIES.seller;
-const BUYER_AGENT_ID = OKX_RUNTIME_IDENTITIES.buyer.agentId;
 const A2A_SERVICE_ID = "37348";
 const COMMUNICATION_ADDRESS = "0x00dbdbb36b71ace0e1fc517056f376f977d8256e";
 
@@ -755,7 +754,10 @@ export function buildSystemEventDeps(
     runModel: createModelTurn(adapterOptions),
     runAction: createActionRunner(adapterOptions),
     reconcile: createReconciler(adapterOptions),
-    publishStatus: createStatusPublisher({ ...adapterOptions, buyerAgentId: BUYER_AGENT_ID }),
+    // The buyer is resolved from authoritative task detail inside the adapter.
+    // This runtime never carries the buyer identity: it is the one process that
+    // must never be able to act as the client.
+    publishStatus: createStatusPublisher(adapterOptions),
     // Rebuilt from the ORIGINAL validated envelope each record stored, and
     // re-validated on the way out — a record whose envelope is missing,
     // malformed, oversized or not provably ours is skipped rather than run.

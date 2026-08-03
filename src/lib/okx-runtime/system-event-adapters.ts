@@ -285,15 +285,32 @@ export function createReconciler(options: AdapterOptions): Reconciler {
   };
 }
 
-export function createStatusPublisher(options: AdapterOptions & { buyerAgentId: string }): StatusPublisher {
+/**
+ * Publishes the buyer-facing status.
+ *
+ * The counterparty is read from authoritative task detail, never configured and
+ * never taken from the model's proposal. A configured buyer id would be wrong
+ * on any job whose client is not that agent, and would also mean the seller
+ * runtime carried the buyer identity around — which it must not, since it is
+ * the one process that must never be able to act as the buyer.
+ *
+ * An unresolvable counterparty is a publication FAILURE, not a silent skip: the
+ * executor keeps the event replayable and, because the action is already
+ * recorded, replay resumes at publication without repeating the action.
+ */
+export function createStatusPublisher(options: AdapterOptions): StatusPublisher {
   const run = options.runner ?? runProcess;
+  const readTask = createTaskReader(options);
   return async ({ jobId, transactionRef }) => {
+    const task = await readTask(jobId);
+    if (!task) return { ok: false, error: "counterparty_unresolved" };
+
     const message = transactionRef
       ? `RepoDiet: provider action confirmed on job ${jobId} (ref ${transactionRef}).`
       : `RepoDiet: provider action confirmed on job ${jobId}.`;
     const result = await run(
       OKX_A2A,
-      ["xmtp-send", "--job-id", jobId, "--to-agent-id", options.buyerAgentId, "--message", message],
+      ["xmtp-send", "--job-id", jobId, "--to-agent-id", task.buyerAgentId, "--message", message],
       { env: options.env, timeoutMs: 90_000 }
     );
     return {

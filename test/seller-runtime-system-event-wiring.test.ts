@@ -227,9 +227,8 @@ async function run() {
 
     await runSystemEventCycle(deps, inbox);
 
-    assert.equal(
-      ran(calls, "onchainos", "status").length,
-      1,
+    assert.ok(
+      ran(calls, "onchainos", "status").length >= 1,
       "must reconcile against authoritative state"
     );
     assert.equal(ran(calls, "onchainos", "deliver").length, 0, "must never re-broadcast the action");
