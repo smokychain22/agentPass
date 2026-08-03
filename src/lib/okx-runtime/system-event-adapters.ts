@@ -328,11 +328,34 @@ function transactionRefFrom(stdout: string): string | undefined {
   );
 }
 
-/** Best-effort HTTP status recovery from CLI output, for the retry policy. */
-function providerStatusFrom(result: ProcessRunResult): number | undefined {
+/**
+ * Best-effort HTTP status recovery from CLI output, for the retry policy.
+ *
+ * Only the 400-599 error range is trusted. `openclaw agent --local --json`
+ * (the CLI this scans) logs its own internal provider calls verbatim into the
+ * stdout/stderr this function reads — including success traces like
+ * `[model-fetch] response ... status=200 ...` for HTTP calls that succeeded.
+ * The regex has no way to tell "the status of the call that actually failed"
+ * from "the status of some unrelated call the process happened to log", so a
+ * 1xx/2xx/3xx match must never be trusted as a failure status: a successful
+ * or redirect code can never be the reason `result.ok` is false. Passing one
+ * through fed `decideRetry` a defined-but-unrecognized status, which falls
+ * into its non_retryable catch-all — silently terminating a genuinely
+ * retryable failure after a single attempt instead of leaving `status`
+ * undefined (routed to `internal_failure_retryable`, bounded by
+ * MAX_ATTEMPTS).
+ *
+ * Live in production on 2026-08-03 (job 0x22a216415e2b1176d2111b136584e42f…):
+ * the `job_accepted` notification's model turn failed and was marked
+ * `model_turn_terminal:non_retryable` on its very first attempt, even though
+ * the runtime's own log showed the Gemini call it made 1.5s earlier returned
+ * `status=200`. That trace line, not any real failure status, is what the
+ * old unrestricted regex was matching.
+ */
+export function providerStatusFrom(result: ProcessRunResult): number | undefined {
   const match = /\b(?:status|HTTP)[ =:]*(\d{3})\b/i.exec(`${result.stdout}${result.stderr}`);
   const status = match ? Number(match[1]) : undefined;
-  return status && status >= 100 && status < 600 ? status : undefined;
+  return status && status >= 400 && status < 600 ? status : undefined;
 }
 
 function retryAfterFrom(result: ProcessRunResult): number | undefined {

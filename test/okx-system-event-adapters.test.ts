@@ -17,6 +17,7 @@ import {
   createModelTurn,
   createActionRunner,
   createReconciler,
+  providerStatusFrom,
 } from "../src/lib/okx-runtime/system-event-adapters";
 import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
 
@@ -247,6 +248,28 @@ async function run() {
       action: { command: "agent deliver", args: [JOB] },
     });
     assert.equal(outcome.completed, false);
+  });
+
+  // Regression: `openclaw agent --local --json` logs its own internal
+  // provider calls into the same stdout/stderr this function scans,
+  // including success traces for calls that had nothing to do with why the
+  // overall invocation failed. Live in production (job
+  // 0x22a216415e2b1176d2111b136584e42fd949f7c0cfca48c657a7d1ca8e6927c6,
+  // 2026-08-03), a failed `job_accepted` model turn was misclassified
+  // `model_turn_terminal:non_retryable` on its first attempt because the
+  // regex matched an unrelated "[model-fetch] response ... status=200 ..."
+  // trace line, not a real failure status.
+  await test("a 2xx trace line elsewhere in the output is never mistaken for the failure status", () => {
+    const result = fail({
+      stdout: "[model-fetch] response provider=google model=gemini-3.5-flash status=200 elapsedMs=10807",
+      stderr: "FailoverError: something unrelated crashed after the model responded",
+    });
+    assert.equal(providerStatusFrom(result), undefined);
+  });
+
+  await test("a genuine 4xx/5xx failure status is still recovered", () => {
+    assert.equal(providerStatusFrom(fail({ stderr: "Google Generative AI API error (status: 429)" })), 429);
+    assert.equal(providerStatusFrom(fail({ stderr: "upstream HTTP 503 Service Unavailable" })), 503);
   });
 
   console.log("okx-system-event-adapters: all passed");
