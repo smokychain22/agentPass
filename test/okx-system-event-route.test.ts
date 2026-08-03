@@ -26,6 +26,7 @@ import {
   isJobId,
   ALLOWED_COMMANDS,
   SELLER_AGENT_ID,
+  MAX_ATTEMPTS,
   type AuthoritativeTask,
 } from "../src/lib/okx-runtime/system-event-route";
 
@@ -300,13 +301,53 @@ test("quota, auth and model errors are terminal — retrying burns quota and del
 });
 
 test("retries are bounded — a terminal failure cannot loop forever", () => {
-  const decision = decideRetry({ status: 429, attempts: 5 });
+  const decision = decideRetry({ status: 429, attempts: MAX_ATTEMPTS });
   assert.equal(decision.retry, false);
   assert.match(decision.reason, /max_attempts_exhausted/);
 });
 
 test("backoff is capped", () => {
   assert.ok(decideRetry({ status: 503, attempts: 4 }).delayMs <= 60_000);
+});
+
+/**
+ * Reproduced LIVE in production on 2026-08-03: job
+ * 0x22a216415e2b1176d2111b136584e42fd949f7c0cfca48c657a7d1ca8e6927c6 (a genuine
+ * paid A2A test) hit a Gemini 503 outage lasting ~4m10s
+ * (17:51:38Z first failure -> 17:55:48Z max_attempts_exhausted). The retry
+ * budget at the time (MAX_ATTEMPTS=5) exhausted at almost exactly the width of
+ * the outage itself, because `decideRetry`'s own `delayMs` is informational
+ * only — the real retry cadence is paced by the external ~60-90s poll loop, not
+ * a sleep on this function's return value. A well-formed, correctly-authorized
+ * event was lost to a transient upstream blip the old budget could not survive.
+ *
+ * This pins that MAX_ATTEMPTS now gives meaningfully more real-world resilience
+ * (at the same external ~60-90s cadence, roughly 15-25 minutes) without
+ * weakening the terminal-failure safety net: a genuinely permanent failure
+ * (401/403/404/400) is still terminal on the FIRST attempt regardless.
+ */
+test("a transient 503 outage lasting several retry cycles now survives, matching the real production incident", () => {
+  // At the OLD bound (5), this exact sequence would already have exhausted.
+  assert.ok(MAX_ATTEMPTS > 5, "the retry budget must exceed the bound that failed live in production");
+
+  let attempts = 0;
+  let lastDecision = decideRetry({ status: 503, attempts });
+  // Simulate the observed outage: 4 consecutive 503s before recovery.
+  for (let i = 0; i < 4; i++) {
+    assert.equal(lastDecision.retry, true, `attempt ${attempts} must still be retryable`);
+    attempts += 1;
+    lastDecision = decideRetry({ status: 503, attempts });
+  }
+  // The outage has now "resolved" — a 5th call succeeds in the real executor,
+  // never reaching decideRetry again. The only property under test here is that
+  // the route did NOT give up during those 4 real-world-observed failures.
+  assert.equal(lastDecision.retry, true, "must still have budget left after the observed outage length");
+
+  // And genuinely permanent failures are unaffected by the wider budget —
+  // still terminal immediately, never burning retries on a dead end.
+  for (const status of [400, 401, 403, 404]) {
+    assert.equal(decideRetry({ status, attempts: 0 }).retry, false);
+  }
 });
 
 // Regression: an internal failure with no HTTP status (next-action non-zero,
@@ -322,7 +363,7 @@ test("an internal failure with no HTTP status stays retryable rather than silent
 });
 
 test("an unknown-status internal failure is still bounded and cannot loop forever", () => {
-  assert.equal(decideRetry({ attempts: 5 }).retry, false);
+  assert.equal(decideRetry({ attempts: MAX_ATTEMPTS }).retry, false);
 });
 
 console.log("okx-system-event-route: all passed");
