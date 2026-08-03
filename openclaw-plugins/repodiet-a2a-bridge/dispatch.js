@@ -44,6 +44,33 @@ function productionUrl() {
   return (process.env.REPODIET_PRODUCTION_URL || DEFAULT_PRODUCTION_URL).replace(/\/$/, "");
 }
 
+/**
+ * Decodes the official x402 `Payment-Required` header.
+ *
+ * Verified against the live production endpoint on 2026-08-03: the official OKX
+ * Payment SDK returns HTTP 402 with the quote base64-encoded in this header and
+ * an EMPTY JSON body (`{}`). Reading the quote from the body alone — as this
+ * bridge previously did — therefore produced a reply in which every field was
+ * "unknown", which is what a reviewer asking for an analysis actually saw.
+ *
+ * Returns undefined rather than a partial object when anything is off, so the
+ * caller falls back to the body instead of relaying a half-decoded quote.
+ */
+function decodePaymentRequired(response) {
+  try {
+    const header = response?.headers?.get?.("payment-required");
+    if (!header) return undefined;
+    const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+    // An array or a bare scalar is not a quote envelope. `typeof [] === "object"`,
+    // so Array.isArray has to be excluded explicitly or a JSON array would be
+    // relayed as though it were a quote.
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return undefined;
+    return decoded;
+  } catch {
+    return undefined;
+  }
+}
+
 async function postJson(path, payload, fetchImpl) {
   const doFetch = fetchImpl || globalThis.fetch;
   const response = await doFetch(`${productionUrl()}${path}`, {
@@ -57,7 +84,7 @@ async function postJson(path, payload, fetchImpl) {
   } catch {
     body = {};
   }
-  return { status: response.status, body };
+  return { status: response.status, body, paymentRequired: decodePaymentRequired(response) };
 }
 
 /**

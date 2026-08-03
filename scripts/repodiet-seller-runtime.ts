@@ -23,6 +23,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { actionLedgerPath, FileActionLedger } from "../src/lib/okx-runtime/action-ledger";
+import type { runProcess } from "../src/lib/okx-runtime/process-runner";
 import {
   ensureRuntimeLayout,
   getRuntimePaths,
@@ -30,12 +32,48 @@ import {
   readLivePid,
   writePid,
 } from "../src/lib/okx-runtime/runtime-layout";
+import {
+  createActionRunner,
+  createInstructionFetcher,
+  createModelTurn,
+  createReconciler,
+  createStatusPublisher,
+  createTaskReader,
+} from "../src/lib/okx-runtime/system-event-adapters";
+import {
+  LedgerActionStore,
+  pendingSystemEvents,
+  readSystemEventInbox,
+  registerObservedEvent,
+  retireSpoolFile,
+  systemEventInboxPath,
+} from "../src/lib/okx-runtime/system-event-intake";
+import {
+  handleSystemEvent,
+  recoverPendingEvents,
+  type ReconcilerDeps,
+} from "../src/lib/okx-runtime/system-event-reconciler";
+// Deliberately NOT from ./seller-runtime-supervisor: that module's import graph
+// reaches `openclaw/plugin-sdk/gateway-runtime`, which needs Node 22+. Reading
+// two constants from it would drag the whole Gateway client into this process's
+// startup path for no reason.
+import { OKX_SYSTEM_EVENT_AGENT_ID } from "../src/lib/okx-runtime/system-event-agent";
 
 const execFileAsync = promisify(execFile);
 
 const SELLER = OKX_RUNTIME_IDENTITIES.seller;
 const A2A_SERVICE_ID = "37348";
 const COMMUNICATION_ADDRESS = "0x00dbdbb36b71ace0e1fc517056f376f977d8256e";
+
+/**
+ * How often the runtime drains the official system-event spool and resumes any
+ * unfinished ledger record.
+ *
+ * This interval is also the effective backoff between retries of a retryable
+ * event: the executor bounds the number of attempts (decideRetry's
+ * MAX_ATTEMPTS), and this bounds how fast they are spent.
+ */
+const SYSTEM_EVENT_POLL_MS = Number(process.env.REPODIET_SYSTEM_EVENT_POLL_MS || 60_000);
 
 /**
  * @okxweb3/a2a-node exposes exactly four providers (codex, claude, hermes,
@@ -660,12 +698,120 @@ async function publishHeartbeat(): Promise<void> {
   }
 }
 
+/**
+ * === The OKX system-event route's production call site ===
+ *
+ * The audited defect had two layers, and this is the fix for the second one.
+ * The first was that the old worker acknowledged an event whenever
+ * `onchainos agent next-action` exited 0 — but next-action exiting 0 only means
+ * the CLI printed an instruction, not that anyone carried it out. The second,
+ * worse layer: that function had NO production caller at all. It was reachable
+ * only from tests, so in production `next-action` never ran even once, and the
+ * official lifecycle never advanced.
+ *
+ * Everything below exists so that is no longer true. The executor
+ * (provider-event-executor) is reached from exactly two triggers, both here,
+ * both funnelling through the same code so neither can bypass the authorization
+ * boundary, the durable ledger or the idempotency rules:
+ *
+ *   - startup recovery, from the ledger's own stored envelopes;
+ *   - the durable inbox spool, for newly received official events.
+ *
+ * The model is reached only from inside that executor, only for an envelope
+ * that structurally proved itself to be an official system event, and only as
+ * the isolated `okx-system-events` agent. Ordinary buyer chat never enters this
+ * path — it is owned end-to-end by the deterministic repodiet-a2a-bridge and
+ * never touches these functions.
+ */
+let systemEventTimer: NodeJS.Timeout | undefined;
+let systemEventCycleInFlight = false;
+
+/**
+ * Builds the real, CLI-backed dependency set. Every adapter here shells out
+ * through argv arrays (never an interpolated string, never `shell: true`), and
+ * the ledger is the crash-safe one on the mounted volume, so evidence survives
+ * a Machine restart or an image redeploy.
+ */
+export function buildSystemEventDeps(
+  dataDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+  /**
+   * Process seam. Production always uses the default (the real argv-array
+   * runner); tests inject a fake so the genuine dependency construction and the
+   * genuine cycle can be exercised without invoking the official CLIs.
+   */
+  runner?: typeof runProcess
+): ReconcilerDeps & { ledgerFile: FileActionLedger } {
+  const ledgerFile = new FileActionLedger(actionLedgerPath(dataDirectory), SELLER.agentId);
+  const adapterOptions = {
+    agentId: SELLER.agentId,
+    systemEventAgentId: OKX_SYSTEM_EVENT_AGENT_ID,
+    env,
+    runner,
+  };
+
+  return {
+    ledgerFile,
+    ledger: new LedgerActionStore(ledgerFile),
+    fetchInstruction: createInstructionFetcher(adapterOptions),
+    readTask: createTaskReader(adapterOptions),
+    runModel: createModelTurn(adapterOptions),
+    runAction: createActionRunner(adapterOptions),
+    reconcile: createReconciler(adapterOptions),
+    // The buyer is resolved from authoritative task detail inside the adapter.
+    // This runtime never carries the buyer identity: it is the one process that
+    // must never be able to act as the client.
+    publishStatus: createStatusPublisher(adapterOptions),
+    // Rebuilt from the ORIGINAL validated envelope each record stored, and
+    // re-validated on the way out — a record whose envelope is missing,
+    // malformed, oversized or not provably ours is skipped rather than run.
+    pending: () => pendingSystemEvents(ledgerFile, log),
+    log,
+  };
+}
+
+/**
+ * Drains the spool into the ledger, then executes.
+ *
+ * The ledger write happens BEFORE the spool file is retired and before any work
+ * is attempted, so an event can never be consumed without a durable record of
+ * it. A crash anywhere after that leaves the event resumable rather than lost.
+ */
+export async function runSystemEventCycle(
+  deps: ReconcilerDeps & { ledgerFile: FileActionLedger },
+  inboxDirectory: string
+): Promise<void> {
+  for (const spooled of readSystemEventInbox(inboxDirectory)) {
+    const outcome = registerObservedEvent(deps.ledgerFile, spooled.raw, {
+      transportId: spooled.transportId,
+      log,
+    });
+
+    if (!outcome.accepted) {
+      // Never executed, never acknowledged — moved aside for inspection.
+      retireSpoolFile(spooled.file, "rejected");
+      continue;
+    }
+
+    // Durable now; the ledger owns this event from here on.
+    retireSpoolFile(spooled.file, "accepted");
+    await handleSystemEvent(outcome.eventId, outcome.envelope, deps);
+  }
+
+  // Resumes anything still unfinished — a retryable failure, an action
+  // broadcast whose outcome was never confirmed, or a turn whose XMTP status
+  // never published. Reconciles before retrying; never re-runs a completed
+  // action.
+  await recoverPendingEvents(deps);
+}
+
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
   log("shutdown_started", { signal });
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (gateCheckTimer) clearInterval(gateCheckTimer);
+  if (systemEventTimer) clearInterval(systemEventTimer);
 
   const paths = getRuntimePaths(resolveRuntimeRoot(), "seller");
   try {
@@ -718,6 +864,44 @@ async function main(): Promise<void> {
     void refreshOfficialGateCheck();
   }, GATE_CHECK_REFRESH_MS);
 
+  // Communication readiness is established, so the official CLIs this route
+  // shells out to are usable. Resume every unfinished system event from the
+  // durable ledger BEFORE accepting new ones: an event left mid-flight by a
+  // restart is older work than anything now arriving, and resuming it first is
+  // what makes "no duplicate transaction, delivery or settlement" hold across
+  // process death.
+  const systemEventDeps = buildSystemEventDeps(paths.data);
+  const systemEventInbox = systemEventInboxPath(paths.data);
+  fs.mkdirSync(systemEventInbox, { recursive: true });
+  log("system_event_route_wired", {
+    ledger: actionLedgerPath(paths.data),
+    inbox: systemEventInbox,
+    systemEventAgentId: OKX_SYSTEM_EVENT_AGENT_ID,
+    pollMs: SYSTEM_EVENT_POLL_MS,
+  });
+
+  await recoverPendingEvents(systemEventDeps);
+
+  systemEventTimer = setInterval(() => {
+    if (shuttingDown) return;
+    if (systemEventCycleInFlight) {
+      log("system_event_cycle_skipped_still_running", {
+        note: "previous system-event cycle has not finished; not stacking another",
+      });
+      return;
+    }
+    systemEventCycleInFlight = true;
+    void runSystemEventCycle(systemEventDeps, systemEventInbox)
+      .catch((err) => {
+        log("system_event_cycle_error", {
+          message: err instanceof Error ? err.message : "unknown_error",
+        });
+      })
+      .finally(() => {
+        systemEventCycleInFlight = false;
+      });
+  }, SYSTEM_EVENT_POLL_MS);
+
   await publishHeartbeat();
   heartbeatTimer = setInterval(() => {
     if (shuttingDown) return;
@@ -736,7 +920,13 @@ async function main(): Promise<void> {
   log("running", { note: "foreground supervisor active; awaiting signals" });
 }
 
-main().catch((err) => {
-  log("fatal", { message: err instanceof Error ? err.message : "unknown_error" });
-  process.exit(1);
-});
+// Guarded so the wiring above (buildSystemEventDeps, runSystemEventCycle) can
+// be imported and asserted against directly, without starting a second seller
+// runtime as an import side effect. Under the container entrypoint this file is
+// still the main module, so production behaviour is unchanged.
+if (require.main === module) {
+  main().catch((err) => {
+    log("fatal", { message: err instanceof Error ? err.message : "unknown_error" });
+    process.exit(1);
+  });
+}

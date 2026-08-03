@@ -27,6 +27,9 @@ import {
   getGatewayLoadedPluginIdsForTests,
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_GATEWAY_URL,
+  OKX_SYSTEM_EVENT_MODEL,
+  buildSystemEventAgentArgs,
+  systemEventAgentPaths,
   OKX_A2A_PLUGIN_ID,
   OKX_A2A_PLUGIN_HOOK,
   OKX_A2A_OPENCLAW_PLUGIN_PATH,
@@ -231,6 +234,54 @@ function run() {
   // instead of skipping bootstrap against a stale marker.
   test("computeExpectedBootstrapVersions carries google, so the deploy re-applies the config batch", () => {
     assert.ok(computeExpectedBootstrapVersions("openclaw").pluginIds.includes("google"));
+  });
+
+  // --- isolated system-event agent -----------------------------------------
+
+  test("the isolated system-event agent is pinned to google/gemini-3.5-flash", () => {
+    const args = buildSystemEventAgentArgs();
+    const modelIndex = args.indexOf("--model");
+    assert.ok(modelIndex >= 0, "--model must be passed");
+    assert.equal(args[modelIndex + 1], "google/gemini-3.5-flash");
+    assert.equal(OKX_SYSTEM_EVENT_MODEL, "google/gemini-3.5-flash");
+  });
+
+  // Verified live: Google returns 404 "no longer available to new users" for
+  // gemini-2.5-flash against this deployment's credential.
+  test("gemini-2.5-flash is never used — Google rejects it for this key", () => {
+    assert.ok(!buildSystemEventAgentArgs().join(" ").includes("gemini-2.5-flash"));
+  });
+
+  test("the agent is provisioned via an argv array, never an interpolated shell string", () => {
+    const args = buildSystemEventAgentArgs();
+    assert.ok(Array.isArray(args));
+    for (const arg of args) {
+      assert.equal(typeof arg, "string");
+      assert.ok(!/[;&|`$><]/.test(arg), `argument must not carry shell metacharacters: ${arg}`);
+    }
+    assert.ok(args.includes("--non-interactive"), "must never block on a prompt in a container");
+  });
+
+  // Sessions and agent state must land on the mounted volume, not the ephemeral
+  // container layer — the same failure mode that previously lost credentials.
+  test("system-event agent state is stored on the persistent volume", () => {
+    const { workspace, agentDir } = systemEventAgentPaths();
+    assert.ok(workspace.startsWith("/persistent/"), workspace);
+    assert.ok(agentDir.startsWith("/persistent/"), agentDir);
+  });
+
+  // The whole point of an isolated agent: binding a model to it must not give
+  // ordinary buyer chat a model. The global default stays unchanged.
+  test("pinning the system-event agent never writes a global default model", () => {
+    const paths = buildOpenclawConfigBatch().map((e) => e.path);
+    assert.ok(!paths.some((p) => p.startsWith("models.")));
+    const args = buildSystemEventAgentArgs();
+    assert.ok(!args.includes("--set-default"), "must not promote this model to the default");
+  });
+
+  test("the bootstrap marker carries the agent-to-model binding, so changing the model re-bootstraps", () => {
+    const ids = computeExpectedBootstrapVersions("openclaw").pluginIds;
+    assert.ok(ids.includes("agent:okx-system-events=google/gemini-3.5-flash"));
   });
 
   test("plugins.allow accepts an explicit override list", () => {

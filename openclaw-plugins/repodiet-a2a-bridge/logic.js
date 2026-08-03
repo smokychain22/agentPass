@@ -26,6 +26,7 @@ import {
   recordPublication,
 } from "./idempotency.js";
 import { publishReply } from "./publish.js";
+import { parseOfficialSystemEnvelope, spoolSystemEvent } from "./system-event-spool.js";
 import {
   describeSessionKeyShape,
   parseSessionKey,
@@ -159,14 +160,22 @@ export function buildProtocolError(service, missingFields) {
 export function formatAnalysisDispatchResult(result) {
   const body = result?.body ?? {};
   if (result?.status === 402) {
-    const accept = Array.isArray(body.accepts) ? body.accepts[0] : undefined;
+    // The official SDK carries the quote in the `Payment-Required` header and
+    // returns an empty body, so the header is authoritative. The body is kept
+    // as a fallback for any deployment that still inlines the quote.
+    const quote = result?.paymentRequired ?? body;
+    const accept = Array.isArray(quote.accepts) ? quote.accepts[0] : undefined;
     const parts = [
       `amount=${accept?.amount ?? "unknown"}`,
       `asset=${accept?.extra?.name ?? accept?.asset ?? "unknown"}`,
       `network=${accept?.network ?? "unknown"}`,
       `payTo=${accept?.payTo ?? "unknown"}`,
-      `quoteId=${body.quoteId ?? "unknown"}`,
     ];
+    if (accept?.scheme) parts.push(`scheme=${accept.scheme}`);
+    if (quote.x402Version !== undefined) parts.push(`x402Version=${quote.x402Version}`);
+    // Only reported when the deployment actually issues one — an invented
+    // "quoteId=unknown" told a counterparty nothing and looked like a fault.
+    if (quote.quoteId) parts.push(`quoteId=${quote.quoteId}`);
     return `PAYMENT_REQUIRED service=analyze_repository(37347) ${parts.join(" ")}. Complete payment via the standard x402 flow, then resubmit.`;
   }
   if (result?.status === 200) {
@@ -306,6 +315,49 @@ async function generateReply(event, ctx, deps = {}) {
 export async function decideReply(event, ctx, deps = {}) {
   const started = Date.now();
   const log = deps.log ?? console.warn;
+
+  /**
+   * Official system events are claimed BEFORE the seller-session check.
+   *
+   * They do not arrive on a `my:9636:to:<peer>` session key, so the check below
+   * would decline them and OpenClaw would hand them to the model — the exact
+   * path that made the official lifecycle silently stall. They are spooled to
+   * the seller runtime instead, which owns next-action, the authorization
+   * boundary, the durable ledger and any on-chain action. Claimed with no
+   * reply: silence is correct here, because the runtime publishes the real
+   * buyer-facing status itself once the work genuinely succeeded.
+   */
+  const parseSystemEvent = deps.parseOfficialSystemEnvelope ?? parseOfficialSystemEnvelope;
+  const spool = deps.spoolSystemEvent ?? spoolSystemEvent;
+  const systemEnvelope = parseSystemEvent(event?.cleanedBody);
+  if (systemEnvelope) {
+    let spooled;
+    let failure;
+    try {
+      spooled = spool(systemEnvelope, {
+        transportId: ctx?.messageId ?? ctx?.idempotencyKey,
+        directory: deps.systemEventInbox,
+      });
+    } catch (err) {
+      failure = err instanceof Error ? err.message : "spool_failed";
+    }
+    emitSellerResponseEvent(
+      {
+        event: "system_event_spooled",
+        outcome: spooled ? "spooled" : "spool_failed",
+        jobId: systemEnvelope.message?.jobId,
+        systemEvent: systemEnvelope.message?.event,
+        claimed: true,
+        failureCode: failure,
+        elapsedMs: Date.now() - started,
+      },
+      log
+    );
+    // Claimed either way. A spool failure must NOT fall through to the model —
+    // the event stays undelivered and the protocol redelivers it, which is
+    // recoverable; a model turn answering a system event is not.
+    return { handled: true, reply: undefined, reason: "repodiet_system_event_spooled" };
+  }
 
   if (!isSellerSession(ctx?.sessionKey)) {
     log(describeUnclaimedSession(ctx?.sessionKey));
