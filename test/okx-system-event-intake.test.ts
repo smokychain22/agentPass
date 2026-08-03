@@ -198,6 +198,68 @@ async function run() {
     assert.equal(record?.transactionRef, "0xtx");
   });
 
+  /**
+   * Reproduced LIVE in production on 2026-08-03/04: a genuine paid A2A job
+   * (0x22a216415e2b1176d2111b136584e42fd949f7c0cfca48c657a7d1ca8e6927c6) hit a
+   * transient Gemini 503 outage, exhausted the retry budget with
+   * model_turn_terminal:max_attempts_exhausted, and was marked terminal_failure
+   * with NO action ever proposed, authorized, or broadcast. Re-arming the job
+   * via `onchainos agent set-asp` (the official mechanism that re-triggers
+   * job_asp_selected) produced a genuinely fresh delivery under the SAME
+   * semantic key — and registerObservedEvent refused it as a permanent
+   * duplicate, with no path back short of hand-editing the ledger. A
+   * correctly-authorized, unfunded, harmless job would have been stuck forever
+   * even though the underlying retry-budget defect was already fixed.
+   */
+  await test("a fresh delivery is accepted after a prior terminal failure that never proposed any action", () => {
+    const { ledger } = freshLedger();
+    const first = registerObservedEvent(ledger, ENVELOPE, { transportId: "todo_1" });
+    assert.equal(first.accepted, true);
+    if (!first.accepted) return;
+
+    // Exactly what a retry-budget exhaustion leaves behind: terminal, but no
+    // authorizedAction / proposedAction / transactionRef were ever set,
+    // because the model turn itself never completed even once.
+    ledger.put(first.eventId, {
+      state: "terminal_failure",
+      terminalReason: "model_turn_terminal:max_attempts_exhausted",
+      attempts: 15,
+    });
+
+    const retried = registerObservedEvent(ledger, ENVELOPE, { transportId: "todo_2" });
+    assert.equal(retried.accepted, true, "an actionless terminal failure must not permanently block a fresh delivery");
+    if (retried.accepted) assert.equal(retried.duplicate, false, "must be a genuinely new record, not a replay of the dead one");
+    assert.equal(ledger.get("todo_2")?.state, "discovered");
+  });
+
+  await test("a terminal failure that DID propose an action still permanently blocks a fresh delivery", () => {
+    for (const patch of [
+      { authorizedAction: { command: "agent deliver", args: ["0xjob"] } },
+      { proposedAction: { command: "agent deliver", args: ["0xjob"] } },
+      { transactionRef: "0xtx" },
+    ] as const) {
+      const { ledger } = freshLedger();
+      const first = registerObservedEvent(ledger, ENVELOPE, { transportId: "todo_1" });
+      assert.equal(first.accepted, true);
+      if (!first.accepted) continue;
+
+      ledger.put(first.eventId, {
+        state: "terminal_failure",
+        terminalReason: "action_refused:some_reason",
+        attempts: 1,
+        ...patch,
+      });
+
+      const retried = registerObservedEvent(ledger, ENVELOPE, { transportId: "todo_2" });
+      assert.equal(
+        retried.accepted,
+        false,
+        `evidence of a taken action (${Object.keys(patch)[0]}) must still block a fresh delivery`
+      );
+      if (!retried.accepted) assert.equal(retried.reason, "duplicate_semantic_key");
+    }
+  });
+
   await test("semantic identity is stable across deliveries and distinct per job", () => {
     assert.equal(semanticKeyFor("job_accepted", JOB), semanticKeyFor("job_accepted", JOB));
     assert.notEqual(semanticKeyFor("job_accepted", JOB), semanticKeyFor("job_accepted", OTHER_JOB));
