@@ -8,9 +8,12 @@ import type { A2ATaskType } from "@/lib/a2a/types";
 import {
   buildInformationalResponse,
   buildMarketplaceIntakeResponse,
+  buildTaskStatusGuidanceResponse,
+  extractTaskId,
   extractUserMessage,
   isInformationalQuery,
   isMarketplaceDiscoveryMessage,
+  isTaskStatusQuery,
   resolveIntakeRepositoryUrl,
   inferCleanupTaskTypeFromText,
 } from "@/lib/a2a/marketplace-intake";
@@ -77,6 +80,27 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         ...info,
+        responseTimeMs: Date.now() - started,
+      });
+    }
+
+    // A caller asking about THEIR task's status ("what is the current status
+    // of my task?") — answered directly (real per-task URL, or a real lookup
+    // pointer) rather than rejected as an unmapped task type. Guarded on
+    // !repoUrl for the same reason as the branches above: a message that also
+    // carries a repository must still continue into real task intake.
+    if (message && isTaskStatusQuery(message) && !repoUrl) {
+      logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
+      const guidance = buildTaskStatusGuidanceResponse(requestId, extractTaskId(body));
+      await recordTaskAcknowledged({ queueDepth: 0, responseLatencyMs: Date.now() - started });
+      logMarketplaceTelemetry("a2a_acknowledgement_sent", {
+        requestId,
+        durationMs: Date.now() - started,
+      });
+      await touchMarketplaceHealth({ a2aInitialResponseReady: true });
+      return NextResponse.json({
+        success: true,
+        ...guidance,
         responseTimeMs: Date.now() - started,
       });
     }

@@ -65,6 +65,44 @@ const INFORMATIONAL_PATTERNS = [
   /what\s+(access|permissions?)\s+do\s+you\s+need/i,
 ];
 
+/**
+ * A caller asking about THEIR task's status. Verified live against production
+ * on 2026-08-03: "What is the current status of my task?" — one of the
+ * standard reviewer prompts this project's own test lists have always
+ * included — returned HTTP 400 INVALID_TASK_TYPE. Never tested end-to-end
+ * before this. The same rejection class as the discovery/authorization
+ * prompts above: a reasonable, ordinary question rejected as unmappable.
+ *
+ * Deliberately separate from INFORMATIONAL_PATTERNS: a status question needs
+ * a DIFFERENT answer shape (point at the real per-task lookup, or perform one
+ * if a taskId was actually supplied) — describing the two services, which is
+ * what buildInformationalResponse does, would not actually answer it.
+ */
+const TASK_STATUS_PATTERNS = [
+  /\bstatus\s+of\s+my\s+task\b/i,
+  /\bmy\s+task('?s)?\s+status\b/i,
+  /\btask\s+status\b/i,
+  /\bcurrent\s+status\b/i,
+  /\bwhat'?s?\s+(the\s+)?status\b/i,
+  /\bcheck\s+(my|the)\s+task\b/i,
+  /\bstatus\s+of\s+(the\s+)?job\b/i,
+];
+
+export function isTaskStatusQuery(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return TASK_STATUS_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+/** Reads a caller-supplied task/job identifier, if any. Never guessed. */
+export function extractTaskId(body: Record<string, unknown>): string | undefined {
+  const candidates = [body.taskId, body.jobId, body.task_id, body.job_id];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 export function extractUserMessage(body: Record<string, unknown>): string | undefined {
   const candidates = [
     body.message,
@@ -271,6 +309,49 @@ export function buildInformationalResponse(requestId: string) {
     },
     permittedActions: ["record_provider_response"],
     scanStarted: false,
+  };
+}
+
+/**
+ * Answers a task-status question honestly.
+ *
+ * With a supplied taskId, points the caller at the real per-task endpoint
+ * rather than fabricating a status here — the endpoint is session/owner
+ * scoped (`GET /api/a2a/tasks/{taskId}`, see assertDirectTaskOwner), which a
+ * generic message-intake POST cannot itself satisfy, so directing the real
+ * call is the honest answer, not a fake inline status.
+ *
+ * With NO taskId, explains that one is required and how it is obtained (every
+ * task acknowledgement already echoes `task.id`) — never invents a status.
+ */
+export function buildTaskStatusGuidanceResponse(requestId: string, taskId?: string) {
+  const baseUrl = getServerBaseUrl();
+  const identity = getCanonicalOkxIdentity();
+  const statusUrl = taskId ? `${baseUrl}/api/a2a/tasks/${taskId}` : `${baseUrl}/api/a2a/tasks/{taskId}`;
+
+  const message = taskId
+    ? `RepoDiet task ${taskId}: query its current status at ${statusUrl}. That endpoint returns the live lifecycle state, findings, and any pull request or escrow details for this exact task.`
+    : "RepoDiet did not receive a task ID with this question, so no status can be reported. " +
+      "Provide the task ID from your original task acknowledgement (the `id` field), or resend it as `taskId` " +
+      `in this request, and RepoDiet will report its current status. Status can also be checked directly at ${statusUrl}.`;
+
+  return {
+    ok: true,
+    terminal: true,
+    status: "AVAILABLE",
+    acknowledged: true,
+    immediateAcknowledgement: true,
+    aspAgentId: String(identity.aspAgentId),
+    a2aServiceId: String(identity.a2aServiceId),
+    a2mcpServiceId: String(identity.a2mcpServiceId),
+    service: "RepoDiet — Verified Repository Cleanup",
+    message,
+    taskId: taskId ?? null,
+    statusUrl,
+    requestId,
+    retryable: false,
+    paymentRequired: false,
+    paymentAlreadySettled: false,
   };
 }
 
