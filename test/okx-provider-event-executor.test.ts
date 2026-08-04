@@ -244,6 +244,65 @@ async function run() {
     assert.match(result.reason, /model_turn_terminal/);
   });
 
+  /**
+   * The turn's own diagnosis must survive into the recorded reason.
+   *
+   * Recording only the retry CLASS hid a live production defect for the entire
+   * life of job 0x22a2…: the turn reported a precise cause (an unparseable
+   * repository URL) on every one of 15 attempts, across four separate event
+   * lifetimes, and none of it reached the ledger or the logs. Every failure
+   * read as an indistinguishable `internal_failure_retryable`.
+   */
+  await test("a retryable failure records the turn's OWN cause, not just the retry class", async () => {
+    const result = await executeSystemEvent(
+      EVENT_ID,
+      ENVELOPE,
+      deps({
+        runModel: async () => ({
+          ok: false,
+          status: undefined,
+          actions: [],
+          error: "repository_url_unresolved",
+        }),
+      })
+    );
+    assert.equal(result.state, "retryable_failure");
+    assert.match(
+      result.reason,
+      /repository_url_unresolved/,
+      "the diagnosable cause must not be discarded"
+    );
+    assert.match(result.reason, /model_turn_retryable/, "and the retry class is still reported");
+  });
+
+  await test("a terminal failure records the turn's own cause too", async () => {
+    const result = await executeSystemEvent(
+      EVENT_ID,
+      ENVELOPE,
+      deps({
+        runModel: async () => ({
+          ok: false,
+          status: 403,
+          actions: [],
+          error: "wakeup_redirect_loop",
+        }),
+      })
+    );
+    assert.equal(result.state, "terminal_failure");
+    assert.match(result.reason, /wakeup_redirect_loop/);
+  });
+
+  await test("a turn that reports no cause still records a clean retry class", async () => {
+    // No `error` field — the reason must stay readable, never "undefined".
+    const result = await executeSystemEvent(
+      EVENT_ID,
+      ENVELOPE,
+      deps({ runModel: async () => ({ ok: false, status: 429, actions: [] }) })
+    );
+    assert.equal(result.state, "retryable_failure");
+    assert.doesNotMatch(result.reason, /undefined/);
+  });
+
   await test("a model-proposed action outside the allowlist is refused and never run", async () => {
     let actionRuns = 0;
     const result = await executeSystemEvent(

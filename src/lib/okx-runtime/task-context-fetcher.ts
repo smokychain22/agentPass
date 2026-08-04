@@ -30,11 +30,36 @@ function firstMatch(stdout: string, patterns: RegExp[]): string | undefined {
   return undefined;
 }
 
+/**
+ * Strips trailing sentence punctuation from a URL captured by `\S+`.
+ *
+ * Buyers write the repository into PROSE, not into a field. The live task
+ * detail for job 0x22a2… reads:
+ *
+ *   "Repository: https://github.com/velz-cmd/repodiet-e2e-test. Do not push
+ *    directly to the default branch."
+ *
+ * `\S+` is greedy to the whitespace, so it captured the sentence period and
+ * yielded `repo: "repodiet-e2e-test."` — a repository that does not exist.
+ * Every GitHub call for that job therefore 404'd, the deterministic turn
+ * failed, and the accepted, escrow-funded task was never delivered.
+ *
+ * Closing bracket characters get the same treatment: a URL inside "(see
+ * https://github.com/a/b)" has the same problem. A trailing slash is NOT
+ * stripped here — it is legitimate in a URL and `parseGitHubUrl` handles it.
+ */
+function trimTrailingSentencePunctuation(url: string): string {
+  return url.replace(/[.,;:!?)\]}>'"]+$/, "");
+}
+
 export function parseTaskContext(stdout: string): TaskContextFields {
-  const repositoryUrl = firstMatch(stdout, [
+  const rawRepositoryUrl = firstMatch(stdout, [
     /repository=(https?:\/\/\S+)/i,
     /repository(?:\s+url)?[:\s]+(https?:\/\/\S+)/i,
   ]);
+  const repositoryUrl = rawRepositoryUrl
+    ? trimTrailingSentencePunctuation(rawRepositoryUrl)
+    : undefined;
 
   const title = firstMatch(stdout, [/title[:\s]+"?([^"\n]+?)"?(?:\n|$)/i]);
   const description = firstMatch(stdout, [/description[:\s]+"?([^"\n]+?)"?(?:\n|$)/i]);
