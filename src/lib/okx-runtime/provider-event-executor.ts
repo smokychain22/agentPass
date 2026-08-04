@@ -83,6 +83,14 @@ export type TaskReader = (jobId: string) => Promise<AuthoritativeTask | undefine
 export type ModelTurn = (input: {
   instruction: string;
   jobId: string;
+  /**
+   * The original validated envelope. Needed because some playbooks are
+   * REDIRECTS rather than instructions — `wakeup_notify`'s says the real
+   * business state lives in `message.jobStatus` and the playbook must be
+   * re-requested with it. The value is read from the envelope, never from
+   * the playbook prose, so generated text can never steer the next action.
+   */
+  envelope?: InboundEnvelope;
 }) => Promise<{
   ok: boolean;
   invocationId?: string;
@@ -232,7 +240,7 @@ export async function executeSystemEvent(
       return persistRetryable(deps, eventId, attempts, "task_detail_unavailable");
     }
 
-    const turn = await deps.runModel({ instruction: instruction.stdout, jobId });
+    const turn = await deps.runModel({ instruction: instruction.stdout, jobId, envelope });
     if (!turn.ok) {
       const decision = decideRetry({
         status: turn.status,

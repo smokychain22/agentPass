@@ -88,6 +88,29 @@ function fail(): ProcessRunResult {
   return { ok: false, exitCode: 1, signal: null, stdout: "", stderr: "not bound", timedOut: false, cancelled: false };
 }
 
+/**
+ * The real `wakeup_notify` playbook, copied verbatim from
+ * `onchainos agent next-action --role asp` on repodiet-agent-9636 against the
+ * live envelope for job 0x22a2…. It is a redirect, not an instruction.
+ */
+const WAKEUP_REDIRECT_PLAYBOOK = `[System notification] wakeup_notify (task wake-up after network / machine reboot)
+[Role] ASP (Agent Service ASP)
+
+⚠️ This is a wake-up heartbeat event, **NOT** a business-driving event. The real business state is in the envelope.message.jobStatus field.
+You should NOT use \`wakeup_notify\` as --event to run the script — this script is just for guidance.
+
+[Your next action (strict order)]
+
+**Step 1 — Read the real status from the envelope**:
+From the wakeup_notify envelope that triggered this turn, read the \`message.jobStatus\` field (e.g. \`accepted\` / \`submitted\` / \`rejected\` / \`disputed\` / \`completed\` / \`failed\`, etc. — the real status string).
+
+**Step 2 — Use the real status to call next-action and fetch the current script**:
+\`\`\`bash
+onchainos agent next-action --role asp --agentId 9636 --message '{"event":"<value of the message.jobStatus field>","jobId":"${JOB}"}'
+\`\`\`
+Follow the returned script for what to do in the current status.
+`;
+
 /** Fake GitHub seams — production resolves a real token and hits the real API. */
 function fakeGitHub(existingPulls: Array<{ number: number; url: string; head: string }> = []) {
   const listCalls: Array<{ owner: string; repo: string; prefix: string }> = [];
@@ -214,6 +237,98 @@ async function run() {
   await test("cleanupBranchForJob is deterministic and stable for the same job across calls", () => {
     assert.equal(cleanupBranchForJob(JOB), cleanupBranchForJob(JOB));
     assert.match(cleanupBranchForJob(JOB), /^repodiet\/cleanup-okx-[a-f0-9]+$/);
+  });
+
+  /**
+   * Reproduced live on repodiet-agent-9636: event 456f7e76 on job 0x22a2…,
+   * already `accepted` with escrow funded, retried every 60 seconds and failed
+   * every time with `model_turn_retryable:internal_failure_retryable`. The
+   * turn was handed `wakeup_notify`'s playbook — which is a REDIRECT, not an
+   * instruction — matched neither known shape, and returned `unrecognized`.
+   * Retryable, so never terminal; never progressing, so never delivered. That
+   * is the OKX-reported "task times out" class exactly.
+   */
+  await test("a wakeup_notify redirect is followed to the real business playbook", async () => {
+    const fetched: Array<{ event: string; jobId: string }> = [];
+    const github = fakeGitHub([]);
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () =>
+        ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+      readTask: async () => TASK,
+      createCleanupPr: (async (input: { repoUrl: string }) => ({
+        data: {
+          pullRequest: { number: 9, url: `${input.repoUrl}/pull/9` },
+          actionSummary: {},
+          repo: { cleanupBranch: "repodiet/cleanup-x" },
+        },
+      })) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
+      refetchInstruction: (async ({ event, jobId }: { event: string; jobId: string }) => {
+        fetched.push({ event, jobId });
+        return { ok: true, stdout: JOB_ACCEPTED_PLAYBOOK, stderr: "" };
+      }) as never,
+    });
+
+    const result = await turn({
+      instruction: WAKEUP_REDIRECT_PLAYBOOK,
+      jobId: JOB,
+      envelope: { agentId: "9636", message: { event: "wakeup_notify", jobId: JOB, jobStatus: "accepted" } } as never,
+    });
+
+    assert.equal(result.ok, true, "the redirect must be followed, not treated as unrecognized");
+    assert.deepEqual(fetched, [{ event: "accepted", jobId: JOB }], "re-request with the REAL status");
+    assert.equal(result.actions[1].command, "agent deliver");
+  });
+
+  await test("a wakeup redirect takes its status from the ENVELOPE, never from the playbook prose", async () => {
+    // The playbook only says *where to look*. Reading the value from generated
+    // text would let prose choose which playbook runs next.
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () => ok("")) as never,
+      readTask: async () => TASK,
+      refetchInstruction: (async () => {
+        throw new Error("must not refetch without a resolvable envelope status");
+      }) as never,
+    });
+
+    for (const envelope of [
+      undefined,
+      { agentId: "9636", message: { event: "wakeup_notify", jobId: JOB } },
+      { agentId: "9636", message: { event: "wakeup_notify", jobId: JOB, jobStatus: "not-a-status" } },
+      { agentId: "9636", message: { event: "wakeup_notify", jobId: JOB, jobStatus: 42 } },
+    ]) {
+      const result = await turn({
+        instruction: WAKEUP_REDIRECT_PLAYBOOK,
+        jobId: JOB,
+        envelope: envelope as never,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "wakeup_redirect_status_unresolved");
+    }
+  });
+
+  await test("a redirect that redirects again is refused rather than looping forever", async () => {
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () => ok("")) as never,
+      readTask: async () => TASK,
+      refetchInstruction: (async () => ({
+        ok: true,
+        stdout: WAKEUP_REDIRECT_PLAYBOOK,
+        stderr: "",
+      })) as never,
+    });
+
+    const result = await turn({
+      instruction: WAKEUP_REDIRECT_PLAYBOOK,
+      jobId: JOB,
+      envelope: { agentId: "9636", message: { event: "wakeup_notify", jobId: JOB, jobStatus: "accepted" } } as never,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "wakeup_redirect_loop");
   });
 
   await test("job_accepted fails safe (retryable, no fabricated action) when common context is unavailable", async () => {
