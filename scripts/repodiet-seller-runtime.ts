@@ -927,6 +927,38 @@ export function buildOpenJobDeps(
     mode: parseApplyMode(env.REPODIET_PROVIDER_APPLY_MODE),
     listOpenJobs: createOpenJobLister(adapterOptions),
     readTask: createOpenJobTaskReader(adapterOptions),
+    /**
+     * Unauthenticated existence probe. No token: the question is precisely
+     * "can anyone see this repository", and answering it with our own
+     * credentials would confuse "public" with "we happen to have access".
+     * Bounded so a hanging request cannot stall the sweep.
+     */
+    repositoryProbe: {
+      publicLookup: async (owner, repo) => {
+        const response = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+          {
+            method: "GET",
+            headers: { accept: "application/vnd.github+json", "user-agent": "repodiet-9636" },
+            signal: AbortSignal.timeout(20_000),
+          }
+        );
+        return { status: response.status };
+      },
+    },
+    /**
+     * Asks the buyer to authorize a repository we cannot read, over the
+     * official A2A channel. This is the protocol-correct alternative to
+     * applying blindly, and it is what turns an unreachable private repo from
+     * a dead end into a resumable negotiation.
+     */
+    requestAuthorization: async ({ jobId, buyerAgentId, message }) => {
+      const result = await runAction({
+        command: "okx-a2a xmtp-send",
+        args: ["--job-id", jobId, "--to-agent-id", buyerAgentId, "--message", message],
+      });
+      if (!result.ok) throw new Error(result.error ?? "authorization_request_failed");
+    },
     getPriorApplication: (key) => ledger.get(key),
     recordApplication: (key, record) => ledger.put(key, record),
     runAction: async (action) => {
