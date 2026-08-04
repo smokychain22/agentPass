@@ -38,6 +38,21 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
   # isGitHubAppConfigured() checks this too, and it was previously missing
   # from both the staged secrets and this file.
   GITHUB_APP_SLUG = "repodiet-operator"
+  # Provider application for open A2A jobs. `live` broadcasts a real,
+  # irreversible, gas-spending `onchainos agent apply` for every job that
+  # passes the full eligibility gate in src/lib/okx-runtime/provider-apply.ts.
+  #
+  # Declared here rather than as a secret because it is policy, not a
+  # credential, and its value must be reviewable in the diff — flipping this
+  # is the difference between observing and transacting.
+  #
+  # Safe to run live because the gate refuses anything that is not this
+  # agent's registered service at its registered price on a real repository:
+  # verified against the seven live open jobs, every one of which is refused
+  # (0.00001 USDT against a 1 USD₮0 listing, scoped to github.com/example/repo,
+  # which does not exist). The code default is `dry_run`, so an unset or
+  # misspelled value observes rather than transacts.
+  REPODIET_PROVIDER_APPLY_MODE = "live"
 
 # This runtime is an outbound XMTP/HTTPS client (heartbeat POST, OpenClaw
 # Gateway is loopback-only at 127.0.0.1:18789), never a server other agents

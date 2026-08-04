@@ -74,6 +74,9 @@ function harness(options: {
     logs,
     deps: {
       mode: options.mode ?? "live",
+      // Default: repository verifies. Tests that care about verification
+      // override or clear this explicitly (see 21-27).
+      repositoryProbe: { publicLookup: async () => ({ status: 200 }) },
       listOpenJobs: async () => {
         if (options.listThrows) throw new Error("network down");
         return jobs;
@@ -240,11 +243,26 @@ async function run() {
     assert.equal(h.broadcasts.length, 0);
   });
 
-  await test("12. the amount broadcast comes from the authoritative task, never the listing", async () => {
+  await test("12. the amount comes from the authoritative task, never the stale listing", async () => {
+    // The listing says the registered 1 USDT; the authoritative read says
+    // 0.00001. The authoritative record must win — and under the strict
+    // policy that means REFUSING, not applying at a price the service does
+    // not offer.
     const h = harness({ task: { tokenAmount: "0.00001" } });
     const outcome = only(await reconcileOpenJobs(h.deps));
-    assert.equal(outcome.action, "applied");
-    assert.deepEqual(h.broadcasts[0][2], "0.00001");
+    assert.equal(outcome.action, "skipped");
+    assert.match(outcome.reason ?? "", /price_not_registered:0.00001/);
+    assert.equal(h.broadcasts.length, 0);
+
+    // And the converse: a listing that understates the price cannot suppress
+    // a genuine job whose authoritative price is correct.
+    const corrected = harness({
+      jobs: [openJob({ tokenAmount: "0.00001" })],
+      task: { tokenAmount: "1" },
+    });
+    const ok = only(await reconcileOpenJobs(corrected.deps));
+    assert.equal(ok.action, "applied");
+    assert.equal(corrected.broadcasts[0][2], "1");
   });
 
   await test("13. a job designated to another provider is never applied for", async () => {
@@ -321,6 +339,112 @@ async function run() {
   await test("20. an empty open-job set is a clean no-op", async () => {
     const h = harness({ jobs: [] });
     assert.deepEqual(await reconcileOpenJobs(h.deps), []);
+    assert.equal(h.broadcasts.length, 0);
+  });
+
+  // --- strict LIVE repository verification ---------------------------------
+
+  await test("21. LIVE mode refuses to apply when a repository cannot be verified at all", async () => {
+    const h = harness({ mode: "live" });
+    h.deps.repositoryProbe = undefined; // no way to verify
+    const outcome = only(await reconcileOpenJobs(h.deps));
+    assert.equal(outcome.action, "skipped");
+    assert.equal(outcome.reason, "repository_probe_unavailable");
+    assert.equal(h.broadcasts.length, 0, "live mode must never apply unverified");
+  });
+
+  await test("22. LIVE mode applies once the repository is verified public", async () => {
+    const h = harness({ mode: "live" });
+    h.deps.repositoryProbe = { publicLookup: async () => ({ status: 200 }) };
+    const outcome = only(await reconcileOpenJobs(h.deps));
+    assert.equal(outcome.action, "applied");
+    assert.equal(h.broadcasts.length, 1);
+  });
+
+  await test("23. an unreachable repository asks the buyer for authorization instead of applying", async () => {
+    const asked: Array<{ jobId: string; buyerAgentId: string; message: string }> = [];
+    const h = harness({ mode: "live" });
+    h.deps.repositoryProbe = {
+      publicLookup: async () => ({ status: 404 }),
+      hasInstallationAccess: async () => false,
+    };
+    h.deps.requestAuthorization = async (input) => {
+      asked.push(input);
+    };
+
+    const outcome = only(await reconcileOpenJobs(h.deps));
+    assert.equal(outcome.action, "skipped");
+    assert.equal(outcome.reason, "repository_unauthorized");
+    assert.equal(h.broadcasts.length, 0, "never apply blindly to a repository we cannot read");
+    assert.equal(asked.length, 1, "the buyer must be asked through the official flow");
+    assert.equal(asked[0].buyerAgentId, "1791");
+    assert.match(asked[0].message, /authoriz|install/i);
+  });
+
+  await test("24. the buyer is asked ONCE, not on every five-minute sweep", async () => {
+    const asked: unknown[] = [];
+    const h = harness({ mode: "live" });
+    h.deps.repositoryProbe = {
+      publicLookup: async () => ({ status: 404 }),
+      hasInstallationAccess: async () => false,
+    };
+    h.deps.requestAuthorization = async (input) => {
+      asked.push(input);
+    };
+
+    await reconcileOpenJobs(h.deps);
+    await reconcileOpenJobs(h.deps);
+    await reconcileOpenJobs(h.deps);
+    assert.equal(asked.length, 1, "repeated sweeps must not spam the buyer");
+    assert.equal(h.broadcasts.length, 0);
+  });
+
+  await test("25. a probe that FAILS is not treated as permission to apply", async () => {
+    const h = harness({ mode: "live" });
+    h.deps.repositoryProbe = {
+      publicLookup: async () => {
+        throw new Error("github unreachable");
+      },
+    };
+    const outcome = only(await reconcileOpenJobs(h.deps));
+    assert.equal(outcome.action, "skipped");
+    assert.equal(outcome.reason, "repository_unknown");
+    assert.equal(h.broadcasts.length, 0);
+  });
+
+  await test("26. dry_run never performs a network probe at all", async () => {
+    let probed = 0;
+    const h = harness({ mode: "dry_run" });
+    h.deps.repositoryProbe = {
+      publicLookup: async () => {
+        probed++;
+        return { status: 200 };
+      },
+    };
+    const outcome = only(await reconcileOpenJobs(h.deps));
+    assert.equal(outcome.action, "dry_run");
+    assert.equal(probed, 0, "an observation-only sweep must not reach the network");
+  });
+
+  await test("27. the real live reviewer jobs are refused BEFORE any probe runs", async () => {
+    // The exact shape of all seven: 0.00001 USDT, github.com/example/repo.
+    // These must be rejected by the cheap gate, so no network call is made.
+    let probed = 0;
+    const h = harness({
+      mode: "live",
+      jobs: [openJob({ tokenAmount: "0.00001", repositoryUrl: "https://github.com/example/repo" })],
+      task: { tokenAmount: "0.00001", repositoryUrl: "https://github.com/example/repo" },
+    });
+    h.deps.repositoryProbe = {
+      publicLookup: async () => {
+        probed++;
+        return { status: 404 };
+      },
+    };
+    const outcome = only(await reconcileOpenJobs(h.deps));
+    assert.equal(outcome.action, "skipped");
+    assert.match(outcome.reason ?? "", /price_not_registered/);
+    assert.equal(probed, 0, "a job failing the cheap gate must never reach the network");
     assert.equal(h.broadcasts.length, 0);
   });
 
