@@ -518,6 +518,62 @@ async function run() {
     assert.equal(weird.state, "unknown");
   });
 
+  /**
+   * Measured live on repodiet-agent-9636: the Fly egress IP is shared and
+   * GitHub's UNAUTHENTICATED quota is 60/hour per IP. The machine was sitting
+   * at `x-ratelimit-limit: 60, x-ratelimit-remaining: 0`, so every probe
+   * returned 403 — for a repository that exists and is public.
+   *
+   * Without the rate-limit branch that 403 fell through to `unauthorized`,
+   * which would have refused to apply to EVERY legitimate job and mailed the
+   * buyer an authorization request for a repository they had already shared.
+   * The apply path would have been silently non-functional in production
+   * while passing every test.
+   */
+  await test("41. a RATE-LIMITED 403 is inconclusive, never 'unauthorized'", async () => {
+    const result = await verifyRepositoryForApply(
+      "https://github.com/velz-cmd/repodiet-e2e-test",
+      { publicLookup: async () => ({ status: 403, rateLimited: true }) }
+    );
+    assert.equal(result.state, "unknown");
+    assert.match(result.state === "unknown" ? result.reason : "", /rate_limited:403/);
+  });
+
+  await test("42. a rate-limited probe still verifies via the quota-independent installation check", async () => {
+    // A throttled IP must not mean "never apply". An installation token is
+    // quota-independent and answers the question that actually matters.
+    const result = await verifyRepositoryForApply(
+      "https://github.com/velz-cmd/repodiet-e2e-test",
+      {
+        publicLookup: async () => ({ status: 403, rateLimited: true }),
+        hasInstallationAccess: async () => true,
+      }
+    );
+    assert.deepEqual(result, { state: "verified", visibility: "authorized" });
+  });
+
+  await test("43. a rate-limited probe with NO installation stays inconclusive, not a refusal", async () => {
+    const result = await verifyRepositoryForApply("https://github.com/velz-cmd/whatever", {
+      publicLookup: async () => ({ status: 403, rateLimited: true }),
+      hasInstallationAccess: async () => false,
+    });
+    assert.equal(result.state, "unknown", "we still do not know; fail closed and retry later");
+  });
+
+  await test("44. a 429 secondary-limit is treated the same as a primary quota refusal", async () => {
+    const result = await verifyRepositoryForApply("https://github.com/velz-cmd/x", {
+      publicLookup: async () => ({ status: 429, rateLimited: true }),
+    });
+    assert.equal(result.state, "unknown");
+  });
+
+  await test("45. a genuine permission 403 is STILL unauthorized — the fix did not blunt it", async () => {
+    const result = await verifyRepositoryForApply("https://github.com/velz-cmd/private-thing", {
+      publicLookup: async () => ({ status: 403, rateLimited: false }),
+    });
+    assert.equal(result.state, "unauthorized", "a non-quota 403 must still ask for authorization");
+  });
+
   await test("40. an unauthorized repository produces a real authorization request, not an apply", () => {
     const message = buildAuthorizationRequest({ jobId: JOB, owner: "velz-cmd", repo: "secret" });
     assert.match(message, /velz-cmd\/secret/);

@@ -55,6 +55,7 @@ import {
   type OpenJobReconcilerDeps,
 } from "../src/lib/okx-runtime/open-job-reconciler";
 import { parseApplyMode } from "../src/lib/okx-runtime/provider-apply";
+import { resolveCleanupGitHubToken } from "../src/lib/github-app/resolve-cleanup-token";
 import {
   createDeterministicTurn,
   type DeterministicTurnOptions,
@@ -937,9 +938,20 @@ export function buildOpenJobDeps(
     listOpenJobs: createOpenJobLister(adapterOptions),
     readTask: createOpenJobTaskReader(adapterOptions),
     /**
-     * Unauthenticated existence probe. No token: the question is precisely
-     * "can anyone see this repository", and answering it with our own
-     * credentials would confuse "public" with "we happen to have access".
+     * Repository existence probe.
+     *
+     * Unauthenticated by intent — the question is "can this repository be
+     * reached at all", and answering it with our own credentials would
+     * confuse "public" with "we happen to have access".
+     *
+     * But GitHub's unauthenticated quota is 60/hour PER IP, and Fly egress
+     * addresses are shared. Measured live on this machine:
+     * `x-ratelimit-limit: 60, x-ratelimit-remaining: 0`, so every probe
+     * returned 403 for a repository that exists and is public. A quota
+     * refusal is reported explicitly so `verifyRepositoryForApply` can treat
+     * it as INCONCLUSIVE rather than as "you may not see this" — otherwise
+     * the apply path refuses every legitimate job while looking healthy.
+     *
      * Bounded so a hanging request cannot stall the sweep.
      */
     repositoryProbe: {
@@ -952,7 +964,31 @@ export function buildOpenJobDeps(
             signal: AbortSignal.timeout(20_000),
           }
         );
-        return { status: response.status };
+        // GitHub signals quota exhaustion with remaining=0 (403), and
+        // secondary/abuse limits with retry-after on 403/429.
+        const remaining = response.headers.get("x-ratelimit-remaining");
+        const rateLimited =
+          (response.status === 403 || response.status === 429) &&
+          (remaining === "0" || response.headers.has("retry-after"));
+        return { status: response.status, rateLimited };
+      },
+      /**
+       * Resolves the 404 ambiguity — and, critically, gives a quota-independent
+       * answer when the unauthenticated probe is throttled. An installation
+       * token is scoped to a repository we can actually work on, which is the
+       * question that ultimately matters.
+       */
+      hasInstallationAccess: async (owner, repo) => {
+        try {
+          await resolveCleanupGitHubToken({
+            repoUrl: `https://github.com/${owner}/${repo}`,
+            owner,
+            repo,
+          });
+          return true;
+        } catch {
+          return false;
+        }
       },
     },
     /**

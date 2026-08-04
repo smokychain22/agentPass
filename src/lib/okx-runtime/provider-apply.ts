@@ -394,8 +394,14 @@ export type RepositoryVerification =
   | { state: "unknown"; reason: string };
 
 export interface RepositoryProbe {
-  /** Unauthenticated existence probe. */
-  publicLookup: (owner: string, repo: string) => Promise<{ status: number }>;
+  /**
+   * Existence probe. `rateLimited` MUST be set when GitHub refused for quota
+   * reasons rather than permission ones — see `verifyRepositoryForApply`.
+   */
+  publicLookup: (
+    owner: string,
+    repo: string
+  ) => Promise<{ status: number; rateLimited?: boolean }>;
   /** True when the RepoDiet GitHub App already has access. */
   hasInstallationAccess?: (owner: string, repo: string) => Promise<boolean>;
 }
@@ -408,13 +414,46 @@ export async function verifyRepositoryForApply(
   if (!slug) return { state: "unknown", reason: "repository_url_unparseable" };
 
   let status: number;
+  let rateLimited: boolean | undefined;
   try {
-    ({ status } = await probe.publicLookup(slug.owner, slug.repo));
+    ({ status, rateLimited } = await probe.publicLookup(slug.owner, slug.repo));
   } catch (err) {
     return {
       state: "unknown",
       reason: `lookup_failed:${err instanceof Error ? err.message : "unknown"}`,
     };
+  }
+
+  /**
+   * A rate-limited refusal says nothing about the repository.
+   *
+   * Measured live on repodiet-agent-9636: the Fly egress IP is shared, and
+   * GitHub's UNAUTHENTICATED quota is 60/hour per IP. The machine was sitting
+   * at `x-ratelimit-limit: 60, x-ratelimit-remaining: 0`, so every probe
+   * returned 403 — for a repository that exists and is public.
+   *
+   * Without this branch that 403 fell through to `unauthorized`, which would
+   * have refused to apply to EVERY legitimate job and sent the buyer an
+   * authorization request for a repository they had already shared. The apply
+   * path would have been silently non-functional in production while looking
+   * healthy in tests.
+   *
+   * Checked before the status branches so it cannot be shadowed by them.
+   */
+  if (rateLimited) {
+    // An installation token is quota-independent and answers the question
+    // that actually matters — can RepoDiet work on this repository — so a
+    // throttled IP does not have to mean "never apply".
+    if (probe.hasInstallationAccess) {
+      try {
+        if (await probe.hasInstallationAccess(slug.owner, slug.repo)) {
+          return { state: "verified", visibility: "authorized" };
+        }
+      } catch {
+        return { state: "unknown", reason: "installation_check_failed" };
+      }
+    }
+    return { state: "unknown", reason: `rate_limited:${status}` };
   }
 
   if (status === 200) return { state: "verified", visibility: "public" };
