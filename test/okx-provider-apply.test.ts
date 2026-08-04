@@ -17,8 +17,12 @@ import {
   applyLedgerKey,
   assessApplyEligibility,
   buildApplyAction,
+  buildAuthorizationRequest,
   isDiscoveryOnlyTitle,
+  isPlaceholderRepository,
   parseApplyMode,
+  parseRepositorySlug,
+  verifyRepositoryForApply,
   X_LAYER_CHAIN_INDEX,
   type ApplyCandidate,
 } from "../src/lib/okx-runtime/provider-apply";
@@ -226,10 +230,13 @@ async function run() {
     assert.match(verdict.allowed === false ? verdict.reason : "", /token_amount_not_authoritative/);
   });
 
-  await test("18. a small but positive negotiated amount is accepted and carried through exactly", () => {
-    const candidate = eligible({ tokenAmount: "0.00001" });
+  await test("18. the registered price is carried into the command exactly as the task states it", () => {
+    // Under the strict policy the amount must equal the registered 1 USD₮0
+    // (see test 31), so what this pins is that the value is passed through
+    // verbatim rather than reformatted — "1.00" must not become "1".
+    const candidate = eligible({ tokenAmount: "1.00" });
     assert.deepEqual(assessApplyEligibility(candidate), { eligible: true });
-    assert.equal(buildApplyAction(candidate).args[2], "0.00001");
+    assert.equal(buildApplyAction(candidate).args[2], "1.00");
   });
 
   await test("19. a missing token symbol is refused — the CLI warns not to assume USDT", () => {
@@ -360,6 +367,162 @@ async function run() {
     for (const command of ["agent confirm-accept", "agent complete", "agent close", "agent create-task", "agent activate", "agent upload"]) {
       assert.equal(ALLOWED_COMMANDS.has(command), false, `${command} must stay forbidden`);
     }
+  });
+
+  // --- strict LIVE production gates ---------------------------------------
+
+  await test("31. the amount must be the REGISTERED price exactly — reviewer probes at 0.00001 are refused", () => {
+    assert.match(reasonFor(eligible({ tokenAmount: "0.00001" })), /price_not_registered:0.00001!=1/);
+    assert.match(reasonFor(eligible({ tokenAmount: "0.5" })), /price_not_registered/);
+    assert.match(reasonFor(eligible({ tokenAmount: "2" })), /price_not_registered/);
+    // Numerically equal spellings of the registered price are all accepted.
+    for (const tokenAmount of ["1", "1.0", "1.00", "1.000000"]) {
+      assert.deepEqual(
+        assessApplyEligibility(eligible({ tokenAmount })),
+        { eligible: true },
+        `${tokenAmount} is the registered price`
+      );
+    }
+  });
+
+  await test("32. the settlement token must be the registered symbol AND contract", () => {
+    assert.match(reasonFor(eligible({ tokenSymbol: "USDC" })), /token_symbol_not_registered:USDC/);
+    assert.deepEqual(
+      assessApplyEligibility(
+        eligible({ tokenAddress: "0x779ded0c9e1022225f8e0630b35a9b54be713736" })
+      ),
+      { eligible: true }
+    );
+    assert.deepEqual(
+      assessApplyEligibility(
+        eligible({ tokenAddress: "0x779DED0C9E1022225F8E0630B35A9B54BE713736" })
+      ),
+      { eligible: true },
+      "contract comparison must be case-insensitive"
+    );
+    // A matching SYMBOL on a different contract is a different token.
+    assert.match(
+      reasonFor(eligible({ tokenAddress: "0x0000000000000000000000000000000000000001" })),
+      /token_asset_not_registered/
+    );
+  });
+
+  await test("33. a placeholder repository is refused — example/repo is what all seven live jobs name", () => {
+    for (const repositoryUrl of [
+      "https://github.com/example/repo",
+      "https://github.com/example/anything",
+      "https://github.com/someone/my-repo",
+      "https://github.com/your-org/project",
+      "https://github.com/test/test",
+      "https://github.com/acme/demo",
+    ]) {
+      assert.equal(isPlaceholderRepository(repositoryUrl), true, `must be placeholder: ${repositoryUrl}`);
+      assert.match(reasonFor(eligible({ repositoryUrl })), /repository_is_placeholder/);
+    }
+    // The real controlled repository must NOT be caught by the heuristic.
+    assert.equal(isPlaceholderRepository("https://github.com/velz-cmd/repodiet-e2e-test"), false);
+    assert.deepEqual(
+      assessApplyEligibility(
+        eligible({ repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test" })
+      ),
+      { eligible: true }
+    );
+  });
+
+  await test("34. every real open job found live on this agent is refused by the strict policy", () => {
+    // The exact shape of all seven, as read from OKX: reviewer-owned, priced
+    // at 0.00001 against a 1 USDT listing, scoped to a repo that does not exist.
+    const live = eligible({
+      tokenAmount: "0.00001",
+      repositoryUrl: "https://github.com/example/repo",
+    });
+    const verdict = assessApplyEligibility(live);
+    assert.equal(verdict.eligible, false);
+    assert.match(
+      verdict.eligible === false ? verdict.reason : "",
+      /price_not_registered/,
+      "price is the first disqualifier reported"
+    );
+    // And it stays refused even if the price were corrected.
+    assert.match(
+      reasonFor(eligible({ repositoryUrl: "https://github.com/example/repo" })),
+      /repository_is_placeholder/
+    );
+  });
+
+  await test("35. a repository slug parses owner/repo, tolerating .git and a trailing slash", () => {
+    const expected = { owner: "velz-cmd", repo: "repodiet-e2e-test" };
+    assert.deepEqual(parseRepositorySlug("https://github.com/velz-cmd/repodiet-e2e-test"), expected);
+    assert.deepEqual(parseRepositorySlug("https://github.com/velz-cmd/repodiet-e2e-test/"), expected);
+    assert.deepEqual(
+      parseRepositorySlug("https://github.com/velz-cmd/repodiet-e2e-test.git"),
+      expected
+    );
+    assert.equal(parseRepositorySlug("not a url"), undefined);
+  });
+
+  // --- repository verification (the async half of the scope gate) ----------
+
+  await test("36. a public, existing repository verifies", async () => {
+    const result = await verifyRepositoryForApply(
+      "https://github.com/velz-cmd/repodiet-e2e-test",
+      { publicLookup: async () => ({ status: 200 }) }
+    );
+    assert.deepEqual(result, { state: "verified", visibility: "public" });
+  });
+
+  await test("37. a 404 with NO installation is 'unauthorized', never silently 'absent'", async () => {
+    // GitHub returns 404 both for "does not exist" and "you cannot see it".
+    // Reading that as absence would refuse legitimate private work outright.
+    const result = await verifyRepositoryForApply("https://github.com/velz-cmd/private-thing", {
+      publicLookup: async () => ({ status: 404 }),
+      hasInstallationAccess: async () => false,
+    });
+    assert.equal(result.state, "unauthorized");
+  });
+
+  await test("38. a 404 WITH an existing installation verifies as authorized", async () => {
+    const result = await verifyRepositoryForApply("https://github.com/velz-cmd/private-thing", {
+      publicLookup: async () => ({ status: 404 }),
+      hasInstallationAccess: async () => true,
+    });
+    assert.deepEqual(result, { state: "verified", visibility: "authorized" });
+  });
+
+  await test("39. 401/403 are unauthorized, and a failed probe is UNKNOWN — never a yes", async () => {
+    for (const status of [401, 403]) {
+      const result = await verifyRepositoryForApply("https://github.com/a/b", {
+        publicLookup: async () => ({ status }),
+      });
+      assert.equal(result.state, "unauthorized", `status ${status}`);
+    }
+
+    const thrown = await verifyRepositoryForApply("https://github.com/a/b", {
+      publicLookup: async () => {
+        throw new Error("network down");
+      },
+    });
+    assert.equal(thrown.state, "unknown", "a check that could not run must fail closed");
+
+    const installFailed = await verifyRepositoryForApply("https://github.com/a/b", {
+      publicLookup: async () => ({ status: 404 }),
+      hasInstallationAccess: async () => {
+        throw new Error("app api down");
+      },
+    });
+    assert.equal(installFailed.state, "unknown", "an incomplete installation check is not absence");
+
+    const weird = await verifyRepositoryForApply("https://github.com/a/b", {
+      publicLookup: async () => ({ status: 500 }),
+    });
+    assert.equal(weird.state, "unknown");
+  });
+
+  await test("40. an unauthorized repository produces a real authorization request, not an apply", () => {
+    const message = buildAuthorizationRequest({ jobId: JOB, owner: "velz-cmd", repo: "secret" });
+    assert.match(message, /velz-cmd\/secret/);
+    assert.match(message, /authoriz|install/i);
+    assert.ok(message.includes(JOB));
   });
 
   console.log("okx-provider-apply: all passed");

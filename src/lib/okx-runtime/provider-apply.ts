@@ -76,6 +76,8 @@ export interface ApplyCandidate {
    * absent, because the agent's only escrow-settled service is the A2A one.
    */
   escrowPayment?: boolean;
+  /** Settlement token contract, when the task detail exposes one. */
+  tokenAddress?: string;
   /** Resolved from serviceParams or the task description. */
   repositoryUrl?: string;
   title?: string;
@@ -104,6 +106,69 @@ const AMOUNT_PATTERN = /^\d+(\.\d+)?$/;
 function hasUsableRepositoryScope(url: string | undefined): boolean {
   if (!url || typeof url !== "string") return false;
   return /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/?$/i.test(url.trim());
+}
+
+/**
+ * Documentation placeholders, which are syntactically perfect GitHub URLs and
+ * therefore sail straight through `hasUsableRepositoryScope`.
+ *
+ * This is not hypothetical: all seven open jobs found live on this agent name
+ * `https://github.com/example/repo`, which does not exist. Applying to one
+ * would commit 9636 on-chain, at cost, to work it can never perform.
+ */
+const PLACEHOLDER_OWNERS = new Set([
+  "example",
+  "examples",
+  "test",
+  "tests",
+  "foo",
+  "bar",
+  "your-org",
+  "your-organization",
+  "yourorg",
+  "myorg",
+  "my-org",
+  "owner",
+  "org",
+  "user",
+  "username",
+  "acme",
+  "sample",
+  "demo",
+  "placeholder",
+]);
+const PLACEHOLDER_REPOS = new Set([
+  "repo",
+  "repository",
+  "my-repo",
+  "myrepo",
+  "your-repo",
+  "yourrepo",
+  "example",
+  "test",
+  "sample",
+  "demo",
+  "placeholder",
+  "project",
+]);
+
+export function parseRepositorySlug(
+  url: string | undefined
+): { owner: string; repo: string } | undefined {
+  if (!url) return undefined;
+  const match = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim());
+  if (!match) return undefined;
+  return { owner: match[1], repo: match[2] };
+}
+
+export function isPlaceholderRepository(url: string | undefined): boolean {
+  const slug = parseRepositorySlug(url);
+  if (!slug) return false;
+  const owner = slug.owner.toLowerCase();
+  const repo = slug.repo.toLowerCase();
+  // Either half being an obvious placeholder is enough — "example/anything"
+  // and "anyone/my-repo" are both documentation boilerplate.
+  return PLACEHOLDER_OWNERS.has(owner) || PLACEHOLDER_REPOS.has(repo);
 }
 
 /**
@@ -208,6 +273,27 @@ export function assessApplyEligibility(
   if (!candidate.tokenSymbol) {
     return { eligible: false, reason: "token_symbol_missing" };
   }
+  // The amount must be the REGISTERED price exactly. A job priced at anything
+  // else is not this service, whatever it is titled — the live reviewer probes
+  // carry 0.00001, five orders of magnitude below the 1 USD₮0 listing.
+  // Compared numerically so "1", "1.0" and "1.00" are all the same price.
+  if (Number(candidate.tokenAmount) !== Number(a2a.fee)) {
+    return {
+      eligible: false,
+      reason: `price_not_registered:${candidate.tokenAmount}!=${a2a.fee}`,
+    };
+  }
+  if (candidate.tokenSymbol.toUpperCase() !== a2a.tokenSymbol) {
+    return { eligible: false, reason: `token_symbol_not_registered:${candidate.tokenSymbol}` };
+  }
+  // When the settlement asset is visible it must be the registered USD₮0
+  // contract — a matching symbol on a different contract is a different token.
+  if (
+    candidate.tokenAddress !== undefined &&
+    candidate.tokenAddress.toLowerCase() !== a2a.tokenAddress
+  ) {
+    return { eligible: false, reason: `token_asset_not_registered:${candidate.tokenAddress}` };
+  }
 
   // --- scope ---------------------------------------------------------------
   if (isDiscoveryOnlyTitle(candidate.title)) {
@@ -215,6 +301,9 @@ export function assessApplyEligibility(
   }
   if (!hasUsableRepositoryScope(candidate.repositoryUrl)) {
     return { eligible: false, reason: "repository_scope_missing" };
+  }
+  if (isPlaceholderRepository(candidate.repositoryUrl)) {
+    return { eligible: false, reason: `repository_is_placeholder:${candidate.repositoryUrl}` };
   }
 
   // --- idempotency ---------------------------------------------------------
@@ -274,4 +363,98 @@ export function parseApplyMode(raw: string | undefined): ApplyMode {
   if (value === "live") return "live";
   if (value === "off") return "off";
   return "dry_run";
+}
+
+/**
+ * Repository existence verification — the async half of the scope gate.
+ *
+ * Kept out of `assessApplyEligibility` deliberately: that function is pure and
+ * synchronous, which is what makes it exhaustively testable and what lets the
+ * authorization boundary re-run it cheaply. Reachability needs a network call,
+ * so it is a separate, explicitly-ordered step that runs only AFTER every
+ * cheap gate has already passed.
+ *
+ * The three-way result matters more than a boolean. A repository we cannot
+ * see is NOT the same as one that does not exist:
+ *
+ *   - `verified`     — public and real. Safe to apply.
+ *   - `absent`       — GitHub says 404 for an unauthenticated read AND we hold
+ *                      no installation for it. Never apply; there is nothing
+ *                      to work on.
+ *   - `unauthorized` — it may well exist but is private or not yet shared with
+ *                      the RepoDiet app. Never apply blindly; ask the buyer
+ *                      for authorization through the official A2A flow first.
+ *   - `unknown`      — the check itself failed (network, rate limit). Fail
+ *                      closed: an unanswered question is not a yes.
+ */
+export type RepositoryVerification =
+  | { state: "verified"; visibility: "public" | "authorized" }
+  | { state: "absent" }
+  | { state: "unauthorized"; owner: string; repo: string }
+  | { state: "unknown"; reason: string };
+
+export interface RepositoryProbe {
+  /** Unauthenticated existence probe. */
+  publicLookup: (owner: string, repo: string) => Promise<{ status: number }>;
+  /** True when the RepoDiet GitHub App already has access. */
+  hasInstallationAccess?: (owner: string, repo: string) => Promise<boolean>;
+}
+
+export async function verifyRepositoryForApply(
+  url: string | undefined,
+  probe: RepositoryProbe
+): Promise<RepositoryVerification> {
+  const slug = parseRepositorySlug(url);
+  if (!slug) return { state: "unknown", reason: "repository_url_unparseable" };
+
+  let status: number;
+  try {
+    ({ status } = await probe.publicLookup(slug.owner, slug.repo));
+  } catch (err) {
+    return {
+      state: "unknown",
+      reason: `lookup_failed:${err instanceof Error ? err.message : "unknown"}`,
+    };
+  }
+
+  if (status === 200) return { state: "verified", visibility: "public" };
+
+  if (status === 404) {
+    // 404 is ambiguous on GitHub: it is returned both for "does not exist" and
+    // for "exists but you cannot see it". An installation we already hold
+    // resolves the ambiguity in favour of existence.
+    if (probe.hasInstallationAccess) {
+      try {
+        if (await probe.hasInstallationAccess(slug.owner, slug.repo)) {
+          return { state: "verified", visibility: "authorized" };
+        }
+      } catch {
+        // Fall through — an installation check we could not complete tells us
+        // nothing, and must not be read as absence.
+        return { state: "unknown", reason: "installation_check_failed" };
+      }
+    }
+    return { state: "unauthorized", owner: slug.owner, repo: slug.repo };
+  }
+
+  if (status === 403 || status === 401) {
+    return { state: "unauthorized", owner: slug.owner, repo: slug.repo };
+  }
+  return { state: "unknown", reason: `unexpected_status:${status}` };
+}
+
+/**
+ * The message sent to the buyer when a job names a repository we cannot see.
+ * Asking is the correct protocol response; applying blindly is not.
+ */
+export function buildAuthorizationRequest(input: {
+  jobId: string;
+  owner: string;
+  repo: string;
+}): string {
+  return [
+    `RepoDiet received job ${input.jobId} for ${input.owner}/${input.repo}, but cannot currently read that repository.`,
+    "It may be private, or the RepoDiet GitHub App may not be installed on it yet.",
+    "Please install/authorize the RepoDiet GitHub App for this repository, or confirm the correct repository URL, and RepoDiet will apply for the task.",
+  ].join(" ");
 }

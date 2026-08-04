@@ -21,10 +21,13 @@ import {
   applyLedgerKey,
   assessApplyEligibility,
   buildApplyAction,
+  buildAuthorizationRequest,
   parseApplyMode,
+  verifyRepositoryForApply,
   type ApplyCandidate,
   type ApplyMode,
   type PriorApplication,
+  type RepositoryProbe,
 } from "./provider-apply";
 import { authorizeAction, SELLER_AGENT_ID, type AuthoritativeTask } from "./system-event-route";
 
@@ -47,6 +50,22 @@ export interface OpenJobReconcilerDeps {
   }) => Promise<{ ok: boolean; transactionRef?: string; stderr?: string; uncertain?: boolean }>;
   log: (event: string, fields: Record<string, unknown>) => void;
   mode?: ApplyMode;
+  /**
+   * Repository reachability probe. Optional so tests and dry runs need not
+   * reach the network — but when it is absent in LIVE mode the reconciler
+   * refuses rather than applying unverified (see `reconcileOne`).
+   */
+  repositoryProbe?: RepositoryProbe;
+  /**
+   * Sends the buyer an authorization request over the official A2A channel
+   * when a job names a repository we cannot see. Asking is the correct
+   * protocol response; applying blindly is not.
+   */
+  requestAuthorization?: (input: {
+    jobId: string;
+    buyerAgentId: string;
+    message: string;
+  }) => Promise<void>;
 }
 
 export interface ReconcileOutcome {
@@ -188,6 +207,69 @@ async function reconcileOne(
   if (!verdict.allowed) {
     deps.log("open_job_apply_unauthorized", { jobId: listed.jobId, reason: verdict.reason });
     return { jobId: listed.jobId, action: "skipped", reason: `unauthorized:${verdict.reason}` };
+  }
+
+  // 5. Repository reachability — the async half of the scope gate, run only
+  //    after every cheap gate has passed. A repository we cannot see is NOT
+  //    the same as one that does not exist, and neither may be applied for.
+  if (mode === "live") {
+    if (!deps.repositoryProbe) {
+      deps.log("open_job_repository_unverified", {
+        jobId: listed.jobId,
+        note: "live mode without a repository probe; refusing to apply unverified",
+      });
+      return { jobId: listed.jobId, action: "skipped", reason: "repository_probe_unavailable" };
+    }
+    const verification = await verifyRepositoryForApply(
+      candidate.repositoryUrl,
+      deps.repositoryProbe
+    );
+    if (verification.state === "unauthorized") {
+      // Ask, do not guess. One request per job — the ledger entry is what
+      // stops a sweep every 5 minutes from spamming the buyer.
+      if (deps.requestAuthorization && candidate.buyerAgentId && !prior) {
+        try {
+          await deps.requestAuthorization({
+            jobId: listed.jobId,
+            buyerAgentId: candidate.buyerAgentId,
+            message: buildAuthorizationRequest({
+              jobId: listed.jobId,
+              owner: verification.owner,
+              repo: verification.repo,
+            }),
+          });
+          await deps.recordApplication(key, {
+            jobId: listed.jobId,
+            state: "failed",
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          deps.log("open_job_authorization_request_failed", {
+            jobId: listed.jobId,
+            message: err instanceof Error ? err.message : "unknown_error",
+          });
+        }
+      }
+      deps.log("open_job_repository_unauthorized", {
+        jobId: listed.jobId,
+        owner: verification.owner,
+        repo: verification.repo,
+        note: "repository private or app not installed; authorization requested, not applied",
+      });
+      return { jobId: listed.jobId, action: "skipped", reason: "repository_unauthorized" };
+    }
+    if (verification.state !== "verified") {
+      deps.log("open_job_repository_unverified", {
+        jobId: listed.jobId,
+        state: verification.state,
+        reason: verification.state === "unknown" ? verification.reason : undefined,
+      });
+      return {
+        jobId: listed.jobId,
+        action: "skipped",
+        reason: `repository_${verification.state}`,
+      };
+    }
   }
 
   if (mode === "dry_run") {
