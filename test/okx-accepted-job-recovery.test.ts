@@ -484,13 +484,59 @@ async function run() {
     assert.equal(ran.length, 2);
   });
 
-  await test("dry run assesses and plans without running any action", async () => {
+  await test("dry run reports the verdict and targets without running any action", async () => {
     const deps = orchestrationDeps({ dryRun: true });
     const outcome = await recoverAcceptedJob(JOB, deps);
     assert.equal(outcome.action, "dry_run");
     if (outcome.action !== "dry_run") return;
-    assert.deepEqual(outcome.plannedActions, ["agent user-notify", "agent deliver"]);
+    assert.equal(outcome.repositoryUrl, REPO);
+    assert.equal(outcome.cleanupBranch, cleanupBranchForJob(JOB));
     assert.equal(deps.ran.length, 0);
+  });
+
+  /**
+   * The turn is not a planner — it CREATES the pull request while producing
+   * its actions. A dry run that called it would write a real branch and a real
+   * PR to a real repository, which is the opposite of what --dry-run promises.
+   */
+  await test("dry run stops before the deterministic turn, so no PR is created", async () => {
+    let turnCalls = 0;
+    let instructionCalls = 0;
+    const deps = orchestrationDeps({
+      dryRun: true,
+      fetchInstruction: async () => {
+        instructionCalls += 1;
+        return { ok: true, stdout: DELIVER_PLAYBOOK, stderr: "" };
+      },
+      runTurn: async () => {
+        turnCalls += 1;
+        return { ok: true, actions: [] };
+      },
+    });
+    const outcome = await recoverAcceptedJob(JOB, deps);
+    assert.equal(outcome.action, "dry_run");
+    assert.equal(turnCalls, 0, "dry run must never invoke the PR-creating turn");
+    assert.equal(instructionCalls, 0);
+    assert.equal(deps.ran.length, 0);
+  });
+
+  await test("dry run on an ineligible job still skips", async () => {
+    const deps = orchestrationDeps({ dryRun: true, listDeliverables: async () => 1 });
+    const outcome = await recoverAcceptedJob(JOB, deps);
+    assert.deepEqual(outcome, {
+      action: "skipped",
+      jobId: JOB,
+      reason: "deliverable_already_exists",
+    });
+  });
+
+  await test("dry run surfaces an existing PR as the reuse target", async () => {
+    const url = "https://github.com/velz-cmd/repodiet-e2e-test/pull/9";
+    const deps = orchestrationDeps({ dryRun: true, findExistingPr: async () => url });
+    const outcome = await recoverAcceptedJob(JOB, deps);
+    assert.equal(outcome.action, "dry_run");
+    if (outcome.action !== "dry_run") return;
+    assert.equal(outcome.reusePrUrl, url);
   });
 
   console.log("okx accepted-job recovery: all assertions passed");
