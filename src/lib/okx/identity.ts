@@ -3,10 +3,26 @@ import { getPaymentEnvironment } from "@/lib/payment/payment-environment";
 const DEFAULT_IDENTITY = {
   appUrl: "https://skillswap-virid-kappa.vercel.app",
   aspAgentId: 9636,
+  /**
+   * The canonical production buyer — User Agent 10466.
+   *
+   * Previously there was no buyer agent id here at all, so every caller that
+   * needed one fell back to its own literal, and the literal in
+   * `api/a2a/preflight` was the historical Agent 5295. Defining it once, next
+   * to the ASP it transacts with, is what stops a superseded identity from
+   * reappearing as somebody's local default.
+   */
+  buyerAgentId: 10466,
   a2aServiceId: 37348,
   a2mcpServiceId: 37347,
   sellerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
-  buyerWallet: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+  /**
+   * The buyer's OWN wallet. This previously duplicated `sellerWallet`, which
+   * is not merely cosmetic: `api/deep-scans` stamps `identity.buyerWallet`
+   * onto the tenant record, so buyer-attributed rows carried the seller's
+   * address and no buyer/seller distinction survived in that data.
+   */
+  buyerWallet: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
   network: "eip155:196",
   settlementAsset: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
 } as const;
@@ -14,6 +30,7 @@ const DEFAULT_IDENTITY = {
 export interface CanonicalOkxIdentity {
   appUrl: string;
   aspAgentId: number;
+  buyerAgentId: number;
   a2aServiceId: number;
   a2mcpServiceId: number;
   sellerWallet: string;
@@ -75,6 +92,10 @@ export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
     ["OKX_A2MCP_SERVICE_ID", "REPODIET_OKX_A2MCP_SERVICE_ID", "NEXT_PUBLIC_OKX_A2MCP_SERVICE_ID"],
     String(DEFAULT_IDENTITY.a2mcpServiceId)
   );
+  const buyerAgentId = consistentValue(
+    ["REPODIET_OKX_BUYER_AGENT_ID", "OKX_BUYER_AGENT_ID"],
+    String(DEFAULT_IDENTITY.buyerAgentId)
+  );
 
   // When payment mode is explicitly testnet, prefer payment-environment resolution
   // (REPODIET_PAYMENT_*). Otherwise keep legacy REPODIET_X402_* / defaults.
@@ -98,6 +119,7 @@ export function getCanonicalOkxIdentity(): CanonicalOkxIdentity {
       appUrl
     ),
     aspAgentId: positiveInteger(aspAgentId, "asp_agent_id"),
+    buyerAgentId: positiveInteger(buyerAgentId, "buyer_agent_id"),
     a2aServiceId: positiveInteger(a2aServiceId, "a2a_service_id"),
     a2mcpServiceId: positiveInteger(a2mcpServiceId, "a2mcp_service_id"),
     sellerWallet: consistentValue(

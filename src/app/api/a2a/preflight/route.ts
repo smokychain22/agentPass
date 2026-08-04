@@ -19,12 +19,19 @@ export const maxDuration = 60;
 
 const A2A_AMOUNT_LABEL = "1 USD₮0";
 
+/**
+ * Resolved from the canonical identity, never from a literal here.
+ *
+ * This function used to end in `|| "5295"` — the historical buyer Agent that
+ * production has since superseded with 10466. Because
+ * `REPODIET_OKX_BUYER_AGENT_ID` is not set in every environment, that literal
+ * was the value production actually resolved, so a superseded identity was
+ * the live default on the one endpoint that decides whether funding is safe.
+ * `getCanonicalOkxIdentity` reads the same two env names first and falls back
+ * to 10466, so there is exactly one place a buyer id can come from.
+ */
 function buyerAgentId(): string {
-  return (
-    process.env.REPODIET_OKX_BUYER_AGENT_ID?.trim() ||
-    process.env.OKX_BUYER_AGENT_ID?.trim() ||
-    "5295"
-  );
+  return String(getCanonicalOkxIdentity().buyerAgentId);
 }
 
 /**

@@ -5,15 +5,30 @@ export type OkxRuntimeRole = "buyer" | "seller";
 
 export interface OkxRuntimeIdentity {
   role: OkxRuntimeRole;
-  agentId: "5295" | "9636";
+  agentId: "10466" | "9636";
   walletAddress: string;
 }
 
+/**
+ * The two production runtime identities.
+ *
+ * The buyer entry previously named Agent 5295 and carried the SELLER's wallet
+ * address. Both were wrong, and neither was cosmetic:
+ * `buildIsolatedRuntimeEnv` exports `REPODIET_OKX_AGENT_ID` and
+ * `REPODIET_OKX_WALLET_ADDRESS` from whichever identity it is given, so
+ * starting the buyer role would have run it under a superseded agent id and
+ * told it the seller's wallet was its own.
+ *
+ * `getRuntimePaths` derives the data directory from `agentId`, so this also
+ * moves the buyer root from `buyer-5295` to `buyer-10466`. Verified safe on
+ * the production volume: only `seller-9636` exists, so no buyer state is
+ * orphaned by the rename.
+ */
 export const OKX_RUNTIME_IDENTITIES: Record<OkxRuntimeRole, OkxRuntimeIdentity> = {
   buyer: {
     role: "buyer",
-    agentId: "5295",
-    walletAddress: "0xaa895234c3fc31c40018eef975db6ac79bf87f1a",
+    agentId: "10466",
+    walletAddress: "0x1339724ada3adf04bb7a8ccc6498216214bbdf90",
   },
   seller: {
     role: "seller",
