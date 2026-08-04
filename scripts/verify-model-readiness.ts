@@ -18,7 +18,7 @@
  *
  * Seller Agent 9636 traffic is deliberately model-INDEPENDENT (the bridge
  * answers it deterministically), so this is not a seller-path blocker. It does
- * still break buyer Agent 5295's own turns and any unclaimed session, and a
+ * still break buyer Agent 10466's own turns and any unclaimed session, and a
  * broken model must never again be a silent failure.
  *
  * This check deliberately does NOT invent a model name and does NOT add a

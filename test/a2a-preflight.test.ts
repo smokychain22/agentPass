@@ -147,7 +147,7 @@ async function run() {
     assert.notEqual(json.serviceId, "37347");
     assert.equal(json.operation, "create_cleanup_pr");
     assert.equal(json.sellerAgentId, "9636");
-    assert.equal(json.buyerAgentId, "5295");
+    assert.equal(json.buyerAgentId, "10466");
   });
 
   await test("binds to the controlled repository from persisted scan truth", async () => {

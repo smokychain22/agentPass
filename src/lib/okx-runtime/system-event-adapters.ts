@@ -54,9 +54,9 @@ const STATUS_CODES: Record<string, number> = {
  * Parses the real `onchainos agent status <jobId>` text output, e.g.
  *
  *   Task status: accepted
- *     jobId:    0x3846…
+ *     jobId:    0x22a2…
  *     budget:   1 USDT
- *     user:    5295
+ *     user:    10466
  *     asp: 9636
  *
  * Returns undefined rather than guessing when a field is missing — the
