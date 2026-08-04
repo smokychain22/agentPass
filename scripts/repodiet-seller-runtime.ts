@@ -24,6 +24,11 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { actionLedgerPath, FileActionLedger } from "../src/lib/okx-runtime/action-ledger";
+import {
+  classifyGateCheckOutcome,
+  DEFAULT_GATE_CHECK_LIMITS,
+  GateProofState,
+} from "../src/lib/okx-runtime/gate-check-proof";
 import type { runProcess } from "../src/lib/okx-runtime/process-runner";
 import {
   ensureRuntimeLayout,
@@ -35,10 +40,21 @@ import {
 import {
   createActionRunner,
   createInstructionFetcher,
+  createOpenJobLister,
+  createOpenJobTaskReader,
   createReconciler,
   createStatusPublisher,
   createTaskReader,
 } from "../src/lib/okx-runtime/system-event-adapters";
+import {
+  applicationLedgerPath,
+  FileApplicationLedger,
+} from "../src/lib/okx-runtime/application-ledger";
+import {
+  reconcileOpenJobs,
+  type OpenJobReconcilerDeps,
+} from "../src/lib/okx-runtime/open-job-reconciler";
+import { parseApplyMode } from "../src/lib/okx-runtime/provider-apply";
 import {
   createDeterministicTurn,
   type DeterministicTurnOptions,
@@ -77,6 +93,12 @@ const COMMUNICATION_ADDRESS = "0x00dbdbb36b71ace0e1fc517056f376f977d8256e";
  * MAX_ATTEMPTS), and this bounds how fast they are spent.
  */
 const SYSTEM_EVENT_POLL_MS = Number(process.env.REPODIET_SYSTEM_EVENT_POLL_MS || 60_000);
+/**
+ * Open-job sweep cadence. Deliberately far slower than the event poll: this
+ * is the safety net for events that never arrived, and each pass costs a full
+ * `active-tasks` read plus a `status` + `context` read per open job.
+ */
+const OPEN_JOB_SWEEP_MS = Number(process.env.REPODIET_OPEN_JOB_SWEEP_MS || 300_000);
 
 /**
  * @okxweb3/a2a-node exposes exactly four providers (codex, claude, hermes,
@@ -203,16 +225,26 @@ let consecutiveHeartbeatFailures = 0;
  * stale or missing proof fails closed exactly as before; this changes how
  * long a real proof stays valid, never whether one is required.
  */
-const GATE_CHECK_TIMEOUT_MS = 150_000;
-const GATE_CHECK_REFRESH_MS = 900_000;
-const GATE_CHECK_FRESHNESS_MS = 2_700_000;
+/**
+ * === Incident #15: see gate-check-proof.ts ===
+ *
+ * Three consecutive 150s timeouts at the 900s cadence is exactly the 2,700s
+ * freshness window, so the proof expired and the agent read as offline to OKX
+ * for ~10 minutes while `daemonOk`/`xmtpOk` were continuously true. The
+ * classification, proof lifetime and retry cadence now live in
+ * `GateProofState`, which distinguishes an INCONCLUSIVE timeout (proof
+ * stands, retry promptly on bounded backoff) from a CONFIRMED failure (proof
+ * dies immediately). Both directions matter: the old code was under-available
+ * on timeouts and under-honest on real failures.
+ */
+const GATE_CHECK_TIMEOUT_MS = DEFAULT_GATE_CHECK_LIMITS.timeoutMs;
 let gateCheckTimer: NodeJS.Timeout | undefined;
 let gateCheckInFlight = false;
 let heartbeatCycleInFlight = false;
-let lastGateCheckPassedAtMs = 0;
+const gateProof = new GateProofState(DEFAULT_GATE_CHECK_LIMITS);
 
 function gateProofIsFresh(nowMs: number = Date.now()): boolean {
-  return lastGateCheckPassedAtMs > 0 && nowMs - lastGateCheckPassedAtMs < GATE_CHECK_FRESHNESS_MS;
+  return gateProof.mayClaimOnline(nowMs);
 }
 
 /**
@@ -238,12 +270,11 @@ function persistGateProof(passedAtMs: number): void {
 function loadPersistedGateProof(): void {
   try {
     const parsed = JSON.parse(fs.readFileSync(gateProofFile(), "utf8"));
-    const passedAtMs = Number(parsed?.passedAtMs);
-    if (!Number.isFinite(passedAtMs) || passedAtMs <= 0) return;
-    if (passedAtMs > Date.now()) return; // clock skew / tampering — never trust
-    if (Date.now() - passedAtMs >= GATE_CHECK_FRESHNESS_MS) return; // already stale
-    lastGateCheckPassedAtMs = passedAtMs;
-    log("gate_proof_restored", { ageMs: Date.now() - passedAtMs });
+    // Absent, future-dated and already-stale values are all rejected inside
+    // `restore` — a restart can never resurrect an expired proof.
+    if (gateProof.restore(Number(parsed?.passedAtMs))) {
+      log("gate_proof_restored", { ageMs: Date.now() - gateProof.lastPassedAtMs });
+    }
   } catch {
     // No usable proof — start with none and fail closed until one passes.
   }
@@ -362,34 +393,62 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
   }
   gateCheckInFlight = true;
   const startedAtMs = Date.now();
+  let stdout: string | undefined;
+  let error: NodeJS.ErrnoException | undefined;
   try {
-    const { stdout } = await execFileAsync(
-      "onchainos",
-      ["agent", "gate-check", "--role", "asp"],
-      { timeout: GATE_CHECK_TIMEOUT_MS }
-    );
-    const parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "{}");
-    const passed =
-      parsed?.data?.ready === true &&
-      parsed?.data?.identity?.agentId === SELLER.agentId &&
-      parsed?.data?.communication?.ok === true &&
-      parsed?.data?.wallet?.ok === true;
-    if (passed) {
-      lastGateCheckPassedAtMs = Date.now();
-      persistGateProof(lastGateCheckPassedAtMs);
-    }
-    log("gate_check_result", { passed, durationMs: Date.now() - startedAtMs });
-    return passed;
-  } catch {
-    log("gate_check_result", {
-      passed: false,
-      durationMs: Date.now() - startedAtMs,
-      note: "gate-check failed or exceeded its bound; last successful proof still applies until it goes stale",
-    });
-    return false;
+    ({ stdout } = await execFileAsync("onchainos", ["agent", "gate-check", "--role", "asp"], {
+      timeout: GATE_CHECK_TIMEOUT_MS,
+    }));
+  } catch (err) {
+    error = err as NodeJS.ErrnoException;
   } finally {
     gateCheckInFlight = false;
   }
+
+  const outcome = classifyGateCheckOutcome({
+    stdout,
+    error,
+    durationMs: Date.now() - startedAtMs,
+    expectedAgentId: SELLER.agentId,
+    timeoutMs: GATE_CHECK_TIMEOUT_MS,
+  });
+  gateProof.record(outcome);
+  if (outcome.kind === "passed") persistGateProof(gateProof.lastPassedAtMs);
+
+  log("gate_check_result", {
+    passed: outcome.kind === "passed",
+    outcome: outcome.kind,
+    reason: outcome.kind === "passed" ? undefined : outcome.reason,
+    durationMs: outcome.durationMs,
+    health: gateProof.health(),
+    nextRefreshMs: gateProof.nextRefreshDelayMs(),
+    note:
+      outcome.kind === "inconclusive"
+        ? "inconclusive (no verdict reached); last successful proof still applies and a retry is scheduled sooner"
+        : outcome.kind === "failed"
+          ? "gate CONFIRMED not ready; cached proof invalidated immediately, heartbeat withheld from the next tick"
+          : undefined,
+  });
+  // Reschedule from the outcome so an inconclusive run is retried well inside
+  // the freshness window instead of waiting a full normal refresh interval.
+  scheduleNextGateCheck();
+  return outcome.kind === "passed";
+}
+
+/**
+ * Single-shot timer, re-armed after every refresh. `setTimeout` rather than
+ * `setInterval` so the delay can vary with the last outcome, and so a slow
+ * refresh can never stack a second one behind it.
+ */
+function scheduleNextGateCheck(): void {
+  if (shuttingDown) return;
+  if (gateCheckTimer) clearTimeout(gateCheckTimer);
+  gateCheckTimer = setTimeout(() => {
+    if (shuttingDown) return;
+    void refreshOfficialGateCheck();
+  }, gateProof.nextRefreshDelayMs());
+  // Never keep the process alive purely to run a diagnostic.
+  gateCheckTimer.unref?.();
 }
 
 async function xmtpClientActive(): Promise<boolean> {
@@ -653,6 +712,11 @@ async function publishHeartbeat(): Promise<void> {
       daemonOk,
       gateOk,
       xmtpOk,
+      // Distinguishes "the gate said no" from "the gate never answered" —
+      // the two used to be indistinguishable in the logs, which is what made
+      // Incident #15 take a full observation window to diagnose.
+      gateHealth: gateProof.health(),
+      gateReason: gateProof.reason(),
       consecutiveFailures: consecutiveHeartbeatFailures,
       note: "runtime is not provably online; heartbeat intentionally not sent",
     });
@@ -728,6 +792,8 @@ async function publishHeartbeat(): Promise<void> {
  */
 let systemEventTimer: NodeJS.Timeout | undefined;
 let systemEventCycleInFlight = false;
+let openJobTimer: NodeJS.Timeout | undefined;
+let openJobSweepInFlight = false;
 
 /**
  * Builds the real, CLI-backed dependency set. Every adapter here shells out
@@ -745,14 +811,19 @@ export function buildSystemEventDeps(
    */
   runner?: typeof runProcess,
   /**
-   * Pipeline seam for the one step the deterministic turn cannot fake with a
-   * process runner: preparing the actual cleanup deliverable. Production
-   * always uses the real `createCleanupPullRequest` (the same function the
-   * ASP job executor and the paid A2MCP tools use); tests inject a fake so
-   * `job_accepted`'s full path can be exercised without cloning a real
-   * repository or calling GitHub.
+   * Pipeline/GitHub seams for the steps the deterministic turn cannot fake
+   * with a process runner: resolving a real GitHub App token, checking for
+   * (and reusing) an already-open cleanup PR for this exact job before ever
+   * creating a new one, and preparing the actual cleanup deliverable.
+   * Production always uses the real implementations (the same ones the ASP
+   * job executor and the paid A2MCP tools use); tests inject fakes so
+   * `job_accepted`'s full path — including its duplicate-PR guard — can be
+   * exercised without cloning a real repository or calling GitHub.
    */
-  createCleanupPr?: DeterministicTurnOptions["createCleanupPr"]
+  testSeams?: Pick<
+    DeterministicTurnOptions,
+    "createCleanupPr" | "resolveGitHubToken" | "createGitHubClient"
+  >
 ): ReconcilerDeps & { ledgerFile: FileActionLedger } {
   const ledgerFile = new FileActionLedger(actionLedgerPath(dataDirectory), SELLER.agentId);
   const adapterOptions = {
@@ -772,7 +843,7 @@ export function buildSystemEventDeps(
     // Deterministic, not model-backed — see deterministic-turn.ts. The
     // mandatory OKX protocol path (acknowledge / apply / accept / deliver)
     // must not depend on a rate-limited, quota-capped third-party LLM.
-    runModel: createDeterministicTurn({ ...adapterOptions, readTask, createCleanupPr }),
+    runModel: createDeterministicTurn({ ...adapterOptions, readTask, ...testSeams }),
     runAction: createActionRunner(adapterOptions),
     reconcile: createReconciler(adapterOptions),
     // The buyer is resolved from authoritative task detail inside the adapter.
@@ -822,12 +893,78 @@ export async function runSystemEventCycle(
   await recoverPendingEvents(deps);
 }
 
+/**
+ * Sweeps OPEN jobs designated to this provider and applies for the eligible
+ * ones.
+ *
+ * The event path above only fires when an event actually arrives. A
+ * `job_asp_selected` that was never delivered — or that arrived while the
+ * machine was down — leaves a real job at `created` with no event to replay,
+ * which is exactly the state seven live jobs were found in. This sweep reads
+ * authoritative OKX state directly and closes that gap.
+ *
+ * Failures are contained: a sweep that throws must never take down the event
+ * cycle it shares a tick with.
+ */
+export function buildOpenJobDeps(
+  dataDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+  runner?: typeof runProcess
+): OpenJobReconcilerDeps {
+  const adapterOptions = {
+    agentId: SELLER.agentId,
+    systemEventAgentId: OKX_SYSTEM_EVENT_AGENT_ID,
+    env,
+    runner,
+  };
+  const ledger = new FileApplicationLedger(
+    applicationLedgerPath(dataDirectory),
+    SELLER.agentId
+  );
+  const runAction = createActionRunner(adapterOptions);
+
+  return {
+    mode: parseApplyMode(env.REPODIET_PROVIDER_APPLY_MODE),
+    listOpenJobs: createOpenJobLister(adapterOptions),
+    readTask: createOpenJobTaskReader(adapterOptions),
+    getPriorApplication: (key) => ledger.get(key),
+    recordApplication: (key, record) => ledger.put(key, record),
+    runAction: async (action) => {
+      const result = await runAction(action);
+      return {
+        ok: result.ok,
+        transactionRef: result.transactionRef,
+        stderr: result.error,
+        // `broadcast` on a FAILED action is the adapter's own signal that the
+        // transaction may already be signed and in flight (a timeout, or
+        // stdout mentioning broadcast/submitted/pending). That is genuinely
+        // ambiguous and must never be reported as a clean failure, which
+        // would licence a retry.
+        uncertain: !result.ok && result.broadcast,
+      };
+    },
+    log,
+  };
+}
+
+export async function runOpenJobSweep(deps: OpenJobReconcilerDeps): Promise<void> {
+  try {
+    await reconcileOpenJobs(deps);
+  } catch (err) {
+    log("open_job_sweep_error", {
+      message: err instanceof Error ? err.message : "unknown_error",
+      note: "sweep failed; event processing is unaffected and the next sweep retries",
+    });
+  }
+}
+
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
   log("shutdown_started", { signal });
   if (heartbeatTimer) clearInterval(heartbeatTimer);
-  if (gateCheckTimer) clearInterval(gateCheckTimer);
+  if (gateCheckTimer) clearTimeout(gateCheckTimer);
+  if (openJobTimer) clearInterval(openJobTimer);
   if (systemEventTimer) clearInterval(systemEventTimer);
 
   const paths = getRuntimePaths(resolveRuntimeRoot(), "seller");
@@ -874,12 +1011,11 @@ async function main(): Promise<void> {
   // the restored proof is genuinely still within the freshness bound.
   loadPersistedGateProof();
   if (!gateProofIsFresh()) {
+    // `refreshOfficialGateCheck` arms the next timer itself from the outcome.
     await refreshOfficialGateCheck();
+  } else {
+    scheduleNextGateCheck();
   }
-  gateCheckTimer = setInterval(() => {
-    if (shuttingDown) return;
-    void refreshOfficialGateCheck();
-  }, GATE_CHECK_REFRESH_MS);
 
   // Communication readiness is established, so the official CLIs this route
   // shells out to are usable. Resume every unfinished system event from the
@@ -918,6 +1054,29 @@ async function main(): Promise<void> {
         systemEventCycleInFlight = false;
       });
   }, SYSTEM_EVENT_POLL_MS);
+
+  // Open-job sweep. Runs on its own slower timer than the event cycle: it is
+  // a safety net for events that never arrived, not the primary path, and it
+  // costs a full `active-tasks` + per-job `status`/`context` read each pass.
+  const openJobDeps = buildOpenJobDeps(paths.data);
+  log("open_job_reconciler_wired", {
+    mode: openJobDeps.mode,
+    ledger: applicationLedgerPath(paths.data),
+    sweepMs: OPEN_JOB_SWEEP_MS,
+    note:
+      openJobDeps.mode === "live"
+        ? "eligible open jobs WILL be applied for on-chain"
+        : "observing only; no application will be broadcast",
+  });
+  await runOpenJobSweep(openJobDeps);
+  openJobTimer = setInterval(() => {
+    if (shuttingDown) return;
+    if (openJobSweepInFlight) return;
+    openJobSweepInFlight = true;
+    void runOpenJobSweep(openJobDeps).finally(() => {
+      openJobSweepInFlight = false;
+    });
+  }, OPEN_JOB_SWEEP_MS);
 
   await publishHeartbeat();
   heartbeatTimer = setInterval(() => {

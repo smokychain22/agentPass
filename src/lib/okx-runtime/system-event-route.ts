@@ -143,11 +143,22 @@ export type AuthorizationVerdict =
 export const ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "agent next-action",
   "agent status",
+  "agent apply",
   "agent deliver",
   "agent user-notify",
   "agent payment",
   "okx-a2a xmtp-send",
 ]);
+
+/**
+ * `agent apply` is an on-chain, irreversible, gas-spending broadcast
+ * ("apply API → sign → broadcast"), and it is the ONE allowlisted command
+ * that is only ever valid from a single status. Applying to a job that has
+ * already moved past `created` would be a duplicate application against a
+ * task that has moved on, so the status rule is pinned here rather than left
+ * to the general non-actionable set — which permits both 0 and 1.
+ */
+const APPLY_ONLY_STATUS = 0;
 
 /** Terminal or otherwise non-actionable states — no action may run against them. */
 const NON_ACTIONABLE_STATUS = new Set([2, 3, 4, 5, 6, 7, 8, 9]);
@@ -186,6 +197,20 @@ export function authorizeAction(
   }
   if (NON_ACTIONABLE_STATUS.has(task.statusCode)) {
     return { allowed: false, reason: `non_actionable_status:${task.statusCode}` };
+  }
+  if (command === "agent apply" && task.statusCode !== APPLY_ONLY_STATUS) {
+    return { allowed: false, reason: `apply_status_not_open:${task.statusCode}` };
+  }
+  // Applying for free is irreversible and the CLI treats an empty/zero amount
+  // as exactly that. The amount must be present and positive here, before the
+  // generic authoritative-amount check below compares it to the task record.
+  if (command === "agent apply") {
+    const index = action.args.indexOf("--token-amount");
+    if (index < 0) return { allowed: false, reason: "apply_token_amount_missing" };
+    const amount = Number(action.args[index + 1]);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { allowed: false, reason: "apply_token_amount_not_positive" };
+    }
   }
 
   // Any job id appearing in the args must be the event's job. Stops a model

@@ -7,7 +7,7 @@
  * `scripts/repodiet-seller-runtime.ts`.
  */
 import assert from "node:assert/strict";
-import { createDeterministicTurn } from "../src/lib/okx-runtime/deterministic-turn";
+import { cleanupBranchForJob, createDeterministicTurn } from "../src/lib/okx-runtime/deterministic-turn";
 import type { AuthoritativeTask } from "../src/lib/okx-runtime/system-event-route";
 import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
 
@@ -88,6 +88,21 @@ function fail(): ProcessRunResult {
   return { ok: false, exitCode: 1, signal: null, stdout: "", stderr: "not bound", timedOut: false, cancelled: false };
 }
 
+/** Fake GitHub seams — production resolves a real token and hits the real API. */
+function fakeGitHub(existingPulls: Array<{ number: number; url: string; head: string }> = []) {
+  const listCalls: Array<{ owner: string; repo: string; prefix: string }> = [];
+  return {
+    resolveGitHubToken: (async () => "fake-token") as never,
+    createGitHubClient: (() => ({
+      listOpenPullRequestsForHeadPrefix: async (owner: string, repo: string, prefix: string) => {
+        listCalls.push({ owner, repo, prefix });
+        return existingPulls;
+      },
+    })) as never,
+    listCalls,
+  };
+}
+
 async function run() {
   console.log("okx-deterministic-turn");
 
@@ -136,13 +151,17 @@ async function run() {
   });
 
   await test("job_accepted runs the real cleanup pipeline and proposes notify + deliver with the real PR URL", async () => {
+    const github = fakeGitHub([]);
+    let createPrCalls = 0;
     const turn = createDeterministicTurn({
       agentId: "9636",
       runner: (async () =>
         ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\ntitle: RepoDiet Verified Cleanup\n")) as never,
       readTask: async () => TASK,
-      createCleanupPr: (async (input: { repoUrl: string }) => {
+      createCleanupPr: (async (input: { repoUrl: string; cleanupBranch?: string }) => {
+        createPrCalls++;
         assert.equal(input.repoUrl, "https://github.com/velz-cmd/repodiet-e2e-test");
+        assert.match(input.cleanupBranch ?? "", /^repodiet\/cleanup-okx-22a2/, "must use the deterministic per-job branch name");
         return {
           data: {
             pullRequest: { number: 7, url: "https://github.com/velz-cmd/repodiet-e2e-test/pull/7" },
@@ -151,6 +170,8 @@ async function run() {
           },
         };
       }) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
     });
 
     const result = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: JOB });
@@ -163,6 +184,36 @@ async function run() {
     assert.equal(result.actions[1].args[0], JOB);
     const deliverText = result.actions[1].args[result.actions[1].args.indexOf("--deliverable-text") + 1];
     assert.match(deliverText, /repodiet-e2e-test\/pull\/7/);
+    assert.equal(createPrCalls, 1);
+    assert.equal(github.listCalls.length, 1, "must check for an existing PR before creating one");
+  });
+
+  await test("a retry after a prior attempt already created the PR reuses it — never opens a duplicate", async () => {
+    const github = fakeGitHub([
+      { number: 3, url: "https://github.com/velz-cmd/repodiet-e2e-test/pull/3", head: cleanupBranchForJob(JOB) },
+    ]);
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () => ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+      readTask: async () => TASK,
+      createCleanupPr: (async () => {
+        throw new Error("must not create a second PR when one already exists for this job");
+      }) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
+    });
+
+    const result = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: JOB });
+    assert.equal(result.ok, true);
+    const deliverAction = result.actions.find((a) => a.command === "agent deliver");
+    assert.ok(deliverAction);
+    const deliverText = deliverAction!.args[deliverAction!.args.indexOf("--deliverable-text") + 1];
+    assert.match(deliverText, /pull\/3/, "must reference the pre-existing PR, not a fabricated new one");
+  });
+
+  await test("cleanupBranchForJob is deterministic and stable for the same job across calls", () => {
+    assert.equal(cleanupBranchForJob(JOB), cleanupBranchForJob(JOB));
+    assert.match(cleanupBranchForJob(JOB), /^repodiet\/cleanup-okx-[a-f0-9]+$/);
   });
 
   await test("job_accepted fails safe (retryable, no fabricated action) when common context is unavailable", async () => {
@@ -213,6 +264,7 @@ async function run() {
     // The turn's dependency surface (runner, readTask, createCleanupPr) contains
     // nothing resembling a model provider call — this test documents that
     // invariant so a future change that reintroduces one fails loudly here.
+    const github = fakeGitHub([]);
     const turn = createDeterministicTurn({
       agentId: "9636",
       runner: (async () => ok("repository=https://github.com/velz-cmd/repodiet-e2e-test")) as never,
@@ -224,6 +276,8 @@ async function run() {
           repo: { cleanupBranch: "repodiet/cleanup-y" },
         },
       })) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
     });
 
     const result = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: JOB });
