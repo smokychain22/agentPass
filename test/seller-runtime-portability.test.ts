@@ -14,6 +14,11 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  DEFAULT_GATE_CHECK_LIMITS,
+  GateProofState,
+} from "../src/lib/okx-runtime/gate-check-proof";
+
+import {
   getRuntimePaths,
   ensureRuntimeLayout,
   readLivePid,
@@ -540,30 +545,57 @@ function run() {
     );
   });
 
+  /**
+   * Incident #15 moved proof lifetime out of the entrypoint and into
+   * `GateProofState`, so these two now assert the same invariants against the
+   * real implementation rather than by grepping the entrypoint's source — a
+   * strictly stronger check, and one that cannot pass on a comment.
+   */
   test("Incident #13: a stale gate-check proof fails closed rather than being assumed valid", () => {
-    const src = entrypointSource();
-    const start = src.indexOf("function gateProofIsFresh(");
-    assert.ok(start > -1);
-    const body = src.slice(start, src.indexOf("\n}\n", start));
-    assert.ok(
-      body.includes("lastGateCheckPassedAtMs > 0") &&
-        body.includes("GATE_CHECK_FRESHNESS_MS"),
-      "freshness must require a real recorded pass AND bound its age — never default to true"
+    const state = new GateProofState(DEFAULT_GATE_CHECK_LIMITS);
+    const t0 = 1_000_000;
+    assert.equal(state.mayClaimOnline(t0), false, "must never default to true with no recorded pass");
+    state.record({ kind: "passed", durationMs: 20_000 }, t0);
+    assert.equal(state.mayClaimOnline(t0 + 1_000), true);
+    assert.equal(
+      state.mayClaimOnline(t0 + DEFAULT_GATE_CHECK_LIMITS.freshnessMs + 1),
+      false,
+      "freshness must require a real recorded pass AND bound its age"
     );
   });
 
   test("Incident #13: freshness window exceeds the refresh interval so one slow refresh cannot flap the agent offline", () => {
-    const src = entrypointSource();
-    const refresh = src.match(/GATE_CHECK_REFRESH_MS\s*=\s*([0-9_]+)/);
-    const fresh = src.match(/GATE_CHECK_FRESHNESS_MS\s*=\s*([0-9_]+)/);
-    const timeout = src.match(/GATE_CHECK_TIMEOUT_MS\s*=\s*([0-9_]+)/);
-    assert.ok(refresh && fresh && timeout, "all three gate-check timings must be declared as named constants");
-    const refreshMs = Number(refresh![1].replace(/_/g, ""));
-    const freshMs = Number(fresh![1].replace(/_/g, ""));
-    const timeoutMs = Number(timeout![1].replace(/_/g, ""));
-    assert.ok(freshMs > refreshMs, "a proof must stay valid longer than the gap between refreshes");
+    const { refreshMs, freshnessMs, timeoutMs } = DEFAULT_GATE_CHECK_LIMITS;
+    assert.ok(freshnessMs > refreshMs, "a proof must stay valid longer than the gap between refreshes");
     assert.ok(timeoutMs > 90_000, "the bound must exceed the >90s the gate-check was measured taking live");
-    assert.ok(freshMs >= refreshMs + timeoutMs, "one full slow refresh must fit inside the freshness window");
+    assert.ok(freshnessMs >= refreshMs + timeoutMs, "one full slow refresh must fit inside the freshness window");
+  });
+
+  /**
+   * Incident #15's core behavioural guarantee, pinned here as well as in
+   * okx-gate-check-proof.test.ts because THIS file is the one that documents
+   * the runtime's availability contract.
+   */
+  test("Incident #15: a timed-out gate-check does not cost availability, but a confirmed failure does", () => {
+    const t0 = 1_000_000;
+
+    const slow = new GateProofState(DEFAULT_GATE_CHECK_LIMITS);
+    slow.record({ kind: "passed", durationMs: 20_000 }, t0);
+    slow.record({ kind: "inconclusive", durationMs: 150_010, reason: "timeout" }, t0 + 900_000);
+    assert.equal(slow.mayClaimOnline(t0 + 900_000), true, "a timeout proves nothing and must not flap us offline");
+    assert.ok(
+      slow.nextRefreshDelayMs() < DEFAULT_GATE_CHECK_LIMITS.refreshMs,
+      "an inconclusive result must be retried sooner than the normal cadence, or three of them exhaust the window"
+    );
+
+    const broken = new GateProofState(DEFAULT_GATE_CHECK_LIMITS);
+    broken.record({ kind: "passed", durationMs: 20_000 }, t0);
+    broken.record({ kind: "failed", durationMs: 5_000, reason: "gate_not_ready:wallet" }, t0 + 1_000);
+    assert.equal(
+      broken.mayClaimOnline(t0 + 1_001),
+      false,
+      "a CONFIRMED bad gate must invalidate the proof at once — never ride out its remaining freshness"
+    );
   });
 
   test("Incident #13: both the heartbeat cycle and the gate-check refresh guard against overlapping runs", () => {
@@ -584,8 +616,10 @@ function run() {
     assert.ok(start > -1);
     const body = src.slice(start, src.indexOf("\n}\n", start));
     assert.ok(
-      body.includes("clearInterval(gateCheckTimer)"),
-      "a leaked interval keeps the process alive past shutdown"
+      // Incident #15 made this a re-armed setTimeout so the delay can vary
+      // with the last outcome; either form must still be cleared.
+      body.includes("clearTimeout(gateCheckTimer)") || body.includes("clearInterval(gateCheckTimer)"),
+      "a leaked timer keeps the process alive past shutdown"
     );
   });
 
@@ -593,10 +627,8 @@ function run() {
   // what the command costs, so the agent could not hold uptime ----------
 
   test("Incident #14: the expensive gate-check runs on a deep-audit cadence, not a tight loop", () => {
-    const src = entrypointSource();
-    const refresh = Number(src.match(/GATE_CHECK_REFRESH_MS\s*=\s*([0-9_]+)/)![1].replace(/_/g, ""));
-    const fresh = Number(src.match(/GATE_CHECK_FRESHNESS_MS\s*=\s*([0-9_]+)/)![1].replace(/_/g, ""));
-    const timeout = Number(src.match(/GATE_CHECK_TIMEOUT_MS\s*=\s*([0-9_]+)/)![1].replace(/_/g, ""));
+    const { refreshMs: refresh, freshnessMs: fresh, timeoutMs: timeout } =
+      DEFAULT_GATE_CHECK_LIMITS;
     assert.ok(
       refresh >= 600_000,
       "measured live: this command shells out to a full okx-a2a doctor (including a ~29s npm-registry lookup) and ranged 14s to past 150s on one shared vCPU — running it every few minutes makes uptime hostage to its slowest external dependency"
@@ -608,32 +640,45 @@ function run() {
   });
 
   test("Incident #14: a persisted proof is re-validated against the same freshness bound, never blindly trusted", () => {
-    const src = entrypointSource();
-    const start = src.indexOf("function loadPersistedGateProof(");
-    assert.ok(start > -1);
-    const body = src.slice(start, src.indexOf("\n}\n", start));
-    assert.ok(
-      body.includes("GATE_CHECK_FRESHNESS_MS"),
+    const now = 5_000_000;
+    assert.equal(
+      new GateProofState(DEFAULT_GATE_CHECK_LIMITS).restore(now - 60_000, now),
+      true,
+      "a genuinely fresh persisted proof is usable across a restart"
+    );
+    assert.equal(
+      new GateProofState(DEFAULT_GATE_CHECK_LIMITS).restore(
+        now - DEFAULT_GATE_CHECK_LIMITS.freshnessMs - 1,
+        now
+      ),
+      false,
       "a restart must not resurrect an expired proof"
     );
-    assert.ok(
-      body.includes("passedAtMs > Date.now()"),
+    assert.equal(
+      new GateProofState(DEFAULT_GATE_CHECK_LIMITS).restore(now + 60_000, now),
+      false,
       "a future-dated proof (clock skew or tampering) must be discarded, not trusted"
     );
-    assert.ok(
-      body.includes("Number.isFinite(passedAtMs)"),
-      "an unparseable or corrupt proof must fail closed"
-    );
+    for (const corrupt of [Number.NaN, 0, -1, Number.POSITIVE_INFINITY]) {
+      assert.equal(
+        new GateProofState(DEFAULT_GATE_CHECK_LIMITS).restore(corrupt, now),
+        false,
+        `an unparseable or corrupt proof must fail closed: ${corrupt}`
+      );
+    }
   });
 
   test("Incident #14: a successful gate-check persists its proof so a restart need not re-prove from cold", () => {
     const src = entrypointSource();
     assert.ok(
-      src.includes("persistGateProof(lastGateCheckPassedAtMs)"),
+      /persistGateProof\(gateProof\.lastPassedAtMs\)/.test(src),
       "the proof must be written when the check genuinely passes"
     );
     assert.ok(
-      /loadPersistedGateProof\(\);\s*\n\s*if \(!gateProofIsFresh\(\)\) \{\s*\n\s*await refreshOfficialGateCheck\(\);/.test(src),
+      // Tolerates interleaved comments; pins the ORDER, which is the invariant.
+      /loadPersistedGateProof\(\);[\s\S]{0,400}?if \(!gateProofIsFresh\(\)\) \{[\s\S]{0,400}?await refreshOfficialGateCheck\(\);/.test(
+        src
+      ),
       "startup must restore first and still block on a real check whenever the restored proof is not fresh"
     );
   });

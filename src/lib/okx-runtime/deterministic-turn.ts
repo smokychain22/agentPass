@@ -22,6 +22,9 @@
  */
 import { createCleanupPullRequest } from "@/lib/operator/create-cleanup-pr";
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
+import { GitHubClient } from "@/lib/github/github-client";
+import { parseGitHubUrl } from "@/lib/github/parse-github-url";
+import { resolveCleanupGitHubToken } from "@/lib/github-app/resolve-cleanup-token";
 import type { ModelTurn, TaskReader } from "./provider-event-executor";
 import type { ProposedAction } from "./system-event-route";
 import { parseTaskContext } from "./task-context-fetcher";
@@ -41,10 +44,42 @@ export interface DeterministicTurnOptions {
   readTask: TaskReader;
   /**
    * Seam for tests — production uses the real pipeline. Kept minimal
-   * (repoUrl only) because `createCleanupPullRequest` resolves its own
-   * findings/patch kit/GitHub token when not pre-supplied.
+   * (repoUrl only, plus the deterministic branch — see cleanupBranchForJob)
+   * because `createCleanupPullRequest` resolves its own findings/patch kit
+   * when not pre-supplied.
    */
   createCleanupPr?: typeof createCleanupPullRequest;
+  /** Seam for tests — production resolves the real GitHub App token. */
+  resolveGitHubToken?: typeof resolveCleanupGitHubToken;
+  /**
+   * Seam for tests — production constructs a real `GitHubClient`. Only
+   * `listOpenPullRequestsForHeadPrefix` is used, for the pre-flight
+   * duplicate-PR check.
+   */
+  createGitHubClient?: (token: string) => Pick<GitHubClient, "listOpenPullRequestsForHeadPrefix">;
+}
+
+/**
+ * Deterministic and derived only from the OKX jobId — stable across every
+ * retry of this event AND across a fresh event delivery for the same job
+ * (a `wakeup_notify`-triggered re-send, for instance).
+ *
+ * This is what makes `job_accepted` execution safe to retry: an earlier
+ * attempt that created the cleanup PR but failed on a *later* step (the
+ * deliver action, or a crash before the ledger recorded it) leaves a real,
+ * findable PR on this exact branch, so a retry reuses it instead of running
+ * the analysis pipeline again and opening a duplicate.
+ *
+ * `createCleanupPullRequest`'s own built-in idempotency lookup
+ * (`getCleanupPrDelivery`, in cleanup-pr-delivery-ledger.ts) is keyed by
+ * `patchKit.id`, which is a fresh random id every call this route makes —
+ * it never pre-supplies a patch kit, so that lookup can never match here.
+ * The branch-based pre-check below is what actually closes the gap for this
+ * caller specifically.
+ */
+export function cleanupBranchForJob(jobId: string): string {
+  const suffix = jobId.replace(/^0x/, "").slice(0, 40);
+  return `repodiet/cleanup-okx-${suffix}`;
 }
 
 function buildNotifyAction(content: string): ProposedAction {
@@ -70,6 +105,9 @@ async function fetchCommonContext(
  */
 export function createDeterministicTurn(options: DeterministicTurnOptions): ModelTurn {
   const createPr = options.createCleanupPr ?? createCleanupPullRequest;
+  const resolveToken = options.resolveGitHubToken ?? resolveCleanupGitHubToken;
+  const buildClient =
+    options.createGitHubClient ?? ((token: string) => new GitHubClient(token));
 
   return async ({ instruction, jobId }) => {
     const plan = parseNextActionPlaybook(instruction);
@@ -115,9 +153,39 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
       tokenSymbol: task?.tokenSymbol ?? context.tokenSymbol,
     });
 
-    let pr: Awaited<ReturnType<typeof createCleanupPullRequest>>;
+    const parsedRepo = parseGitHubUrl(context.repositoryUrl);
+    if (!parsedRepo) {
+      return { ok: false, actions: [], status: undefined, error: "repository_url_invalid" };
+    }
+    const branch = cleanupBranchForJob(jobId);
+
+    let prUrl: string;
     try {
-      pr = await createPr({ repoUrl: context.repositoryUrl, mode: "safe_only" });
+      const token = await resolveToken({
+        repoUrl: context.repositoryUrl,
+        owner: parsedRepo.owner,
+        repo: parsedRepo.repo,
+      });
+      const client = buildClient(token);
+      const existing = await client.listOpenPullRequestsForHeadPrefix(
+        parsedRepo.owner,
+        parsedRepo.repo,
+        branch
+      );
+      if (existing.length > 0) {
+        // A prior attempt on this exact job already opened this PR — reuse
+        // it. Never re-run the pipeline once a deliverable exists for this
+        // jobId; that would be a duplicate PR for the same paid task.
+        prUrl = existing[0].url;
+      } else {
+        const pr = await createPr({
+          repoUrl: context.repositoryUrl,
+          mode: "safe_only",
+          cleanupBranch: branch,
+          githubToken: token,
+        });
+        prUrl = pr.data.pullRequest.url;
+      }
     } catch (err) {
       const message =
         err instanceof ToolExecutionError
@@ -128,7 +196,7 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
       return { ok: false, actions: [], status: undefined, error: message };
     }
 
-    const deliverText = `RepoDiet Verified Cleanup — pull request ready for review: ${pr.data.pullRequest.url}`;
+    const deliverText = `RepoDiet Verified Cleanup — pull request ready for review: ${prUrl}`;
 
     const deliverAction: ProposedAction = {
       command: "agent deliver",

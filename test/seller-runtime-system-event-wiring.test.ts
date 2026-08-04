@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildSystemEventDeps, runSystemEventCycle } from "../scripts/repodiet-seller-runtime";
+import { cleanupBranchForJob } from "../src/lib/okx-runtime/deterministic-turn";
 import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
 import { spoolSystemEvent, systemEventInboxPath } from "../src/lib/okx-runtime/system-event-intake";
 import {
@@ -90,15 +91,21 @@ onchainos agent deliver ${JOB} --file "<local file path>" --agent-id 9636
 const COMMON_CONTEXT_STDOUT =
   "title: RepoDiet Verified Cleanup\nserviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n";
 
-/** Fake pipeline seam — the deterministic turn's one non-CLI dependency. */
-function fakeCreateCleanupPr() {
-  return (async (input: { repoUrl: string }) => ({
-    data: {
-      pullRequest: { number: 1, url: `${input.repoUrl}/pull/1` },
-      actionSummary: {},
-      repo: { cleanupBranch: "repodiet/cleanup-test" },
-    },
-  })) as never;
+/** Fake pipeline/GitHub seams — the deterministic turn's non-CLI dependencies. */
+function fakeTestSeams() {
+  return {
+    createCleanupPr: (async (input: { repoUrl: string }) => ({
+      data: {
+        pullRequest: { number: 1, url: `${input.repoUrl}/pull/1` },
+        actionSummary: {},
+        repo: { cleanupBranch: "repodiet/cleanup-test" },
+      },
+    })) as never,
+    resolveGitHubToken: (async () => "fake-token") as never,
+    createGitHubClient: (() => ({
+      listOpenPullRequestsForHeadPrefix: async () => [],
+    })) as never,
+  };
 }
 
 interface Invocation {
@@ -196,7 +203,7 @@ async function run() {
   await test("a newly received official event runs through the same executor", async () => {
     const { data, inbox } = workspace();
     const { calls, runner } = recordingRunner();
-    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeCreateCleanupPr());
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeTestSeams());
 
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
     await runSystemEventCycle(deps, inbox);
@@ -222,7 +229,7 @@ async function run() {
     const { data, inbox } = workspace();
     const { calls, runner } = recordingRunner();
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
-    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeCreateCleanupPr());
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeTestSeams());
     await runSystemEventCycle(deps, inbox);
 
     assert.equal(
@@ -321,7 +328,7 @@ async function run() {
     const { data, inbox } = workspace();
     const failedSend: ProcessRunResult = { ...ok(""), ok: false, exitCode: 1, stderr: "xmtp down" };
     const { calls, runner } = recordingRunner({ "okx-a2a xmtp-send": failedSend });
-    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeCreateCleanupPr());
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeTestSeams());
 
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
     await runSystemEventCycle(deps, inbox);
@@ -334,6 +341,63 @@ async function run() {
       "nothing may be acknowledged before the buyer is told"
     );
     assert.equal(ran(calls, "onchainos", "deliver").length, 1, "the action ran exactly once");
+  });
+
+  await test("a mid-turn failure after the PR is created, then a retry, never opens a second PR", async () => {
+    // Reproduces the exact race a real quota/network hiccup can cause: the
+    // deterministic turn's cleanup pipeline succeeds (a real PR now exists),
+    // but the deliver CLI call that follows in the SAME turn fails cleanly —
+    // which restarts the whole turn from scratch on retry, including the
+    // pipeline call. The per-job deterministic branch + pre-check (see
+    // deterministic-turn.ts's cleanupBranchForJob) is what must catch this.
+    const { data, inbox } = workspace();
+    let deliverAttempts = 0;
+    let createPrCalls = 0;
+    let openPr: { number: number; url: string; head: string } | undefined;
+
+    const runner = (async (bin: string, argv: readonly string[]) => {
+      if (bin === "onchainos" && argv[1] === "next-action") return ok(NEXT_ACTION_JOB_ACCEPTED_STDOUT);
+      if (bin === "onchainos" && argv[1] === "common") return ok(COMMON_CONTEXT_STDOUT);
+      if (bin === "onchainos" && argv[1] === "status") return ok(STATUS_STDOUT);
+      if (bin === "onchainos" && argv[1] === "deliver") {
+        deliverAttempts++;
+        if (deliverAttempts === 1) {
+          return { ok: false, exitCode: 1, signal: null, stdout: "", stderr: "deliver transiently failed", timedOut: false, cancelled: false };
+        }
+        return ok(`{"txHash":"0x${"a".repeat(64)}"}`);
+      }
+      if (bin === "okx-a2a") return ok('{"messageId":"xmtp-1"}');
+      return ok("");
+    }) as never;
+
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, {
+      createCleanupPr: (async (input: { repoUrl: string }) => {
+        createPrCalls++;
+        openPr = { number: 5, url: `${input.repoUrl}/pull/5`, head: cleanupBranchForJob(JOB) };
+        return {
+          data: {
+            pullRequest: { number: openPr.number, url: openPr.url },
+            actionSummary: {},
+            repo: { cleanupBranch: cleanupBranchForJob(JOB) },
+          },
+        };
+      }) as never,
+      resolveGitHubToken: (async () => "fake-token") as never,
+      createGitHubClient: (() => ({
+        listOpenPullRequestsForHeadPrefix: async () => (openPr ? [openPr] : []),
+      })) as never,
+    });
+
+    spoolSystemEvent(inbox, ENVELOPE, "todo_1");
+    // One cycle is enough: live intake processes the event (deliver fails,
+    // clean retryable failure), and the SAME cycle's recovery pass — see
+    // runSystemEventCycle — immediately retries it, restarted from scratch
+    // per the executor's own published contract for a clean action failure.
+    await runSystemEventCycle(deps, inbox);
+
+    assert.equal(deliverAttempts, 2, "deliver must be retried");
+    assert.equal(createPrCalls, 1, "the cleanup pipeline must never run twice for the same job");
+    assert.equal(deps.ledgerFile.get("todo_1")?.state, "acknowledged");
   });
 
   await test("the provider route cannot complete, settle, resubmit or mutate a listing", () => {

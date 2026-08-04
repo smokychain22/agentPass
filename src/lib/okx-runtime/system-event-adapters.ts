@@ -20,6 +20,8 @@ import type {
   TaskReader,
 } from "./provider-event-executor";
 import type { AuthoritativeTask, ProposedAction } from "./system-event-route";
+import type { ApplyCandidate } from "./provider-apply";
+import { parseTaskContext } from "./task-context-fetcher";
 
 export const ONCHAINOS = "onchainos";
 export const OKX_A2A = "okx-a2a";
@@ -361,4 +363,112 @@ export function providerStatusFrom(result: ProcessRunResult): number | undefined
 function retryAfterFrom(result: ProcessRunResult): number | undefined {
   const match = /retry[- ]after[ =:]*(\d+)/i.exec(`${result.stdout}${result.stderr}`);
   return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * === Open-job discovery, for the provider-apply reconciler ===
+ *
+ * `onchainos agent active-tasks --role asp` is the authoritative index of
+ * non-terminal jobs across the account's agents. It emits the standard
+ * `{ok,data}` envelope with a `tasks[]` array, each carrying its own numeric
+ * `statusCode` — which is used directly rather than re-derived from the
+ * status NAME, since the CLI's own code is authoritative for its own values.
+ */
+export function parseActiveTasks(stdout: string, agentId: string): ApplyCandidate[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+  } catch {
+    return [];
+  }
+  const tasks = (parsed as { data?: { tasks?: unknown[] } })?.data?.tasks;
+  if (!Array.isArray(tasks)) return [];
+
+  const candidates: ApplyCandidate[] = [];
+  for (const raw of tasks) {
+    const task = raw as Record<string, unknown>;
+    // Only rows where WE are the provider. `active-tasks` aggregates every
+    // agent on the account and reports each job from both sides, so the same
+    // jobId can appear twice with opposite roles.
+    if (String(task.myAgentId) !== agentId) continue;
+    if (task.myRole !== "asp") continue;
+    if (typeof task.jobId !== "string") continue;
+
+    candidates.push({
+      jobId: task.jobId,
+      aspAgentId: String(task.myAgentId),
+      buyerAgentId: task.counterpartyAgentId ? String(task.counterpartyAgentId) : undefined,
+      myRole: "asp",
+      statusCode: Number(task.statusCode),
+      tokenAmount: String(task.tokenAmount ?? ""),
+      tokenSymbol: String(task.tokenSymbol ?? ""),
+      title: typeof task.title === "string" ? task.title : undefined,
+    });
+  }
+  return candidates;
+}
+
+/** Lists open (`created`) jobs this agent is the designated provider for. */
+export function createOpenJobLister(options: AdapterOptions): () => Promise<ApplyCandidate[]> {
+  const run = options.runner ?? runProcess;
+  return async () => {
+    const result = await run(ONCHAINOS, ["agent", "active-tasks", "--role", "asp"], {
+      env: options.env,
+      timeoutMs: 90_000,
+    });
+    // A failed read must throw, not return []. An empty array reads as "no
+    // open jobs", which would silently mask an outage.
+    if (!result.ok) throw new Error(`active_tasks_failed:${result.stderr || result.exitCode}`);
+    return parseActiveTasks(result.stdout, options.agentId).filter((c) => c.statusCode === 0);
+  };
+}
+
+/**
+ * Enriches an open job with the facts the eligibility gate needs but that
+ * `active-tasks` does not carry: chain, escrow payment mode and repository
+ * scope. Sourced from `agent common context`, whose output is prose — see
+ * task-context-fetcher.ts for why every field is optional-and-never-invented.
+ */
+export function parseOpenJobContext(stdout: string): {
+  chainIndex?: number;
+  escrowPayment?: boolean;
+  repositoryUrl?: string;
+  title?: string;
+} {
+  const context = parseTaskContext(stdout);
+  const chain = /chainId=(\d+)/i.exec(stdout)?.[1];
+  // "Payment mode (paymentType=1): escrow payment"
+  const escrow = /paymentType=1|escrow\s+payment/i.test(stdout);
+  // The repository often lives only in the free-text description.
+  const repositoryUrl =
+    context.repositoryUrl ?? /(https:\/\/github\.com\/[^\s,.)]+)/i.exec(stdout)?.[1];
+
+  return {
+    chainIndex: chain ? Number(chain) : undefined,
+    escrowPayment: escrow || undefined,
+    repositoryUrl: repositoryUrl?.replace(/[.,)]+$/, ""),
+    title: context.title,
+  };
+}
+
+/** Authoritative per-job read for the reconciler: status + enrichment. */
+export function createOpenJobTaskReader(
+  options: AdapterOptions
+): (jobId: string) => Promise<(AuthoritativeTask & Partial<ApplyCandidate>) | undefined> {
+  const run = options.runner ?? runProcess;
+  const readStatus = createTaskReader(options);
+  return async (jobId) => {
+    const task = await readStatus(jobId);
+    if (!task) return undefined;
+
+    const context = await run(
+      ONCHAINOS,
+      ["agent", "common", "context", jobId, "--agent-id", options.agentId],
+      { env: options.env, timeoutMs: 90_000 }
+    );
+    // Enrichment is best-effort; the eligibility gate refuses on the missing
+    // field rather than proceeding on a half-known job.
+    const enriched = context.ok ? parseOpenJobContext(context.stdout) : {};
+    return { ...task, ...enriched };
+  };
 }
