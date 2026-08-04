@@ -34,11 +34,81 @@ export interface JobAcceptedPlan {
   notifyTemplate: string;
 }
 
+/**
+ * `wakeup_notify` is not a business event — it is a REDIRECT.
+ *
+ * Its playbook says so explicitly: "This is a wake-up heartbeat event, **NOT**
+ * a business-driving event. The real business state is in the
+ * envelope.message.jobStatus field… You should NOT use `wakeup_notify` as
+ * --event", followed by an instruction to call next-action again with the
+ * real status.
+ *
+ * Traced live on repodiet-agent-9636: event 456f7e76 on job 0x22a2…, an
+ * already-`accepted` job with escrow funded, retried every 60 seconds and
+ * failed every time with `model_turn_retryable:internal_failure_retryable`.
+ * The turn was handed this redirect playbook, matched neither known shape,
+ * and returned `unrecognized` — which is retryable, so it never became
+ * terminal and never made progress either. The job sat undelivered.
+ *
+ * That is the OKX-reported failure class exactly: a task that is accepted,
+ * paid for, and then simply times out. Recognising the redirect is what
+ * closes it.
+ */
+export interface WakeupRedirectPlan {
+  kind: "wakeup_redirect";
+  /** The real business status to re-request the playbook with. */
+  jobStatus: string;
+}
+
 export interface UnrecognizedPlan {
   kind: "unrecognized";
 }
 
-export type PlaybookPlan = NotifyOnlyPlan | JobAcceptedPlan | UnrecognizedPlan;
+export type PlaybookPlan =
+  | NotifyOnlyPlan
+  | JobAcceptedPlan
+  | WakeupRedirectPlan
+  | UnrecognizedPlan;
+
+/**
+ * Statuses a wakeup redirect may legitimately name. Anything else is refused
+ * rather than forwarded — the redirect target becomes an `--event` value, and
+ * an unbounded one would let envelope content steer which playbook runs.
+ */
+const REDIRECTABLE_STATUSES = new Set([
+  "created",
+  "accepted",
+  "submitted",
+  "refused",
+  "rejected",
+  "disputed",
+  "completed",
+  "complete",
+  "closed",
+  "close",
+  "failed",
+  "expired",
+]);
+
+export function isWakeupRedirectPlaybook(stdout: string): boolean {
+  return (
+    stdout.includes("wakeup_notify") &&
+    /NOT.{0,40}business.{0,20}event|wake-?up heartbeat/i.test(stdout)
+  );
+}
+
+/**
+ * Resolves the redirect target from the ORIGINAL envelope, never from the
+ * playbook text. The playbook only says *where to look*; the value itself is
+ * authoritative envelope data, and reading it from prose would let generated
+ * text choose the next action.
+ */
+export function resolveWakeupRedirect(envelopeJobStatus: unknown): WakeupRedirectPlan | UnrecognizedPlan {
+  if (typeof envelopeJobStatus !== "string") return { kind: "unrecognized" };
+  const status = envelopeJobStatus.trim().toLowerCase();
+  if (!REDIRECTABLE_STATUSES.has(status)) return { kind: "unrecognized" };
+  return { kind: "wakeup_redirect", jobStatus: status };
+}
 
 const BASH_BLOCK = /```bash\n([\s\S]*?)```/g;
 const CONTENT_LABEL = "content:";
