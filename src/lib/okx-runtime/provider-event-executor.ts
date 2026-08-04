@@ -247,10 +247,22 @@ export async function executeSystemEvent(
         attempts,
         retryAfterSeconds: turn.retryAfterSeconds,
       });
+      // `decision.reason` describes the RETRY CLASS (retryable vs terminal),
+      // not what actually went wrong. Recording it alone discards the turn's
+      // own diagnosis, and every failure in this branch then reads as an
+      // indistinguishable `internal_failure_retryable`.
+      //
+      // That opacity is not cosmetic: it hid a live production defect for the
+      // entire life of job 0x22a2…. The turn was reporting a precise cause
+      // (an unparseable repository URL) on every one of 15 attempts, four
+      // separate times, and none of it reached the ledger or the logs. The
+      // cause of a failure and its retry class are different facts and both
+      // are now kept.
+      const cause = turn.error ? `${decision.reason}:${turn.error}` : decision.reason;
       if (!decision.retry) {
-        return persistTerminal(deps, eventId, attempts, `model_turn_terminal:${decision.reason}`);
+        return persistTerminal(deps, eventId, attempts, `model_turn_terminal:${cause}`);
       }
-      return persistRetryable(deps, eventId, attempts, `model_turn_retryable:${decision.reason}`);
+      return persistRetryable(deps, eventId, attempts, `model_turn_retryable:${cause}`);
     }
 
     if (turn.actions.length === 0) {
