@@ -75,7 +75,35 @@ export async function saveInstallationSession(session: GitHubInstallationSession
 
 export async function readInstallationSession(): Promise<GitHubInstallationSession | null> {
   if (!isGitHubAppConfigured()) return null;
-  const jar = await cookies();
+  /**
+   * There is no browser cookie jar outside a request scope, and for THIS
+   * function that is a legitimate state with an already-defined answer: `null`
+   * means "no browser installation session", which is exactly true in a
+   * background process.
+   *
+   * `cookies()` does not return null there — it throws. Verified live on the
+   * headless seller runtime, where the deterministic A2A turn resolves a
+   * GitHub App token with no HTTP request in flight: every attempt failed with
+   * "`cookies` was called outside a request scope", the accepted,
+   * escrow-funded job 0x22a2… retried to its 15-attempt ceiling, and the
+   * deliverable was never produced.
+   *
+   * The caller (`resolveCleanupGitHubToken`) already handles a null session by
+   * falling back to `resolveAspGitHubToken` — the documented seller-delivery
+   * path for a repository where the App is installed but no Patch-tab cookie
+   * exists. The throw meant that fallback was unreachable from any background
+   * caller. Mapping the throw to the null it already means restores it.
+   *
+   * Deliberately narrow: only the absent-request-scope case becomes null. A
+   * malformed or tampered cookie still fails through `decodeSignedSession`,
+   * and a missing App configuration still returns null above.
+   */
+  let jar: Awaited<ReturnType<typeof cookies>>;
+  try {
+    jar = await cookies();
+  } catch {
+    return null;
+  }
   const raw = jar.get(INSTALLATION_COOKIE)?.value;
   if (!raw) return null;
   return decodeSignedSession(raw);

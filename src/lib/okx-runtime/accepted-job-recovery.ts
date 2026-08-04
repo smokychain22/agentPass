@@ -301,7 +301,13 @@ export interface AcceptedJobRecoveryDeps {
 export type AcceptedJobRecoveryOutcome =
   | { action: "recovered"; jobId: string; actionsRun: number; transactionRefs: string[] }
   | { action: "skipped"; jobId: string; reason: string }
-  | { action: "dry_run"; jobId: string; plannedActions: string[] }
+  | {
+      action: "dry_run";
+      jobId: string;
+      repositoryUrl: string;
+      cleanupBranch: string;
+      reusePrUrl?: string;
+    }
   | { action: "failed"; jobId: string; reason: string };
 
 /**
@@ -392,6 +398,34 @@ export async function recoverAcceptedJob(
     reusingExistingPr: verdict.reusePrUrl ?? null,
   });
 
+  /**
+   * Stops BEFORE the deterministic turn, not after.
+   *
+   * The turn is not a planner — it creates the cleanup pull request as part of
+   * producing its actions (see deterministic-turn.ts: it calls
+   * `createCleanupPullRequest` and only then proposes `agent deliver` with the
+   * resulting URL). Running it to "preview" would therefore write a real
+   * branch and a real PR to a real repository, which is the opposite of what
+   * `--dry-run` promises. So a dry run reports the verdict and the exact
+   * targets it would act on, and performs no repository work at all.
+   */
+  if (deps.dryRun) {
+    deps.log("accepted_job_recovery_dry_run", {
+      jobId,
+      repositoryUrl: verdict.repositoryUrl,
+      cleanupBranch: verdict.cleanupBranch,
+      reusePrUrl: verdict.reusePrUrl ?? null,
+      note: "eligible; stopped before the deterministic turn so no branch or PR is created",
+    });
+    return {
+      action: "dry_run",
+      jobId,
+      repositoryUrl: verdict.repositoryUrl,
+      cleanupBranch: verdict.cleanupBranch,
+      reusePrUrl: verdict.reusePrUrl,
+    };
+  }
+
   // --- official playbook for the OBSERVED state ----------------------------
   const envelope = buildRecoveryQueryEnvelope(jobId);
   let instruction: { ok: boolean; stdout: string; stderr: string };
@@ -414,12 +448,6 @@ export async function recoverAcceptedJob(
     const reason = turn.error ?? "deterministic_turn_failed";
     deps.log("accepted_job_recovery_failed", { jobId, reason });
     return { action: "failed", jobId, reason };
-  }
-
-  if (deps.dryRun) {
-    const plannedActions = turn.actions.map((a) => a.command);
-    deps.log("accepted_job_recovery_dry_run", { jobId, plannedActions });
-    return { action: "dry_run", jobId, plannedActions };
   }
 
   // --- execute -------------------------------------------------------------
