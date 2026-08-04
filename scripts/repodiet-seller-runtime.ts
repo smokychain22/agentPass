@@ -822,7 +822,7 @@ export function buildSystemEventDeps(
    */
   testSeams?: Pick<
     DeterministicTurnOptions,
-    "createCleanupPr" | "resolveGitHubToken" | "createGitHubClient"
+    "createCleanupPr" | "resolveGitHubToken" | "createGitHubClient" | "refetchInstruction"
   >
 ): ReconcilerDeps & { ledgerFile: FileActionLedger } {
   const ledgerFile = new FileActionLedger(actionLedgerPath(dataDirectory), SELLER.agentId);
@@ -834,16 +834,25 @@ export function buildSystemEventDeps(
   };
 
   const readTask = createTaskReader(adapterOptions);
+  const fetchInstruction = createInstructionFetcher(adapterOptions);
 
   return {
     ledgerFile,
     ledger: new LedgerActionStore(ledgerFile),
-    fetchInstruction: createInstructionFetcher(adapterOptions),
+    fetchInstruction,
     readTask,
     // Deterministic, not model-backed — see deterministic-turn.ts. The
     // mandatory OKX protocol path (acknowledge / apply / accept / deliver)
     // must not depend on a rate-limited, quota-capped third-party LLM.
-    runModel: createDeterministicTurn({ ...adapterOptions, readTask, ...testSeams }),
+    // `refetchInstruction` is the SAME fetcher the executor uses, so a
+    // `wakeup_notify` redirect re-requests its real playbook through the
+    // identical authenticated path — never a second, divergent code path.
+    runModel: createDeterministicTurn({
+      ...adapterOptions,
+      readTask,
+      refetchInstruction: fetchInstruction,
+      ...testSeams,
+    }),
     runAction: createActionRunner(adapterOptions),
     reconcile: createReconciler(adapterOptions),
     // The buyer is resolved from authoritative task detail inside the adapter.

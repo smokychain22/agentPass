@@ -25,11 +25,13 @@ import { ToolExecutionError } from "@/lib/a2mcp/errors";
 import { GitHubClient } from "@/lib/github/github-client";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { resolveCleanupGitHubToken } from "@/lib/github-app/resolve-cleanup-token";
-import type { ModelTurn, TaskReader } from "./provider-event-executor";
+import type { InstructionFetcher, ModelTurn, TaskReader } from "./provider-event-executor";
 import type { ProposedAction } from "./system-event-route";
 import { parseTaskContext } from "./task-context-fetcher";
 import {
   fillNotifyTemplate,
+  isWakeupRedirectPlaybook,
+  resolveWakeupRedirect,
   flattenForCliArgument,
   parseNextActionPlaybook,
 } from "./next-action-playbook";
@@ -57,6 +59,12 @@ export interface DeterministicTurnOptions {
    * duplicate-PR check.
    */
   createGitHubClient?: (token: string) => Pick<GitHubClient, "listOpenPullRequestsForHeadPrefix">;
+  /**
+   * Re-requests the playbook for a different event. Required to follow a
+   * `wakeup_notify` redirect; production wires the same
+   * `createInstructionFetcher` the executor itself uses.
+   */
+  refetchInstruction?: InstructionFetcher;
 }
 
 /**
@@ -109,14 +117,66 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
   const buildClient =
     options.createGitHubClient ?? ((token: string) => new GitHubClient(token));
 
-  return async ({ instruction, jobId }) => {
-    const plan = parseNextActionPlaybook(instruction);
+  return async ({ instruction, jobId, envelope }) => {
+    let plan = parseNextActionPlaybook(instruction);
+
+    /**
+     * A `wakeup_notify` playbook is a REDIRECT, not an instruction: it says
+     * the real business state is in `message.jobStatus` and the playbook must
+     * be re-requested with that as `--event`.
+     *
+     * Traced live: without this, event 456f7e76 on the already-accepted,
+     * escrow-funded job 0x22a2… retried every 60s forever and never
+     * delivered — the OKX-reported timeout class exactly.
+     *
+     * The redirect target comes from the ENVELOPE, never from the playbook
+     * prose, and is restricted to a known status set, so generated text can
+     * never choose which playbook runs.
+     */
+    if (isWakeupRedirectPlaybook(instruction)) {
+      const message = (envelope?.message ?? {}) as { jobStatus?: unknown };
+      const redirect = resolveWakeupRedirect(message.jobStatus);
+      if (redirect.kind !== "wakeup_redirect") {
+        return {
+          ok: false,
+          actions: [],
+          status: undefined,
+          error: "wakeup_redirect_status_unresolved",
+        };
+      }
+      if (!options.refetchInstruction) {
+        return {
+          ok: false,
+          actions: [],
+          status: undefined,
+          error: "wakeup_redirect_unsupported",
+        };
+      }
+      const followed = await options.refetchInstruction({
+        event: redirect.jobStatus,
+        jobId,
+        envelope: { ...envelope, message: { ...message, event: redirect.jobStatus } } as never,
+      });
+      if (!followed.ok) {
+        return { ok: false, actions: [], status: followed.status, error: "wakeup_redirect_fetch_failed" };
+      }
+      plan = parseNextActionPlaybook(followed.stdout);
+      if (isWakeupRedirectPlaybook(followed.stdout)) {
+        // A redirect that redirects again would loop. Follow exactly one hop.
+        return {
+          ok: false,
+          actions: [],
+          status: undefined,
+          error: "wakeup_redirect_loop",
+        };
+      }
+    }
 
     if (plan.kind === "notify_only") {
       return { ok: true, actions: [buildNotifyAction(plan.content)] };
     }
 
-    if (plan.kind === "unrecognized") {
+    if (plan.kind === "wakeup_redirect" || plan.kind === "unrecognized") {
       // Never guess a state transition — stay retryable and bounded by
       // MAX_ATTEMPTS so an unfamiliar shape surfaces for investigation
       // instead of either hanging forever or fabricating an action.
