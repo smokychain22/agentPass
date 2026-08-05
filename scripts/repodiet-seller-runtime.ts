@@ -18,7 +18,7 @@
  *   - refuses to start a second instance against the same data root;
  *   - never logs secrets, tokens, or key material.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -239,6 +239,91 @@ let consecutiveHeartbeatFailures = 0;
  * on timeouts and under-honest on real failures.
  */
 const GATE_CHECK_TIMEOUT_MS = DEFAULT_GATE_CHECK_LIMITS.timeoutMs;
+
+/**
+ * Runs a command with a timeout that kills the ENTIRE process group, so no
+ * grandchild can outlive the deadline.
+ *
+ * `execFile`'s built-in `timeout` signals only the direct child. Commands that
+ * shell out (`onchainos agent gate-check` → `okx-a2a doctor`) therefore leave
+ * orphans behind on every timeout. `detached: true` gives the child its own
+ * process group (pgid === child.pid) and `kill(-pgid)` takes down that whole
+ * tree — the child and everything it spawned.
+ *
+ * Resolves with stdout on clean exit. On timeout, rejects with `code: "ETIMEDOUT"`
+ * so the caller's existing `classifyGateCheckOutcome` still reads it as the
+ * inconclusive-timeout case rather than a hard failure.
+ */
+async function runBoundedGroup(
+  command: string,
+  args: string[],
+  timeoutMs: number
+): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    /** Kills the group, falling back to the bare pid if the group is already gone. */
+    const killGroup = (signal: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          /* already exited */
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup("SIGTERM");
+      // Escalate for anything ignoring SIGTERM, then stop waiting.
+      setTimeout(() => killGroup("SIGKILL"), 5_000).unref();
+    }, timeoutMs);
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+
+    child.on("error", (err) => {
+      finish(() => reject(err));
+    });
+
+    child.on("close", (code) => {
+      finish(() => {
+        if (timedOut) {
+          const err = new Error(`${command} timed out after ${timeoutMs}ms`) as NodeJS.ErrnoException;
+          err.code = "ETIMEDOUT";
+          reject(err);
+          return;
+        }
+        if (code === 0) {
+          resolve({ stdout });
+          return;
+        }
+        const err = new Error(stderr.trim() || `${command} exited with code ${code}`) as NodeJS.ErrnoException;
+        err.code = String(code ?? "UNKNOWN");
+        reject(err);
+      });
+    });
+  });
+}
 let gateCheckTimer: NodeJS.Timeout | undefined;
 let gateCheckInFlight = false;
 let heartbeatCycleInFlight = false;
@@ -397,9 +482,27 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
   let stdout: string | undefined;
   let error: NodeJS.ErrnoException | undefined;
   try {
-    ({ stdout } = await execFileAsync("onchainos", ["agent", "gate-check", "--role", "asp"], {
-      timeout: GATE_CHECK_TIMEOUT_MS,
-    }));
+    /**
+     * `detached: true` puts the child in its own PROCESS GROUP, and the
+     * timeout below kills that whole group rather than just the direct child.
+     *
+     * Why this matters, observed live: `execFileAsync`'s own `timeout` sends
+     * a signal to `onchainos` only. But `onchainos agent gate-check` spawns
+     * `okx-a2a doctor --json` as a GRANDCHILD, so a timed-out gate-check left
+     * that grandchild running, reparented to init (ppid=1). Every subsequent
+     * timeout leaked another one. Three had accumulated on the production
+     * machine, each holding a Node heap on a 1-vCPU box, which drove load
+     * average past 14 and starved the very gate-check that spawned them — a
+     * feedback loop where each timeout made the next timeout more likely.
+     *
+     * Killing the group means a bounded check stays genuinely bounded: no
+     * survivors, no accumulation, no starvation spiral.
+     */
+    ({ stdout } = await runBoundedGroup(
+      "onchainos",
+      ["agent", "gate-check", "--role", "asp"],
+      GATE_CHECK_TIMEOUT_MS
+    ));
   } catch (err) {
     error = err as NodeJS.ErrnoException;
   } finally {
