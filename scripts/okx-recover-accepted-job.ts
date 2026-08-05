@@ -22,6 +22,7 @@
 import {
   parseDeliverableCount,
   recoverAcceptedJob,
+  REPODIET_A2A_RECOVERY_POLICY,
   type AcceptedJobRecoveryDeps,
 } from "../src/lib/okx-runtime/accepted-job-recovery";
 import { createDeterministicTurn } from "../src/lib/okx-runtime/deterministic-turn";
@@ -46,14 +47,22 @@ function log(event: string, fields: Record<string, unknown>): void {
   );
 }
 
-function parseArgs(argv: string[]): { jobId?: string; dryRun: boolean } {
+function parseArgs(argv: string[]): {
+  jobId?: string;
+  dryRun: boolean;
+  expectedBuyer?: string;
+} {
   let jobId: string | undefined;
   let dryRun = false;
+  let expectedBuyer: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--job-id" || argv[i] === "--jobId") jobId = argv[i + 1];
+    if (argv[i] === "--expected-buyer" || argv[i] === "--expectedBuyer") {
+      expectedBuyer = argv[i + 1];
+    }
     if (argv[i] === "--dry-run") dryRun = true;
   }
-  return { jobId, dryRun };
+  return { jobId, dryRun, expectedBuyer };
 }
 
 /**
@@ -78,9 +87,17 @@ async function listDeliverables(jobId: string): Promise<number> {
 }
 
 async function main(): Promise<void> {
-  const { jobId, dryRun } = parseArgs(process.argv.slice(2));
+  const { jobId, dryRun, expectedBuyer } = parseArgs(process.argv.slice(2));
   if (!jobId) {
     log("accepted_job_recovery_usage_error", { error: "--job-id is required" });
+    process.exit(2);
+  }
+  // Named explicitly per invocation — never defaulted. See
+  // AcceptedJobRecoveryPolicy.expectedBuyerAgentId.
+  if (!expectedBuyer) {
+    log("accepted_job_recovery_usage_error", {
+      error: "--expected-buyer is required; recovery must name the authorized counterparty",
+    });
     process.exit(2);
   }
 
@@ -94,6 +111,7 @@ async function main(): Promise<void> {
   const runAction = createActionRunner(adapterOptions);
 
   const deps: AcceptedJobRecoveryDeps = {
+    policy: { ...REPODIET_A2A_RECOVERY_POLICY, expectedBuyerAgentId: expectedBuyer },
     readTask: createOpenJobTaskReader(adapterOptions),
     listDeliverables,
     hasInstallationAccess: async (owner, repo) => {
