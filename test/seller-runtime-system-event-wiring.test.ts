@@ -104,6 +104,12 @@ function fakeTestSeams() {
     resolveGitHubToken: (async () => "fake-token") as never,
     createGitHubClient: (() => ({
       listOpenPullRequestsForHeadPrefix: async () => [],
+      getRepo: async (owner: string, repo: string) => ({
+        owner,
+        name: repo,
+        defaultBranch: "main",
+      }),
+      getBranchSha: async () => "b890ac4b055e608a7729d442c92bfe1dce573e64",
     })) as never,
   };
 }
@@ -385,6 +391,12 @@ async function run() {
       resolveGitHubToken: (async () => "fake-token") as never,
       createGitHubClient: (() => ({
         listOpenPullRequestsForHeadPrefix: async () => (openPr ? [openPr] : []),
+        getRepo: async (owner: string, repo: string) => ({
+          owner,
+          name: repo,
+          defaultBranch: "main",
+        }),
+        getBranchSha: async () => "b890ac4b055e608a7729d442c92bfe1dce573e64",
       })) as never,
     });
 

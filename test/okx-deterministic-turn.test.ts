@@ -112,7 +112,10 @@ Follow the returned script for what to do in the current status.
 `;
 
 /** Fake GitHub seams — production resolves a real token and hits the real API. */
-function fakeGitHub(existingPulls: Array<{ number: number; url: string; head: string }> = []) {
+function fakeGitHub(
+  existingPulls: Array<{ number: number; url: string; head: string }> = [],
+  baseCommit = "b890ac4b055e608a7729d442c92bfe1dce573e64"
+) {
   const listCalls: Array<{ owner: string; repo: string; prefix: string }> = [];
   return {
     resolveGitHubToken: (async () => "fake-token") as never,
@@ -121,6 +124,14 @@ function fakeGitHub(existingPulls: Array<{ number: number; url: string; head: st
         listCalls.push({ owner, repo, prefix });
         return existingPulls;
       },
+      // The per-job delete approval is bound to the base commit, so the turn
+      // READS it rather than assuming it — see job-delivery-approvals.ts.
+      getRepo: async (owner: string, repo: string) => ({
+        owner,
+        name: repo,
+        defaultBranch: "main",
+      }),
+      getBranchSha: async () => baseCommit,
     })) as never,
     listCalls,
   };
@@ -209,6 +220,95 @@ async function run() {
     assert.match(deliverText, /repodiet-e2e-test\/pull\/7/);
     assert.equal(createPrCalls, 1);
     assert.equal(github.listCalls.length, 1, "must check for an existing PR before creating one");
+  });
+
+  await test("passes exactly one job-bound approved delete path into the cleanup pipeline", async () => {
+    const github = fakeGitHub([]);
+    let seenApproved: string[] | undefined;
+    let calls = 0;
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () =>
+        ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+      readTask: async () => TASK,
+      createCleanupPr: (async (input: { approvedPaths?: string[] }) => {
+        calls++;
+        seenApproved = input.approvedPaths;
+        return {
+          data: {
+            pullRequest: { number: 9, url: "https://github.com/velz-cmd/repodiet-e2e-test/pull/9" },
+            actionSummary: { safeCandidatesApplied: 1, filesDeleted: 1 },
+            repo: { cleanupBranch: cleanupBranchForJob(JOB) },
+          },
+        };
+      }) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
+    });
+
+    const result = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: JOB });
+    assert.equal(result.ok, true);
+    assert.equal(calls, 1);
+    assert.deepEqual(
+      seenApproved,
+      ["src/unused/empty-module.ts"],
+      "exactly one approved deletion, and only the reviewed path"
+    );
+  });
+
+  await test("omits approvedPaths entirely when the base commit has moved", async () => {
+    // A moved base branch means the reviewed diff no longer describes reality,
+    // so the approval must expire rather than carry over to new content.
+    const github = fakeGitHub([], "0000000000000000000000000000000000000000");
+    let seenApproved: string[] | undefined = ["sentinel"];
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () =>
+        ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+      readTask: async () => TASK,
+      createCleanupPr: (async (input: { approvedPaths?: string[] }) => {
+        seenApproved = input.approvedPaths;
+        return {
+          data: {
+            pullRequest: { number: 10, url: "https://github.com/velz-cmd/repodiet-e2e-test/pull/10" },
+            actionSummary: { safeCandidatesApplied: 0, filesDeleted: 0 },
+            repo: { cleanupBranch: cleanupBranchForJob(JOB) },
+          },
+        };
+      }) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
+    });
+
+    await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: JOB });
+    assert.equal(seenApproved, undefined, "no approval must be supplied at an unreviewed commit");
+  });
+
+  await test("a different job id gets no approval — approval never leaks across jobs", async () => {
+    const github = fakeGitHub([]);
+    let seenApproved: string[] | undefined = ["sentinel"];
+    const otherJob = "0x38463285397e0844c7c01446bae2783ea3a8b00f45147768c31d97cb484ce8a6";
+    const turn = createDeterministicTurn({
+      agentId: "9636",
+      runner: (async () =>
+        ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+      readTask: async () => TASK,
+      createCleanupPr: (async (input: { approvedPaths?: string[] }) => {
+        seenApproved = input.approvedPaths;
+        return {
+          data: {
+            pullRequest: { number: 11, url: "https://github.com/velz-cmd/repodiet-e2e-test/pull/11" },
+            actionSummary: { safeCandidatesApplied: 0, filesDeleted: 0 },
+            repo: { cleanupBranch: cleanupBranchForJob(otherJob) },
+          },
+        };
+      }) as never,
+      resolveGitHubToken: github.resolveGitHubToken,
+      createGitHubClient: github.createGitHubClient,
+    });
+
+    await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: otherJob });
+    assert.equal(seenApproved, undefined, "another job must not inherit this job's approval");
   });
 
   await test("a retry after a prior attempt already created the PR reuses it — never opens a duplicate", async () => {

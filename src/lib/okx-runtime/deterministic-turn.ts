@@ -27,6 +27,7 @@ import { parseGitHubUrl } from "@/lib/github/parse-github-url";
 import { resolveCleanupGitHubToken } from "@/lib/github-app/resolve-cleanup-token";
 import type { InstructionFetcher, ModelTurn, TaskReader } from "./provider-event-executor";
 import type { ProposedAction } from "./system-event-route";
+import { approvedDeletePathsForJob } from "./job-delivery-approvals";
 import { parseTaskContext } from "./task-context-fetcher";
 import {
   fillNotifyTemplate,
@@ -54,11 +55,14 @@ export interface DeterministicTurnOptions {
   /** Seam for tests — production resolves the real GitHub App token. */
   resolveGitHubToken?: typeof resolveCleanupGitHubToken;
   /**
-   * Seam for tests — production constructs a real `GitHubClient`. Only
-   * `listOpenPullRequestsForHeadPrefix` is used, for the pre-flight
-   * duplicate-PR check.
+   * Seam for tests — production constructs a real `GitHubClient`.
+   * `listOpenPullRequestsForHeadPrefix` drives the pre-flight duplicate-PR
+   * check; `getRepo`/`getBranchSha` resolve the base commit a per-job delete
+   * approval is bound to (see job-delivery-approvals.ts).
    */
-  createGitHubClient?: (token: string) => Pick<GitHubClient, "listOpenPullRequestsForHeadPrefix">;
+  createGitHubClient?: (
+    token: string
+  ) => Pick<GitHubClient, "listOpenPullRequestsForHeadPrefix" | "getRepo" | "getBranchSha">;
   /**
    * Re-requests the playbook for a different event. Required to follow a
    * `wakeup_notify` redirect; production wires the same
@@ -238,11 +242,45 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
         // jobId; that would be a duplicate PR for the same paid task.
         prUrl = existing[0].url;
       } else {
+        /**
+         * Per-job delete approval, bound to the exact repository state.
+         *
+         * `unused/` is classifiable as a safe candidate but is NOT in the
+         * unattended operator-safe delete set, so a delivery whose only
+         * finding lives there fails the final gate with NO_SAFE_CANDIDATES —
+         * observed live on this job. Supplying the approval the gate was
+         * designed to require is the intended path; widening
+         * OPERATOR_SAFE_DIRS would grant that authority to every future
+         * unattended delivery instead of this one reviewed diff.
+         *
+         * The base commit is READ from GitHub rather than assumed, so an
+         * approval cannot survive the base branch moving underneath it. A
+         * mismatch yields [], which means "no explicit approval" and leaves
+         * the unattended default untouched — never a wider permission.
+         *
+         * Every approved path is still subject to
+         * `isApprovedValidatedDeletePath` and the sandbox's own
+         * `validatedPaths` inside `resolveValidatedDeliveryOps`. Nothing here
+         * can delete a protected, generated, credential or workflow path.
+         */
+        const repoMeta = await client.getRepo(parsedRepo.owner, parsedRepo.repo);
+        const baseCommit = await client.getBranchSha(
+          parsedRepo.owner,
+          parsedRepo.repo,
+          repoMeta.defaultBranch
+        );
+        const approvedPaths = approvedDeletePathsForJob({
+          jobId,
+          repositoryUrl: context.repositoryUrl,
+          baseCommit,
+        });
+
         const pr = await createPr({
           repoUrl: context.repositoryUrl,
           mode: "safe_only",
           cleanupBranch: branch,
           githubToken: token,
+          ...(approvedPaths.length > 0 ? { approvedPaths } : {}),
         });
         prUrl = pr.data.pullRequest.url;
       }
