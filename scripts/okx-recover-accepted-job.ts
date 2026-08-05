@@ -20,6 +20,7 @@
  * already-open PR on the deterministic branch is reused, never duplicated.
  */
 import {
+  parseDeliverableCount,
   recoverAcceptedJob,
   type AcceptedJobRecoveryDeps,
 } from "../src/lib/okx-runtime/accepted-job-recovery";
@@ -58,21 +59,22 @@ function parseArgs(argv: string[]): { jobId?: string; dryRun: boolean } {
 /**
  * Official deliverable list. Throws on a failed read so the caller records
  * "unknown" rather than "none" — the gate refuses on unknown.
+ *
+ * Takes ONLY `--job-id`. Verified against the live CLI: passing `--agent-id`
+ * here exits 2 with `unexpected argument '--agent-id'`, because a job id
+ * already identifies the job uniquely and this subcommand takes nothing else.
+ * The first live dry-run of this script did exactly that, so every invocation
+ * refused with `deliverable_state_uncertain` — the fail-closed path behaving
+ * correctly on an argument list that could never have succeeded.
  */
 async function listDeliverables(jobId: string): Promise<number> {
   const result = await runProcess(
     ONCHAINOS,
-    ["agent", "task-deliverable-list", "--job-id", jobId, "--agent-id", SELLER.agentId],
+    ["agent", "task-deliverable-list", "--job-id", jobId],
     { timeoutMs: 60_000 }
   );
   if (!result.ok) throw new Error("deliverable_list_unavailable");
-  try {
-    const parsed = JSON.parse(result.stdout) as { deliverables?: unknown[] };
-    if (!Array.isArray(parsed.deliverables)) throw new Error("unrecognised_shape");
-    return parsed.deliverables.length;
-  } catch {
-    throw new Error("deliverable_list_unparseable");
-  }
+  return parseDeliverableCount(result.stdout);
 }
 
 async function main(): Promise<void> {
