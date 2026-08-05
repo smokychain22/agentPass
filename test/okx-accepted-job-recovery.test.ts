@@ -32,6 +32,21 @@ async function test(name: string, fn: () => Promise<void> | void) {
   }
 }
 
+/**
+ * The controlled-recovery policy for these tests: the operator names the
+ * counterparty explicitly, exactly as the real invocation must. The exported
+ * default deliberately carries NO buyer, so tests must supply one too.
+ */
+const CONTROLLED_POLICY = {
+  ...REPODIET_A2A_RECOVERY_POLICY,
+  expectedBuyerAgentId: "10466",
+};
+
+const assess = (
+  observation: Parameters<typeof assessAcceptedJobRecovery>[0],
+  policy: Parameters<typeof assessAcceptedJobRecovery>[1] = CONTROLLED_POLICY
+) => assessAcceptedJobRecovery(observation, policy);
+
 const JOB = "0x22a216415e2b1176d2111b136584e42fd949f7c0cfca48c657a7d1ca8e6927c6";
 const REPO = "https://github.com/velz-cmd/repodiet-e2e-test";
 
@@ -71,7 +86,7 @@ async function run() {
   // --- 1. eligible accepted job ---------------------------------------------
 
   await test("eligible accepted job passes every gate", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation());
+    const verdict = assess(eligibleObservation());
     assert.equal(verdict.eligible, true);
     if (!verdict.eligible) return;
     assert.equal(verdict.repositoryUrl, REPO);
@@ -86,24 +101,24 @@ async function run() {
   // --- 2. wrong provider -----------------------------------------------------
 
   await test("refuses a job designated to another provider", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ aspAgentId: "5295" }));
+    const verdict = assess(taskWith({ aspAgentId: "5295" }));
     assert.deepEqual(verdict, { eligible: false, reason: "not_designated_provider" });
   });
 
   await test("refuses the forbidden historical provider identity 5283", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ aspAgentId: "5283" }));
+    const verdict = assess(taskWith({ aspAgentId: "5283" }));
     assert.equal(verdict.eligible, false);
   });
 
   // --- 3. wrong service ------------------------------------------------------
 
   await test("refuses an explicit non-A2A serviceId", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ serviceId: "37347" }));
+    const verdict = assess(taskWith({ serviceId: "37347" }));
     assert.deepEqual(verdict, { eligible: false, reason: "service_not_a2a:37347" });
   });
 
   await test("refuses an operation that is not create_cleanup_pr", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ operation: "analyze_repository" }));
+    const verdict = assess(taskWith({ operation: "analyze_repository" }));
     assert.deepEqual(verdict, {
       eligible: false,
       reason: "operation_not_cleanup:analyze_repository",
@@ -111,29 +126,29 @@ async function run() {
   });
 
   await test("accepts the A2A serviceId when OKX does expose it", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ serviceId: "37348" }));
+    const verdict = assess(taskWith({ serviceId: "37348" }));
     assert.equal(verdict.eligible, true);
   });
 
   // --- 4. wrong price --------------------------------------------------------
 
   await test("refuses the reviewer-probe price 0.00001", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ tokenAmount: "0.00001" }));
+    const verdict = assess(taskWith({ tokenAmount: "0.00001" }));
     assert.deepEqual(verdict, { eligible: false, reason: "price_not_registered:0.00001!=1" });
   });
 
   await test("treats 1.00 as the registered price", () => {
-    assert.equal(assessAcceptedJobRecovery(taskWith({ tokenAmount: "1.00" })).eligible, true);
+    assert.equal(assess(taskWith({ tokenAmount: "1.00" })).eligible, true);
   });
 
   await test("refuses a malformed amount", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ tokenAmount: "" }));
+    const verdict = assess(taskWith({ tokenAmount: "" }));
     assert.equal(verdict.eligible, false);
     assert.match((verdict as { reason: string }).reason, /token_amount_malformed/);
   });
 
   await test("refuses a matching symbol on a different token contract", () => {
-    const verdict = assessAcceptedJobRecovery(
+    const verdict = assess(
       taskWith({ tokenAddress: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" })
     );
     assert.equal(verdict.eligible, false);
@@ -141,14 +156,14 @@ async function run() {
   });
 
   await test("refuses a job on the wrong network", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ chainIndex: 1 }));
+    const verdict = assess(taskWith({ chainIndex: 1 }));
     assert.deepEqual(verdict, { eligible: false, reason: "network_not_x_layer:1" });
   });
 
   // --- 5. missing escrow -----------------------------------------------------
 
   await test("refuses when escrow is not corroborated", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ escrowPayment: undefined }));
+    const verdict = assess(taskWith({ escrowPayment: undefined }));
     // With no serviceId either, the service itself is unverifiable — refused
     // before the escrow gate, and refused either way.
     assert.equal(verdict.eligible, false);
@@ -156,7 +171,7 @@ async function run() {
   });
 
   await test("refuses an accepted job with an explicit non-escrow payment", () => {
-    const verdict = assessAcceptedJobRecovery(
+    const verdict = assess(
       taskWith({ escrowPayment: false, serviceId: "37348" })
     );
     assert.deepEqual(verdict, { eligible: false, reason: "escrow_not_funded" });
@@ -165,12 +180,12 @@ async function run() {
   // --- 6. existing deliverable ----------------------------------------------
 
   await test("refuses when a deliverable already exists", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ deliverableCount: 1 }));
+    const verdict = assess(eligibleObservation({ deliverableCount: 1 }));
     assert.deepEqual(verdict, { eligible: false, reason: "deliverable_already_exists" });
   });
 
   await test("refuses when the deliverable count is unreadable", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ deliverableCount: undefined }));
+    const verdict = assess(eligibleObservation({ deliverableCount: undefined }));
     assert.deepEqual(verdict, { eligible: false, reason: "deliverable_state_uncertain" });
   });
 
@@ -178,7 +193,7 @@ async function run() {
 
   await test("reuses an existing PR on the deterministic branch", () => {
     const url = "https://github.com/velz-cmd/repodiet-e2e-test/pull/7";
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ existingPrUrl: url }));
+    const verdict = assess(eligibleObservation({ existingPrUrl: url }));
     assert.equal(verdict.eligible, true);
     if (!verdict.eligible) return;
     // Eligible, but flagged for reuse — never a second PR for the same job.
@@ -188,7 +203,7 @@ async function run() {
   // --- 8. completed / settled job -------------------------------------------
 
   await test("refuses a created job — the open-job sweep owns that state", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ statusCode: 0 }));
+    const verdict = assess(taskWith({ statusCode: 0 }));
     assert.deepEqual(verdict, { eligible: false, reason: "status_not_accepted:0" });
   });
 
@@ -203,61 +218,121 @@ async function run() {
     [9, "admin_stopped"],
   ] as const) {
     await test(`refuses a ${label} job (status ${code})`, () => {
-      const verdict = assessAcceptedJobRecovery(taskWith({ statusCode: code }));
+      const verdict = assess(taskWith({ statusCode: code }));
       assert.deepEqual(verdict, { eligible: false, reason: `status_not_accepted:${code}` });
     });
   }
 
   // --- reviewer-owned / unrelated jobs --------------------------------------
 
-  await test("refuses a job from a buyer that is not the pinned counterparty", () => {
-    const verdict = assessAcceptedJobRecovery(taskWith({ buyerAgentId: "5295" }));
+  await test("refuses a job from a buyer that is not the expected counterparty", () => {
+    const verdict = assess(taskWith({ buyerAgentId: "5295" }));
     assert.deepEqual(verdict, {
       eligible: false,
-      reason: "buyer_not_pinned_counterparty:5295",
+      reason: "buyer_not_expected_counterparty:5295",
     });
   });
 
   await test("refuses self-dealing", () => {
-    const verdict = assessAcceptedJobRecovery(
+    const verdict = assess(
       taskWith({ buyerAgentId: "9636" }),
-      { ...REPODIET_A2A_RECOVERY_POLICY, buyerAgentId: "9636" }
+      { ...REPODIET_A2A_RECOVERY_POLICY, expectedBuyerAgentId: "9636" }
     );
     assert.deepEqual(verdict, { eligible: false, reason: "buyer_is_self" });
+  });
+
+  // --- per-invocation expected buyer ----------------------------------------
+  //
+  // The buyer was briefly a module constant (`REPODIET_A2A_BUYER_AGENT_ID =
+  // "10466"`). That is wrong for two independent reasons: it is a standing
+  // authorization to act on one counterparty's jobs, and it invites the reading
+  // that the PUBLIC path is also restricted to 10466. It is not — see
+  // `provider-apply.ts`, which derives the buyer from authoritative task
+  // context and accepts any eligible marketplace buyer.
+
+  await test("recovery fails closed when no expected buyer is supplied", () => {
+    // The exported default deliberately carries no buyer.
+    const verdict = assessAcceptedJobRecovery(eligibleObservation());
+    assert.deepEqual(verdict, { eligible: false, reason: "expected_buyer_not_supplied" });
+  });
+
+  await test("recovery accepts the job when the supplied expected buyer matches", () => {
+    const verdict = assessAcceptedJobRecovery(eligibleObservation(), {
+      ...REPODIET_A2A_RECOVERY_POLICY,
+      expectedBuyerAgentId: "10466",
+    });
+    assert.equal(verdict.eligible, true);
+  });
+
+  await test("recovery refuses a buyer other than the one explicitly supplied", () => {
+    // Same job, but the operator authorized a different counterparty.
+    const verdict = assessAcceptedJobRecovery(eligibleObservation(), {
+      ...REPODIET_A2A_RECOVERY_POLICY,
+      expectedBuyerAgentId: "77777",
+    });
+    assert.deepEqual(verdict, {
+      eligible: false,
+      reason: "buyer_not_expected_counterparty:10466",
+    });
+  });
+
+  await test("recovery works for an unrelated public buyer when that buyer is the one supplied", () => {
+    // Proves the gate is a per-invocation match, not a 10466 allowlist: an
+    // arbitrary marketplace buyer is eligible when it is the named counterparty.
+    const verdict = assessAcceptedJobRecovery(taskWith({ buyerAgentId: "24680" }), {
+      ...REPODIET_A2A_RECOVERY_POLICY,
+      expectedBuyerAgentId: "24680",
+    });
+    assert.equal(verdict.eligible, true);
+  });
+
+  await test("the exported recovery policy hardcodes no buyer at all", () => {
+    assert.equal(
+      (REPODIET_A2A_RECOVERY_POLICY as { expectedBuyerAgentId?: string }).expectedBuyerAgentId,
+      undefined,
+      "a default buyer would be a standing authorization on someone else's jobs"
+    );
+    const serialized = JSON.stringify(REPODIET_A2A_RECOVERY_POLICY);
+    for (const forbidden of ["10466", "5295", "5283"]) {
+      assert.ok(
+        !serialized.includes(forbidden),
+        `${forbidden} must not appear as a default in the recovery policy`
+      );
+    }
   });
 
   // --- fail-closed on uncertain state ---------------------------------------
 
   await test("refuses when authoritative state is unavailable", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ task: undefined }));
+    const verdict = assess(eligibleObservation({ task: undefined }));
     assert.deepEqual(verdict, { eligible: false, reason: "authoritative_state_unavailable" });
   });
 
   await test("refuses when the authoritative read is for a different job", () => {
     const other = `0x${"b".repeat(64)}`;
-    const verdict = assessAcceptedJobRecovery(taskWith({ jobId: other }));
+    const verdict = assess(taskWith({ jobId: other }));
     assert.deepEqual(verdict, { eligible: false, reason: "authoritative_job_id_mismatch" });
   });
 
   await test("refuses a malformed job id", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ jobId: "0xnope" }));
+    const verdict = assess(eligibleObservation({ jobId: "0xnope" }));
     assert.deepEqual(verdict, { eligible: false, reason: "job_id_malformed" });
   });
 
   await test("refuses an unresolved repository url", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ repositoryUrl: undefined }));
+    const verdict = assess(eligibleObservation({ repositoryUrl: undefined }));
     assert.deepEqual(verdict, { eligible: false, reason: "repository_url_unresolved" });
   });
 
   await test("refuses a repository url that is not parseable", () => {
-    const verdict = assessAcceptedJobRecovery(
+    const verdict = assess(
       eligibleObservation({ repositoryUrl: "https://example.com/not-github" })
     );
     assert.deepEqual(verdict, { eligible: false, reason: "repository_url_invalid" });
   });
 
   await test("refuses when installation access is inconclusive", () => {
-    const verdict = assessAcceptedJobRecovery(
+    const verdict = assess(
       eligibleObservation({ installationAccess: undefined })
     );
     assert.deepEqual(verdict, {
@@ -267,7 +342,7 @@ async function run() {
   });
 
   await test("refuses when installation access is denied", () => {
-    const verdict = assessAcceptedJobRecovery(eligibleObservation({ installationAccess: false }));
+    const verdict = assess(eligibleObservation({ installationAccess: false }));
     assert.deepEqual(verdict, {
       eligible: false,
       reason: "github_installation_access_unavailable",
@@ -307,6 +382,9 @@ async function run() {
     const deps = {
       ran,
       logs,
+      // The operator names the counterparty per invocation — the real CLI
+      // requires --expected-buyer for exactly this reason.
+      policy: CONTROLLED_POLICY,
       readTask: async () => eligibleObservation().task,
       listDeliverables: async () => 0,
       hasInstallationAccess: async () => true,

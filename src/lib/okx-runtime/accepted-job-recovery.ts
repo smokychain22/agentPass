@@ -86,11 +86,20 @@ const AMOUNT_PATTERN = /^\d+(\.\d+)?$/;
  * live probes carry a different buyer AND a price five orders of magnitude
  * below the listing, and either fact alone is disqualifying.
  */
-export const REPODIET_A2A_BUYER_AGENT_ID = "10466";
-
 export interface AcceptedJobRecoveryPolicy {
   aspAgentId: string;
-  buyerAgentId: string;
+  /**
+   * The buyer this OPERATOR-INVOKED recovery is authorized for, supplied
+   * explicitly per invocation.
+   *
+   * Deliberately NOT defaulted. The generic public A2A path
+   * (`provider-apply.ts`) derives the buyer from authoritative OKX task
+   * context and accepts any eligible marketplace buyer — a global constant
+   * here would be a standing authorization to act on one counterparty's jobs,
+   * which is the opposite of what a recovery tool should carry. `undefined`
+   * fails closed (see `assessAcceptedJobRecovery`).
+   */
+  expectedBuyerAgentId?: string;
   serviceId: string;
   fee: string;
   tokenSymbol: string;
@@ -98,9 +107,14 @@ export interface AcceptedJobRecoveryPolicy {
   chainIndex: number;
 }
 
+/**
+ * Everything about the A2A service EXCEPT the counterparty.
+ *
+ * Callers spread this and add `expectedBuyerAgentId` for the specific job they
+ * are recovering, so the buyer is always a conscious per-invocation decision.
+ */
 export const REPODIET_A2A_RECOVERY_POLICY: AcceptedJobRecoveryPolicy = {
   aspAgentId: SELLER_AGENT_ID,
-  buyerAgentId: REPODIET_A2A_BUYER_AGENT_ID,
   serviceId: REPODIET_OKX_SERVICES.a2a.serviceId,
   fee: REPODIET_OKX_SERVICES.a2a.fee,
   tokenSymbol: REPODIET_OKX_SERVICES.a2a.tokenSymbol,
@@ -181,9 +195,17 @@ export function assessAcceptedJobRecovery(
   if (!task.buyerAgentId) {
     return { eligible: false, reason: "buyer_unknown" };
   }
-  if (task.buyerAgentId !== policy.buyerAgentId) {
-    // Keeps this path off reviewer-owned and unrelated jobs.
-    return { eligible: false, reason: `buyer_not_pinned_counterparty:${task.buyerAgentId}` };
+  /**
+   * An operator recovery must name the counterparty it is authorized for.
+   * Absent authorization is refused rather than widened to "any buyer" — the
+   * generic public path is the thing that legitimately accepts any eligible
+   * buyer, and it is a different code path with its own gates.
+   */
+  if (!policy.expectedBuyerAgentId) {
+    return { eligible: false, reason: "expected_buyer_not_supplied" };
+  }
+  if (task.buyerAgentId !== policy.expectedBuyerAgentId) {
+    return { eligible: false, reason: `buyer_not_expected_counterparty:${task.buyerAgentId}` };
   }
   if (task.buyerAgentId === policy.aspAgentId) {
     return { eligible: false, reason: "buyer_is_self" };
