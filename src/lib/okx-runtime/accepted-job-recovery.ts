@@ -266,6 +266,32 @@ export function assessAcceptedJobRecovery(
   };
 }
 
+/**
+ * Counts deliverables in `agent task-deliverable-list` stdout.
+ *
+ * Lives here, exported and pure, because the two ways it can be wrong are
+ * both silent and both dangerous: reading a wrapped payload as absent, or
+ * reading an unparseable payload as zero. Either would make an
+ * already-delivered job look undelivered and licence a second delivery
+ * against real escrow.
+ *
+ * The live CLI wraps its result — `{"ok":true,"data":{"deliverables":[]}}` —
+ * but a bare `{"deliverables":[]}` is accepted too rather than assuming one
+ * shape. Anything else THROWS, so the caller records "unknown" and the gate
+ * refuses; it must never fall back to 0.
+ */
+export function parseDeliverableCount(stdout: string): number {
+  const parsed = JSON.parse(stdout) as {
+    ok?: unknown;
+    deliverables?: unknown;
+    data?: { deliverables?: unknown };
+  };
+  if (parsed.ok === false) throw new Error("deliverable_list_not_ok");
+  const deliverables = parsed.data?.deliverables ?? parsed.deliverables;
+  if (!Array.isArray(deliverables)) throw new Error("deliverable_list_unrecognised_shape");
+  return deliverables.length;
+}
+
 export interface AcceptedJobRecoveryDeps {
   /** Authoritative status + context enrichment (`createOpenJobTaskReader`). */
   readTask: (

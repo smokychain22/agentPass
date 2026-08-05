@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   assessAcceptedJobRecovery,
   buildRecoveryQueryEnvelope,
+  parseDeliverableCount,
   recoverAcceptedJob,
   REPODIET_A2A_RECOVERY_POLICY,
   type AcceptedJobObservation,
@@ -537,6 +538,39 @@ async function run() {
     assert.equal(outcome.action, "dry_run");
     if (outcome.action !== "dry_run") return;
     assert.equal(outcome.reusePrUrl, url);
+  });
+
+  // --- deliverable-list parsing (live CLI shape) ---------------------------
+  //
+  // The first live dry-run refused with `deliverable_state_uncertain` because
+  // this script invoked `task-deliverable-list` with `--agent-id`, which that
+  // subcommand rejects (exit 2). The fail-closed path behaved correctly on an
+  // argument list that could never have succeeded — and the parser would ALSO
+  // have failed on the real payload, which is wrapped in `data`.
+
+  await test("counts deliverables in the live wrapped CLI payload", () => {
+    assert.equal(parseDeliverableCount('{"ok":true,"data":{"deliverables":[]}}'), 0);
+    assert.equal(parseDeliverableCount('{"ok":true,"data":{"deliverables":[{"id":1}]}}'), 1);
+  });
+
+  await test("accepts a bare unwrapped payload too", () => {
+    assert.equal(parseDeliverableCount('{"deliverables":[{"a":1},{"b":2}]}'), 2);
+  });
+
+  await test("throws rather than reporting zero on an unrecognised shape", () => {
+    assert.throws(() => parseDeliverableCount('{"data":{}}'), /unrecognised_shape/);
+    assert.throws(() => parseDeliverableCount("{}"), /unrecognised_shape/);
+  });
+
+  await test("throws on an explicit CLI failure payload", () => {
+    assert.throws(
+      () => parseDeliverableCount('{"ok":false,"error":"session expired"}'),
+      /not_ok/
+    );
+  });
+
+  await test("throws on non-JSON output", () => {
+    assert.throws(() => parseDeliverableCount("error: unexpected argument"));
   });
 
   console.log("okx accepted-job recovery: all assertions passed");
