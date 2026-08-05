@@ -510,8 +510,18 @@ function run() {
     assert.ok(start > -1, "the gate-check runner must exist");
     const body = src.slice(start, src.indexOf("\n}\n", start));
     assert.ok(
-      body.includes('"onchainos"') && body.includes("timeout: GATE_CHECK_TIMEOUT_MS"),
+      body.includes('"onchainos"') && body.includes("GATE_CHECK_TIMEOUT_MS"),
       "every CLI call must be bounded — an unbounded call that stalls hangs the awaiting cycle forever, silently, with no further log line ever produced again"
+    );
+    // Incident #14 strengthened this: `execFile`'s own timeout signals only the
+    // direct child, so `onchainos agent gate-check` left its `okx-a2a doctor`
+    // GRANDCHILD running (reparented to init) on every timeout. Three
+    // accumulated in production and starved the 1-vCPU machine — load 14.30,
+    // 49 MB free — which made the next gate-check time out too. The bound must
+    // therefore kill the whole process GROUP, not just the child.
+    assert.ok(
+      body.includes("runBoundedGroup"),
+      "the gate-check bound must kill the whole process group, or a timed-out grandchild survives and accumulates"
     );
   });
 
