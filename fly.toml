@@ -38,6 +38,23 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
   # isGitHubAppConfigured() checks this too, and it was previously missing
   # from both the staged secrets and this file.
   GITHUB_APP_SLUG = "repodiet-operator"
+  # Operator kill switch for the autonomous system-event path. "1" suspends
+  # startup recovery AND the poll loop; anything else (including absence)
+  # leaves production behaving exactly as before.
+  #
+  # Declared here rather than as a secret for the same reason as the apply
+  # mode below: it is policy, not a credential, and whether autonomous job
+  # execution is paused must be reviewable in the diff. It also has to ship in
+  # the SAME deployment as the image — setting it via `fly secrets set`
+  # restarts the machine on the OLD code, which triggers exactly the
+  # pending-event recovery pass this flag exists to prevent.
+  #
+  # Currently ENGAGED: funded job 0x22a2… replays on every restart and
+  # saturates this shared-cpu-1x/2GB machine until the gate check times out
+  # and heartbeats are withheld. Suspension never acknowledges, delivers,
+  # settles or discards anything — the 11 pending events are preserved and
+  # resume when this is set back to "0".
+  REPODIET_SUSPEND_SYSTEM_EVENTS = "1"
   # Provider application for open A2A jobs. `live` broadcasts a real,
   # irreversible, gas-spending `onchainos agent apply` for every job that
   # passes the full eligibility gate in src/lib/okx-runtime/provider-apply.ts.

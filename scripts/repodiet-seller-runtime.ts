@@ -73,6 +73,7 @@ import {
   recoverPendingEvents,
   type ReconcilerDeps,
 } from "../src/lib/okx-runtime/system-event-reconciler";
+import { systemEventsSuspended } from "../src/lib/okx-runtime/system-event-suspension";
 // Deliberately NOT from ./seller-runtime-supervisor: that module's import graph
 // reaches `openclaw/plugin-sdk/gateway-runtime`, which needs Node 22+. Reading
 // two constants from it would drag the whole Gateway client into this process's
@@ -982,6 +983,19 @@ export async function runSystemEventCycle(
   deps: ReconcilerDeps & { ledgerFile: FileActionLedger },
   inboxDirectory: string
 ): Promise<void> {
+  /**
+   * Checked before the spool is read: draining the inbox writes to the ledger
+   * and retires spool files, so even the "just observe" half of this cycle is
+   * a mutation. Suspension must leave the inbox exactly as it found it.
+   */
+  if (systemEventsSuspended()) {
+    log("system_events_suspended", {
+      phase: "poll_cycle",
+      note: "REPODIET_SUSPEND_SYSTEM_EVENTS is set; spool not drained and no event claimed",
+    });
+    return;
+  }
+
   for (const spooled of readSystemEventInbox(inboxDirectory)) {
     const outcome = registerObservedEvent(deps.ledgerFile, spooled.raw, {
       transportId: spooled.transportId,
@@ -1211,29 +1225,48 @@ async function main(): Promise<void> {
     inbox: systemEventInbox,
     systemEventAgentId: OKX_SYSTEM_EVENT_AGENT_ID,
     pollMs: SYSTEM_EVENT_POLL_MS,
+    suspended: systemEventsSuspended(),
   });
 
-  await recoverPendingEvents(systemEventDeps);
+  /**
+   * Suspension is announced once, here, with the pending count so an operator
+   * can see exactly how much work is being held. The count is read through the
+   * same validated `pending()` accessor used for recovery and is READ-ONLY —
+   * it neither claims nor mutates anything.
+   *
+   * Everything below this block — XMTP, the gate check, the open-job sweep and
+   * the heartbeat — continues to run, so the agent stays provably online while
+   * suspended rather than dropping off the network.
+   */
+  if (systemEventsSuspended()) {
+    log("system_events_suspended", {
+      phase: "startup",
+      pendingPreserved: systemEventDeps.pending().length,
+      note: "REPODIET_SUSPEND_SYSTEM_EVENTS is set; startup recovery skipped and the poll loop will not be started. Heartbeat, XMTP and the A2A daemon continue normally.",
+    });
+  } else {
+    await recoverPendingEvents(systemEventDeps);
 
-  systemEventTimer = setInterval(() => {
-    if (shuttingDown) return;
-    if (systemEventCycleInFlight) {
-      log("system_event_cycle_skipped_still_running", {
-        note: "previous system-event cycle has not finished; not stacking another",
-      });
-      return;
-    }
-    systemEventCycleInFlight = true;
-    void runSystemEventCycle(systemEventDeps, systemEventInbox)
-      .catch((err) => {
-        log("system_event_cycle_error", {
-          message: err instanceof Error ? err.message : "unknown_error",
+    systemEventTimer = setInterval(() => {
+      if (shuttingDown) return;
+      if (systemEventCycleInFlight) {
+        log("system_event_cycle_skipped_still_running", {
+          note: "previous system-event cycle has not finished; not stacking another",
         });
-      })
-      .finally(() => {
-        systemEventCycleInFlight = false;
-      });
-  }, SYSTEM_EVENT_POLL_MS);
+        return;
+      }
+      systemEventCycleInFlight = true;
+      void runSystemEventCycle(systemEventDeps, systemEventInbox)
+        .catch((err) => {
+          log("system_event_cycle_error", {
+            message: err instanceof Error ? err.message : "unknown_error",
+          });
+        })
+        .finally(() => {
+          systemEventCycleInFlight = false;
+        });
+    }, SYSTEM_EVENT_POLL_MS);
+  }
 
   // Open-job sweep. Runs on its own slower timer than the event cycle: it is
   // a safety net for events that never arrived, not the primary path, and it

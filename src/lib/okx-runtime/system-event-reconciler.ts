@@ -23,6 +23,7 @@ import {
   type ExecuteResult,
 } from "./provider-event-executor";
 import { classifyInbound, type InboundEnvelope } from "./system-event-route";
+import { systemEventsSuspended } from "./system-event-suspension";
 
 export interface ReconcilerDeps extends ExecuteDeps {
   /** Unfinished events from the durable ledger, oldest first. */
@@ -39,6 +40,19 @@ export interface ReconcilerDeps extends ExecuteDeps {
  * than merely defensibly correct.
  */
 export async function recoverPendingEvents(deps: ReconcilerDeps): Promise<ExecuteResult[]> {
+  /**
+   * Checked BEFORE `deps.pending()` is even read: suspension must not touch
+   * the ledger at all, so a suspended runtime cannot alter retry metadata as a
+   * side effect of merely looking.
+   */
+  if (systemEventsSuspended()) {
+    deps.log("system_events_suspended", {
+      phase: "startup_recovery",
+      note: "REPODIET_SUSPEND_SYSTEM_EVENTS is set; pending events left untouched and unacknowledged",
+    });
+    return [];
+  }
+
   const pending = deps.pending();
   if (pending.length === 0) {
     deps.log("system_event_recovery_clean", { pending: 0 });
@@ -83,6 +97,24 @@ export async function handleSystemEvent(
   envelope: InboundEnvelope,
   deps: ReconcilerDeps
 ): Promise<ExecuteResult | undefined> {
+  /**
+   * Second, independent guard. `runSystemEventCycle` already refuses to run
+   * while suspended, but this is the single choke point every execution path
+   * passes through, so checking here means no future caller can reach
+   * `executeSystemEvent` by adding a path that forgets the outer check.
+   *
+   * Returns undefined — the same "not handled" signal used for a declined
+   * classification — so the caller neither acknowledges nor retires anything.
+   */
+  if (systemEventsSuspended()) {
+    deps.log("system_events_suspended", {
+      phase: "handle_event",
+      eventId,
+      note: "REPODIET_SUSPEND_SYSTEM_EVENTS is set; event left pending and unacknowledged",
+    });
+    return undefined;
+  }
+
   const classification = classifyInbound(envelope);
   if (classification.kind !== "okx_system_event") {
     deps.log("system_event_declined", {

@@ -184,6 +184,25 @@ RUN set -eu; \
     node_modules/.bin/tsx scripts/verify-openclaw-plugins-load.ts; \
     rm -rf "$HOME"
 
+# Literal Git SHA of the commit this image was built from.
+#
+# Supplied by the deploy (`--build-arg GIT_COMMIT=$(git rev-parse HEAD)`) and
+# recorded two ways on purpose: the file survives an ssh session with no shell
+# env, and the env var is readable by the runtime itself. Without it a deployed
+# image can only be identified by fingerprinting source files, which proves
+# "some commit containing symbol X" rather than "exactly this SHA" — a real gap
+# hit on 2026-08-06 when verifying what was actually running in production.
+#
+# Defaults to "unknown" rather than failing the build, so an image built
+# outside the deploy path stays usable and is HONESTLY labelled as
+# unverifiable instead of silently inheriting a stale SHA.
+#
+# Placed last so a new SHA invalidates only this tiny layer, never the
+# dependency, plugin-extraction or verification layers above.
+ARG GIT_COMMIT=unknown
+ENV REPODIET_BUILD_COMMIT=${GIT_COMMIT}
+RUN printf '%s' "${GIT_COMMIT}" > /app/BUILD_COMMIT
+
 # Proves the process is alive AND holding its instance lock — not merely running.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "const fs=require('fs');const p=process.env.REPODIET_OKX_RUNTIME_ROOT+'/seller-9636/runtime.pid';if(!fs.existsSync(p))process.exit(1);const pid=Number(fs.readFileSync(p,'utf8').trim());try{process.kill(pid,0)}catch{process.exit(1)}"
