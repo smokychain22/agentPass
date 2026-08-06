@@ -37,15 +37,100 @@ function checkStatusFromScript(
   return "not_run";
 }
 
+/** One phase's record of a single named check, as stored on the verification result. */
+interface PhaseCheck {
+  name: string;
+  status: string;
+  exitCode?: number | null;
+  stdoutSummary?: string;
+  stderrSummary?: string;
+}
+
+/**
+ * Stable identity for a check FAILURE, used only to decide whether the patched
+ * tree failed in the *same* way the baseline already did.
+ *
+ * Deliberately includes the exit code and the normalized output summary, not
+ * just the status: two failures that are both merely "failed" can be entirely
+ * different breakages, and treating those as equivalent would let a real
+ * regression ride in behind a pre-existing one.
+ *
+ * Normalization strips ANSI codes, absolute workspace paths, digit runs, and
+ * collapses whitespace, so the same underlying failure fingerprints identically
+ * across two temp directories and two runs with different timings.
+ */
+function fingerprintCheckFailure(check: PhaseCheck): string {
+  const raw = `${check.stderrSummary ?? ""}\n${check.stdoutSummary ?? ""}`;
+  const normalized = raw
+    .replace(/\[[0-9;]*m/g, "")
+    .replace(/[A-Za-z]:[\\/][^\s'"]*/g, "<path>")
+    .replace(/\/(?:[\w.-]+\/)+[\w.-]+/g, "<path>")
+    .replace(/\d+/g, "<n>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+  return `${check.name}:${check.exitCode ?? "null"}:${normalized}`;
+}
+
+/**
+ * Resolves the required `unit_tests` gate.
+ *
+ * `runRepositoryVerification` already compares baseline against patched and
+ * only requires typecheck/build to pass, so a repository whose suite was
+ * ALREADY red before cleanup can legitimately reach `status: "verified"` with
+ * `verifiedChanges > 0`. This gate used to read the patched `test` result on
+ * its own and fail unconditionally, which refused a safe, approved deletion
+ * for a failure the patch did not introduce — observed on funded job 0x22a2…,
+ * where `createCleanupPullRequest` then threw NO_SAFE_CANDIDATES.
+ *
+ * Fail-closed: a pre-existing failure is excused ONLY when the baseline failed
+ * with the same fingerprint. A patched-only failure, or a patched failure that
+ * differs from the baseline's, still fails the gate and still blocks the PR.
+ */
+export function resolveUnitTestGate(
+  checkList: Array<{ name: string; status: string }>,
+  repoVerified: boolean,
+  baselineChecks: PhaseCheck[] | undefined,
+  patchedChecks: PhaseCheck[] | undefined
+): { status: VerificationGateStatus; detail?: string } {
+  const status = checkStatusFromScript(checkList, "test", repoVerified);
+  if (status !== "failed") return { status };
+
+  const baselineTest = baselineChecks?.find((c) => c.name === "test");
+  const patchedTest = patchedChecks?.find((c) => c.name === "test");
+
+  // Without both phases recorded we cannot prove the failure pre-existed.
+  if (!baselineTest || !patchedTest) return { status: "failed" };
+  if (baselineTest.status !== "failed" || patchedTest.status !== "failed") {
+    return { status: "failed" };
+  }
+
+  const baselineFingerprint = fingerprintCheckFailure(baselineTest);
+  const patchedFingerprint = fingerprintCheckFailure(patchedTest);
+  if (baselineFingerprint !== patchedFingerprint) {
+    return {
+      status: "failed",
+      detail:
+        "Patched test failure differs from the baseline failure — treated as a new regression.",
+    };
+  }
+
+  return {
+    status: "skipped",
+    detail:
+      "Pre-existing test failure: the baseline tree already failed `test` identically before cleanup, and the patch did not change it.",
+  };
+}
+
 export function buildVerificationGateReport(
   patchKit: PatchKitPayload,
   findings?: FindingsPayload
 ): VerificationGateReport {
   const baseline = patchKit.repositoryVerification?.baseline as
-    | { checks?: Array<{ name: string; status: string }> }
+    | { checks?: PhaseCheck[] }
     | undefined;
   const patched = patchKit.repositoryVerification?.patched as
-    | { checks?: Array<{ name: string; status: string }> }
+    | { checks?: PhaseCheck[] }
     | undefined;
   // Prefer patched-phase statuses; keep baseline when a check is absent from patched.
   const uniqueChecks = new Map<string, { name: string; status: string }>();
@@ -116,7 +201,7 @@ export function buildVerificationGateReport(
       id: "unit_tests",
       label: "Run unit tests",
       requiredForSafePr: true,
-      status: checkStatusFromScript(checkList, "test", repoVerified),
+      ...resolveUnitTestGate(checkList, repoVerified, baseline?.checks, patched?.checks),
     },
     {
       id: "production_build",
