@@ -231,6 +231,60 @@ async function run() {
     assert.deepEqual(deps.ledgerFile.get("todo_1")?.envelope, ENVELOPE);
   });
 
+  await test("the poll cycle drains nothing and claims nothing while suspended", async () => {
+    const { data, inbox } = workspace();
+    const { calls, runner } = recordingRunner();
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeTestSeams());
+
+    spoolSystemEvent(inbox, ENVELOPE, "todo_1");
+    const spooledBefore = fs.readdirSync(inbox).filter((f) => f.endsWith(".json"));
+    assert.equal(spooledBefore.length, 1, "precondition: one spooled event");
+
+    const previous = process.env.REPODIET_SUSPEND_SYSTEM_EVENTS;
+    process.env.REPODIET_SUSPEND_SYSTEM_EVENTS = "1";
+    try {
+      await runSystemEventCycle(deps, inbox);
+    } finally {
+      if (previous === undefined) delete process.env.REPODIET_SUSPEND_SYSTEM_EVENTS;
+      else process.env.REPODIET_SUSPEND_SYSTEM_EVENTS = previous;
+    }
+
+    // No CLI touched: nothing was fetched, delivered, acknowledged or settled.
+    assert.equal(calls.length, 0, "no external command may run while suspended");
+    // The spool file is still there, unretired.
+    assert.deepEqual(
+      fs.readdirSync(inbox).filter((f) => f.endsWith(".json")),
+      spooledBefore,
+      "the spooled event must be preserved exactly"
+    );
+    // And no ledger record was created for it.
+    assert.equal(deps.ledgerFile.get("todo_1"), undefined, "no ledger record may be written");
+  });
+
+  await test("the same event processes normally once suspension is lifted", async () => {
+    const { data, inbox } = workspace();
+    const { calls, runner } = recordingRunner();
+    const deps = buildSystemEventDeps(data, TEST_ENV, runner, fakeTestSeams());
+
+    spoolSystemEvent(inbox, ENVELOPE, "todo_1");
+
+    const previous = process.env.REPODIET_SUSPEND_SYSTEM_EVENTS;
+    process.env.REPODIET_SUSPEND_SYSTEM_EVENTS = "1";
+    try {
+      await runSystemEventCycle(deps, inbox);
+    } finally {
+      if (previous === undefined) delete process.env.REPODIET_SUSPEND_SYSTEM_EVENTS;
+      else process.env.REPODIET_SUSPEND_SYSTEM_EVENTS = previous;
+    }
+    assert.equal(calls.length, 0);
+
+    // Suspension held the work rather than discarding it: the identical event
+    // is still available and completes normally.
+    await runSystemEventCycle(deps, inbox);
+    assert.equal(deps.ledgerFile.get("todo_1")?.state, "acknowledged");
+    assert.equal(ran(calls, "onchainos", "deliver").length, 1);
+  });
+
   await test("the mandatory protocol path never calls a model provider — a Gemini outage cannot stop event acknowledgement", async () => {
     const { data, inbox } = workspace();
     const { calls, runner } = recordingRunner();

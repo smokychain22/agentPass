@@ -63,6 +63,27 @@ export function isNpmLogNoiseLine(line: string): boolean {
   if (/^[0-9a-f]{2}(\s+[0-9a-f]{2}){12,}/i.test(trimmed)) return true;
   if (trimmed.startsWith("npm error A complete log of this run can be found in:")) return true;
   if (trimmed.startsWith("npm notice")) return true;
+  /**
+   * `npm warn` is NOT a failure. npm emits it on completely healthy installs
+   * (deprecated transitive deps, config defaults), so it must never be
+   * eligible to become a failure reason.
+   *
+   * Observed in production on the Fly runtime: a dependency install failed for
+   * an unrelated reason, `formatInstallFailureReason` found no `npm error`
+   * line and no parseable debug log, and its last-resort fallback returned the
+   * final lines of output — which were warnings. The verification check then
+   * reported `npm warn config … npm warn deprecated left-pad@1.3.0` as the
+   * cause, which propagated all the way into the delivery gate's
+   * NO_SAFE_CANDIDATES message and masked the real failure.
+   *
+   * A warn line carrying a genuinely fatal marker (ENOSPC / EROFS / no space
+   * left) is deliberately NOT suppressed: npm normally reports those at error
+   * level, but if it ever reports one at warn level it must still be able to
+   * reach the error matchers rather than be discarded as noise.
+   */
+  if (/^npm\s+warn\b/i.test(trimmed) && !/\b(ENOSPC|EROFS)\b|no space left/i.test(trimmed)) {
+    return true;
+  }
   return false;
 }
 
@@ -135,12 +156,49 @@ export function formatInstallFailureReason(stderr: string, stdout: string): stri
     return logErrors.slice(0, 4).join(" ");
   }
 
+  /**
+   * Last resort. Only lines that still look diagnostic survive to here —
+   * numbered debug lines and (as of the production incident above) npm warn
+   * chatter are already gone. If nothing diagnostic remains, say so plainly
+   * rather than echoing whatever text happened to be printed last: a reason
+   * assembled from benign output reads as a root cause and sends the reader
+   * to the wrong place.
+   */
   const fallback = streamLines.filter((line) => !/^\d+\s/.test(line)).slice(-3);
   if (fallback.length > 0) {
     return fallback.join(" ");
   }
 
   return "Dependency install failed before repository checks could run.";
+}
+
+/**
+ * Describes HOW a process died when the output says nothing useful.
+ *
+ * A dependency install killed by the 2 GB Fly machine's OOM killer, or cut off
+ * by the install timeout, typically produces no `npm error` line at all — the
+ * process never got to write one. Without this the failure reason falls
+ * through to generic text and the operator cannot tell an OOM from a network
+ * stall from a genuine dependency conflict.
+ */
+export function describeProcessTermination(result: {
+  exitCode?: number | null;
+  signal?: string | null;
+  timedOut?: boolean;
+}): string | null {
+  if (result.timedOut) {
+    return "Dependency install exceeded its time limit and was terminated (no npm error was emitted).";
+  }
+  if (result.signal === "SIGKILL" || result.exitCode === 137) {
+    return "Dependency install was killed (SIGKILL/exit 137) — this is characteristic of the container running out of memory.";
+  }
+  if (result.signal === "SIGTERM" || result.exitCode === 143) {
+    return "Dependency install was terminated (SIGTERM/exit 143) before it completed.";
+  }
+  if (result.signal) {
+    return `Dependency install terminated by signal ${result.signal}.`;
+  }
+  return null;
 }
 
 /** User-facing install failure — never expose npm silly/http debug lines. */
@@ -576,7 +634,13 @@ export async function ensureWorkspaceDependenciesWithCache(
       };
     }
 
-    lastReason = summarize(stderr || stdout || "install failed");
+    lastReason = summarize(
+      describeProcessTermination(result) ||
+        formatInstallFailureReason(stderr, stdout) ||
+        stderr ||
+        stdout ||
+        "install failed"
+    );
     lastExitCode = result.exitCode ?? null;
     lastStdout = stdout;
     lastStderr = stderr;
@@ -721,8 +785,14 @@ export async function ensureVerificationDependencies(
     }
 
     const logReason = await readLatestNpmLog(cacheDir);
+    /**
+     * Termination cause first: an OOM kill or timeout explains the failure
+     * better than whatever npm managed to flush before it died, and both
+     * commonly leave no npm error line at all.
+     */
     lastReason = humanizeInstallFailure(
-      logReason ||
+      describeProcessTermination(result) ||
+        logReason ||
         formatInstallFailureReason(stderr, stdout) ||
         summarize(stderr || stdout || "install failed")
     );

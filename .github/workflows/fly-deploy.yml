@@ -62,7 +62,19 @@ jobs:
           # which this task explicitly forbids. Verify this flag against
           # the flyctl version pinned by setup-flyctl before the first real
           # run (`flyctl deploy --help`) — not executed by this PR.
-          flyctl deploy --remote-only --ha=false --app repodiet-agent-9636
+          #
+          # --build-arg GIT_COMMIT: bakes the literal deployed SHA into
+          # /app/BUILD_COMMIT and REPODIET_BUILD_COMMIT (see
+          # Dockerfile.seller). Without it the ARG defaults to "unknown" and
+          # a deployed image can only be identified by fingerprinting source
+          # files, which proves "some commit containing symbol X" rather than
+          # "exactly this SHA". The checkout above pins ref: main, so
+          # GITHUB_SHA is not necessarily the tree being built — resolve the
+          # SHA from the checked-out worktree instead.
+          GIT_COMMIT="$(git rev-parse HEAD)"
+          echo "Deploying commit ${GIT_COMMIT}"
+          flyctl deploy --remote-only --ha=false --app repodiet-agent-9636 \
+            --build-arg "GIT_COMMIT=${GIT_COMMIT}"
           # Never echo or log FLY_API_TOKEN, request headers, or flyctl's
           # own auth output above this line.
 
