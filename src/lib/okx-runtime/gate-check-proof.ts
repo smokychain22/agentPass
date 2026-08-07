@@ -116,6 +116,40 @@ const ADVISORY_DOCTOR_CHECKS: ReadonlyMap<string, string> = new Map([
   ],
 ]);
 
+/**
+ * Whether a CONFIRMED gate failure is worth re-examining with doctor evidence.
+ *
+ * === Incident #24: the guard never matched the string production emits ===
+ *
+ * `classifyGateCheckOutcome` builds its reason by joining the failing parts
+ * with a COMMA — the real production value is:
+ *
+ *   gate_not_ready:ready,communication
+ *
+ * because `ready` is derived from `communication` and so always accompanies it.
+ * The original guard was `/(^|:)communication(,|:|$)/`, which requires a colon
+ * or string-start immediately before the word. In the real string
+ * `communication` is preceded by a COMMA, so the guard never matched and the
+ * Incident #17 doctor-evidence path never ran even once in production.
+ *
+ * It went unnoticed for as long as it did because the path is only needed when
+ * `cli_version` fails, and that only began when OKX published 0.2.1 — until
+ * then the gate passed outright and the branch was never reached.
+ *
+ * Matching on the joined token list rather than a hand-written regex removes
+ * the class of bug: the reason is parsed the same way it was built.
+ */
+export function gateFailureMentionsCommunication(reason: string): boolean {
+  const [, list = ""] = reason.split("gate_not_ready:");
+  // Only the FIRST segment is the failing-part list; anything after a further
+  // colon is the doctor detail appended by the blocking branch.
+  return list
+    .split(":")[0]
+    .split(",")
+    .map((part) => part.trim())
+    .includes("communication");
+}
+
 export interface DoctorCheck {
   id?: unknown;
   status?: unknown;

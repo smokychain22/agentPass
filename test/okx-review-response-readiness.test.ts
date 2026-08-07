@@ -41,6 +41,7 @@ import {
   classifyDoctorChecks,
   classifyGateCheckOutcome,
   DEFAULT_GATE_CHECK_LIMITS,
+  gateFailureMentionsCommunication,
   GateProofState,
 } from "../src/lib/okx-runtime/gate-check-proof";
 import {
@@ -438,6 +439,71 @@ async function main(): Promise<void> {
     assert.deepEqual(
       ledger.deferredForRecovery().map((r) => r.eventId),
       ["evt-through-store"]
+    );
+  });
+
+  // ------------------------------------------------------- Incident #24 ----
+  console.log(" the doctor-evidence guard must match what production actually emits");
+
+  /**
+   * The Incident #17 doctor-evidence path never ran ONCE in production.
+   *
+   * `classifyGateCheckOutcome` joins the failing parts with a COMMA, so the
+   * real reason is `gate_not_ready:ready,communication` — `ready` is derived
+   * from `communication` and always accompanies it. The original guard,
+   * `/(^|:)communication(,|:|$)/`, required a colon or string-start before the
+   * word, and in the real string it is preceded by a COMMA.
+   *
+   * It stayed hidden because the path is only needed when `cli_version` fails,
+   * which only began when OKX published 0.2.1. Until then the gate passed
+   * outright and the branch was never reached — on 2026-08-07 it then withheld
+   * the heartbeat for 27 consecutive cycles with every communication-bearing
+   * check passing.
+   */
+  await test("the guard matches the EXACT reason string production emits", () => {
+    assert.equal(
+      gateFailureMentionsCommunication("gate_not_ready:ready,communication"),
+      true,
+      "this is the literal value observed in production logs"
+    );
+    assert.equal(gateFailureMentionsCommunication("gate_not_ready:communication"), true);
+    assert.equal(
+      gateFailureMentionsCommunication("gate_not_ready:ready,communication,wallet"),
+      true
+    );
+  });
+
+  await test("the guard does NOT fire for failures that are not about communication", () => {
+    assert.equal(gateFailureMentionsCommunication("gate_not_ready:wallet"), false);
+    assert.equal(gateFailureMentionsCommunication("gate_not_ready:ready,identity"), false);
+    assert.equal(gateFailureMentionsCommunication("identity_mismatch:5295"), false);
+    // The blocking branch appends doctor detail after a further colon; that
+    // detail must not be mistaken for the failing-part list.
+    assert.equal(
+      gateFailureMentionsCommunication("gate_not_ready:wallet:daemon_running"),
+      false
+    );
+  });
+
+  await test("end to end: the exact production reason plus 0.2.1 staleness now yields a PASS", () => {
+    // Reproduces 2026-08-07 exactly: OKX published 0.2.1, the box was idle, the
+    // gate-check completed in 14s and said not-ready on communication alone.
+    const reason = "gate_not_ready:ready,communication";
+    assert.equal(gateFailureMentionsCommunication(reason), true, "the guard must let this through");
+    const outcome = classifyGateCheckOutcome({
+      stdout: gateCheckNotReadyStdout(),
+      durationMs: 14_251,
+      expectedAgentId: AGENT,
+      timeoutMs: DEFAULT_GATE_CHECK_LIMITS.timeoutMs,
+      doctorStdout: doctorStdout([
+        { id: "cli_version", status: "fail" },
+        { id: "autostart", status: "fail" },
+      ]),
+    });
+    assert.equal(outcome.kind, "passed");
+    assert.ok(
+      outcome.kind === "passed" && outcome.advisories?.length === 2,
+      "both advisories must be named rather than hidden"
     );
   });
 
