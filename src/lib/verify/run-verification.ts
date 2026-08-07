@@ -10,9 +10,16 @@ import { extractApplyablePatch, patchHasDeleteOperations } from "@/lib/patch-kit
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 
-// Incident #26 — see execution/workspace-install.ts.
-const COMMAND_TIMEOUT_MS = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS || 300_000);
-const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600_000);
+/** Incident #26/#27 — see execution/workspace-install.ts. */
+export const PRODUCTION_VERIFY_COMMAND_TIMEOUT_MS = 300_000;
+function installTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : 600_000;
+}
+function commandTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : PRODUCTION_VERIFY_COMMAND_TIMEOUT_MS;
+}
 /**
  * Incident #26. The whole verification pass is a baseline install + checks and
  * a patched install + checks. With the per-step bounds raised to what this
@@ -20,7 +27,11 @@ const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600
  * own steps could finish. Still bounded, and still inside the 900s heavy-job
  * ceiling and 20-minute per-event deadline above it.
  */
-const TOTAL_TIMEOUT_MS = Number(process.env.REPODIET_VERIFY_TOTAL_TIMEOUT_MS || 1_500_000);
+export const PRODUCTION_VERIFY_TOTAL_TIMEOUT_MS = 1_500_000;
+function totalTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_VERIFY_TOTAL_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : PRODUCTION_VERIFY_TOTAL_TIMEOUT_MS;
+}
 
 const ALLOWED_SCRIPT_NAMES = ["build", "lint", "test", "typecheck", "check", "check:types"];
 
@@ -76,7 +87,7 @@ async function runCheck(
   started: number
 ): Promise<VerifyCheckResult> {
   const t0 = Date.now();
-  if (Date.now() - started > TOTAL_TIMEOUT_MS) {
+  if (Date.now() - started > totalTimeoutMs()) {
     return {
       name,
       command: command.join(" "),
@@ -93,7 +104,7 @@ async function runCheck(
   // cannot prove it is online for the duration of the run.
   const child = execa(command[0], command.slice(1), {
     cwd: rootDir,
-    timeout: COMMAND_TIMEOUT_MS,
+    timeout: commandTimeoutMs(),
     reject: false,
     env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "test" },
   });
@@ -149,7 +160,7 @@ export async function runVerification(
       const applyCheck = await execa("git", ["apply", "--check", patchFile], {
         cwd: workspace.rootDir,
         reject: false,
-        timeout: COMMAND_TIMEOUT_MS,
+        timeout: commandTimeoutMs(),
       });
       checks.push({
         name: "git apply --check",
@@ -166,7 +177,7 @@ export async function runVerification(
         const apply = await execa("git", ["apply", patchFile], {
           cwd: workspace.rootDir,
           reject: false,
-          timeout: COMMAND_TIMEOUT_MS,
+          timeout: commandTimeoutMs(),
         });
         checks.push({
           name: "git apply",
@@ -204,7 +215,7 @@ export async function runVerification(
       const installCmd = installCommand(pm);
       const install = await execa(installCmd[0], installCmd.slice(1), {
         cwd: workspace.rootDir,
-        timeout: INSTALL_TIMEOUT_MS,
+        timeout: installTimeoutMs(),
         reject: false,
         env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
       });

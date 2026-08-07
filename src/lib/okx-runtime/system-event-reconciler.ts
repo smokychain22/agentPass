@@ -52,12 +52,39 @@ export interface ReconcilerDeps extends ExecuteDeps {
  * timed-out event stays unacknowledged, unaltered and replayable — exactly the
  * state a crash would leave it in.
  */
-export const EVENT_EXECUTION_TIMEOUT_MS = Number(
-  // Incident #26: kept above the heavy-job ceiling (1800s) so this stays a
-  // backstop for hangs OUTSIDE that limiter rather than a competing deadline
-  // that cuts a legitimately-running cleanup short.
-  process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS || 2_400_000
-);
+/**
+ * The PRODUCTION default. Kept above the heavy-job ceiling (1800s) so this
+ * stays a backstop for hangs OUTSIDE that limiter rather than a competing
+ * deadline that cuts a legitimately-running cleanup short.
+ */
+export const PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS = 2_400_000;
+
+/**
+ * === Incident #27: a test must never wait a production deadline ===
+ *
+ * Proving "an event that never settles is bounded" is a millisecond-scale
+ * property, but it was previously proved by letting the real deadline elapse.
+ * At 2,400,000 ms that is a forty-minute test. CI's `typecheck-test-build` ran
+ * 45 minutes and was CANCELLED — and a cancelled check is not a green one.
+ *
+ * The deadline is therefore INJECTABLE. Production passes nothing and gets the
+ * constant above; tests pass a few milliseconds. Injection is used rather than
+ * an environment variable because an env read at module-load time is decided by
+ * import order and module caching, which is precisely the kind of brittleness
+ * that makes a test pass locally and hang in CI.
+ */
+export interface ReconcilerOptions {
+  /** Overrides the per-event execution deadline. Tests only. */
+  eventTimeoutMs?: number;
+}
+
+function resolveEventTimeoutMs(options?: ReconcilerOptions): number {
+  if (options?.eventTimeoutMs !== undefined) return options.eventTimeoutMs;
+  const override = Number(process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0
+    ? override
+    : PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS;
+}
 
 class EventDeadlineExceeded extends Error {
   constructor(readonly eventId: string, readonly timeoutMs: number) {
@@ -70,8 +97,10 @@ class EventDeadlineExceeded extends Error {
 async function executeWithDeadline(
   eventId: string,
   envelope: InboundEnvelope,
-  deps: ReconcilerDeps
+  deps: ReconcilerDeps,
+  options?: ReconcilerOptions
 ): Promise<ExecuteResult> {
+  const timeoutMs = resolveEventTimeoutMs(options);
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -80,8 +109,8 @@ async function executeWithDeadline(
         // Not unref'd: a bound that the event loop may skip is not a bound.
         // Always cleared below, so it cannot outlive the event it guards.
         timer = setTimeout(
-          () => reject(new EventDeadlineExceeded(eventId, EVENT_EXECUTION_TIMEOUT_MS)),
-          EVENT_EXECUTION_TIMEOUT_MS
+          () => reject(new EventDeadlineExceeded(eventId, timeoutMs)),
+          timeoutMs
         );
       }),
     ]);
@@ -98,7 +127,10 @@ async function executeWithDeadline(
  * hold, but serialising here keeps the recovery path obviously correct rather
  * than merely defensibly correct.
  */
-export async function recoverPendingEvents(deps: ReconcilerDeps): Promise<ExecuteResult[]> {
+export async function recoverPendingEvents(
+  deps: ReconcilerDeps,
+  options?: ReconcilerOptions
+): Promise<ExecuteResult[]> {
   /**
    * Checked BEFORE `deps.pending()` is even read: suspension must not touch
    * the ledger at all, so a suspended runtime cannot alter retry metadata as a
@@ -123,7 +155,7 @@ export async function recoverPendingEvents(deps: ReconcilerDeps): Promise<Execut
 
   for (const { eventId, envelope } of pending) {
     try {
-      const result = await executeWithDeadline(eventId, envelope, deps);
+      const result = await executeWithDeadline(eventId, envelope, deps, options);
       results.push(result);
       deps.log("system_event_recovered", {
         eventId,
@@ -154,7 +186,8 @@ export async function recoverPendingEvents(deps: ReconcilerDeps): Promise<Execut
 export async function handleSystemEvent(
   eventId: string,
   envelope: InboundEnvelope,
-  deps: ReconcilerDeps
+  deps: ReconcilerDeps,
+  options?: ReconcilerOptions
 ): Promise<ExecuteResult | undefined> {
   /**
    * Second, independent guard. `runSystemEventCycle` already refuses to run
@@ -184,7 +217,7 @@ export async function handleSystemEvent(
     return undefined;
   }
 
-  const result = await executeWithDeadline(eventId, envelope, deps);
+  const result = await executeWithDeadline(eventId, envelope, deps, options);
   deps.log("system_event_processed", {
     eventId,
     jobId: classification.jobId,

@@ -5,6 +5,7 @@ import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 import {
+  PRODUCTION_INSTALL_TIMEOUT_MS,
   deprioritize,
   ensureWorkspaceDependencies,
   nodeModulesPresent,
@@ -20,8 +21,16 @@ export type { WorkspaceInstallResult } from "@/lib/execution/workspace-install";
  * even before those trade-offs. Raised to a bound the command can actually
  * meet; the heavy-job ceiling and per-event deadline still bound it above.
  */
-const COMMAND_TIMEOUT_MS = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS || 300_000);
-const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600_000);
+/** Incident #27: production default as a constant; resolved per call so tests can inject. */
+export const PRODUCTION_VERIFY_COMMAND_TIMEOUT_MS = 300_000;
+function installTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : PRODUCTION_INSTALL_TIMEOUT_MS;
+}
+function commandTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : PRODUCTION_VERIFY_COMMAND_TIMEOUT_MS;
+}
 
 export type ComparisonOutcome =
   | "passed_before_and_after"
@@ -87,7 +96,7 @@ async function runNamedCheck(
   name: string,
   command: string[],
   phase: "baseline" | "after",
-  timeoutMs = COMMAND_TIMEOUT_MS
+  timeoutMs = commandTimeoutMs()
 ): Promise<BaselineCheck> {
   const t0 = Date.now();
   try {
@@ -211,7 +220,7 @@ async function runPackageIntegrity(
   }
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
-  return runNamedCheck(rootDir, "package integrity", installCommand(pm), phase, INSTALL_TIMEOUT_MS);
+  return runNamedCheck(rootDir, "package integrity", installCommand(pm), phase, installTimeoutMs());
 }
 
 export interface RunFullBaselineChecksOptions {
