@@ -440,6 +440,83 @@ async function main(): Promise<void> {
     );
   });
 
+  // ------------------------------------------------------- Incident #21 ----
+  console.log(" quarantine is per-JOB, not merely per-event");
+
+  /**
+   * Observed live on 2026-08-07: the funded job owned fourteen live events,
+   * each with its own staggered backoff, so something was always due and heavy
+   * repository work ran back-to-back. Load stayed between 7 and 15, the 150s
+   * gate-check timed out repeatedly, and the agent withheld its heartbeat for
+   * 20 consecutive cycles with `daemonOk:true` and `xmtpOk:true`. Nothing
+   * crashed — the box never got quiet enough to re-prove itself.
+   */
+  await test("deferring ONE event quarantines its whole job — a job cannot round-robin through its events", () => {
+    const { ledger } = freshLedger();
+    // Three live events for the same failing job; only one is deferred.
+    ledger.put("evt-a", { state: "retryable_failure", jobId: FUNDED_JOB, semanticKey: "a", attempts: 3 });
+    ledger.put("evt-b", { state: "instruction_fetched", jobId: FUNDED_JOB, semanticKey: "b", attempts: 2 });
+    ledger.put("evt-c", {
+      state: "retryable_failure",
+      jobId: FUNDED_JOB,
+      semanticKey: "c",
+      attempts: 9,
+      retryAfterIso: new Date(Date.now() + 30 * 60_000).toISOString(),
+    });
+
+    assert.deepEqual(
+      ledger.pendingForRecovery().map((r) => r.eventId),
+      [],
+      "the job's other events must not keep the machine busy while one is quarantined"
+    );
+    assert.equal(
+      ledger.deferredForRecovery().length,
+      3,
+      "all three must be reported as deferred, so every live record is accounted for"
+    );
+  });
+
+  await test("a DIFFERENT job is completely unaffected by another job's quarantine", () => {
+    const { ledger } = freshLedger();
+    ledger.put("evt-stuck", {
+      state: "retryable_failure",
+      jobId: FUNDED_JOB,
+      semanticKey: "stuck",
+      attempts: 13,
+      retryAfterIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+    });
+    ledger.put("evt-reviewer", {
+      state: "discovered",
+      jobId: "0xreviewer-new-job",
+      semanticKey: "rev",
+      attempts: 0,
+    });
+
+    assert.deepEqual(
+      ledger.pendingForRecovery().map((r) => r.eventId),
+      ["evt-reviewer"],
+      "a reviewer's new job must never be held back by the stuck one"
+    );
+  });
+
+  await test("the job's events return together once the longest deadline passes", () => {
+    const { ledger } = freshLedger();
+    const dueAt = Date.now() + 10 * 60_000;
+    ledger.put("evt-x", { state: "retryable_failure", jobId: FUNDED_JOB, semanticKey: "x", attempts: 1 });
+    ledger.put("evt-y", {
+      state: "retryable_failure",
+      jobId: FUNDED_JOB,
+      semanticKey: "y",
+      attempts: 8,
+      retryAfterIso: new Date(dueAt).toISOString(),
+    });
+    assert.deepEqual(ledger.pendingForRecovery().map((r) => r.eventId), []);
+    assert.deepEqual(
+      ledger.pendingForRecovery(dueAt + 1).map((r) => r.eventId).sort(),
+      ["evt-x", "evt-y"]
+    );
+  });
+
   // ------------------------------------------------------- Incident #20 ----
   console.log(" a proof is never allowed to expire without a check being attempted");
 
