@@ -1,15 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execa } from "execa";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 import {
   PRODUCTION_INSTALL_TIMEOUT_MS,
-  deprioritize,
   ensureWorkspaceDependencies,
   nodeModulesPresent,
 } from "@/lib/execution/workspace-install";
+import { runBoundedProcessGroup } from "@/lib/execution/bounded-process-group";
 
 export { ensureWorkspaceDependencies } from "@/lib/execution/workspace-install";
 export type { WorkspaceInstallResult } from "@/lib/execution/workspace-install";
@@ -100,18 +99,24 @@ async function runNamedCheck(
 ): Promise<BaselineCheck> {
   const t0 = Date.now();
   try {
-    // Incident #22: verification checks — `next build` above all — are the
-    // heaviest thing this runtime spawns. On a single shared vCPU they must
-    // never outrank the agent's own liveness calls, or the agent cannot prove
-    // it is online for the whole run.
-    const child = execa(command[0], command.slice(1), {
+    /**
+     * Incident #22: verification checks — `next build` above all — are the
+     * heaviest thing this runtime spawns. On a single shared vCPU they must
+     * never outrank the agent's own liveness calls, or the agent cannot prove
+     * it is online for the whole run.
+     *
+     * Bounded by process GROUP (not `execa`'s own `timeout`, which signals
+     * only the direct child and previously let a timed-out `next build` leave
+     * jest-worker/esbuild grandchildren behind), and paused whenever the ASP's
+     * liveness proof needs the machine to itself — see
+     * bounded-process-group.ts for why `nice 19` alone was not enough.
+     */
+    const result = await runBoundedProcessGroup(command, {
       cwd: rootDir,
-      timeout: timeoutMs,
-      reject: false,
+      timeoutMs,
       env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "test" },
+      label: `verify:${name}`,
     });
-    deprioritize(child.pid, `verify:${name}`);
-    const result = await child;
     if (result.timedOut) {
       return {
         name,

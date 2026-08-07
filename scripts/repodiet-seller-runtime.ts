@@ -76,6 +76,7 @@ import {
   type ReconcilerDeps,
 } from "../src/lib/okx-runtime/system-event-reconciler";
 import { systemEventsSuspended } from "../src/lib/okx-runtime/system-event-suspension";
+import { registerLivenessCoordinator } from "../src/lib/okx-runtime/liveness-coordinator";
 // Deliberately NOT from ./seller-runtime-supervisor: that module's import graph
 // reaches `openclaw/plugin-sdk/gateway-runtime`, which needs Node 22+. Reading
 // two constants from it would drag the whole Gateway client into this process's
@@ -341,6 +342,24 @@ const gateProof = new GateProofState(DEFAULT_GATE_CHECK_LIMITS);
 
 function gateProofIsFresh(nowMs: number = Date.now()): boolean {
   return gateProof.mayClaimOnline(nowMs);
+}
+
+/**
+ * Registers this runtime as the real liveness coordinator for heavy
+ * repository work (`src/lib/okx-runtime/liveness-coordinator.ts`).
+ *
+ * `refreshOfficialGateCheck` is called here exactly as it is from
+ * `scheduleNextGateCheck` — same in-flight guard, same doctor-evidence path,
+ * same proof bookkeeping — so an out-of-cadence liveness-driven refresh
+ * cannot diverge from the timer-driven one. Registered once at startup; there
+ * is exactly one seller runtime process per Machine, so exactly one
+ * registration is ever live.
+ */
+function registerHeavyWorkLivenessCoordinator(): void {
+  registerLivenessCoordinator({
+    freshnessRemainingMs: () => gateProof.msUntilProofExpiry(),
+    requestRefresh: () => refreshOfficialGateCheck(),
+  });
 }
 
 /**
@@ -1280,6 +1299,9 @@ async function main(): Promise<void> {
   // command happens to be slow. Only skips the blocking initial run when
   // the restored proof is genuinely still within the freshness bound.
   loadPersistedGateProof();
+  // Must be registered before anything can admit a heavy job — see
+  // liveness-coordinator.ts. Cheap and synchronous; safe this early.
+  registerHeavyWorkLivenessCoordinator();
   if (!gateProofIsFresh()) {
     // `refreshOfficialGateCheck` arms the next timer itself from the outcome.
     await refreshOfficialGateCheck();

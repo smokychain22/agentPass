@@ -14,6 +14,7 @@ import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
 import { resolvePrRepairStrategy, type PrRepairResolution } from "./pr-repair";
 import { resolveValidatedDeliveryOps, normalizeApprovedPaths } from "./delivery-operations";
 import { getCleanupPrDelivery, recordCleanupPrDelivery } from "./cleanup-pr-delivery-ledger";
+import { runExclusiveHeavyJob } from "@/lib/okx-runtime/heavy-job-limiter";
 import {
   buildMaintenanceOutcome,
   type MaintenanceOutcome,
@@ -58,7 +59,8 @@ async function resolveFindings(input: CreateCleanupPrInput): Promise<FindingsPay
 
 async function resolvePatchKit(
   input: CreateCleanupPrInput,
-  findings: FindingsPayload
+  findings: FindingsPayload,
+  approvedDeletePaths: string[]
 ): Promise<PatchKitPayload> {
   if (
     input.patchKit?.artifacts?.reportMd &&
@@ -71,6 +73,14 @@ async function resolvePatchKit(
     repoUrl: input.repoUrl,
     branch: input.branch ?? findings.repo.branch,
     findings,
+    /**
+     * The approval scope must reach the engine, because the engine is where
+     * repository verification happens. Passing it later — after the kit is
+     * built, which is where the delivery filter runs — is exactly the ordering
+     * defect this fixes: verification would describe a superset tree that
+     * includes candidates this delivery will never ship.
+     */
+    approvedDeletePaths,
   });
 }
 
@@ -212,7 +222,49 @@ function buildPrBody(
   return lines.join("\n");
 }
 
+/**
+ * === THE canonical machine-wide admission boundary for repository work ===
+ *
+ * Every production path that can start a repository cleanup goes through this
+ * wrapper: the deterministic OKX turn, the ASP job executor, the A2A
+ * orchestrator, the A2MCP phase-3 engine and its tool, the HTTP cleanup route,
+ * the cleanup engine, and the production verification script.
+ *
+ * It exists because the previous arrangement only LOOKED machine-wide.
+ * `runExclusiveHeavyJob` was documented as "machine-wide admission control"
+ * but was applied at exactly one call site (`createDeterministicTurn`), while
+ * `createCleanupPullRequest` had seven other callers that reached the heavy
+ * pipeline without passing any limiter at all. The production verification
+ * script was one of them, which is how a proof run and the live agent could
+ * contend for the same 1-vCPU box.
+ *
+ * The boundary is placed HERE, at the single function every caller already
+ * shares, rather than re-applied at each call site — a per-call-site guard is
+ * exactly what failed, because a new caller silently opts out by forgetting
+ * it. `createCleanupPullRequestUnlocked` is not exported from the package
+ * index; it exists so this wrapper (and focused tests) can call the pipeline
+ * body without recursing.
+ *
+ * Callers that previously wrapped this in their own `runExclusiveHeavyJob`
+ * have had that wrapper REMOVED (see deterministic-turn.ts). Nesting would
+ * make the inner acquisition see the outer's slot and reject itself with
+ * `heavy_job_already_running` — a self-deadlock dressed as admission control.
+ *
+ * `HeavyJobRejected` propagates unchanged, so the executor keeps mapping it to
+ * `internal_failure_retryable`: a busy or slow machine still never decides a
+ * funded job's outcome.
+ */
 export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
+  const label = `cleanup_pr:${input.repoUrl || "unknown-repository"}`;
+  return runExclusiveHeavyJob(label, () => createCleanupPullRequestUnlocked(input));
+}
+
+/**
+ * The cleanup pipeline body. Deliberately NOT part of the public surface —
+ * reaching this without passing `createCleanupPullRequest` bypasses the
+ * machine's only heavy-work admission boundary.
+ */
+export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInput) {
   const { assertPreviewAllowsRepositoryWrite, PreviewDryRunError } = await import(
     "@/lib/deployment/preview-dry-run"
   );
@@ -254,19 +306,23 @@ export async function createCleanupPullRequest(input: CreateCleanupPrInput) {
   const baseBranch = input.branch?.trim() || parsed.branch || repoMeta.meta.defaultBranch;
 
   const findings = await resolveFindings(input);
-  const patchKit = withRefreshedVerificationGates(
-    await resolvePatchKit(input, findings),
-    findings
-  );
-  const buckets = classifyFindingsForPatch(findings);
-  const validatedChanges = patchKit.summary.validatedChanges ?? 0;
-  const validatedEdits = patchKit.validatedEdits ?? [];
   // Normalized once, centrally, for every caller of createCleanupPullRequest
   // (the manual route, the A2A orchestrator, phase3, and the ASP executor) —
   // see delivery-operations.ts's normalizeApprovedPaths docblock. Runs before
   // the mode check so a malformed approvedPaths input fails loudly even in
   // report_only mode, rather than being silently ignored.
+  //
+  // Hoisted above patch-kit resolution so the approval scope can reach the
+  // engine's verification step. Validation still happens here and still throws
+  // on malformed input, so hoisting cannot let a bad list through unchecked.
   const normalizedApprovedPaths = normalizeApprovedPaths(input.approvedPaths);
+  const patchKit = withRefreshedVerificationGates(
+    await resolvePatchKit(input, findings, normalizedApprovedPaths),
+    findings
+  );
+  const buckets = classifyFindingsForPatch(findings);
+  const validatedChanges = patchKit.summary.validatedChanges ?? 0;
+  const validatedEdits = patchKit.validatedEdits ?? [];
   const deliveryOps =
     mode === "safe_only"
       ? resolveValidatedDeliveryOps(patchKit, validatedEdits, normalizedApprovedPaths)

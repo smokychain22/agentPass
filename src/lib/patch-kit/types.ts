@@ -11,6 +11,19 @@ export interface PatchKitGenerateBody {
   projectRoot?: string;
   /** Paid A2A execution — full verification, scoped to selected findings. */
   paidExecution?: boolean;
+  /**
+   * Paths the caller explicitly approved for deletion in THIS piece of work.
+   *
+   * Threaded down to repository verification so the verified tree matches the
+   * tree that would actually be delivered. Without it the engine verified the
+   * analyzer's whole candidate superset, and one unapproved false positive
+   * could block an unrelated approved-safe candidate from ever shipping — see
+   * `verification-delivery-scope.ts`.
+   *
+   * Absent or empty means "operator-safe defaults only", which is the
+   * behaviour every existing caller already had.
+   */
+  approvedDeletePaths?: string[];
 }
 
 export interface PatchKitRepo {

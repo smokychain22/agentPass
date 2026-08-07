@@ -38,7 +38,11 @@ import {
 } from "./next-action-playbook";
 import { runProcess, type ProcessRunResult } from "./process-runner";
 import { ONCHAINOS } from "./system-event-adapters";
-import { HeavyJobRejected, runExclusiveHeavyJob } from "./heavy-job-limiter";
+// Only the ERROR type is needed here. The slot itself is acquired inside
+// `createCleanupPullRequest`, the canonical machine-wide boundary; importing
+// the acquirer at a call site is how the boundary got fragmented in the first
+// place, so the structural regression forbids it.
+import { HeavyJobRejected } from "./heavy-job-limiter";
 
 export interface DeterministicTurnOptions {
   agentId: string;
@@ -290,15 +294,22 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
          * that costs nothing, and the duplicate-PR check is exactly what lets a
          * retry skip the expensive path entirely.
          */
-        const pr = await runExclusiveHeavyJob(`cleanup_pr:${jobId}`, () =>
-          createPr({
-            repoUrl: context.repositoryUrl!,
-            mode: "safe_only",
-            cleanupBranch: branch,
-            githubToken: token,
-            ...(approvedPaths.length > 0 ? { approvedPaths } : {}),
-          })
-        );
+        /**
+         * The heavy slot is acquired INSIDE `createCleanupPullRequest` now —
+         * it is the canonical machine-wide boundary shared by every caller.
+         * Wrapping here as well would make that inner acquisition observe this
+         * one's slot and reject itself with `heavy_job_already_running`: a
+         * self-deadlock wearing admission control's clothes. `HeavyJobRejected`
+         * still propagates from within, so the retryable mapping below is
+         * unchanged.
+         */
+        const pr = await createPr({
+          repoUrl: context.repositoryUrl!,
+          mode: "safe_only",
+          cleanupBranch: branch,
+          githubToken: token,
+          ...(approvedPaths.length > 0 ? { approvedPaths } : {}),
+        });
         prUrl = pr.data.pullRequest.url;
       }
     } catch (err) {

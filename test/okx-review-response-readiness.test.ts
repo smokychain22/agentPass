@@ -706,6 +706,15 @@ async function main(): Promise<void> {
    */
   await test("every heavy spawn site lowers its child's scheduling priority, and the runtime's own priority is never touched", () => {
     const root = path.join(__dirname, "..", "src", "lib");
+    /**
+     * All three sites now spawn through the single shared
+     * `runBoundedProcessGroup` (bounded-process-group.ts), which is where
+     * `deprioritize(child.pid, ...)` actually lives — see the Incident #28
+     * lesson this codebase already applies to the heavy-job admission
+     * boundary: one canonical implementation that every caller shares beats
+     * the same logic re-declared at each call site, which is exactly what let
+     * a caller silently opt out before.
+     */
     const sites = [
       ["execution", "workspace-install.ts"],
       ["execution", "baseline-verification.ts"],
@@ -714,8 +723,8 @@ async function main(): Promise<void> {
     for (const parts of sites) {
       const src = fs.readFileSync(path.join(root, ...parts), "utf8");
       assert.ok(
-        /deprioritize\(\s*child\.pid/.test(src),
-        `${parts.join("/")} must lower the priority of the child it spawns`
+        /runBoundedProcessGroup\(/.test(src),
+        `${parts.join("/")} must spawn its heavy child through the shared, deprioritizing, group-bounded runner`
       );
       // Renicing the runtime itself would slow the very heartbeat this
       // protects, so `process.pid` must never be the target.
@@ -724,6 +733,19 @@ async function main(): Promise<void> {
         `${parts.join("/")} must never deprioritise the runtime process itself`
       );
     }
+
+    const sharedRunner = fs.readFileSync(
+      path.join(root, "execution", "bounded-process-group.ts"),
+      "utf8"
+    );
+    assert.ok(
+      /deprioritize\(\s*child\.pid/.test(sharedRunner),
+      "bounded-process-group.ts must lower the priority of the child it spawns"
+    );
+    assert.ok(
+      !/setPriority\(\s*process\.pid/.test(sharedRunner),
+      "bounded-process-group.ts must never deprioritise the runtime process itself"
+    );
   });
 
   await test("deprioritize is best-effort — an unsupported platform or an already-exited child never breaks the pipeline", () => {

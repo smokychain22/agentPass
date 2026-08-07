@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
-import { deprioritize } from "@/lib/execution/workspace-install";
+import { runBoundedProcessGroup } from "@/lib/execution/bounded-process-group";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
@@ -99,17 +99,19 @@ async function runCheck(
     };
   }
 
-  // Incident #22: see workspace-install.ts. Heavy verification must yield the
-  // CPU to the runtime's liveness calls on a single shared vCPU, or the agent
-  // cannot prove it is online for the duration of the run.
-  const child = execa(command[0], command.slice(1), {
+  /**
+   * Incident #22: see bounded-process-group.ts. Heavy verification must yield
+   * the machine to the runtime's liveness calls on a single shared vCPU —
+   * `nice 19` alone proved insufficient in production, so this is also
+   * bounded by process GROUP (a timed-out `execa` `timeout` signals only the
+   * direct child) and paused whenever a liveness refresh needs to run.
+   */
+  const result = await runBoundedProcessGroup(command, {
     cwd: rootDir,
-    timeout: commandTimeoutMs(),
-    reject: false,
+    timeoutMs: commandTimeoutMs(),
     env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "test" },
+    label: `verify:${name}`,
   });
-  deprioritize(child.pid, `verify:${name}`);
-  const result = await child;
 
   return {
     name,
