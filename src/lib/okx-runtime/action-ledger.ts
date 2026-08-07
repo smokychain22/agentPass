@@ -305,13 +305,44 @@ export class FileActionLedger {
    * to defer an event indefinitely, only ever to fail open into a retry.
    */
   pendingForRecovery(nowMs: number = Date.now()): LedgerRecord[] {
-    return Object.values(this.load().records)
-      .filter((r) => !r.acknowledged && r.state !== "terminal_failure")
-      .filter((r) => {
-        if (!r.retryAfterIso) return true;
-        const dueAt = Date.parse(r.retryAfterIso);
-        return Number.isFinite(dueAt) ? dueAt <= nowMs : true;
-      })
+    const live = Object.values(this.load().records).filter(
+      (r) => !r.acknowledged && r.state !== "terminal_failure"
+    );
+
+    /**
+     * === Incident #21: a per-EVENT quarantine is not a per-JOB quarantine ===
+     *
+     * The deadline is honoured per record, and one job can own many records.
+     * Funded job 0x22a2… had fourteen live events, each with its own staggered
+     * backoff, so something was always due: heavy repository work ran
+     * essentially back-to-back. Observed live on 2026-08-07 — load held between
+     * 7 and 15, the 150s gate-check timed out repeatedly, and the agent
+     * withheld its heartbeat for 20 consecutive cycles with `daemonOk:true`
+     * and `xmtpOk:true`. Nothing was crashing; the box simply never got quiet
+     * enough to re-prove itself.
+     *
+     * The unit that is failing is the JOB, not the individual event. So the
+     * longest deadline any of a job's records carries now governs ALL of that
+     * job's records: quarantining one event quarantines the job. A job whose
+     * work keeps failing goes quiet for as long as its own backoff says,
+     * instead of round-robining through its events and starving everything
+     * else on the machine.
+     *
+     * This is what the repair was always meant to be — isolate the specific
+     * expensive failing job, rather than suspending all system events globally.
+     * Other jobs are completely unaffected: the grouping is keyed on `jobId`,
+     * so a reviewer's brand-new job is never held back by this one.
+     */
+    const jobDeadline = new Map<string, number>();
+    for (const record of live) {
+      if (!record.retryAfterIso) continue;
+      const dueAt = Date.parse(record.retryAfterIso);
+      if (!Number.isFinite(dueAt)) continue;
+      jobDeadline.set(record.jobId, Math.max(jobDeadline.get(record.jobId) ?? 0, dueAt));
+    }
+
+    return live
+      .filter((r) => (jobDeadline.get(r.jobId) ?? 0) <= nowMs)
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 
@@ -323,13 +354,16 @@ export class FileActionLedger {
    * dropped, which is the confusion the global suspension switch created.
    */
   deferredForRecovery(nowMs: number = Date.now()): LedgerRecord[] {
-    return Object.values(this.load().records)
-      .filter((r) => !r.acknowledged && r.state !== "terminal_failure")
-      .filter((r) => {
-        if (!r.retryAfterIso) return false;
-        const dueAt = Date.parse(r.retryAfterIso);
-        return Number.isFinite(dueAt) && dueAt > nowMs;
-      })
+    const live = Object.values(this.load().records).filter(
+      (r) => !r.acknowledged && r.state !== "terminal_failure"
+    );
+    const due = new Set(this.pendingForRecovery(nowMs).map((r) => r.eventId));
+    // The complement of what is due, so a record held back by its JOB's
+    // deadline (Incident #21) is reported as deferred even when its own
+    // deadline has passed — otherwise the two views would disagree and an
+    // operator could not account for every live record.
+    return live
+      .filter((r) => !due.has(r.eventId))
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 }
