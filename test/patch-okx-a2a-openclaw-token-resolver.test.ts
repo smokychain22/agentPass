@@ -1,18 +1,18 @@
 /**
  * scripts/patch-okx-a2a-openclaw-token-resolver.ts — build-time
- * compatibility patch for @okxweb3/a2a-openclaw@0.1.11's own internal
+ * compatibility patch for @okxweb3/a2a-openclaw@0.2.0's own internal
  * Gateway token resolver, which only understands a plain string or the
  * plugin-native {env:"VAR"} shorthand, never the {provider,source,id}
  * SecretRef shape OpenClaw core (and this repo's config) actually use —
  * confirmed by reading the plugin's real dist/index.js end to end (no
  * plugin-specific config field exists to redirect through instead).
  *
- * Runs against test/fixtures/okx-a2a-openclaw-0.1.11/dist-index.js, a
+ * Runs against test/fixtures/okx-a2a-openclaw-0.2.0/dist-index.js, a
  * real, unmodified copy of the pinned plugin's published dist/index.js
- * (fetched via `npm pack @okxweb3/a2a-openclaw@0.1.11`, the same
+ * (fetched via `npm pack @okxweb3/a2a-openclaw@0.2.0`, the same
  * resolution path Dockerfile.seller trusts, and independently confirmed
  * to match both the tarball's published npm integrity
- * (sha512-Qc/TkdqVouIvAumR8wVbyeEk4/+oYBZAWYk3oEvffXINNFoh5LbIPjWZz/9R2jOfjq7uhz7uQOodxPJnEYPhdQ==,
+ * (sha512-g5hfNMh1Wnr3q7FArvGNXIw4E5OVhwcJN/IZrWDzHMO1o7bKFX2md5Ixxw/fhGCMd3rE78xWtObKFyIfAGovkg==,
  * the exact value Dockerfile.seller pins) and this patch's own pinned
  * dist/index.js sha256 — not a hand-crafted approximation.
  */
@@ -27,6 +27,7 @@ import {
   EXPECTED_UPSTREAM_SHA256,
   ORIGINAL_TOKEN_RESOLVER_SOURCE,
   PATCHED_TOKEN_RESOLVER_SOURCE,
+  TOKEN_RESOLVER_FUNCTION_NAME,
 } from "../scripts/patch-okx-a2a-openclaw-token-resolver";
 
 function test(name: string, fn: () => void) {
@@ -40,7 +41,7 @@ function test(name: string, fn: () => void) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, "..");
-const FIXTURE_PATH = path.join(REPO_ROOT, "test", "fixtures", "okx-a2a-openclaw-0.1.11", "dist-index.js");
+const FIXTURE_PATH = path.join(REPO_ROOT, "test", "fixtures", "okx-a2a-openclaw-0.2.0", "dist-index.js");
 const REAL_UPSTREAM_SOURCE = fs.readFileSync(FIXTURE_PATH, "utf8");
 
 /** Extracts a top-level function's exact source via brace-depth counting — the same technique used to derive ORIGINAL_TOKEN_RESOLVER_SOURCE in the first place, so this test never hand-transcribes minified source. */
@@ -138,20 +139,20 @@ test("the patched resolver's original two branches (plain string, legacy {env:\"
   withScratchCopy((scratchPath) => {
     applyTokenResolverPatch(scratchPath);
     const patchedSource = fs.readFileSync(scratchPath, "utf8");
-    const patchedFn = extractFunctionSource(patchedSource, "function ze(e)");
+    const patchedFn = extractFunctionSource(patchedSource, `function ${TOKEN_RESOLVER_FUNCTION_NAME}(e)`);
     assert.ok(patchedFn.startsWith(ORIGINAL_TOKEN_RESOLVER_SOURCE.slice(0, -2)), "the original branches' source must be a strict prefix of the patched function");
   });
 });
 
-test("evaluating the ACTUAL patched ze function (extracted from the real patched file, not a reimplementation) resolves every shape correctly: plain string, legacy {env}, the real OpenClaw SecretRef shape, and correctly leaves unsupported/unknown shapes unresolved", () => {
+test("evaluating the ACTUAL patched token-resolver function (extracted from the real patched file, not a reimplementation) resolves every shape correctly: plain string, legacy {env}, the real OpenClaw SecretRef shape, and correctly leaves unsupported/unknown shapes unresolved", () => {
   withScratchCopy((scratchPath) => {
     applyTokenResolverPatch(scratchPath);
     const patchedSource = fs.readFileSync(scratchPath, "utf8");
-    const fnSource = extractFunctionSource(patchedSource, "function ze(e)");
+    const fnSource = extractFunctionSource(patchedSource, `function ${TOKEN_RESOLVER_FUNCTION_NAME}(e)`);
     // eslint-disable-next-line @typescript-eslint/no-implied-eval -- evaluating the real extracted source under test, not user input
-    const ze: (input: unknown) => string | undefined = new Function(
+    const resolveToken: (input: unknown) => string | undefined = new Function(
       "process",
-      `return (${fnSource.replace("function ze", "function")})`
+      `return (${fnSource.replace(`function ${TOKEN_RESOLVER_FUNCTION_NAME}`, "function")})`
     )(process);
 
     const originalEnv = { ...process.env };
@@ -159,18 +160,18 @@ test("evaluating the ACTUAL patched ze function (extracted from the real patched
       process.env.OPENCLAW_GATEWAY_TOKEN = "test-secret-token-value";
       process.env.LEGACY_VAR = "legacy-value";
 
-      assert.equal(ze("literal-token"), "literal-token");
-      assert.equal(ze({ env: "LEGACY_VAR" }), "legacy-value");
-      assert.equal(ze({ env: "DOES_NOT_EXIST_VAR" }), undefined);
+      assert.equal(resolveToken("literal-token"), "literal-token");
+      assert.equal(resolveToken({ env: "LEGACY_VAR" }), "legacy-value");
+      assert.equal(resolveToken({ env: "DOES_NOT_EXIST_VAR" }), undefined);
       assert.equal(
-        ze({ provider: "default", source: "env", id: "OPENCLAW_GATEWAY_TOKEN" }),
+        resolveToken({ provider: "default", source: "env", id: "OPENCLAW_GATEWAY_TOKEN" }),
         "test-secret-token-value",
         "the exact SecretRef shape scripts/seller-runtime-supervisor.ts writes for gateway.auth.token must now resolve"
       );
-      assert.equal(ze({ provider: "default", source: "env", id: "DOES_NOT_EXIST_VAR" }), undefined);
-      assert.equal(ze({ provider: "default", source: "file", id: "/some/path" }), undefined, "unsupported source kinds must remain unresolved, not silently mishandled");
-      assert.equal(ze(undefined), undefined);
-      assert.equal(ze(null), undefined);
+      assert.equal(resolveToken({ provider: "default", source: "env", id: "DOES_NOT_EXIST_VAR" }), undefined);
+      assert.equal(resolveToken({ provider: "default", source: "file", id: "/some/path" }), undefined, "unsupported source kinds must remain unresolved, not silently mishandled");
+      assert.equal(resolveToken(undefined), undefined);
+      assert.equal(resolveToken(null), undefined);
     } finally {
       process.env = originalEnv;
     }

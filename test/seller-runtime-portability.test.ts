@@ -323,7 +323,7 @@ function run() {
   // --- @okxweb3/a2a-openclaw's own runtime dependency (Incident #5) ------
 
   test("@sentry/node is a real, pinned dependency satisfying @okxweb3/a2a-openclaw's own declared requirement", () => {
-    // Verified directly against the real published @okxweb3/a2a-openclaw@0.1.11
+    // Verified directly against the real published @okxweb3/a2a-openclaw@0.2.0
     // package.json: "dependencies": { "@sentry/node": "^7.74.1" } — a real
     // runtime dependency of the plugin itself, not guessed. Without this
     // installed in the image, the plugin's own dist/index.js fails to load
@@ -751,7 +751,7 @@ function run() {
   });
 
   test("doctor JSON parsing reads counts from the real verified schema (summary.pass/warn/fail), not an assumed top-level shape", () => {
-    // Verified directly against the live pinned 0.1.11 CLI: `okx-a2a doctor
+    // Verified directly against the live pinned 0.2.0 CLI: `okx-a2a doctor
     // --fix --json` writes one JSON object to stdout shaped like
     // { ok, ready, summary: { pass, warn, fail, ... }, ... } — the counts are
     // nested, and a flat parsed.pass/warn/fail would silently never match.

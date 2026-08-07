@@ -118,14 +118,66 @@ export async function POST(request: Request) {
           : ((inferCleanupTaskTypeFromText(message) as A2ATaskType | undefined) ??
             (body.type as A2ATaskType));
     if (!VALID_TYPES.includes(type)) {
+      /**
+       * A free-form message that matched none of the classifiers above is
+       * answered informatively rather than rejected.
+       *
+       * === Why this replaces "add one more regex" ===
+       *
+       * Every INVALID_TASK_TYPE rejection OKX has raised was fixed by appending
+       * another pattern to marketplace-intake.ts — see its own comments for
+       * three separate rounds (#141, #143, and live reproductions on 2026-08-02
+       * and 2026-08-03). That approach can only ever catch phrasings someone
+       * already thought of, and the next unanticipated one is another rejected
+       * review.
+       *
+       * Reproduced live against production on 2026-08-07, a plain capability
+       * question — "I have a GitHub repository with dead code. Can RepoDiet
+       * help?" — still returned HTTP 400 "could not map it to a cleanup task
+       * type". Telling a prospective customer we cannot understand them is
+       * never the better answer to an ordinary sentence, and it is precisely
+       * the "Agent did not respond" class OKX rejected this listing for.
+       *
+       * So the default for a HUMAN MESSAGE inverts: describe the two services
+       * and say what is needed to start. That is always a truthful, useful
+       * reply, and it demands nothing the caller has not already offered.
+       *
+       * A caller who explicitly supplied a `type` field still gets the hard
+       * error below: that is a structured API contract violation, where naming
+       * an unsupported type is a real mistake worth reporting precisely rather
+       * than papering over with prose.
+       */
+      const declaredType = typeof body.type === "string" ? body.type.trim() : "";
+      if (message && !declaredType) {
+        logMarketplaceTelemetry("a2a_message_received", { requestId, channel: "a2a_tasks" });
+        const info = buildInformationalResponse(requestId);
+        await recordTaskAcknowledged({ queueDepth: 0, responseLatencyMs: Date.now() - started });
+        logMarketplaceTelemetry("a2a_acknowledgement_sent", {
+          requestId,
+          durationMs: Date.now() - started,
+        });
+        await touchMarketplaceHealth({ a2aInitialResponseReady: true });
+        return NextResponse.json({
+          success: true,
+          ...info,
+          // Named so this is auditable as the fallback rather than looking like
+          // a pattern match, and so the next unanticipated phrasing is visible
+          // in telemetry instead of silently absorbed.
+          classification: "unclassified_conversational_message",
+          responseTimeMs: Date.now() - started,
+        });
+      }
+
       return NextResponse.json(
         {
           success: false,
           error: "Invalid task type.",
           acknowledged: true,
-          message:
-            "RepoDiet received your message but could not map it to a cleanup task type. Include the word task and Agent ID 9636, or provide type + repoUrl.",
+          message: declaredType
+            ? `RepoDiet does not support task type "${declaredType}". Supported types: ${VALID_TYPES.join(", ")}. Provide one of those with a repoUrl, or send a plain message describing what you need.`
+            : "RepoDiet received your request but it carried no message and no repository. Provide type + repoUrl, or send a message describing what you need.",
           code: "INVALID_TASK_TYPE",
+          supportedTypes: VALID_TYPES,
           retryable: true,
           requestId,
         },

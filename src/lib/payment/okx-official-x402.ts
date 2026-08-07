@@ -46,6 +46,32 @@ export const OKX_X402_NETWORK = "eip155:196";
 /** The registered A2MCP endpoint, exactly as listed for service 37347. */
 export const A2MCP_ROUTE_PATTERN = "POST /api/a2mcp/quick-triage";
 
+/**
+ * The same resource, probed with GET.
+ *
+ * === Why this is registered too ===
+ *
+ * `onchainos agent x402-check --endpoint <url>` is OKX's own endpoint
+ * validator — the tool a reviewer reaches for. Run without `--body` it probes
+ * with GET, and on 2026-08-07 it returned, against live production:
+ *
+ *   {"reason":"Endpoint returned HTTP 200 (not 402); not a valid x402
+ *     service.","statusCode":200,"valid":false}
+ *
+ * The 200 came from a liveness descriptor this route served on GET, added as
+ * speculative hardening whose own comment conceded "we have no evidence that
+ * any reviewer probe required GET or HEAD". It turned out to be worse than
+ * unnecessary: it is the reason OKX's validator classified a correctly
+ * implemented x402 endpoint as invalid. The same command WITH `--body`
+ * returned `valid:true, amountHuman:0.03, network:eip155:196` — so the paid
+ * path was always right and only the unauthenticated probe was wrong.
+ *
+ * Registering the GET pattern with identical terms means the SDK — not this
+ * code — mints the challenge for a bodyless probe, so discovery and payment
+ * describe the same price from the same source and cannot drift apart.
+ */
+export const A2MCP_PROBE_ROUTE_PATTERN = "GET /api/a2mcp/quick-triage";
+
 const INITIALIZE_ATTEMPTS = 3;
 const INITIALIZE_RETRY_DELAY_MS = 250;
 
@@ -188,8 +214,11 @@ export async function getOfficialResourceServer(
   const resourceServer = new x402ResourceServer(facilitator);
   resourceServer.register(OKX_X402_NETWORK, new ExactEvmScheme());
 
+  // Both methods carry the SAME RouteConfig object, so a discovery probe and a
+  // real payment can never quote different terms.
   const httpServer = new x402HTTPResourceServer(resourceServer, {
     [A2MCP_ROUTE_PATTERN]: route,
+    [A2MCP_PROBE_ROUTE_PATTERN]: route,
   });
 
   // initialize() is a live round-trip to the OKX facilitator: it loads the
@@ -282,6 +311,46 @@ export async function processOfficialPayment(
   // "no-payment-required" would mean the route is unprotected. For a paid
   // marketplace service that is a misconfiguration, not a free pass.
   throw new OfficialX402ConfigError([`route ${A2MCP_ROUTE_PATTERN} is not payment-protected`]);
+}
+
+/**
+ * Produces the SDK's own PAYMENT-REQUIRED challenge for an unauthenticated
+ * discovery probe (`GET`), without ever executing or settling anything.
+ *
+ * Deliberately constructs the context with NO payment header, so the SDK
+ * always takes its unpaid branch and returns the challenge. A GET carries no
+ * business body and therefore cannot run the analysis; answering it with the
+ * price is the entire point of the probe, and treating a GET as a payment
+ * attempt would be the only way to get that wrong.
+ *
+ * The challenge is the SDK's, verbatim — this function composes nothing.
+ */
+export async function mintOfficialPaymentChallenge(
+  request: Request,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<{ status: number; headers: Record<string, string>; body: unknown }> {
+  const server = await getOfficialResourceServer(env);
+  const adapter = createNextHttpAdapter(request);
+  const result = await server.processHTTPRequest({
+    adapter,
+    path: adapter.getPath(),
+    method: adapter.getMethod(),
+    paymentHeader: undefined,
+    routePattern: A2MCP_PROBE_ROUTE_PATTERN,
+  });
+
+  if (result.type === "payment-error") {
+    return {
+      status: result.response.status,
+      headers: result.response.headers,
+      body: result.response.body,
+    };
+  }
+  // Anything else means the probe route is not payment-protected, which for a
+  // paid marketplace service is a misconfiguration, not a free pass.
+  throw new OfficialX402ConfigError([
+    `route ${A2MCP_PROBE_ROUTE_PATTERN} is not payment-protected`,
+  ]);
 }
 
 /**

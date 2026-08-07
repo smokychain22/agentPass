@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Build-time compatibility patch: teaches the pinned
- * @okxweb3/a2a-openclaw@0.1.11 plugin's own internal Gateway token
+ * @okxweb3/a2a-openclaw@0.2.0 plugin's own internal Gateway token
  * resolver to understand OpenClaw core's SecretRef shape.
  *
  * === Root cause, confirmed by direct source reading (not assumed) ===
@@ -12,36 +12,38 @@
  * the SAME shared `gateway.auth.token` field this supervisor configures,
  * through its own resolver:
  *
- *   function ze(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"
+ *   function en(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"
  *   &&e!==null&&"env"in e)return process.env[e.env]||void 0}}
  *
- * `ze` only understands a plain string or the plugin-native `{env:
+ * `en` only understands a plain string or the plugin-native `{env:
  * "VARNAME"}` shorthand — never the `{provider, source, id}` SecretRef
  * shape OpenClaw core actually uses (verified against
  * openclaw/dist/plugin-sdk/secret-ref-runtime.js's own resolution: a ref
  * with `source==="env"` resolves by reading `process.env[ref.id]`).
  * scripts/seller-runtime-supervisor.ts's buildOpenclawConfigBatch() sets
  * `gateway.auth.token` to exactly `{provider:"default", source:"env",
- * id:"OPENCLAW_GATEWAY_TOKEN"}` — an object with no `env` key — so `ze`
+ * id:"OPENCLAW_GATEWAY_TOKEN"}` — an object with no `env` key — so `en`
  * silently returns `undefined` for it. This is NOT a config bug on the
  * supervisor's side: this IS the OpenClaw-documented SecretRef shape, and
  * the Gateway's own core auth resolution reads it correctly; only this
  * one third-party plugin's own internal (unrelated, separate) Gateway
  * client fails to. There is no plugin-specific field to redirect this
  * through instead — confirmed by reading the plugin's entire dist/index.js
- * end to end (78,376 bytes): no reference to any plugin-scoped config key,
+ * end to end (80,682 bytes): no reference to any plugin-scoped config key,
  * `OPENCLAW_GATEWAY_TOKEN`, or `OKX_A2A_OPENCLAW_GATEWAY_TOKEN` exists in
- * it at all.
+ * it at all, and its manifest configSchema is still `"properties": {}`.
  *
- * Identical bug to @okxweb3/a2a-openclaw@0.1.10 (this same file's bug was
- * first found and patched there) — 0.1.11's re-minify only renamed the
- * function from `Ue` to `ze`; the logic is byte-identical otherwise. This
- * confirms the version bump alone would not have fixed it, and this patch
- * still needs to be re-verified (not blindly re-applied) on every version
- * bump, exactly as designed.
+ * Identical bug across every version this project has pinned. Each re-minify
+ * has only renamed the function — `Ue` in 0.1.10, `ze` in 0.1.11, `en` in
+ * 0.2.0 — while the body stayed byte-identical. Re-verified against 0.2.0 on
+ * 2026-08-07, when the pin was moved off 0.1.11 (see Incident #17 in
+ * gate-check-proof.ts): the upstream defect is still present, still occurs
+ * exactly once, and the plugin still exposes no config surface to route
+ * around it. A version bump alone has never fixed this, and this patch is
+ * re-verified — never blindly re-applied — on every bump, as designed.
  *
  * === The patch ===
- * A single, narrow, additive branch: when `ze` receives an object with
+ * A single, narrow, additive branch: when `en` receives an object with
  * `source === "env"` and a string `id` (i.e. exactly the shape a
  * `source:"env"` SecretRef takes), it now also resolves
  * `process.env[e.id]` — mirroring OpenClaw core's own env-source
@@ -59,20 +61,23 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
-/** Pinned against @okxweb3/a2a-openclaw@0.1.11's real published dist/index.js — computed directly from the exact tarball Dockerfile.seller extracts (same npm pack + integrity-checked source), not guessed. */
+/** The minified name of the resolver in the pinned version. Renamed by every upstream re-minify, so it is a constant here rather than inlined in three places. */
+export const TOKEN_RESOLVER_FUNCTION_NAME = "en";
+
+/** Pinned against @okxweb3/a2a-openclaw@0.2.0's real published dist/index.js — computed directly from the exact tarball Dockerfile.seller extracts (same npm pack + integrity-checked source), not guessed. */
 export const EXPECTED_UPSTREAM_SHA256 =
-  "d58ccebf69a30e4799ffae910607a1321453beef605e08334b63142087583df6";
+  "f1ca17d8330d247ad6ed05f087ee7b79b1e63a78612841c407b7c393769460da";
 
 /**
  * Exact byte-for-byte source of the unpatched resolver, extracted via
  * brace-depth counting from the real pinned file (not hand-transcribed).
  */
 export const ORIGINAL_TOKEN_RESOLVER_SOURCE =
-  'function ze(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"&&e!==null&&"env"in e)return process.env[e.env]||void 0}}';
+  `function ${TOKEN_RESOLVER_FUNCTION_NAME}(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"&&e!==null&&"env"in e)return process.env[e.env]||void 0}}`;
 
 /** Adds exactly one new branch; the two original branches are byte-identical to before. */
 export const PATCHED_TOKEN_RESOLVER_SOURCE =
-  'function ze(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"&&e!==null&&"env"in e)return process.env[e.env]||void 0;if(typeof e=="object"&&e!==null&&e.source==="env"&&typeof e.id=="string")return process.env[e.id]||void 0}}';
+  `function ${TOKEN_RESOLVER_FUNCTION_NAME}(e){if(e){if(typeof e=="string")return e;if(typeof e=="object"&&e!==null&&"env"in e)return process.env[e.env]||void 0;if(typeof e=="object"&&e!==null&&e.source==="env"&&typeof e.id=="string")return process.env[e.id]||void 0}}`;
 
 export type PatchOutcome = "applied" | "already_patched";
 
@@ -119,7 +124,7 @@ export function applyTokenResolverPatch(pluginDistIndexPath: string): PatchResul
   if (actualSha256 !== EXPECTED_UPSTREAM_SHA256) {
     throw new TokenResolverPatchError(
       `refusing to patch ${pluginDistIndexPath}: sha256 is ${actualSha256}, expected ${EXPECTED_UPSTREAM_SHA256} ` +
-        `(pinned from @okxweb3/a2a-openclaw@0.1.11's real published dist/index.js). The upstream source no longer ` +
+        `(pinned from @okxweb3/a2a-openclaw@0.2.0's real published dist/index.js). The upstream source no longer ` +
         `matches what this patch was written and reviewed against — a version bump or repackage must be re-reviewed ` +
         `before this patch is safe to reapply; refusing to guess.`
     );

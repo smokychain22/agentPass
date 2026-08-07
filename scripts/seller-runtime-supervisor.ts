@@ -206,9 +206,9 @@ export { OKX_SYSTEM_EVENT_AGENT_ID, OKX_SYSTEM_EVENT_MODEL };
 // the Dockerfile without a matching bump here would silently make the
 // marker never invalidate.
 export const ONCHAINOS_VERSION = "4.4.1";
-export const OKX_A2A_VERSION = "0.1.11";
+export const OKX_A2A_VERSION = "0.2.0";
 export const OPENCLAW_VERSION = "2026.7.1-2";
-export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.1.11";
+export const OKX_A2A_OPENCLAW_PLUGIN_VERSION = "0.2.0";
 
 /**
  * === Incident #6 (superseded): raised `gateway health`/`gateway status
