@@ -39,7 +39,30 @@ import {
  * a process-group kill on expiry. Nothing here can run unbounded; it is simply
  * given long enough to finish the work it was asked to do.
  */
-const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600_000);
+/**
+ * The PRODUCTION default, as a plain constant so it can be asserted directly.
+ *
+ * === Incident #27: production bounds became the test suite's bounds ===
+ *
+ * Raising this from 180s to 600s (Incident #26) was right for production, and
+ * it silently became the ceiling for the TEST suite too, because the test suite
+ * runs real `npm ci` against fixtures. CI's `typecheck-test-build` job then ran
+ * for 45 minutes and was cancelled with `npm ci` still orphaned — which is
+ * exactly the kind of "not failed yet" state that must never be mistaken for
+ * green.
+ *
+ * Production timeouts and test timeouts are different concerns and are now
+ * separated: the default below is what production uses, and the test scripts
+ * inject the far smaller bounds a fixture needs. Resolution happens per CALL
+ * rather than at module load, so a test can set the value at any point without
+ * depending on import ordering or module-cache behaviour.
+ */
+export const PRODUCTION_INSTALL_TIMEOUT_MS = 600_000;
+
+function installTimeoutMs(): number {
+  const override = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0 ? override : PRODUCTION_INSTALL_TIMEOUT_MS;
+}
 const MAX_ATTEMPTS = 4;
 const CACHE_RETRY_MAX = 2;
 /** Grace between SIGTERM and SIGKILL for an install that ignores the first. */
@@ -122,7 +145,7 @@ async function runBoundedInstall(
   signal?: string | null;
   timedOut?: boolean;
 }> {
-  const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? installTimeoutMs();
   // Process groups are POSIX. On Windows `detached` creates a new console
   // rather than a killable group, so the platform's own child-tree handling
   // (and execa's timeout) is used there instead.

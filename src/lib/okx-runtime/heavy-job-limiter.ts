@@ -67,9 +67,13 @@
  * cadence is still governed by the per-job quarantine, and a timed-out job is
  * still abandoned and left replayable rather than acknowledged.
  */
-export const HEAVY_JOB_TIMEOUT_MS = Number(
-  process.env.REPODIET_HEAVY_JOB_TIMEOUT_MS || 1_800_000
-);
+export const PRODUCTION_HEAVY_JOB_TIMEOUT_MS = 1_800_000;
+
+/** Resolved per call (Incident #27) so a test can inject without import-order games. */
+export function heavyJobTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_HEAVY_JOB_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : PRODUCTION_HEAVY_JOB_TIMEOUT_MS;
+}
 
 export class HeavyJobRejected extends Error {
   constructor(
@@ -128,7 +132,7 @@ export async function runExclusiveHeavyJob<T>(
     );
   }
 
-  const timeoutMs = options.timeoutMs ?? HEAVY_JOB_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? heavyJobTimeoutMs();
   inFlight = { label, startedAtMs: now() };
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;

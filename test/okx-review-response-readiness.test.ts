@@ -52,6 +52,7 @@ import {
 } from "../src/lib/okx-runtime/heavy-job-limiter";
 import { decideRetry, MAX_ATTEMPTS } from "../src/lib/okx-runtime/system-event-route";
 import { executeSystemEvent } from "../src/lib/okx-runtime/provider-event-executor";
+import { recoverPendingEvents } from "../src/lib/okx-runtime/system-event-reconciler";
 import { decideReply } from "../openclaw-plugins/repodiet-a2a-bridge/logic.js";
 
 let failures = 0;
@@ -456,40 +457,51 @@ async function main(): Promise<void> {
    * Each layer must exceed what it contains, or raising an inner bound just
    * moves the failure outwards.
    */
-  await test("each bound exceeds the work it contains: install < verify-total < heavy-job < event", async () => {
+  await test("each PRODUCTION bound exceeds the work it contains: install < verify-total < heavy-job < event", async () => {
+    const install = await import("../src/lib/execution/workspace-install");
+    const verify = await import("../src/lib/verify/run-verification");
     const heavy = await import("../src/lib/okx-runtime/heavy-job-limiter");
     const recon = await import("../src/lib/okx-runtime/system-event-reconciler");
-    const install = fs.readFileSync(
-      path.join(__dirname, "..", "src", "lib", "execution", "workspace-install.ts"),
-      "utf8"
-    );
-    const verify = fs.readFileSync(
-      path.join(__dirname, "..", "src", "lib", "verify", "run-verification.ts"),
-      "utf8"
-    );
-    const num = (src: string, name: string) => {
-      const m = new RegExp(`${name}\\s*=\\s*Number\\([^|]*\\|\\|\\s*([0-9_]+)\\)`).exec(src);
-      assert.ok(m, `${name} must be a configurable Number(...) with a default`);
-      return Number(m![1].replace(/_/g, ""));
-    };
-    const installMs = num(install, "INSTALL_TIMEOUT_MS");
-    const totalMs = num(verify, "TOTAL_TIMEOUT_MS");
+
+    // Asserted on the exported PRODUCTION_* constants, never on the resolved
+    // values: the test process deliberately injects tiny bounds (Incident #27),
+    // so reading the live values here would assert the test config, not
+    // production's.
+    const installMs = install.PRODUCTION_INSTALL_TIMEOUT_MS;
+    const totalMs = verify.PRODUCTION_VERIFY_TOTAL_TIMEOUT_MS;
+    const heavyMs = heavy.PRODUCTION_HEAVY_JOB_TIMEOUT_MS;
+    const eventMs = recon.PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS;
 
     assert.ok(
       installMs > 180_000,
       `the install bound must exceed the 180s at which real installs were being killed, got ${installMs}`
     );
     assert.ok(totalMs > installMs, "a verification pass must outlast a single install inside it");
+    assert.ok(heavyMs > totalMs, "the heavy-job ceiling must exceed the verification pass it contains");
     assert.ok(
-      heavy.HEAVY_JOB_TIMEOUT_MS > totalMs,
-      "the heavy-job ceiling must exceed the verification pass it contains"
-    );
-    assert.ok(
-      recon.EVENT_EXECUTION_TIMEOUT_MS > heavy.HEAVY_JOB_TIMEOUT_MS,
+      eventMs > heavyMs,
       "the per-event deadline must remain a backstop, not a competing deadline"
     );
-    // Still bounded — none of this may become "run forever".
-    assert.ok(recon.EVENT_EXECUTION_TIMEOUT_MS <= 3_600_000, "every bound must stay finite and sane");
+    assert.ok(eventMs <= 3_600_000, "every bound must stay finite and sane");
+  });
+
+  await test("test-injected bounds are small, so no suite can wait a production deadline", () => {
+    // Incident #27: the npm scripts inject these. If that ever stops happening,
+    // the suite silently starts waiting production wall-clock again and CI gets
+    // cancelled rather than failing — the worst possible failure mode.
+    for (const name of [
+      "REPODIET_INSTALL_TIMEOUT_MS",
+      "REPODIET_VERIFY_COMMAND_TIMEOUT_MS",
+      "REPODIET_VERIFY_TOTAL_TIMEOUT_MS",
+    ]) {
+      const raw = process.env[name];
+      if (raw === undefined) continue; // running the file directly is allowed
+      const v = Number(raw);
+      assert.ok(
+        Number.isFinite(v) && v > 0 && v <= 300_000,
+        `${name}=${raw} is too large for a test run`
+      );
+    }
   });
 
   // ------------------------------------------------------- Incident #25 ----
@@ -913,21 +925,20 @@ async function main(): Promise<void> {
     assert.ok(/heartbeatTimer = setInterval\(/.test(src), "the heartbeat timer must be armed");
   });
 
-  await test("one event that never settles cannot own the recovery loop — it is bounded and the loop continues", async () => {
+  await test("one event that never settles cannot own the recovery loop — bounded, reported, and the loop continues", async () => {
     const { ledger } = freshLedger();
     const envelope = {
       agentId: AGENT,
       message: { source: "system", event: "job_accepted", jobId: FUNDED_JOB },
     };
-    const previous = process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS;
-    process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS = "50";
-    try {
-      // Re-import so the module-level bound picks up the override.
-      const mod = await import(
-        `../src/lib/okx-runtime/system-event-reconciler?bound=${Date.now()}`
-      );
-      const logs: string[] = [];
-      const results = await mod.recoverPendingEvents({
+    const logs: string[] = [];
+    const startedAt = Date.now();
+
+    // The deadline is INJECTED, not set through the environment. An env read at
+    // module-load time depends on import order and module caching — the exact
+    // brittleness that let this pass locally and hang for 45 minutes in CI.
+    const results = await recoverPendingEvents(
+      {
         pending: () => [
           { eventId: "evt-hang", envelope },
           { eventId: "evt-next", envelope },
@@ -939,9 +950,8 @@ async function main(): Promise<void> {
           tryLock: () => true,
           unlock: () => {},
         },
-        // The first event hangs forever; the second completes normally.
-        fetchInstruction: async (input: { jobId: string }) => {
-          void input;
+        // The first event never settles; the second completes normally.
+        fetchInstruction: async () => {
           if (logs.includes("hang")) return { ok: false, stdout: "", stderr: "x" };
           logs.push("hang");
           return new Promise(() => {});
@@ -952,26 +962,45 @@ async function main(): Promise<void> {
         reconcile: async () => ({ completed: false }),
         publishStatus: async () => ({ ok: true }),
         log: (event: string) => logs.push(event),
-      } as never);
+      } as never,
+      { eventTimeoutMs: 50 }
+    );
 
-      assert.ok(
-        logs.includes("system_event_recovery_error"),
-        "the hung event must be reported, not silently swallowed"
-      );
-      assert.ok(
-        logs.includes("system_event_recovery_complete"),
-        "the loop must finish rather than being owned by the hung event"
-      );
-      assert.equal(results.length, 1, "the event AFTER the hung one must still have executed");
-      assert.equal(
-        ledger.get("evt-hang")?.acknowledged,
-        undefined,
-        "a timed-out event must never be acknowledged"
-      );
-    } finally {
-      if (previous === undefined) delete process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS;
-      else process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS = previous;
-    }
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(
+      logs.includes("system_event_recovery_error"),
+      "the hung event must be reported, not silently swallowed"
+    );
+    assert.ok(
+      logs.includes("system_event_recovery_complete"),
+      "the loop must finish rather than being owned by the hung event"
+    );
+    assert.equal(results.length, 1, "the event AFTER the hung one must still have executed");
+    assert.equal(
+      ledger.get("evt-hang")?.acknowledged,
+      undefined,
+      "a timed-out event must never be acknowledged"
+    );
+
+    /**
+     * Incident #27 regression. This asserts the TEST is fast, never that
+     * production is: the production default stays 2,400,000 ms and is asserted
+     * separately below. A timeout test that waits a production deadline is how
+     * CI ran 45 minutes and got cancelled.
+     */
+    assert.ok(
+      elapsedMs < 5_000,
+      `the deadline test must prove itself in milliseconds, took ${elapsedMs}ms`
+    );
+  });
+
+  await test("the injected test deadline never leaks into the production default", async () => {
+    const mod = await import("../src/lib/okx-runtime/system-event-reconciler");
+    assert.equal(
+      mod.PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS,
+      2_400_000,
+      "production must keep its real bound regardless of what tests inject"
+    );
   });
 
   // ------------------------------------------------------- heavy limiter ----
