@@ -35,7 +35,24 @@ COPY src ./src
 # Pinned deliberately: an unpinned agent CLI must not change under a live
 # marketplace listing. The build FAILS if it is unavailable — a container
 # missing a required executable must never reach production.
-ARG OKX_A2A_VERSION=0.1.11
+#
+# 0.1.11 -> 0.2.0 on 2026-08-07. `okx-a2a doctor`'s `cli_version` check
+# (severity "required") compares the installed CLI against npm's LIVE `latest`
+# tag, so 0.1.11 read as a blocking failure once 0.2.0 shipped; that collapsed
+# into gate-check's `communication.ok:false` and withheld the marketplace
+# heartbeat for 328 consecutive cycles. See Incident #17 in
+# src/lib/okx-runtime/gate-check-proof.ts — that check can never be satisfied
+# durably by ANY pin, so the proof logic no longer treats it as evidence of a
+# broken channel. This bump is the other half: being current for a reviewer who
+# runs `onchainos agent gate-check --role asp` themselves.
+#
+# Verified before bumping, against the real published 0.2.0 tarball rather than
+# assumed: every CLI surface this runtime drives still exists (`daemon start
+# --no-autostart`, `daemon status`, `agent refresh --json`, `xmtp-send`,
+# `doctor --fix --json`, `ai-provider`, `session query`/`send`), and the
+# seller sessionKey shape the bridge matches on is unchanged
+# (`job:${shortenValue2(jobId)}:my:<id>:to:<peer>`).
+ARG OKX_A2A_VERSION=0.2.0
 RUN npm install -g "@okxweb3/a2a-node@${OKX_A2A_VERSION}"  && okx-a2a --version
 
 # OnchainOS — official Linux release, pinned and checksum-verified.
@@ -121,7 +138,7 @@ COPY openclaw-plugins ./openclaw-plugins
 # Fetched via `npm pack` (same trusted resolution path as the other pinned
 # CLIs above) and cross-checked against the exact sha512 integrity npm's own
 # registry publishes for this pinned version — verified directly with `npm
-# view @okxweb3/a2a-openclaw@0.1.11 dist.integrity`, not guessed. The build
+# view @okxweb3/a2a-openclaw@0.2.0 dist.integrity`, not guessed. The build
 # fails closed on any mismatch, missing tarball, or extraction failure.
 #
 # Extracted to a plain image path (like the bridge plugin above), NOT
@@ -131,8 +148,12 @@ COPY openclaw-plugins ./openclaw-plugins
 # the real volume mounts). Instead this is loaded at boot via
 # `plugins.load.paths` alongside the bridge plugin, and must stay
 # root-owned for the same plugin-loader ownership check.
-ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION=0.1.11
-ARG OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY=sha512-Qc/TkdqVouIvAumR8wVbyeEk4/+oYBZAWYk3oEvffXINNFoh5LbIPjWZz/9R2jOfjq7uhz7uQOodxPJnEYPhdQ==
+# Kept in lockstep with OKX_A2A_VERSION above — the daemon and its OpenClaw
+# gateway plugin are two halves of one release. Integrity re-read from the
+# registry for 0.2.0 (`npm view @okxweb3/a2a-openclaw@0.2.0 dist.integrity`),
+# not carried over.
+ARG OKX_A2A_OPENCLAW_PLUGIN_VERSION=0.2.0
+ARG OKX_A2A_OPENCLAW_PLUGIN_INTEGRITY=sha512-g5hfNMh1Wnr3q7FArvGNXIw4E5OVhwcJN/IZrWDzHMO1o7bKFX2md5Ixxw/fhGCMd3rE78xWtObKFyIfAGovkg==
 RUN set -eu; \
     cd /tmp; \
     npm pack "@okxweb3/a2a-openclaw@${OKX_A2A_OPENCLAW_PLUGIN_VERSION}" --silent >/tmp/pack-name.txt; \

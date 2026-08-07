@@ -18,6 +18,100 @@ import {
 const INSTALL_TIMEOUT_MS = 180_000;
 const MAX_ATTEMPTS = 4;
 const CACHE_RETRY_MAX = 2;
+/** Grace between SIGTERM and SIGKILL for an install that ignores the first. */
+const INSTALL_KILL_GRACE_MS = 5_000;
+
+/**
+ * Runs one install command under a timeout that kills the ENTIRE process
+ * group, so nothing the package manager spawned can outlive the deadline.
+ *
+ * === Why execa's own `timeout` is not enough ===
+ *
+ * `execa`'s `timeout` signals the direct child only. `npm ci` / `npm install`
+ * is not a leaf process: it forks workers and (for package managers that honour
+ * lifecycle scripts) arbitrary child processes of its own. A timed-out install
+ * therefore left grandchildren running, reparented to init.
+ *
+ * This is the exact defect already fixed once on this machine for the
+ * gate-check path (`runBoundedGroup` in scripts/repodiet-seller-runtime.ts):
+ * three leaked `okx-a2a doctor` grandchildren had accumulated on
+ * repodiet-agent-9636, each holding a Node heap on a 1-vCPU box, driving load
+ * average past 14 and starving the very command that spawned them. The
+ * repository-verification path spawns strictly heavier children than that and
+ * had no equivalent protection at all — on a 2 GB machine a single leaked
+ * install is enough to reach the OOM killer.
+ *
+ * `detached: true` puts the child in its own process group (pgid === pid), so
+ * `kill(-pgid)` takes down the child and everything beneath it.
+ *
+ * The returned shape is exactly execa's, including `timedOut` and `signal`, so
+ * `describeProcessTermination` keeps reporting OOM-vs-timeout-vs-conflict the
+ * same way. `reject: false` is preserved: callers inspect `exitCode`.
+ */
+async function runBoundedInstall(
+  command: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number }
+): Promise<{
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  signal?: string | null;
+  timedOut?: boolean;
+}> {
+  const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
+  // Process groups are POSIX. On Windows `detached` creates a new console
+  // rather than a killable group, so the platform's own child-tree handling
+  // (and execa's timeout) is used there instead.
+  const useProcessGroup = process.platform !== "win32";
+
+  const child = execa(command[0], command.slice(1), {
+    cwd: options.cwd,
+    env: options.env,
+    reject: false,
+    detached: useProcessGroup,
+    // Retained as a backstop for the direct child; the group kill below is
+    // what actually bounds the tree.
+    timeout: useProcessGroup ? undefined : timeoutMs,
+  });
+
+  let timedOut = false;
+  const killGroup = (signal: NodeJS.Signals) => {
+    if (child.pid === undefined) return;
+    try {
+      if (useProcessGroup) process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      try {
+        child.kill(signal);
+      } catch {
+        /* already exited */
+      }
+    }
+  };
+
+  const timer = useProcessGroup
+    ? setTimeout(() => {
+        timedOut = true;
+        killGroup("SIGTERM");
+        setTimeout(() => killGroup("SIGKILL"), INSTALL_KILL_GRACE_MS).unref?.();
+      }, timeoutMs)
+    : undefined;
+  timer?.unref?.();
+
+  try {
+    const result = await child;
+    return {
+      exitCode: result.exitCode ?? null,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      signal: result.signal ?? null,
+      // Our own group kill is authoritative; execa only knows about its own.
+      timedOut: timedOut || result.timedOut === true,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface WorkspaceInstallResult {
   installed: boolean;
@@ -598,10 +692,8 @@ export async function ensureWorkspaceDependenciesWithCache(
     const command = variants[attempt % variants.length];
     lastCommand = command.join(" ");
     const t0 = Date.now();
-    const result = await execa(command[0], command.slice(1), {
+    const result = await runBoundedInstall(command, {
       cwd: rootDir,
-      timeout: INSTALL_TIMEOUT_MS,
-      reject: false,
       env: installEnv(cacheDir, rootDir, "workspace"),
     });
     const durationMs = Date.now() - t0;
@@ -742,12 +834,7 @@ export async function ensureVerificationDependencies(
     assertVerificationInstallCommand(command);
     lastCommand = command.join(" ");
     const t0 = Date.now();
-    const result = await execa(command[0], command.slice(1), {
-      cwd: rootDir,
-      timeout: INSTALL_TIMEOUT_MS,
-      reject: false,
-      env: plan.env,
-    });
+    const result = await runBoundedInstall(command, { cwd: rootDir, env: plan.env });
     const durationMs = Date.now() - t0;
     const stdout = result.stdout ?? "";
     const stderr = result.stderr ?? "";

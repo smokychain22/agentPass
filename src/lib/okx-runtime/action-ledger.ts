@@ -284,10 +284,52 @@ export class FileActionLedger {
     this.held.delete(eventId);
   }
 
-  /** Unfinished events to resume after a restart, oldest first. */
-  pendingForRecovery(): LedgerRecord[] {
+  /**
+   * Unfinished events to resume, oldest first.
+   *
+   * A record whose `retryAfterIso` is still in the future is DEFERRED, not
+   * dropped: it stays on disk, unacknowledged and unaltered, and reappears
+   * here the moment its quarantine window passes. This is the single choke
+   * point both startup recovery and the poll loop read through, so honouring
+   * the deferral here covers both without a second mechanism.
+   *
+   * === Incident #18 ===
+   * Startup recovery replayed EVERY unfinished event immediately, with no
+   * delay at all. For funded job 0x22a2…, whose event fails inside the heavy
+   * repository pipeline, that meant a restart instantly re-ran the work that
+   * had exhausted the machine — so the crash loop was self-sustaining and the
+   * only available lever was suspending all system events globally.
+   *
+   * An unparseable or absent `retryAfterIso` is treated as "due now", which is
+   * exactly the pre-existing behaviour: a corrupt timestamp must never be able
+   * to defer an event indefinitely, only ever to fail open into a retry.
+   */
+  pendingForRecovery(nowMs: number = Date.now()): LedgerRecord[] {
     return Object.values(this.load().records)
       .filter((r) => !r.acknowledged && r.state !== "terminal_failure")
+      .filter((r) => {
+        if (!r.retryAfterIso) return true;
+        const dueAt = Date.parse(r.retryAfterIso);
+        return Number.isFinite(dueAt) ? dueAt <= nowMs : true;
+      })
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  }
+
+  /**
+   * Records currently held back by an unexpired `retryAfterIso`.
+   *
+   * Read-only and used purely so the runtime can LOG what it is deferring.
+   * A quarantine nobody can see is indistinguishable from work being silently
+   * dropped, which is the confusion the global suspension switch created.
+   */
+  deferredForRecovery(nowMs: number = Date.now()): LedgerRecord[] {
+    return Object.values(this.load().records)
+      .filter((r) => !r.acknowledged && r.state !== "terminal_failure")
+      .filter((r) => {
+        if (!r.retryAfterIso) return false;
+        const dueAt = Date.parse(r.retryAfterIso);
+        return Number.isFinite(dueAt) && dueAt > nowMs;
+      })
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 }

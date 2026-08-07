@@ -51,9 +51,130 @@
  */
 
 export type GateCheckOutcome =
-  | { kind: "passed"; durationMs: number }
+  | { kind: "passed"; durationMs: number; advisories?: string[] }
   | { kind: "failed"; durationMs: number; reason: string }
   | { kind: "inconclusive"; durationMs: number; reason: string };
+
+/**
+ * === Incident #17: a version-staleness advisory permanently took a healthy
+ * agent offline, and no pin can ever fix that ===
+ *
+ * Observed live on repodiet-agent-9636 on 2026-08-07: the heartbeat had been
+ * withheld 328 consecutive cycles (~5.5 hours) with `gateOk:false`,
+ * `gate_not_ready:ready,communication`, on a CONFIRMED failure that completed
+ * in 13s — not a timeout. `daemonOk` and `xmtpOk` were true throughout.
+ *
+ * `onchainos agent gate-check` collapses `okx-a2a doctor` into a single
+ * `communication.ok` boolean. Reading the doctor output directly showed why it
+ * was false — exactly one failing check out of ten:
+ *
+ *   cli_version   FAIL  "0.1.11 installed; latest stable is 0.2.0"
+ *   daemon_running    PASS  running (pid=874, ready)
+ *   gateway_reachable PASS  gateway responds, okx-a2a plugin reachable
+ *   agent_refresh     PASS  agentCount=2, activeClients=2
+ *   provider_binding  PASS  default provider is openclaw
+ *   gateway_plugin / gateway_config / npm_available / node_version  PASS
+ *
+ * That check compares the installed CLI against npm's LIVE `latest` tag. It is
+ * therefore not a statement about whether this agent can communicate — it is a
+ * statement about what OKX published to npm most recently, and it goes false
+ * again the moment they publish anything (0.2.1 betas were already dated the
+ * same day). Pinning a newer version postpones the outage; it cannot prevent
+ * it. Incident #14 already established that the agent's online status must not
+ * be hostage to an external dependency inside a diagnostic command; this is
+ * that same defect, arriving through the version check instead of latency.
+ *
+ * The fix reads the doctor's own structured `checks[]` instead of the
+ * collapsed boolean, and lets a not-ready verdict stand as PASSED only when
+ * every failing check is one that does not bear on communication at all. This
+ * is strictly MORE evidence than the aggregate boolean it replaces, not less:
+ *
+ *   - identity and wallet must still pass, from gate-check itself;
+ *   - every communication-bearing check must still genuinely pass;
+ *   - missing, unparseable or shape-unexpected doctor evidence keeps the
+ *     CONFIRMED failure, so the fail-closed default is unchanged;
+ *   - an unrecognised check id is treated as communication-bearing, so a
+ *     future doctor release cannot quietly widen the amnesty.
+ *
+ * Only these two ids are advisory, and both are justified individually rather
+ * than by severity (`cli_version` is severity "required", so severity alone
+ * would not separate them).
+ */
+const ADVISORY_DOCTOR_CHECKS: ReadonlyMap<string, string> = new Map([
+  [
+    // Compares against npm's live `latest` tag. Says nothing about this
+    // agent's reachability, and no pinned value stays current.
+    "cli_version",
+    "installed CLI is behind npm latest; does not affect reachability",
+  ],
+  [
+    // Doctor itself labels this OPTIONAL and NOT blocking. This container has
+    // no systemd user session by design — the supervisor owns process
+    // lifecycle (see Incident #11) — so it can never be satisfied here.
+    "autostart",
+    "OS autostart not installed; the supervisor owns daemon lifecycle here",
+  ],
+]);
+
+export interface DoctorCheck {
+  id?: unknown;
+  status?: unknown;
+  detail?: unknown;
+}
+
+export type DoctorEvidence =
+  /** Every failing check is advisory-only; communication is genuinely proven. */
+  | { kind: "advisory_only"; advisories: string[] }
+  /** At least one check that bears on communication genuinely failed. */
+  | { kind: "blocking"; failing: string[] }
+  /** No usable evidence — the caller must keep its fail-closed verdict. */
+  | { kind: "unreadable"; reason: string };
+
+/**
+ * Classifies `okx-a2a doctor --json` output by which checks actually failed.
+ *
+ * Deliberately conservative: anything it cannot read, and any failing check it
+ * does not explicitly recognise as advisory, is reported as blocking or
+ * unreadable so the caller keeps failing closed.
+ */
+export function classifyDoctorChecks(stdout: string | undefined): DoctorEvidence {
+  let parsed: unknown;
+  try {
+    const line = (stdout ?? "").trim().split("\n").pop() ?? "";
+    parsed = JSON.parse(line);
+  } catch {
+    return { kind: "unreadable", reason: "unparseable_doctor_output" };
+  }
+
+  const checks = (parsed as { checks?: unknown })?.checks;
+  if (!Array.isArray(checks) || checks.length === 0) {
+    return { kind: "unreadable", reason: "doctor_checks_missing" };
+  }
+
+  const advisories: string[] = [];
+  const failing: string[] = [];
+
+  for (const raw of checks as DoctorCheck[]) {
+    if (!raw || typeof raw !== "object") {
+      return { kind: "unreadable", reason: "doctor_check_malformed" };
+    }
+    // Only "fail" counts against the gate. "warn"/"skipped" were never
+    // blocking, and doctor reports its own optional items as "fail" too.
+    if (raw.status !== "fail") continue;
+    const id = typeof raw.id === "string" ? raw.id : undefined;
+    if (id === undefined) {
+      return { kind: "unreadable", reason: "doctor_check_missing_id" };
+    }
+    const advisory = ADVISORY_DOCTOR_CHECKS.get(id);
+    // Unrecognised ids fall here on purpose: a future doctor release must
+    // never be able to widen this amnesty by adding a check we have not read.
+    if (advisory === undefined) failing.push(id);
+    else advisories.push(`${id}:${advisory}`);
+  }
+
+  if (failing.length > 0) return { kind: "blocking", failing };
+  return { kind: "advisory_only", advisories };
+}
 
 export interface GateCheckLimits {
   /** Hard bound on a single gate-check invocation. */
@@ -91,6 +212,13 @@ export function classifyGateCheckOutcome(input: {
   durationMs: number;
   expectedAgentId: string;
   timeoutMs: number;
+  /**
+   * Structured `okx-a2a doctor --json` output, when the caller was able to
+   * collect it. Consulted ONLY to resolve a not-ready verdict whose sole
+   * complaint is `communication` (see Incident #17). Absent evidence changes
+   * nothing: the not-ready verdict stays a confirmed failure.
+   */
+  doctorStdout?: string;
 }): GateCheckOutcome {
   const { error, durationMs, expectedAgentId } = input;
 
@@ -152,6 +280,39 @@ export function classifyGateCheckOutcome(input: {
   if (identity?.agentId !== expectedAgentId) failing.push("identity");
   if (communication?.ok !== true) failing.push("communication");
   if (wallet?.ok !== true) failing.push("wallet");
+
+  /**
+   * Incident #17. The ONLY not-ready shape eligible for reconsideration is
+   * one where identity and wallet both genuinely passed and the sole
+   * complaint is the collapsed `communication` boolean (`ready` is derived
+   * from it, so it always accompanies it). Anything else — a bad identity, a
+   * bad wallet, or a not-ready we cannot account for — stays a confirmed
+   * failure without ever consulting the doctor evidence.
+   */
+  const onlyCommunication =
+    identity?.agentId === expectedAgentId &&
+    wallet?.ok === true &&
+    communication?.ok !== true &&
+    failing.every((item) => item === "ready" || item === "communication");
+
+  if (onlyCommunication) {
+    const evidence = classifyDoctorChecks(input.doctorStdout);
+    if (evidence.kind === "advisory_only") {
+      // Every failing doctor check is one that does not bear on
+      // communication, and every communication-bearing check passed. The
+      // channel is proven; the collapsed boolean was simply wrong about why.
+      return { kind: "passed", durationMs, advisories: evidence.advisories };
+    }
+    if (evidence.kind === "blocking") {
+      return {
+        kind: "failed",
+        durationMs,
+        reason: `gate_not_ready:communication:${evidence.failing.join(",")}`,
+      };
+    }
+    // Unreadable evidence — fall through to the fail-closed verdict below.
+  }
+
   return { kind: "failed", durationMs, reason: `gate_not_ready:${failing.join(",")}` };
 }
 

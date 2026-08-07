@@ -9,10 +9,8 @@ import {
   isGreenPrVerificationOperation,
 } from "@/lib/a2mcp/green-pr-verification";
 import { normalizeRepositoryTarget } from "@/lib/repository/repository-target";
-import { getCanonicalOkxIdentityPublic } from "@/lib/okx/identity-public";
-import { getAnalyzeRepositoryPrice } from "@/lib/payment/analyze-repository-price";
-import { A2MCP_SERVICES } from "@/lib/okx/services";
 import {
+  mintOfficialPaymentChallenge,
   processOfficialPayment,
   settleOfficialPayment,
   OfficialX402ConfigError,
@@ -127,67 +125,73 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 /**
- * Liveness / capability descriptor for the registered A2MCP endpoint.
+ * Discovery probe for the registered A2MCP endpoint.
  *
- * DEFENSIVE COMPATIBILITY HARDENING — NOT a proven fix for any specific
- * review failure. Official A2MCP validation is an unpaid POST returning
- * HTTP 402, and that path was already healthy and correctly bound. We have
- * no evidence that any reviewer probe required GET or HEAD.
+ * === Why this returns 402 and not 200 ===
  *
- * What is true: this route previously exported only POST, so a plain
- * GET/HEAD received Next.js's default 405 with an empty body. Answering
- * generic reachability probes with a real 200 costs nothing and removes
- * one plausible source of ambiguity, so it is worth having regardless.
+ * This route used to answer GET/HEAD with a 200 "liveness descriptor", added
+ * as speculative hardening whose own comment conceded there was "no evidence
+ * that any reviewer probe required GET or HEAD". That turned out to be
+ * actively harmful. `onchainos agent x402-check --endpoint <url>` — OKX's own
+ * endpoint validator, and the obvious tool for a reviewer to run — probes with
+ * GET when no `--body` is supplied, and against live production on 2026-08-07
+ * it returned:
  *
- * It deliberately performs NO billable work: no repository is fetched, no
- * scan runs, no quote is minted, no revenue is recorded, and no x402
- * challenge is issued. Paid execution remains exclusively on POST.
+ *   {"reason":"Endpoint returned HTTP 200 (not 402); not a valid x402
+ *     service.","statusCode":200,"valid":false}
+ *
+ * The very same command WITH `--body` returned `valid:true`, `amountHuman:0.03`,
+ * `network:eip155:196`, `payTo:0xaa89…f1a`. So the paid path was correct all
+ * along and only the unauthenticated probe misrepresented the service — the
+ * 200 was reporting "online" while telling OKX's validator this was not an
+ * x402 endpoint at all.
+ *
+ * A 402 carrying the SDK's own PAYMENT-REQUIRED challenge is both the
+ * standards-correct answer for a protected resource and a strictly better
+ * liveness signal: it proves the route is reachable AND that its payment
+ * boundary is live, which a static descriptor never did.
+ *
+ * Still no billable work: no repository is fetched, no scan runs, nothing is
+ * verified, recorded or settled. The challenge is minted by the official SDK
+ * from the same RouteConfig the POST path uses, so discovery and payment can
+ * never quote different terms.
  */
-function buildServiceDescriptor() {
-  const identity = getCanonicalOkxIdentityPublic();
-  const price = getAnalyzeRepositoryPrice();
-  const definition = A2MCP_SERVICES.analyze_repository;
+async function buildProbeResponse(request: Request, includeBody: boolean): Promise<NextResponse> {
+  let challenge: Awaited<ReturnType<typeof mintOfficialPaymentChallenge>>;
+  try {
+    challenge = await mintOfficialPaymentChallenge(request);
+  } catch (error) {
+    // Fails closed exactly like POST: a probe must never claim the service is
+    // healthy while its payment boundary is not.
+    return NextResponse.json(
+      buildToolErrorResponse(
+        "analyze_repository",
+        createTaskId(),
+        "PAYMENT_BOUNDARY_UNAVAILABLE",
+        error instanceof OfficialX402ConfigError
+          ? error.message
+          : "The official OKX payment boundary is temporarily unavailable."
+      ),
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
 
-  return {
-    ok: true,
-    status: "online" as const,
-    service: "RepoDiet Quick Triage",
-    serviceType: "A2MCP" as const,
-    agentId: String(identity.aspAgentId),
-    serviceId: String(identity.a2mcpServiceId),
-    operation: definition.operation,
-    description: definition.description,
-    readOnly: definition.readOnly,
-    price: {
-      amountMicro: price.amountMicro,
-      label: price.priceLabel.replace(/USDT/g, "USD₮0"),
-      currency: "USDT",
-    },
-    invocation: {
-      method: "POST" as const,
-      contentType: "application/json",
-      requiredFields: ["repositoryUrl"],
-      paymentProtocol: "x402",
-      note: "An unpaid POST returns HTTP 402 with an x402 payment challenge. GET and HEAD are liveness probes only and never trigger payment or execution.",
-    },
-    checkedAt: new Date().toISOString(),
-  };
+  const headers = new Headers(challenge.headers);
+  headers.set("Cache-Control", "no-store");
+  return new NextResponse(
+    includeBody ? (challenge.body === undefined ? null : JSON.stringify(challenge.body)) : null,
+    { status: challenge.status, headers }
+  );
 }
 
-/** Reachability probe — always fast, never billable. */
-export async function GET() {
-  return NextResponse.json(buildServiceDescriptor(), {
-    status: 200,
-    headers: { "Cache-Control": "no-store" },
-  });
+/** Discovery probe — fast, never billable, and honest about the price. */
+export async function GET(request: Request) {
+  return buildProbeResponse(request, true);
 }
 
-/** Reachability probe (no body) — always fast, never billable. */
-export async function HEAD() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: { "Cache-Control": "no-store" },
-  });
+/** Discovery probe (no body) — identical status and headers to GET. */
+export async function HEAD(request: Request) {
+  return buildProbeResponse(request, false);
 }
 
 function isValidPublicGitHubRepository(url: string): boolean {

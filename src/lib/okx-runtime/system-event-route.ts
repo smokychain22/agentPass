@@ -321,7 +321,40 @@ export interface RetryDecision {
 /** Exported so tests assert against the real bound rather than a duplicated literal. */
 export const MAX_ATTEMPTS = 15;
 const BASE_BACKOFF_MS = 2_000;
-const MAX_BACKOFF_MS = 60_000;
+/**
+ * Ceiling on a single deferral, raised from 60s on 2026-08-07.
+ *
+ * === Incident #18: the retry delay was computed and then thrown away, so one
+ * failing job replayed forever at full speed and saturated the machine ===
+ *
+ * `delayMs` below has always been correct and has never been honoured — the
+ * docblock above says so outright ("nothing in the executor or the seller
+ * runtime sleeps on it"). The real cadence was therefore the 60s poll, plus an
+ * immediate, undelayed replay of EVERY unfinished event on every startup.
+ *
+ * Live consequence on repodiet-agent-9636: funded job 0x22a2…'s `job_accepted`
+ * event fails inside the heavy repository pipeline (clone + npm install +
+ * analyzer + verification). Each replay ran that pipeline again on a
+ * shared-cpu-1x/2GB machine; the gate check then timed out, the heartbeat was
+ * withheld, the machine restarted, and startup recovery replayed it
+ * immediately — a loop where the failure caused the restart that caused the
+ * failure. The only lever that existed was suspending ALL system events
+ * globally, which also blocks every legitimate NEW job.
+ *
+ * Honouring `delayMs` (see persistRetryable) and raising this ceiling turns
+ * that into a per-event quarantine that needs no global switch. The shape is
+ * deliberately asymmetric — `BASE_BACKOFF_MS * 2 ** attempts` — so a transient
+ * upstream blip is still retried within seconds, while an event that keeps
+ * failing backs off into hours:
+ *
+ *   attempt  1 → 4s      attempt  8 → 8.5m
+ *   attempt  3 → 16s     attempt 10 → 34m
+ *   attempt  5 → 64s     attempt 12 → 1h (capped)
+ *
+ * The bound is still finite and MAX_ATTEMPTS still terminates the event, so
+ * this defers work — it never abandons or acknowledges it.
+ */
+const MAX_BACKOFF_MS = 3_600_000;
 
 /**
  * Bounded retry for model-provider failures.

@@ -53,6 +53,13 @@ export interface ActionEvidence {
   xmtpMessageId?: string;
   error?: string;
   attempts: number;
+  /**
+   * Earliest time this event may be retried, ISO-8601. Set from
+   * `decideRetry`'s own computed delay on a retryable failure; the recovery
+   * scan skips the record until it passes. See Incident #18 in
+   * system-event-route.ts.
+   */
+  retryAfterIso?: string;
 }
 
 /** Durable, process-safe ledger. Implemented over the /persistent volume. */
@@ -403,7 +410,25 @@ function persistRetryable(
 ): ExecuteResult {
   const decision = decideRetry({ status, attempts });
   const state: EventLifecycleState = decision.retry ? "retryable_failure" : "terminal_failure";
-  const evidence: ActionEvidence = { state, attempts, error: reason };
+  /**
+   * Incident #18: `decideRetry` has always computed a delay and no caller has
+   * ever honoured it, so a failing event replayed at full poll speed and, on
+   * restart, immediately. Recording it on the event's own ledger record turns
+   * it into a durable, PER-EVENT quarantine: `pendingForRecovery` skips a
+   * record until its `retryAfterIso` has passed, across restarts.
+   *
+   * Scoped to the one failing event and nothing else — a healthy event
+   * arriving a second later is completely unaffected, which is the whole
+   * point of replacing the global suspension switch.
+   *
+   * Only set when the event is genuinely going to be retried. A terminal
+   * record is never replayed, so a defer timestamp on one would be
+   * meaningless, and leaving it absent keeps the record honest.
+   */
+  const retryAfterIso = decision.retry
+    ? new Date(Date.now() + decision.delayMs).toISOString()
+    : undefined;
+  const evidence: ActionEvidence = { state, attempts, error: reason, retryAfterIso };
   deps.ledger.put(eventId, evidence);
   return { state, acknowledged: mayAcknowledge(state), reason, evidence };
 }

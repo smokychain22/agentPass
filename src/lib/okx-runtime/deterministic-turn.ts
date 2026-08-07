@@ -38,6 +38,7 @@ import {
 } from "./next-action-playbook";
 import { runProcess, type ProcessRunResult } from "./process-runner";
 import { ONCHAINOS } from "./system-event-adapters";
+import { HeavyJobRejected, runExclusiveHeavyJob } from "./heavy-job-limiter";
 
 export interface DeterministicTurnOptions {
   agentId: string;
@@ -275,22 +276,48 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
           baseCommit,
         });
 
-        const pr = await createPr({
-          repoUrl: context.repositoryUrl,
-          mode: "safe_only",
-          cleanupBranch: branch,
-          githubToken: token,
-          ...(approvedPaths.length > 0 ? { approvedPaths } : {}),
-        });
+        /**
+         * The single expensive step in this whole route: clone, dependency
+         * install, analyzer, then a baseline AND a patched verification
+         * install. Admitted through the machine-wide heavy-job limiter so it
+         * can never run concurrently with another repository execution and can
+         * never occupy the box without bound — see heavy-job-limiter.ts.
+         *
+         * Everything above this point (reading task detail, `agent common
+         * context`, resolving a token, the duplicate-PR lookup) is cheap and
+         * deliberately stays OUTSIDE the slot: holding the machine's only
+         * heavy slot while waiting on a GitHub round-trip would serialise work
+         * that costs nothing, and the duplicate-PR check is exactly what lets a
+         * retry skip the expensive path entirely.
+         */
+        const pr = await runExclusiveHeavyJob(`cleanup_pr:${jobId}`, () =>
+          createPr({
+            repoUrl: context.repositoryUrl!,
+            mode: "safe_only",
+            cleanupBranch: branch,
+            githubToken: token,
+            ...(approvedPaths.length > 0 ? { approvedPaths } : {}),
+          })
+        );
         prUrl = pr.data.pullRequest.url;
       }
     } catch (err) {
+      /**
+       * A refusal from the limiter is a statement about the MACHINE, not about
+       * this job — the job is untouched and still owed its work. Returning it
+       * with `status: undefined` puts it on the executor's existing
+       * `internal_failure_retryable` path, so it keeps its ledger record and
+       * its envelope and is retried on the bounded backoff, exactly like any
+       * other transient failure.
+       */
       const message =
-        err instanceof ToolExecutionError
+        err instanceof HeavyJobRejected
           ? `${err.code}:${err.message}`
-          : err instanceof Error
-            ? err.message
-            : "cleanup_pr_failed";
+          : err instanceof ToolExecutionError
+            ? `${err.code}:${err.message}`
+            : err instanceof Error
+              ? err.message
+              : "cleanup_pr_failed";
       return { ok: false, actions: [], status: undefined, error: message };
     }
 

@@ -318,8 +318,15 @@ async function runBoundedGroup(
           resolve({ stdout });
           return;
         }
-        const err = new Error(stderr.trim() || `${command} exited with code ${code}`) as NodeJS.ErrnoException;
+        const err = new Error(stderr.trim() || `${command} exited with code ${code}`) as NodeJS.ErrnoException & {
+          stdout?: string;
+        };
         err.code = String(code ?? "UNKNOWN");
+        // `okx-a2a doctor --json` exits NON-ZERO whenever anything is not
+        // ready, which is the ordinary case we most need to read — its
+        // diagnostic JSON is on stdout regardless. Discarding it here is what
+        // left Incident #17 diagnosable only by hand.
+        err.stdout = stdout;
         reject(err);
       });
     });
@@ -510,13 +517,47 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
     gateCheckInFlight = false;
   }
 
-  const outcome = classifyGateCheckOutcome({
-    stdout,
-    error,
-    durationMs: Date.now() - startedAtMs,
-    expectedAgentId: SELLER.agentId,
-    timeoutMs: GATE_CHECK_TIMEOUT_MS,
-  });
+  const classify = (doctorStdout?: string) =>
+    classifyGateCheckOutcome({
+      stdout,
+      error,
+      durationMs: Date.now() - startedAtMs,
+      expectedAgentId: SELLER.agentId,
+      timeoutMs: GATE_CHECK_TIMEOUT_MS,
+      doctorStdout,
+    });
+
+  let outcome = classify();
+
+  /**
+   * Incident #17: gate-check collapses ten doctor checks into one
+   * `communication` boolean, so a purely advisory failure (an installed CLI
+   * behind npm's live `latest` tag) is indistinguishable from a genuinely
+   * broken channel — and permanently withheld the heartbeat for it.
+   *
+   * Only when the verdict is not-ready SOLELY on `communication` is the
+   * structured evidence collected and the verdict reconsidered. This costs one
+   * extra bounded, read-only doctor run on the failure path of a 900s cadence,
+   * and never runs on the healthy path. `--fix` is deliberately absent: this is
+   * evidence gathering, and must not mutate the runtime to make itself pass.
+   */
+  if (outcome.kind === "failed" && /(^|:)communication(,|:|$)/.test(outcome.reason)) {
+    let doctorStdout: string | undefined;
+    try {
+      ({ stdout: doctorStdout } = await runBoundedGroup(
+        "okx-a2a",
+        ["doctor", "--json"],
+        GATE_CHECK_TIMEOUT_MS
+      ));
+    } catch (err) {
+      // Non-zero exit is the ORDINARY case when anything is not ready; the
+      // diagnostic JSON is still on stdout. A timeout leaves it undefined,
+      // which keeps the original fail-closed verdict.
+      doctorStdout = (err as { stdout?: string } | undefined)?.stdout;
+    }
+    outcome = classify(doctorStdout);
+  }
+
   gateProof.record(outcome);
   if (outcome.kind === "passed") persistGateProof(gateProof.lastPassedAtMs);
 
@@ -524,6 +565,9 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
     passed: outcome.kind === "passed",
     outcome: outcome.kind,
     reason: outcome.kind === "passed" ? undefined : outcome.reason,
+    // Named explicitly so "passed DESPITE a failing doctor check" can never
+    // look like an unqualified clean pass in the operator log.
+    advisories: outcome.kind === "passed" ? outcome.advisories : undefined,
     durationMs: outcome.durationMs,
     health: gateProof.health(),
     nextRefreshMs: gateProof.nextRefreshDelayMs(),
@@ -1245,6 +1289,28 @@ async function main(): Promise<void> {
       note: "REPODIET_SUSPEND_SYSTEM_EVENTS is set; startup recovery skipped and the poll loop will not be started. Heartbeat, XMTP and the A2A daemon continue normally.",
     });
   } else {
+    /**
+     * Incident #18: what is being HELD BACK is logged before recovery runs.
+     *
+     * A per-event quarantine that nobody can see is indistinguishable from
+     * work being silently dropped — which is precisely the ambiguity the
+     * global suspension switch created, and the reason it was reached for. The
+     * read is read-only (it neither claims nor mutates anything) and names the
+     * job and the due time, so an operator can tell "deferred until 14:32"
+     * apart from "lost".
+     */
+    for (const deferred of systemEventDeps.ledgerFile.deferredForRecovery()) {
+      log("system_event_deferred", {
+        eventId: deferred.eventId,
+        jobId: deferred.jobId,
+        state: deferred.state,
+        attempts: deferred.attempts,
+        retryAfter: deferred.retryAfterIso,
+        lastError: deferred.lastError ?? deferred.terminalReason,
+        note: "quarantined by its own bounded backoff; preserved, unacknowledged, and retried when due. New events are unaffected.",
+      });
+    }
+
     await recoverPendingEvents(systemEventDeps);
 
     systemEventTimer = setInterval(() => {
