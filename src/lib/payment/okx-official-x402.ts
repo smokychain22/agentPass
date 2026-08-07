@@ -72,6 +72,23 @@ export const A2MCP_ROUTE_PATTERN = "POST /api/a2mcp/quick-triage";
  */
 export const A2MCP_PROBE_ROUTE_PATTERN = "GET /api/a2mcp/quick-triage";
 
+/**
+ * HEAD is a SEPARATE verb to the SDK's route matcher, not an alias for GET.
+ *
+ * Caught on the PR preview deployment before merge: with only the GET pattern
+ * registered, `GET` returned 402 while `HEAD` returned 503. The SDK's
+ * `getRouteConfig(path, method)` matches `route.verb === upperMethod`, so a
+ * HEAD request matched nothing, came back `no-payment-required`, and this
+ * module correctly refused to treat an unprotected route as a free pass — the
+ * fail-closed path firing for a probe that should simply have been answered.
+ *
+ * Two probe verbs are registered explicitly rather than using the matcher's
+ * `"*"` wildcard: a wildcard would also protect PUT/DELETE/PATCH on this path,
+ * silently turning unimplemented methods into 402s instead of the 405 they
+ * should be.
+ */
+export const A2MCP_PROBE_HEAD_ROUTE_PATTERN = "HEAD /api/a2mcp/quick-triage";
+
 const INITIALIZE_ATTEMPTS = 3;
 const INITIALIZE_RETRY_DELAY_MS = 250;
 
@@ -219,6 +236,7 @@ export async function getOfficialResourceServer(
   const httpServer = new x402HTTPResourceServer(resourceServer, {
     [A2MCP_ROUTE_PATTERN]: route,
     [A2MCP_PROBE_ROUTE_PATTERN]: route,
+    [A2MCP_PROBE_HEAD_ROUTE_PATTERN]: route,
   });
 
   // initialize() is a live round-trip to the OKX facilitator: it loads the
@@ -331,12 +349,14 @@ export async function mintOfficialPaymentChallenge(
 ): Promise<{ status: number; headers: Record<string, string>; body: unknown }> {
   const server = await getOfficialResourceServer(env);
   const adapter = createNextHttpAdapter(request);
+  const method = adapter.getMethod();
   const result = await server.processHTTPRequest({
     adapter,
     path: adapter.getPath(),
-    method: adapter.getMethod(),
+    method,
     paymentHeader: undefined,
-    routePattern: A2MCP_PROBE_ROUTE_PATTERN,
+    routePattern:
+      method === "HEAD" ? A2MCP_PROBE_HEAD_ROUTE_PATTERN : A2MCP_PROBE_ROUTE_PATTERN,
   });
 
   if (result.type === "payment-error") {
@@ -349,7 +369,7 @@ export async function mintOfficialPaymentChallenge(
   // Anything else means the probe route is not payment-protected, which for a
   // paid marketplace service is a misconfiguration, not a free pass.
   throw new OfficialX402ConfigError([
-    `route ${A2MCP_PROBE_ROUTE_PATTERN} is not payment-protected`,
+    `route ${method} /api/a2mcp/quick-triage is not payment-protected`,
   ]);
 }
 
