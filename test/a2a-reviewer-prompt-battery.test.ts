@@ -182,12 +182,41 @@ async function run() {
     );
   });
 
-  await test("genuinely unmappable input is still refused — the gate is not simply removed", async () => {
-    const { body } = await post({ message: "banana" });
+  /**
+   * This assertion was re-pointed on 2026-08-07, NOT relaxed.
+   *
+   * It previously required `code: "INVALID_TASK_TYPE"` for "banana", under the
+   * stated intent "unrelated text must not be silently coerced into a cleanup
+   * task". That intent is exactly right and is fully preserved below — what
+   * changed is that the route now expresses it by DESCRIBING ITSELF instead of
+   * returning HTTP 400.
+   *
+   * The 400 was never the safety property; not creating work was. And the 400
+   * carried a real cost: the same branch that rejected "banana" also rejected
+   * "I have a GitHub repository with dead code. Can RepoDiet help?" live in
+   * production, which is a paying customer and an OKX reviewer, not noise. A
+   * marketplace agent that answers an unrecognised sentence with "I could not
+   * map that" fails review; one that answers with what it does, does not.
+   *
+   * So the assertions here now check the thing that actually matters — no
+   * task, no scan, no payment, no coercion into a cleanup type — for input
+   * with no conceivable cleanup intent.
+   */
+  await test("genuinely unmappable input still creates NO task and starts NO work — it is answered, not acted on", async () => {
+    const { status, body } = await post({ message: "banana" });
+    assert.equal(status, 200, "an unrecognised sentence is answered, not refused");
     assert.equal(
-      body.code,
-      "INVALID_TASK_TYPE",
-      "unrelated text must not be silently coerced into a cleanup task"
+      body.classification,
+      "unclassified_conversational_message",
+      "it must go through the explicit fallback, not be mistaken for a real request"
+    );
+    assert.equal(body.taskId, undefined, "unrelated text must not create a task");
+    assert.equal(body.scanStarted, false, "unrelated text must not start a scan");
+    assert.equal(body.requestedTaskType, undefined, "unrelated text must not acquire a cleanup type");
+    assert.equal(
+      (body.taskPolicy as Record<string, unknown>)?.startWork,
+      false,
+      "unrelated text must never authorise work"
     );
   });
 
@@ -235,6 +264,87 @@ async function run() {
       body.marketplaceLifecycle,
       "AVAILABLE",
       "a request carrying a repository must not be answered as mere discovery/status guidance"
+    );
+  });
+
+  // --- the unclassified-message fallback (2026-08-07) --------------------
+
+  /**
+   * Every INVALID_TASK_TYPE rejection so far was fixed by appending one more
+   * regex to marketplace-intake.ts — three separate rounds, each after a
+   * reviewer hit a phrasing nobody had listed. That can only ever catch
+   * phrasings someone already thought of.
+   *
+   * Reproduced live against production on 2026-08-07, one of the three
+   * messages this repair was asked to prove: "I have a GitHub repository with
+   * dead code. Can RepoDiet help?" returned HTTP 400, "could not map it to a
+   * cleanup task type" — an ordinary prospective-customer sentence answered
+   * with a rejection. The route now answers ANY unclassified human message
+   * informatively, so the next unanticipated phrasing is a useful reply rather
+   * than the next rejected review.
+   */
+  await test("the three marketplace reviewer messages are all answered, none rejected", async () => {
+    for (const message of [
+      "I would like to use the services of agent ID 9636",
+      "What services do you provide?",
+      "I have a GitHub repository with dead code. Can RepoDiet help?",
+    ]) {
+      const { status, body } = await post({ message });
+      assert.equal(status, 200, `must answer with 200: ${message}`);
+      assert.notEqual(body.code, "INVALID_TASK_TYPE", `must not reject: ${message}`);
+      assert.equal(body.acknowledged, true, `must acknowledge: ${message}`);
+      const text = String(body.message ?? "");
+      assert.ok(text.length > 0, `must say something: ${message}`);
+      assert.match(text, /RepoDiet/, `must identify itself: ${message}`);
+    }
+  });
+
+  await test("an unclassified message gets the service description, and is labelled as the fallback rather than passing as a pattern match", async () => {
+    const { status, body } = await post({
+      message: "I have a GitHub repository with dead code. Can RepoDiet help?",
+    });
+    assert.equal(status, 200);
+    assert.equal(body.classification, "unclassified_conversational_message");
+    const text = String(body.message);
+    // The reply must actually be useful: both services, and what to send next.
+    assert.match(text, /37347/, "must name the A2MCP service");
+    assert.match(text, /37348/, "must name the A2A service");
+    assert.match(text, /repository/i, "must say what input is needed");
+  });
+
+  await test("the fallback never starts work or demands payment — it is a conversation, not a task", async () => {
+    // Deliberately free of any cleanup/PR wording: a message that DOES state
+    // cleanup intent must keep routing to the real cleanup path, and is
+    // covered separately above.
+    const { body } = await post({ message: "Hello, I am evaluating agents for my project." });
+    assert.equal(body.scanStarted, false);
+    assert.equal(body.paymentRequired, false);
+    assert.equal((body.taskPolicy as Record<string, unknown>)?.startWork, false);
+    assert.equal(body.taskId, undefined, "no task may be created by a conversational reply");
+  });
+
+  await test("an EXPLICIT unsupported type is still a hard error — a structured contract violation is reported, not papered over", async () => {
+    const { status, body } = await post({ message: "do this", type: "repository.delete_everything" });
+    assert.equal(status, 400);
+    assert.equal(body.code, "INVALID_TASK_TYPE");
+    assert.match(String(body.message), /repository\.delete_everything/, "must name the rejected type");
+    assert.ok(Array.isArray(body.supportedTypes), "must tell the caller what IS supported");
+  });
+
+  await test("a request carrying neither a message nor a repository is still a 400, not a cheerful non-answer", async () => {
+    const { status, body } = await post({});
+    assert.equal(status, 400);
+    assert.equal(body.code, "INVALID_TASK_TYPE");
+  });
+
+  await test("the fallback never swallows a real repository request", async () => {
+    const { body } = await post({
+      message: "Some phrasing nobody anticipated, repo https://github.com/velz-cmd/repodiet-e2e-test",
+    });
+    assert.notEqual(
+      body.classification,
+      "unclassified_conversational_message",
+      "a message carrying a repository must continue into real task intake"
     );
   });
 
