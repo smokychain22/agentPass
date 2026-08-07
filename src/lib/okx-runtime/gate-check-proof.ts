@@ -196,7 +196,33 @@ export interface GateCheckLimits {
 }
 
 export const DEFAULT_GATE_CHECK_LIMITS: GateCheckLimits = {
-  timeoutMs: 150_000,
+  /**
+   * === Incident #23: the bound was tighter than the command it bounds ===
+   *
+   * Measured on the production Machine on 2026-08-07, with heavy-child CPU
+   * deprioritisation (Incident #22) already confirmed live at nice 19: every
+   * gate-check during a cleanup attempt still returned
+   * `outcome:"inconclusive" reason:"timeout" durationMs:150241`, and because the
+   * machine had just rebooted there was no persisted proof to fall back on. The
+   * agent reported `gateReason:"no_proof_yet"` and withheld its heartbeat for
+   * eleven consecutive cycles with `daemonOk:true` and `xmtpOk:true`.
+   *
+   * `nice` could not help here, and that is the point: `gate-check` shells out
+   * to `okx-a2a doctor`, whose cost is dominated by LIVE NETWORK CALLS (npm
+   * registry, OKX backend, XMTP) — it is I/O-bound, not CPU-bound, and a
+   * concurrent `npm install` saturates exactly the same network and disk.
+   * Incident #14 already measured this command between 14s and past 150s on a
+   * quiet box; under I/O contention it simply needs longer than the bound it
+   * was given.
+   *
+   * A timeout is classified INCONCLUSIVE (Incident #15), so a longer bound
+   * costs availability nothing: a genuinely broken gate still returns a parsed
+   * verdict quickly and dies immediately. All this changes is that a slow-but-
+   * healthy run is allowed to finish instead of being abandoned a few seconds
+   * short. It stays far inside the 2,700s freshness window and the 900s refresh
+   * cadence.
+   */
+  timeoutMs: 300_000,
   refreshMs: 900_000,
   freshnessMs: 2_700_000,
   // 60s → 120s → 240s → 480s → capped. Inside one 2,700s freshness window

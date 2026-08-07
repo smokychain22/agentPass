@@ -425,6 +425,9 @@ function installEnv(cacheDir: string | undefined, rootDir: string, mode: "worksp
     NPM_CONFIG_PROGRESS: "false",
     NPM_CONFIG_LOGLEVEL: "warn",
     NPM_CONFIG_OPTIONAL: "false",
+    // Incident #23 — see NPM_MAX_SOCKETS. Set as env as well as a flag so the
+    // cap holds for any npm invocation that inherits this environment.
+    NPM_CONFIG_MAXSOCKETS: NPM_MAX_SOCKETS,
   };
 
   if (cacheDir) {
@@ -436,6 +439,27 @@ function installEnv(cacheDir: string | undefined, rootDir: string, mode: "worksp
   return env;
 }
 
+/**
+ * Caps how many sockets npm opens at once.
+ *
+ * === Incident #23: `nice` cannot fix an I/O fight ===
+ *
+ * Deprioritising the install's CPU (Incident #22) was confirmed working live at
+ * nice 19 and still did not restore the heartbeat: every `gate-check` timed out
+ * at 150s while an install ran. `gate-check` shells out to `okx-a2a doctor`,
+ * whose cost is dominated by live network calls (npm registry, OKX backend,
+ * XMTP). npm's default of 15 concurrent sockets saturates exactly that network
+ * on a shared-cpu-1x box, so the two compete for a resource `nice` does not
+ * schedule.
+ *
+ * Three sockets still pipeline the download comfortably — installs get slower,
+ * not stalled — while leaving the runtime enough headroom to prove itself
+ * online. Trading install wall-clock for agent availability is the right
+ * direction: nobody is waiting on the install interactively, and an agent that
+ * cannot answer is worth less than a cleanup that takes a minute longer.
+ */
+const NPM_MAX_SOCKETS = "3";
+
 function workspaceNpmFlags(cacheDir?: string): string[] {
   const cacheFlag = cacheDir ? ["--cache", cacheDir] : [];
   return [
@@ -443,6 +467,8 @@ function workspaceNpmFlags(cacheDir?: string): string[] {
     "--omit=optional",
     "--no-audit",
     "--no-fund",
+    "--maxsockets",
+    NPM_MAX_SOCKETS,
     ...cacheFlag,
     "--legacy-peer-deps",
   ];

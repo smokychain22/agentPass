@@ -65,6 +65,16 @@ export function verificationInstallEnv(
     NPM_CONFIG_FETCH_RETRIES: "5",
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000",
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000",
+    /**
+     * Incident #23. This is the HEAVIEST install the runtime performs (full
+     * verification, optional deps and lifecycle scripts enabled), and it runs
+     * on the same shared-cpu-1x box as the agent. npm's default 15 concurrent
+     * sockets saturate the network that `okx-a2a doctor` — and therefore
+     * `gate-check`, and therefore the heartbeat — depends on. CPU
+     * deprioritisation cannot help with that, because the contention is I/O.
+     * See workspace-install.ts's NPM_MAX_SOCKETS for the full reasoning.
+     */
+    NPM_CONFIG_MAXSOCKETS: "3",
     ...(cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {}),
   };
 }

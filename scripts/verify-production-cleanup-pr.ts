@@ -81,6 +81,32 @@ async function main(): Promise<void> {
    */
   const base = arg("base");
 
+  /**
+   * Explicitly approved delete paths, comma-separated.
+   *
+   * The final delivery gate refuses to delete anything that is not either in
+   * the narrow unattended operator-safe set or explicitly approved for this
+   * exact piece of work. That refusal is correct and load-bearing — it is what
+   * stops an unattended cleanup removing something a human never sanctioned —
+   * and the production path satisfies it the same way, via
+   * `approvedDeletePathsForJob` (see deterministic-turn.ts).
+   *
+   * Observed on 2026-08-07: without this the proof reached the gate and was
+   * blocked with "No approved cleanup operation passed the final delivery
+   * safety gate", listing the seeded candidate among the blocked paths. The
+   * engine had done everything right; nobody had approved anything.
+   *
+   * Passing an approval for a file this run deliberately seeded onto a
+   * throwaway branch is therefore USING the gate, not bypassing it. Every
+   * approved path is still checked by `isApprovedValidatedDeletePath` and by
+   * the sandbox's own `validatedPaths`, so a protected, generated, credential
+   * or workflow path stays undeletable no matter what is listed here.
+   */
+  const approvedPaths = (arg("approve") ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
   if (CUSTOMER_BRANCH_PATTERN.test(branch)) {
     fail(
       `refusing to run against ${branch}: that is the deterministic branch shape reserved for real paid OKX jobs`
@@ -92,7 +118,14 @@ async function main(): Promise<void> {
 
   console.log(
     JSON.stringify(
-      { step: "start", repoUrl, branch, base: base ?? "(repository default)", buildCommit: commit },
+      {
+        step: "start",
+        repoUrl,
+        branch,
+        base: base ?? "(repository default)",
+        approvedPaths,
+        buildCommit: commit,
+      },
       null,
       2
     )
@@ -132,6 +165,7 @@ async function main(): Promise<void> {
       cleanupBranch: branch,
       githubToken: token,
       ...(base ? { branch: base } : {}),
+      ...(approvedPaths.length > 0 ? { approvedPaths } : {}),
     });
     prUrl = result.data.pullRequest.url;
     prNumber = result.data.pullRequest.number;

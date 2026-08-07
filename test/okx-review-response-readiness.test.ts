@@ -441,6 +441,73 @@ async function main(): Promise<void> {
     );
   });
 
+  // ------------------------------------------------------- Incident #23 ----
+  console.log(" the gate-check bound and install I/O must not fight each other");
+
+  /**
+   * Measured on the production Machine with CPU deprioritisation already
+   * confirmed live at nice 19: every gate-check during a cleanup attempt still
+   * returned `timeout` at `durationMs:150241`, and with no persisted proof
+   * after a reboot the agent reported `gateReason:"no_proof_yet"` and withheld
+   * its heartbeat for eleven consecutive cycles with `daemonOk:true` and
+   * `xmtpOk:true`.
+   *
+   * `nice` could not help: `gate-check` shells out to `okx-a2a doctor`, whose
+   * cost is dominated by live NETWORK calls, and a concurrent `npm install`
+   * saturates the same network. The contention is I/O, which `nice` does not
+   * schedule.
+   */
+  await test("the gate-check bound exceeds the command's own measured worst case, so a slow-but-healthy run can finish", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    assert.ok(
+      limits.timeoutMs > 150_000,
+      `the bound must exceed the 150s at which real runs were being abandoned, got ${limits.timeoutMs}`
+    );
+    // Still far inside the windows it has to fit within, or a slow check would
+    // itself become the thing that expires the proof.
+    assert.ok(limits.timeoutMs < limits.refreshMs, "a check must finish well inside one refresh interval");
+    assert.ok(
+      limits.timeoutMs * 3 < limits.freshnessMs,
+      "several consecutive slow checks must still fit inside one freshness window"
+    );
+  });
+
+  await test("a timeout is STILL inconclusive at the wider bound — availability is bought without weakening the online claim", () => {
+    const outcome = classifyGateCheckOutcome({
+      error: { code: "ETIMEDOUT", message: "timed out" },
+      durationMs: DEFAULT_GATE_CHECK_LIMITS.timeoutMs,
+      expectedAgentId: AGENT,
+      timeoutMs: DEFAULT_GATE_CHECK_LIMITS.timeoutMs,
+    });
+    assert.equal(outcome.kind, "inconclusive");
+    // And a genuinely broken gate still dies immediately, regardless of bound.
+    const broken = classifyGateCheckOutcome({
+      stdout: gateCheckNotReadyStdout(),
+      durationMs: 5_000,
+      expectedAgentId: AGENT,
+      timeoutMs: DEFAULT_GATE_CHECK_LIMITS.timeoutMs,
+      doctorStdout: doctorStdout([{ id: "daemon_running", status: "fail" }]),
+    });
+    assert.equal(broken.kind, "failed");
+  });
+
+  await test("every install path caps npm's socket concurrency, so it cannot starve the network gate-check depends on", () => {
+    const install = fs.readFileSync(
+      path.join(__dirname, "..", "src", "lib", "execution", "workspace-install.ts"),
+      "utf8"
+    );
+    const adapter = fs.readFileSync(
+      path.join(__dirname, "..", "src", "lib", "execution", "package-manager-adapter.ts"),
+      "utf8"
+    );
+    assert.ok(/"--maxsockets"/.test(install), "workspace installs must pass --maxsockets");
+    assert.ok(/NPM_CONFIG_MAXSOCKETS/.test(install), "workspace install env must cap sockets");
+    assert.ok(
+      /NPM_CONFIG_MAXSOCKETS/.test(adapter),
+      "the verification install — the heaviest one — must cap sockets too"
+    );
+  });
+
   // ------------------------------------------------------- Incident #22 ----
   console.log(" heavy work must never outrank the agent's liveness calls");
 
