@@ -164,6 +164,38 @@ async function runVerificationScript(
   return result;
 }
 
+/** Normalizes and de-duplicates repository-relative paths for verification. */
+function uniqueVerificationPaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of paths) {
+    const normalized = raw.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+/**
+ * Removes exactly the delivery-scoped deletions from the patched tree.
+ *
+ * Path containment is enforced against the patched root: a candidate path is
+ * analyzer output, and a `..` traversal must never be able to delete outside
+ * the verification workspace. An already-absent path is not an error — the
+ * post-condition ("this file is gone") already holds.
+ */
+async function applyScopedDeletes(rootDir: string, deletePaths: string[]): Promise<void> {
+  const root = path.resolve(rootDir);
+  for (const relative of deletePaths) {
+    const target = path.resolve(root, relative);
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      throw new Error(`refusing to delete outside the verification workspace: ${relative}`);
+    }
+    await fs.rm(target, { force: true, recursive: true });
+  }
+}
+
 async function applyPatchOrEdits(
   rootDir: string,
   patch: string | undefined,
@@ -456,16 +488,55 @@ export async function runRepositoryVerification(input: {
   edits: ConsolidatedEdit[];
   cleanupRunId: string;
   patch?: string;
+  /**
+   * === Delivery scope (the exact tree the customer would receive) ===
+   *
+   * When present, verification is DELIVERY-SCOPED: the patched tree is built
+   * from `edits` plus exactly these deletions, and the broad `patch` is
+   * deliberately ignored.
+   *
+   * Why this exists: verification used to run against the whole analyzer
+   * candidate set via `patch` (the merged patch), while the approval/delivery
+   * filter ran later, in `createCleanupPullRequest`. So an analyzer false
+   * positive that was NEVER going to be delivered still got applied to the
+   * verified tree, failed the repository's own tests, drove `verifiedChanges`
+   * to 0, and blocked delivery of an unrelated, genuinely-safe approved
+   * candidate.
+   *
+   * Observed on repodiet-agent-9636 against velz-cmd/repodiet-e2e-test: the
+   * kit proposed deleting `src/config/runtime-hook.ts` (referenced
+   * dynamically through `fixture.config.json`, so a genuine false positive).
+   * The approved candidate was `src/repodiet-verification-unused.js`, which is
+   * genuinely unreferenced. Verification applied BOTH, the repository's own
+   * `dynamic, side-effect, config, package-export and asset references stay
+   * alive` test failed, and no PR could ever be produced. The base branch's
+   * own tests pass cleanly, so this was not a pre-existing failure.
+   *
+   * This does not weaken anything. A false positive that IS selected for
+   * delivery is still applied here and still fails closed against the
+   * repository's own tests — see the Case B regression. What changes is only
+   * that an UNSELECTED candidate can no longer invalidate the deliverable.
+   */
+  deletePaths?: string[];
 }): Promise<RepositoryVerificationResult> {
   const deduped = dedupeConsolidatedEdits(input.edits);
-  if (deduped.length === 0) {
+  const deliveryScoped = input.deletePaths !== undefined;
+  const scopedDeletes = uniqueVerificationPaths(input.deletePaths ?? []);
+
+  // A delivery that is ONLY deletions is a real deliverable and must be
+  // verified. Keying "nothing to do" off edits alone would silently skip
+  // verification for exactly the shape this fix exists to support.
+  if (deduped.length === 0 && scopedDeletes.length === 0) {
     return { status: "not_run", installAttempts: [], checks: [] };
   }
 
   const workspace = await createScanWorkspace("repo-verify");
   const baselineRoot = path.join(workspace.artifactsPath, "baseline");
   const patchedRoot = path.join(workspace.artifactsPath, "patched");
-  const patchedPaths = deduped.map((edit) => edit.path.replace(/\\/g, "/"));
+  const patchedPaths = [
+    ...deduped.map((edit) => edit.path.replace(/\\/g, "/")),
+    ...scopedDeletes,
+  ];
 
   try {
     await copyRepoBaseline(input.baselineRoot, baselineRoot);
@@ -498,7 +569,13 @@ export async function runRepositoryVerification(input: {
     });
 
     await copyRepoBaseline(input.baselineRoot, patchedRoot);
-    await applyPatchOrEdits(patchedRoot, input.patch, deduped);
+    if (deliveryScoped) {
+      // EXACTLY the delivery operations — never the broad candidate patch.
+      await applyPatchOrEdits(patchedRoot, undefined, deduped);
+      await applyScopedDeletes(patchedRoot, scopedDeletes);
+    } else {
+      await applyPatchOrEdits(patchedRoot, input.patch, deduped);
+    }
 
     const patched = await runVerificationPhase({
       rootDir: patchedRoot,

@@ -50,6 +50,7 @@ import { isGitCliAvailable } from "./git-runtime";
 import { startRepositoryCleanupExecution, SandboxUnavailableError } from "@/lib/execution/start-cleanup-workflow";
 import { runRepositoryVerification } from "./repository-verification";
 import type { RepositoryVerificationResult } from "./repository-verification";
+import { resolveVerificationDeliveryScope } from "./verification-delivery-scope";
 import { buildCleanupRunSummary } from "./cleanup-summary";
 import { refreshRepositoryIdentityFromUrl, applyRepositoryIdentity } from "@/lib/github/refresh-repo-identity";
 import { fetchBranchCommitSha } from "@/lib/github/fetch-repo-zip";
@@ -956,11 +957,28 @@ export async function runPatchKitEngine(body: PatchKitGenerateBody): Promise<Pat
         }
       }
 
+      /**
+       * Verification must describe the tree the customer would actually
+       * receive, not the analyzer's raw candidate superset. See
+       * `verification-delivery-scope.ts` for the incident this fixes: an
+       * unapproved false-positive deletion used to be applied to the verified
+       * tree, fail the customer repository's own tests, and block an unrelated
+       * approved-safe candidate from ever being delivered.
+       *
+       * The broad `mergedPatch` is deliberately NOT passed here — it encodes
+       * every candidate, which is exactly what must not be verified.
+       */
+      const scope = resolveVerificationDeliveryScope({
+        changeOperations,
+        edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
+        approvedDeletePaths: body.approvedDeletePaths,
+      });
+
       return runRepositoryVerification({
         baselineRoot,
-        edits: validatedEdits.length > 0 ? validatedEdits : generatedEdits,
+        edits: scope.edits,
         cleanupRunId,
-        patch: mergedPatch,
+        deletePaths: scope.deletePaths,
       });
     })();
 
