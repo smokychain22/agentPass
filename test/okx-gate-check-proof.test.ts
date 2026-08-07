@@ -174,7 +174,16 @@ async function run() {
     state.record({ kind: "passed", durationMs: 18_000 }, t0 + 1_020_000);
     assert.equal(state.mayClaimOnline(t0 + 1_020_000), true);
     assert.equal(state.health(t0 + 1_020_000), "proven");
-    assert.equal(state.nextRefreshDelayMs(), LIMITS.refreshMs, "backoff must reset after recovery");
+    // Clock passed explicitly: as of Incident #20 the cadence also depends on
+    // how much life the CURRENT proof has left, so reading the real wall clock
+    // here would compare a synthetic proof against today's date and always see
+    // it as expired. The property under test is unchanged — after a pass, the
+    // outcome-derived delay returns to the normal slow cadence.
+    assert.equal(
+      state.nextRefreshDelayMs(t0 + 1_020_000),
+      LIMITS.refreshMs,
+      "backoff must reset after recovery"
+    );
   });
 
   await test("recovery after a CONFIRMED failure also clears the failure state", () => {

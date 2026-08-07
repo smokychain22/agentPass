@@ -187,6 +187,12 @@ export interface GateCheckLimits {
   backoffBaseMs: number;
   /** Ceiling for backoff; never longer than a normal refresh. */
   backoffMaxMs: number;
+  /**
+   * Floor on any scheduled refresh. Bounds how often a nearly-expired or
+   * already-expired proof may re-check, so Incident #20's clamp cannot turn
+   * into a hot loop of an expensive command.
+   */
+  expiryFloorMs: number;
 }
 
 export const DEFAULT_GATE_CHECK_LIMITS: GateCheckLimits = {
@@ -198,6 +204,9 @@ export const DEFAULT_GATE_CHECK_LIMITS: GateCheckLimits = {
   // whose own cost is the thing making it slow.
   backoffBaseMs: 60_000,
   backoffMaxMs: 480_000,
+  // One bounded check per 60s at worst — the same cadence the heartbeat runs
+  // at, and far cheaper than the outage it prevents.
+  expiryFloorMs: 60_000,
 };
 
 /**
@@ -392,15 +401,67 @@ export class GateProofState {
     return undefined;
   }
 
+  /** Milliseconds until the current proof stops being fresh. 0 if none/expired. */
+  msUntilProofExpiry(nowMs: number = Date.now()): number {
+    if (this.passedAtMs <= 0) return 0;
+    return Math.max(0, this.passedAtMs + this.limits.freshnessMs - nowMs);
+  }
+
   /**
    * When to run the next refresh. Inconclusive results back off from a short
    * base so a transient slow window is retried several times well inside the
    * freshness budget; anything else returns to the normal slow cadence.
+   *
+   * === Incident #20: a proof was allowed to expire with no check attempted ===
+   *
+   * Observed live on repodiet-agent-9636 on 2026-08-07. On boot the runtime
+   * restored a persisted proof that was already 42 minutes old — still inside
+   * the 45-minute freshness window, so it correctly skipped the blocking
+   * initial gate-check — and then scheduled the next refresh a full
+   * `refreshMs` (15 minutes) away. The proof expired three minutes later. The
+   * agent then reported `gateReason: "proof_expired"` and withheld its
+   * heartbeat for nine consecutive cycles WITHOUT A SINGLE GATE-CHECK HAVING
+   * RUN: `gate_check_result` appeared zero times in that whole window.
+   *
+   * The cadence was being chosen purely from the last OUTCOME, ignoring how
+   * long the evidence it depends on has left. A refresh scheduled after the
+   * proof dies cannot keep the agent online, however healthy the agent is.
+   *
+   * The delay is therefore also clamped so the next check STARTS with enough
+   * time to finish before expiry (`timeoutMs` of headroom). A floor keeps a
+   * nearly-expired or already-expired proof from turning this into a hot loop
+   * — it still costs one bounded check per floor interval, never more.
    */
-  nextRefreshDelayMs(): number {
-    if (this.consecutiveInconclusive === 0) return this.limits.refreshMs;
-    const backoff =
-      this.limits.backoffBaseMs * 2 ** Math.min(this.consecutiveInconclusive - 1, 10);
-    return Math.min(backoff, this.limits.backoffMaxMs, this.limits.refreshMs);
+  nextRefreshDelayMs(nowMs: number = Date.now()): number {
+    const outcomeDelay =
+      this.consecutiveInconclusive === 0
+        ? this.limits.refreshMs
+        : Math.min(
+            this.limits.backoffBaseMs * 2 ** Math.min(this.consecutiveInconclusive - 1, 10),
+            this.limits.backoffMaxMs,
+            this.limits.refreshMs
+          );
+
+    const remaining = this.msUntilProofExpiry(nowMs);
+
+    /**
+     * With no live proof there is nothing left to preserve, so the clamp does
+     * NOT apply and the outcome-derived delay stands.
+     *
+     * This asymmetry is deliberate. Flooring here instead would mean that once
+     * the proof is gone — precisely when checks are timing out because the
+     * machine is overloaded — a 150s command gets re-launched every 60s. That
+     * hammers the most expensive diagnostic in the system exactly when it is
+     * least affordable, which is the spiral Incident #14 documented. The
+     * inconclusive backoff (60s → 480s) exists for that case and is left to do
+     * its job; `okx-gate-check-proof.test.ts` pins it.
+     *
+     * The clamp's whole purpose is narrower: stop a proof that is still ALIVE
+     * from dying with no check attempted.
+     */
+    if (remaining === 0) return outcomeDelay;
+
+    const beforeExpiry = remaining - this.limits.timeoutMs;
+    return Math.max(this.limits.expiryFloorMs, Math.min(outcomeDelay, beforeExpiry));
   }
 }
