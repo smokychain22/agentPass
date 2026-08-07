@@ -440,6 +440,80 @@ async function main(): Promise<void> {
     );
   });
 
+  // ------------------------------------------------------- Incident #20 ----
+  console.log(" a proof is never allowed to expire without a check being attempted");
+
+  /**
+   * Observed live on 2026-08-07. On boot the runtime restored a persisted proof
+   * already 42 minutes old — still inside the 45-minute freshness window, so it
+   * correctly skipped the blocking initial check — then scheduled the next
+   * refresh a full 15 minutes away. The proof expired three minutes later and
+   * the agent withheld its heartbeat for nine consecutive cycles with
+   * `gate_check_result` appearing ZERO times: the cadence was chosen purely
+   * from the last outcome, ignoring how long its evidence had left.
+   */
+  await test("a nearly-expired proof schedules its refresh BEFORE expiry, not a full interval later", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    const proof = new GateProofState(limits);
+    const now = Date.now();
+    // Exactly the live case: restored proof, 42 minutes old, 3 minutes of life.
+    assert.equal(proof.restore(now - 42 * 60_000, now), true);
+
+    const remaining = proof.msUntilProofExpiry(now);
+    const delay = proof.nextRefreshDelayMs(now);
+    assert.ok(remaining > 0 && remaining < limits.refreshMs, "precondition: proof expires before a normal refresh");
+    assert.ok(
+      delay < remaining,
+      `the next check must start before the proof dies (delay ${delay}ms vs ${remaining}ms remaining)`
+    );
+    assert.ok(
+      delay + limits.timeoutMs <= remaining || delay === limits.expiryFloorMs,
+      "the check must also have time to FINISH before expiry, unless already at the floor"
+    );
+    assert.ok(delay >= limits.expiryFloorMs, "never faster than the floor");
+  });
+
+  await test("a healthy fresh proof still uses the normal slow cadence — this does not make checks more frequent in the good case", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    const proof = new GateProofState(limits);
+    const now = Date.now();
+    proof.record({ kind: "passed", durationMs: 16_000 }, now);
+    assert.equal(proof.nextRefreshDelayMs(now), limits.refreshMs);
+  });
+
+  /**
+   * The clamp is deliberately ASYMMETRIC and must not apply once the proof is
+   * gone. Flooring there would re-launch a 150s command every 60s exactly when
+   * checks are timing out because the machine is overloaded — the spiral
+   * Incident #14 documented. An earlier draft of this fix did precisely that,
+   * and `okx-gate-check-proof.test.ts`'s backoff assertion caught it.
+   */
+  await test("with NO live proof the clamp does not apply — the inconclusive backoff still paces an expensive command", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    const now = Date.now();
+
+    const expired = new GateProofState(limits);
+    expired.record({ kind: "passed", durationMs: 1_000 }, now - limits.freshnessMs - 1_000);
+    assert.equal(expired.mayClaimOnline(now), false, "precondition: the proof is gone");
+    for (let i = 0; i < 3; i++) {
+      expired.record({ kind: "inconclusive", durationMs: limits.timeoutMs, reason: "timeout" }, now);
+    }
+    assert.equal(
+      expired.nextRefreshDelayMs(now),
+      240_000,
+      "backoff must keep escalating instead of hammering at the floor"
+    );
+  });
+
+  await test("the clamp can never schedule faster than the floor, at any inconclusive depth", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    const proof = new GateProofState(limits);
+    const now = Date.now();
+    proof.restore(now - (limits.freshnessMs - 1_000), now); // 1s of life left
+    for (let i = 0; i < 12; i++) proof.record({ kind: "inconclusive", durationMs: 1, reason: "timeout" }, now);
+    assert.ok(proof.nextRefreshDelayMs(now) >= limits.expiryFloorMs);
+  });
+
   // ------------------------------------------------------- Incident #19 ----
   console.log(" liveness is never gated on job work");
 
