@@ -10,9 +10,17 @@ import { extractApplyablePatch, patchHasDeleteOperations } from "@/lib/patch-kit
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 
-const COMMAND_TIMEOUT_MS = 120_000;
-const INSTALL_TIMEOUT_MS = 180_000;
-const TOTAL_TIMEOUT_MS = 300_000;
+// Incident #26 — see execution/workspace-install.ts.
+const COMMAND_TIMEOUT_MS = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS || 300_000);
+const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600_000);
+/**
+ * Incident #26. The whole verification pass is a baseline install + checks and
+ * a patched install + checks. With the per-step bounds raised to what this
+ * machine can actually achieve, a 300s total would cut the pass off before its
+ * own steps could finish. Still bounded, and still inside the 900s heavy-job
+ * ceiling and 20-minute per-event deadline above it.
+ */
+const TOTAL_TIMEOUT_MS = Number(process.env.REPODIET_VERIFY_TOTAL_TIMEOUT_MS || 1_500_000);
 
 const ALLOWED_SCRIPT_NAMES = ["build", "lint", "test", "typecheck", "check", "check:types"];
 

@@ -53,7 +53,10 @@ export interface ReconcilerDeps extends ExecuteDeps {
  * state a crash would leave it in.
  */
 export const EVENT_EXECUTION_TIMEOUT_MS = Number(
-  process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS || 1_200_000
+  // Incident #26: kept above the heavy-job ceiling (1800s) so this stays a
+  // backstop for hangs OUTSIDE that limiter rather than a competing deadline
+  // that cuts a legitimately-running cleanup short.
+  process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS || 2_400_000
 );
 
 class EventDeadlineExceeded extends Error {
