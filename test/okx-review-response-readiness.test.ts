@@ -442,6 +442,113 @@ async function main(): Promise<void> {
     );
   });
 
+  // ------------------------------------------------------- Incident #26 ----
+  console.log(" the timeout hierarchy must be internally consistent");
+
+  /**
+   * With the seeded candidate finally approved, the real cleanup got past the
+   * delivery safety gate and then died on "Dependency install exceeded its time
+   * limit". That was a direct consequence of the two availability fixes —
+   * `nice 19` (#22) and `--maxsockets 3` (#23) — which deliberately trade
+   * install wall-clock for agent liveness. Neither was matched by an increase
+   * in the install bound, so an already-tight 180s ceiling became unreachable.
+   *
+   * Each layer must exceed what it contains, or raising an inner bound just
+   * moves the failure outwards.
+   */
+  await test("each bound exceeds the work it contains: install < verify-total < heavy-job < event", async () => {
+    const heavy = await import("../src/lib/okx-runtime/heavy-job-limiter");
+    const recon = await import("../src/lib/okx-runtime/system-event-reconciler");
+    const install = fs.readFileSync(
+      path.join(__dirname, "..", "src", "lib", "execution", "workspace-install.ts"),
+      "utf8"
+    );
+    const verify = fs.readFileSync(
+      path.join(__dirname, "..", "src", "lib", "verify", "run-verification.ts"),
+      "utf8"
+    );
+    const num = (src: string, name: string) => {
+      const m = new RegExp(`${name}\\s*=\\s*Number\\([^|]*\\|\\|\\s*([0-9_]+)\\)`).exec(src);
+      assert.ok(m, `${name} must be a configurable Number(...) with a default`);
+      return Number(m![1].replace(/_/g, ""));
+    };
+    const installMs = num(install, "INSTALL_TIMEOUT_MS");
+    const totalMs = num(verify, "TOTAL_TIMEOUT_MS");
+
+    assert.ok(
+      installMs > 180_000,
+      `the install bound must exceed the 180s at which real installs were being killed, got ${installMs}`
+    );
+    assert.ok(totalMs > installMs, "a verification pass must outlast a single install inside it");
+    assert.ok(
+      heavy.HEAVY_JOB_TIMEOUT_MS > totalMs,
+      "the heavy-job ceiling must exceed the verification pass it contains"
+    );
+    assert.ok(
+      recon.EVENT_EXECUTION_TIMEOUT_MS > heavy.HEAVY_JOB_TIMEOUT_MS,
+      "the per-event deadline must remain a backstop, not a competing deadline"
+    );
+    // Still bounded — none of this may become "run forever".
+    assert.ok(recon.EVENT_EXECUTION_TIMEOUT_MS <= 3_600_000, "every bound must stay finite and sane");
+  });
+
+  // ------------------------------------------------------- Incident #25 ----
+  console.log(" a confirmed failure must be re-checked promptly, not in 15 minutes");
+
+  /**
+   * Observed live 20 SECONDS after a deploy restart: the gate-check ran,
+   * `okx-a2a doctor` reported `daemon_running` still coming up, and the result
+   * was correctly classified as a confirmed failure. The proof died — right —
+   * and the next refresh was scheduled a full 900s away, because the backoff
+   * only ever considered INCONCLUSIVE results. Eleven consecutive
+   * `heartbeat_withheld` followed with `daemonOk:true` and `xmtpOk:true`.
+   */
+  await test("a confirmed failure schedules a prompt retry, not a full refresh interval", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    const proof = new GateProofState(limits);
+    const now = Date.now();
+    proof.record({ kind: "failed", durationMs: 24_066, reason: "gate_not_ready:communication:daemon_running" }, now);
+    const delay = proof.nextRefreshDelayMs(now);
+    assert.equal(delay, limits.backoffBaseMs, "the first retry after a confirmed failure must be prompt");
+    assert.ok(delay < limits.refreshMs, "waiting a whole refresh interval is what caused the outage");
+  });
+
+  await test("repeated confirmed failures still escalate and stay capped — a broken gate is never hammered", () => {
+    const limits = DEFAULT_GATE_CHECK_LIMITS;
+    const proof = new GateProofState(limits);
+    const now = Date.now();
+    const seen: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      proof.record({ kind: "failed", durationMs: 1_000, reason: "gate_not_ready:communication:daemon_running" }, now);
+      seen.push(proof.nextRefreshDelayMs(now));
+    }
+    assert.deepEqual(seen.slice(0, 4), [60_000, 120_000, 240_000, 480_000]);
+    for (const d of seen) {
+      assert.ok(d <= limits.backoffMaxMs, `${d} must stay capped`);
+      assert.ok(d <= limits.refreshMs, `${d} must never exceed a normal refresh`);
+    }
+  });
+
+  await test("prompt retry does NOT weaken the online claim — the agent stays unproven until a check genuinely passes", () => {
+    const proof = new GateProofState();
+    const now = Date.now();
+    proof.record({ kind: "passed", durationMs: 15_000 }, now - 1_000);
+    assert.equal(proof.mayClaimOnline(now), true, "precondition: proven");
+
+    proof.record({ kind: "failed", durationMs: 24_000, reason: "gate_not_ready:communication:daemon_running" }, now);
+    assert.equal(proof.mayClaimOnline(now), false, "a confirmed failure must kill the claim immediately");
+    assert.equal(proof.health(now), "unproven");
+    // …and it stays dead across the prompt retry window until a real pass.
+    assert.equal(proof.mayClaimOnline(now + 60_000), false);
+    proof.record({ kind: "passed", durationMs: 16_000 }, now + 60_000);
+    assert.equal(proof.mayClaimOnline(now + 60_000), true, "only a genuine pass restores it");
+    assert.equal(
+      proof.nextRefreshDelayMs(now + 60_000),
+      DEFAULT_GATE_CHECK_LIMITS.refreshMs,
+      "recovery must return to the slow cadence"
+    );
+  });
+
   // ------------------------------------------------------- Incident #24 ----
   console.log(" the doctor-evidence guard must match what production actually emits");
 

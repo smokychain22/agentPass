@@ -44,9 +44,31 @@
  * must never be able to decide a funded job's outcome.
  */
 
-/** Wall-clock ceiling for one heavy repository execution. */
+/**
+ * Wall-clock ceiling for one heavy repository execution.
+ *
+ * === Incident #26: the ceiling has to be bigger than the work it bounds ===
+ *
+ * The bounds below this one form a hierarchy, and it only holds if each layer
+ * is larger than the sum of what it contains. A full cleanup is a BASELINE
+ * install plus its checks, then a PATCHED install plus its checks:
+ *
+ *   install            600s   (nice 19, npm capped to 3 sockets)
+ *   per check          300s   (`next build` is the heaviest)
+ *   verification total 1500s
+ *   heavy job          1800s  ← must exceed the verification total
+ *   event execution    2400s  ← must exceed the heavy job
+ *
+ * Raising the inner bounds to what this machine can actually achieve (Incident
+ * #26) without raising these two would simply move the failure outwards: the
+ * install would finish and the job would be abandoned anyway.
+ *
+ * These are still hard ceilings. Concurrency is still one heavy job at a time,
+ * cadence is still governed by the per-job quarantine, and a timed-out job is
+ * still abandoned and left replayable rather than acknowledged.
+ */
 export const HEAVY_JOB_TIMEOUT_MS = Number(
-  process.env.REPODIET_HEAVY_JOB_TIMEOUT_MS || 900_000
+  process.env.REPODIET_HEAVY_JOB_TIMEOUT_MS || 1_800_000
 );
 
 export class HeavyJobRejected extends Error {

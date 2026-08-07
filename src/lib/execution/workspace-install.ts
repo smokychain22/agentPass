@@ -15,7 +15,31 @@ import {
   prepareNpmCacheDir,
 } from "@/lib/execution/verification-workspace";
 
-const INSTALL_TIMEOUT_MS = 180_000;
+/**
+ * === Incident #26: the availability fixes made installs slower than their own
+ * bound, so the product could no longer deliver ===
+ *
+ * Measured on the production Machine on 2026-08-07. With the seeded candidate
+ * finally approved, the real cleanup got past the delivery safety gate and then
+ * died on:
+ *
+ *   Dependency install exceeded its time limit and was terminated
+ *   (no npm error was emitted)
+ *
+ * That is a direct consequence of the two fixes that bought the agent its
+ * availability back: `nice 19` on heavy children (Incident #22) and
+ * `--maxsockets 3` (Incident #23). Both deliberately trade install wall-clock
+ * for agent liveness, and neither was matched by a corresponding increase in
+ * the install bound — so a 180s ceiling that was already tight became
+ * unreachable.
+ *
+ * The bounds below are raised to match the environment they now run in. They
+ * remain BOUNDED, and every layer above still bounds them further: one heavy
+ * job at a time, a 900s heavy-job ceiling, a 20-minute per-event deadline, and
+ * a process-group kill on expiry. Nothing here can run unbounded; it is simply
+ * given long enough to finish the work it was asked to do.
+ */
+const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600_000);
 const MAX_ATTEMPTS = 4;
 const CACHE_RETRY_MAX = 2;
 /** Grace between SIGTERM and SIGKILL for an install that ignores the first. */

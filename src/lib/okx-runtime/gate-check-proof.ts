@@ -399,6 +399,11 @@ export type GateHealth = "proven" | "degraded_unconfirmed" | "unproven";
 export class GateProofState {
   private passedAtMs = 0;
   private consecutiveInconclusive = 0;
+  /**
+   * Consecutive CONFIRMED failures. Drives the same bounded backoff as
+   * inconclusive results — see Incident #25 in `nextRefreshDelayMs`.
+   */
+  private consecutiveFailed = 0;
   /** Set when a parsed result contradicted the proof. Cleared only by a pass. */
   private confirmedFailureReason: string | undefined;
 
@@ -421,6 +426,7 @@ export class GateProofState {
     if (outcome.kind === "passed") {
       this.passedAtMs = nowMs;
       this.consecutiveInconclusive = 0;
+      this.consecutiveFailed = 0;
       this.confirmedFailureReason = undefined;
       return;
     }
@@ -428,6 +434,7 @@ export class GateProofState {
       // Contradicted. The proof dies now — not when it would have aged out.
       this.passedAtMs = 0;
       this.consecutiveInconclusive = 0;
+      this.consecutiveFailed += 1;
       this.confirmedFailureReason = outcome.reason;
       return;
     }
@@ -493,14 +500,44 @@ export class GateProofState {
    * — it still costs one bounded check per floor interval, never more.
    */
   nextRefreshDelayMs(nowMs: number = Date.now()): number {
+    /**
+     * === Incident #25: a CONFIRMED failure waited a full refresh interval ===
+     *
+     * Observed live on 2026-08-07, 20 SECONDS after a deploy restart: the
+     * gate-check ran, `okx-a2a doctor` reported `daemon_running` still coming
+     * up, and the result was correctly classified as a confirmed failure. The
+     * proof died — right — and the next refresh was then scheduled a full
+     * `refreshMs` (15 minutes) away, because the backoff only ever considered
+     * INCONCLUSIVE results. The agent withheld its heartbeat for eleven
+     * consecutive cycles while `daemonOk:true` and `xmtpOk:true` throughout.
+     *
+     * "Confirmed not ready" is not the same as "permanently broken". The most
+     * common confirmed failure on this runtime is precisely the transient one:
+     * a component that has not finished starting. Waiting a quarter of an hour
+     * to re-ask is the wrong default for a condition that typically clears in
+     * seconds.
+     *
+     * Failures now escalate on the SAME bounded backoff as inconclusive
+     * results (60s → 120s → … → capped), so a boot-time blip costs about a
+     * minute and a genuinely broken gate is still not hammered.
+     *
+     * This weakens nothing. The proof stays dead until a check GENUINELY
+     * passes, `mayClaimOnline` still returns false the entire time, and the
+     * heartbeat stays withheld. Only how soon the runtime re-asks changes.
+     */
+    const backoffFrom = (attempts: number) =>
+      Math.min(
+        this.limits.backoffBaseMs * 2 ** Math.min(attempts - 1, 10),
+        this.limits.backoffMaxMs,
+        this.limits.refreshMs
+      );
+
     const outcomeDelay =
-      this.consecutiveInconclusive === 0
-        ? this.limits.refreshMs
-        : Math.min(
-            this.limits.backoffBaseMs * 2 ** Math.min(this.consecutiveInconclusive - 1, 10),
-            this.limits.backoffMaxMs,
-            this.limits.refreshMs
-          );
+      this.consecutiveFailed > 0
+        ? backoffFrom(this.consecutiveFailed)
+        : this.consecutiveInconclusive === 0
+          ? this.limits.refreshMs
+          : backoffFrom(this.consecutiveInconclusive);
 
     const remaining = this.msUntilProofExpiry(nowMs);
 

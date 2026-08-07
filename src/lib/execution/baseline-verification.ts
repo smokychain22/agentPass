@@ -13,8 +13,15 @@ import {
 export { ensureWorkspaceDependencies } from "@/lib/execution/workspace-install";
 export type { WorkspaceInstallResult } from "@/lib/execution/workspace-install";
 
-const COMMAND_TIMEOUT_MS = 60_000;
-const INSTALL_TIMEOUT_MS = 120_000;
+/**
+ * Incident #26. A verification check on this runtime means `next build` — the
+ * single heaviest command RepoDiet runs — now executing at nice 19 with npm
+ * capped to 3 sockets so the agent stays answerable. 60s could not finish it
+ * even before those trade-offs. Raised to a bound the command can actually
+ * meet; the heavy-job ceiling and per-event deadline still bound it above.
+ */
+const COMMAND_TIMEOUT_MS = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS || 300_000);
+const INSTALL_TIMEOUT_MS = Number(process.env.REPODIET_INSTALL_TIMEOUT_MS || 600_000);
 
 export type ComparisonOutcome =
   | "passed_before_and_after"
