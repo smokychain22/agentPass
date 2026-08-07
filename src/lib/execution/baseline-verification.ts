@@ -5,6 +5,7 @@ import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
 import {
+  deprioritize,
   ensureWorkspaceDependencies,
   nodeModulesPresent,
 } from "@/lib/execution/workspace-install";
@@ -83,12 +84,18 @@ async function runNamedCheck(
 ): Promise<BaselineCheck> {
   const t0 = Date.now();
   try {
-    const result = await execa(command[0], command.slice(1), {
+    // Incident #22: verification checks — `next build` above all — are the
+    // heaviest thing this runtime spawns. On a single shared vCPU they must
+    // never outrank the agent's own liveness calls, or the agent cannot prove
+    // it is online for the whole run.
+    const child = execa(command[0], command.slice(1), {
       cwd: rootDir,
       timeout: timeoutMs,
       reject: false,
       env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "test" },
     });
+    deprioritize(child.pid, `verify:${name}`);
+    const result = await child;
     if (result.timedOut) {
       return {
         name,

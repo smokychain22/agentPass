@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
+import { deprioritize } from "@/lib/execution/workspace-install";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
@@ -79,12 +80,17 @@ async function runCheck(
     };
   }
 
-  const result = await execa(command[0], command.slice(1), {
+  // Incident #22: see workspace-install.ts. Heavy verification must yield the
+  // CPU to the runtime's liveness calls on a single shared vCPU, or the agent
+  // cannot prove it is online for the duration of the run.
+  const child = execa(command[0], command.slice(1), {
     cwd: rootDir,
     timeout: COMMAND_TIMEOUT_MS,
     reject: false,
     env: { ...process.env, CI: "true", FORCE_COLOR: "0", NODE_ENV: "test" },
   });
+  deprioritize(child.pid, `verify:${name}`);
+  const result = await child;
 
   return {
     name,

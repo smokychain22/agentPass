@@ -22,6 +22,46 @@ const CACHE_RETRY_MAX = 2;
 const INSTALL_KILL_GRACE_MS = 5_000;
 
 /**
+ * Drops a heavy child to the lowest scheduling priority.
+ *
+ * === Incident #22: one verification run starved the live agent ===
+ *
+ * Measured on the production Machine (shared-cpu-1x, 2 GB) on 2026-08-07. A
+ * SINGLE cleanup attempt for the funded job — `npm install` followed by
+ * `next build` and its jest-worker children — drove the 1-vCPU box to load
+ * 11+. The seller runtime's own liveness calls (`okx-a2a daemon status`,
+ * `agent refresh`, and the `okx-a2a doctor` behind `gate-check`) are light but
+ * latency-sensitive, and they lost the CPU race for the whole run: the 150s
+ * gate-check timed out repeatedly and the agent withheld its heartbeat for the
+ * entire ~20-minute window with `daemonOk:true` and `xmtpOk:true`.
+ *
+ * Bounding and quarantining the job (Incidents #18/#21) stops it running
+ * CONTINUOUSLY, which was the larger problem. This addresses what remains: for
+ * as long as one permitted attempt does run, it must not outrank the agent's
+ * ability to prove it is alive.
+ *
+ * `nice` is exactly the right instrument. The heavy work is throughput-bound
+ * and nobody is waiting on it interactively, so yielding the CPU whenever the
+ * runtime needs it costs the cleanup a little wall-clock and buys the agent its
+ * liveness back. Priority is applied to the child, never to the runtime itself
+ * — deprioritising the runtime would slow the very heartbeat this protects.
+ *
+ * Best-effort by design: unsupported platforms and races where the child has
+ * already exited are ignored, because failing to renice must never fail an
+ * install.
+ */
+export function deprioritize(pid: number | undefined, label: string): void {
+  if (pid === undefined) return;
+  try {
+    // 19 = lowest. The runtime stays at its default 0 and therefore always
+    // preempts this work.
+    os.setPriority(pid, 19);
+  } catch {
+    void label; // renice is advisory; never let it break the pipeline
+  }
+}
+
+/**
  * Runs one install command under a timeout that kills the ENTIRE process
  * group, so nothing the package manager spawned can outlive the deadline.
  *
@@ -73,6 +113,8 @@ async function runBoundedInstall(
     // what actually bounds the tree.
     timeout: useProcessGroup ? undefined : timeoutMs,
   });
+
+  deprioritize(child.pid, "install");
 
   let timedOut = false;
   const killGroup = (signal: NodeJS.Signals) => {
