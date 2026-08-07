@@ -172,10 +172,21 @@ async function run() {
     // Static proof that the caller exists in main() itself, not merely that an
     // exported helper could call it — the absence of a production caller is the
     // exact defect being fixed.
+    //
+    // The call is DETACHED (`void`) rather than awaited as of Incident #19:
+    // awaiting it meant one stuck event blocked the heartbeat timer from ever
+    // being armed, and the agent went dark for 20+ minutes on a live boot. The
+    // property this test protects — that startup genuinely resumes unfinished
+    // events, after communication readiness — is unchanged and still asserted
+    // below; only the blocking-ness changed, which was never the point.
     const main = source.slice(source.indexOf("async function main("));
     assert.ok(
-      /await recoverPendingEvents\(systemEventDeps\)/.test(main),
+      /void recoverPendingEvents\(systemEventDeps\)/.test(main),
       "main() must resume unfinished events from the durable ledger at startup"
+    );
+    assert.ok(
+      !/await recoverPendingEvents\(systemEventDeps\)/.test(main),
+      "startup recovery must never block the liveness path again (Incident #19)"
     );
     assert.ok(
       main.indexOf("establishCommunicationReadiness()") <

@@ -32,6 +32,62 @@ export interface ReconcilerDeps extends ExecuteDeps {
 }
 
 /**
+ * Hard wall-clock ceiling on ONE event's execution.
+ *
+ * === Incident #19 ===
+ * A `npm install` inside the first pending event's verification pipeline ran
+ * for 20+ minutes on the production Machine. Because recovery walks events
+ * sequentially, that single event occupied the loop indefinitely — and the
+ * poll loop's own `systemEventCycleInFlight` guard means a wedged cycle also
+ * stops every LATER cycle, so no NEW event (a reviewer's `job_asp_selected`,
+ * say) would ever be drained from the spool either. One stuck job silently
+ * became a total processing outage.
+ *
+ * Deliberately larger than the heavy-job limiter's own bound, so this is a
+ * backstop for hangs OUTSIDE that limiter (GitHub calls, CLI subprocesses, an
+ * install that escaped its own timeout) rather than a competing deadline.
+ *
+ * Abandoning the await is safe by construction: `executeSystemEvent` persists
+ * evidence before it acts and releases its ledger lock in a `finally`, so a
+ * timed-out event stays unacknowledged, unaltered and replayable — exactly the
+ * state a crash would leave it in.
+ */
+export const EVENT_EXECUTION_TIMEOUT_MS = Number(
+  process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS || 1_200_000
+);
+
+class EventDeadlineExceeded extends Error {
+  constructor(readonly eventId: string, readonly timeoutMs: number) {
+    super(`event ${eventId} exceeded its ${timeoutMs}ms execution bound`);
+    this.name = "EventDeadlineExceeded";
+  }
+}
+
+/** Runs one event under the deadline above. Never lets a hang own the loop. */
+async function executeWithDeadline(
+  eventId: string,
+  envelope: InboundEnvelope,
+  deps: ReconcilerDeps
+): Promise<ExecuteResult> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      executeSystemEvent(eventId, envelope, deps),
+      new Promise<never>((_resolve, reject) => {
+        // Not unref'd: a bound that the event loop may skip is not a bound.
+        // Always cleared below, so it cannot outlive the event it guards.
+        timer = setTimeout(
+          () => reject(new EventDeadlineExceeded(eventId, EVENT_EXECUTION_TIMEOUT_MS)),
+          EVENT_EXECUTION_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Resumes every unfinished event after startup.
  *
  * Sequential by design: concurrent resumption of two events that touch the same
@@ -64,7 +120,7 @@ export async function recoverPendingEvents(deps: ReconcilerDeps): Promise<Execut
 
   for (const { eventId, envelope } of pending) {
     try {
-      const result = await executeSystemEvent(eventId, envelope, deps);
+      const result = await executeWithDeadline(eventId, envelope, deps);
       results.push(result);
       deps.log("system_event_recovered", {
         eventId,
@@ -125,7 +181,7 @@ export async function handleSystemEvent(
     return undefined;
   }
 
-  const result = await executeSystemEvent(eventId, envelope, deps);
+  const result = await executeWithDeadline(eventId, envelope, deps);
   deps.log("system_event_processed", {
     eventId,
     jobId: classification.jobId,

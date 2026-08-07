@@ -1054,7 +1054,22 @@ export async function runSystemEventCycle(
 
     // Durable now; the ledger owns this event from here on.
     retireSpoolFile(spooled.file, "accepted");
-    await handleSystemEvent(outcome.eventId, outcome.envelope, deps);
+    try {
+      await handleSystemEvent(outcome.eventId, outcome.envelope, deps);
+    } catch (err) {
+      /**
+       * Incident #19: one event must never stop the rest of the spool being
+       * drained. The record is already durable and stays unacknowledged, so it
+       * is picked up again by recovery — but the OTHER events waiting behind
+       * it in this same cycle would otherwise be delayed a full poll interval
+       * (or, if the throw were a hang, forever).
+       */
+      log("system_event_handle_error", {
+        eventId: outcome.eventId,
+        message: err instanceof Error ? err.message : "unknown_error",
+        note: "event left pending and replayable; continuing with the rest of the spool",
+      });
+    }
   }
 
   // Resumes anything still unfinished — a retryable failure, an action
@@ -1311,7 +1326,48 @@ async function main(): Promise<void> {
       });
     }
 
-    await recoverPendingEvents(systemEventDeps);
+    /**
+     * === Incident #19: startup recovery ran BEFORE the heartbeat timer was
+     * armed, so one stuck job took the whole agent dark ===
+     *
+     * Observed live on repodiet-agent-9636 on 2026-08-07, immediately after
+     * the Incident #18 deploy. Boot reached:
+     *
+     *   system_event_recovery_start {"pending":11}     11:44:24
+     *
+     * and then, for 20+ minutes, logged NOTHING further from this runtime: no
+     * `system_event_recovered`, no `open_job_reconciler_wired`, and — the part
+     * that matters — not a single `heartbeat_accepted` OR `heartbeat_withheld`.
+     * A `npm install` child (pid 1158) from the first event's verification
+     * pipeline was still running the entire time.
+     *
+     * The cause is ordering, not the stuck install. `main()` AWAITED
+     * `recoverPendingEvents()` before arming the heartbeat, the open-job sweep
+     * and the poll loop, so the agent could not report itself online until
+     * every pending event had finished. Incident #18 gave each event a
+     * quarantine deadline, which stops the REPLAY loop — but a first pass that
+     * hangs still blocked liveness, because nothing downstream of this await
+     * had started yet.
+     *
+     * That is the exact property this whole repair exists to guarantee: a
+     * stale or expensive job must never stop RepoDiet answering, or reporting
+     * that it is alive. Liveness is now armed FIRST and recovery runs
+     * detached, so pending work can take as long as it takes without the agent
+     * ever going dark. Recovery is still sequential, still bounded, still
+     * quarantined, and still runs before the first poll tick fires.
+     */
+    void recoverPendingEvents(systemEventDeps)
+      .then((results) => {
+        log("system_event_startup_recovery_finished", {
+          processed: results.length,
+          note: "ran detached from the liveness path; the heartbeat was never gated on it",
+        });
+      })
+      .catch((err) => {
+        log("system_event_startup_recovery_error", {
+          message: err instanceof Error ? err.message : "unknown_error",
+        });
+      });
 
     systemEventTimer = setInterval(() => {
       if (shuttingDown) return;
@@ -1347,7 +1403,13 @@ async function main(): Promise<void> {
         ? "eligible open jobs WILL be applied for on-chain"
         : "observing only; no application will be broadcast",
   });
-  await runOpenJobSweep(openJobDeps);
+  /**
+   * Detached for the same reason as startup recovery (Incident #19): this
+   * sweep costs a full `active-tasks` read plus a `status` + `context` read
+   * per open job, all live network calls, and there were seven open jobs. The
+   * heartbeat must not wait behind any of it.
+   */
+  void runOpenJobSweep(openJobDeps);
   openJobTimer = setInterval(() => {
     if (shuttingDown) return;
     if (openJobSweepInFlight) return;
