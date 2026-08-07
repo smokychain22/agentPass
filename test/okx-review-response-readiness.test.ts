@@ -396,6 +396,109 @@ async function main(): Promise<void> {
     assert.equal(record.acknowledged, false, "a deferred event must never be acknowledged");
   });
 
+  // ------------------------------------------------------- Incident #19 ----
+  console.log(" liveness is never gated on job work");
+
+  /**
+   * Reproduced live on 2026-08-07, right after the Incident #18 deploy: boot
+   * logged `system_event_recovery_start {"pending":11}` and then nothing at
+   * all from this runtime for 20+ minutes — no `system_event_recovered`, no
+   * `open_job_reconciler_wired`, and not one `heartbeat_accepted` OR
+   * `heartbeat_withheld`, while a `npm install` child from the first event
+   * kept running. `main()` awaited recovery before arming the heartbeat, so a
+   * single stuck job took the agent dark.
+   */
+  await test("startup NEVER awaits recovery or the open-job sweep before arming the heartbeat", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "scripts", "repodiet-seller-runtime.ts"),
+      "utf8"
+    );
+    assert.ok(
+      /void recoverPendingEvents\(/.test(src),
+      "startup recovery must be detached, not awaited"
+    );
+    /**
+     * `runSystemEventCycle` legitimately awaits recovery — that call is INSIDE
+     * the poll cycle, which already runs on a timer behind
+     * `systemEventCycleInFlight` and so cannot gate startup. Only the call in
+     * `main()` mattered, so the assertion is scoped to main() rather than to
+     * the whole file.
+     */
+    const mainBody = src.slice(src.indexOf("async function main("));
+    assert.ok(mainBody.length > 0, "main() must exist");
+    assert.ok(
+      !/\bawait recoverPendingEvents\(/.test(mainBody),
+      "awaiting startup recovery in main() is what took the agent dark in Incident #19"
+    );
+    assert.ok(
+      !/\bawait runOpenJobSweep\(/.test(mainBody),
+      "the open-job sweep must not gate the heartbeat either"
+    );
+    // The heartbeat must still actually be armed.
+    assert.ok(/heartbeatTimer = setInterval\(/.test(src), "the heartbeat timer must be armed");
+  });
+
+  await test("one event that never settles cannot own the recovery loop — it is bounded and the loop continues", async () => {
+    const { ledger } = freshLedger();
+    const envelope = {
+      agentId: AGENT,
+      message: { source: "system", event: "job_accepted", jobId: FUNDED_JOB },
+    };
+    const previous = process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS;
+    process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS = "50";
+    try {
+      // Re-import so the module-level bound picks up the override.
+      const mod = await import(
+        `../src/lib/okx-runtime/system-event-reconciler?bound=${Date.now()}`
+      );
+      const logs: string[] = [];
+      const results = await mod.recoverPendingEvents({
+        pending: () => [
+          { eventId: "evt-hang", envelope },
+          { eventId: "evt-next", envelope },
+        ],
+        ledger: {
+          get: (id: string) => ledger.get(id),
+          put: (id: string, e: Record<string, unknown>) =>
+            ledger.put(id, { ...e, jobId: FUNDED_JOB, semanticKey: "sk" } as never),
+          tryLock: () => true,
+          unlock: () => {},
+        },
+        // The first event hangs forever; the second completes normally.
+        fetchInstruction: async (input: { jobId: string }) => {
+          void input;
+          if (logs.includes("hang")) return { ok: false, stdout: "", stderr: "x" };
+          logs.push("hang");
+          return new Promise(() => {});
+        },
+        readTask: async () => undefined,
+        runModel: async () => ({ ok: false, actions: [] }),
+        runAction: async () => ({ ok: false, broadcast: false }),
+        reconcile: async () => ({ completed: false }),
+        publishStatus: async () => ({ ok: true }),
+        log: (event: string) => logs.push(event),
+      } as never);
+
+      assert.ok(
+        logs.includes("system_event_recovery_error"),
+        "the hung event must be reported, not silently swallowed"
+      );
+      assert.ok(
+        logs.includes("system_event_recovery_complete"),
+        "the loop must finish rather than being owned by the hung event"
+      );
+      assert.equal(results.length, 1, "the event AFTER the hung one must still have executed");
+      assert.equal(
+        ledger.get("evt-hang")?.acknowledged,
+        undefined,
+        "a timed-out event must never be acknowledged"
+      );
+    } finally {
+      if (previous === undefined) delete process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS;
+      else process.env.REPODIET_EVENT_EXECUTION_TIMEOUT_MS = previous;
+    }
+  });
+
   // ------------------------------------------------------- heavy limiter ----
   console.log(" heavy-job limiter: bounded, exclusive, and always replayable");
 
