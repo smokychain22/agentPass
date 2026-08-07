@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { execa } from "execa";
+import { runBoundedProcessGroup } from "@/lib/execution/bounded-process-group";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { PackageManager } from "@/lib/scanner/types";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
@@ -65,8 +65,6 @@ function installTimeoutMs(): number {
 }
 const MAX_ATTEMPTS = 4;
 const CACHE_RETRY_MAX = 2;
-/** Grace between SIGTERM and SIGKILL for an install that ignores the first. */
-const INSTALL_KILL_GRACE_MS = 5_000;
 
 /**
  * Drops a heavy child to the lowest scheduling priority.
@@ -97,43 +95,15 @@ const INSTALL_KILL_GRACE_MS = 5_000;
  * already exited are ignored, because failing to renice must never fail an
  * install.
  */
-export function deprioritize(pid: number | undefined, label: string): void {
-  if (pid === undefined) return;
-  try {
-    // 19 = lowest. The runtime stays at its default 0 and therefore always
-    // preempts this work.
-    os.setPriority(pid, 19);
-  } catch {
-    void label; // renice is advisory; never let it break the pipeline
-  }
-}
+export { deprioritize } from "@/lib/execution/bounded-process-group";
 
 /**
- * Runs one install command under a timeout that kills the ENTIRE process
- * group, so nothing the package manager spawned can outlive the deadline.
- *
- * === Why execa's own `timeout` is not enough ===
- *
- * `execa`'s `timeout` signals the direct child only. `npm ci` / `npm install`
- * is not a leaf process: it forks workers and (for package managers that honour
- * lifecycle scripts) arbitrary child processes of its own. A timed-out install
- * therefore left grandchildren running, reparented to init.
- *
- * This is the exact defect already fixed once on this machine for the
- * gate-check path (`runBoundedGroup` in scripts/repodiet-seller-runtime.ts):
- * three leaked `okx-a2a doctor` grandchildren had accumulated on
- * repodiet-agent-9636, each holding a Node heap on a 1-vCPU box, driving load
- * average past 14 and starving the very command that spawned them. The
- * repository-verification path spawns strictly heavier children than that and
- * had no equivalent protection at all — on a 2 GB machine a single leaked
- * install is enough to reach the OOM killer.
- *
- * `detached: true` puts the child in its own process group (pgid === pid), so
- * `kill(-pgid)` takes down the child and everything beneath it.
- *
- * The returned shape is exactly execa's, including `timedOut` and `signal`, so
- * `describeProcessTermination` keeps reporting OOM-vs-timeout-vs-conflict the
- * same way. `reject: false` is preserved: callers inspect `exitCode`.
+ * Runs one install command bounded by process group and — see
+ * `bounded-process-group.ts` — paused whenever the ASP's liveness proof needs
+ * the machine to itself in order to refresh. `nice 19` alone was proven
+ * insufficient on the production Fly machine: it arbitrates CPU only, and the
+ * contention that starved `onchainos agent gate-check` also involved memory
+ * and process-creation overhead.
  */
 async function runBoundedInstall(
   command: string[],
@@ -144,62 +114,14 @@ async function runBoundedInstall(
   stderr: string;
   signal?: string | null;
   timedOut?: boolean;
+  pausedMs: number;
 }> {
-  const timeoutMs = options.timeoutMs ?? installTimeoutMs();
-  // Process groups are POSIX. On Windows `detached` creates a new console
-  // rather than a killable group, so the platform's own child-tree handling
-  // (and execa's timeout) is used there instead.
-  const useProcessGroup = process.platform !== "win32";
-
-  const child = execa(command[0], command.slice(1), {
+  return runBoundedProcessGroup(command, {
     cwd: options.cwd,
     env: options.env,
-    reject: false,
-    detached: useProcessGroup,
-    // Retained as a backstop for the direct child; the group kill below is
-    // what actually bounds the tree.
-    timeout: useProcessGroup ? undefined : timeoutMs,
+    timeoutMs: options.timeoutMs ?? installTimeoutMs(),
+    label: "install",
   });
-
-  deprioritize(child.pid, "install");
-
-  let timedOut = false;
-  const killGroup = (signal: NodeJS.Signals) => {
-    if (child.pid === undefined) return;
-    try {
-      if (useProcessGroup) process.kill(-child.pid, signal);
-      else child.kill(signal);
-    } catch {
-      try {
-        child.kill(signal);
-      } catch {
-        /* already exited */
-      }
-    }
-  };
-
-  const timer = useProcessGroup
-    ? setTimeout(() => {
-        timedOut = true;
-        killGroup("SIGTERM");
-        setTimeout(() => killGroup("SIGKILL"), INSTALL_KILL_GRACE_MS).unref?.();
-      }, timeoutMs)
-    : undefined;
-  timer?.unref?.();
-
-  try {
-    const result = await child;
-    return {
-      exitCode: result.exitCode ?? null,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      signal: result.signal ?? null,
-      // Our own group kill is authoritative; execa only knows about its own.
-      timedOut: timedOut || result.timedOut === true,
-    };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 export interface WorkspaceInstallResult {

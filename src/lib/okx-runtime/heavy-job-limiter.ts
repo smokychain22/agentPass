@@ -43,6 +43,7 @@
  * acknowledges, delivers, settles or discards anything — a busy or slow machine
  * must never be able to decide a funded job's outcome.
  */
+import { isLivenessProvenFresh } from "@/lib/okx-runtime/liveness-coordinator";
 
 /**
  * Wall-clock ceiling for one heavy repository execution.
@@ -77,7 +78,10 @@ export function heavyJobTimeoutMs(): number {
 
 export class HeavyJobRejected extends Error {
   constructor(
-    readonly code: "heavy_job_already_running" | "heavy_job_timeout",
+    readonly code:
+      | "heavy_job_already_running"
+      | "heavy_job_timeout"
+      | "heavy_job_liveness_unproven",
     message: string
   ) {
     super(message);
@@ -167,6 +171,30 @@ export async function runExclusiveHeavyJob<T>(
   options: { timeoutMs?: number; nowMs?: () => number } = {}
 ): Promise<T> {
   const now = options.nowMs ?? Date.now;
+
+  /**
+   * === Admission half of the liveness-first scheduler ===
+   *
+   * Necessary but NOT sufficient on its own: production evidence showed the
+   * agent proven healthy immediately before a heavy job started and only
+   * degrading DURING it. The other half — yielding while work is already
+   * running — lives in bounded-process-group.ts, which every heavy child
+   * spawned by `fn` goes through. This half only stops a NEW job from being
+   * admitted onto a machine whose liveness is already unproven; it says
+   * nothing about a job already in flight.
+   *
+   * Zero safety margin here deliberately: this is a point-in-time check
+   * ("can we start right now"), not a forecast. Checked before the `inFlight`
+   * guard so an unproven machine refuses new work regardless of whether the
+   * single slot happens to be free.
+   */
+  if (!isLivenessProvenFresh(0)) {
+    throw new HeavyJobRejected(
+      "heavy_job_liveness_unproven",
+      `refusing to start ${label}: the ASP's liveness proof is not currently fresh; retry once the gate proof recovers`
+    );
+  }
+
   if (inFlight) {
     const heldMs = now() - inFlight.startedAtMs;
     throw new HeavyJobRejected(
