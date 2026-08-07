@@ -89,11 +89,20 @@ export class HeavyJobRejected extends Error {
  * Process-wide, deliberately not per-job: the constraint being enforced is the
  * MACHINE's memory and single shared vCPU, which two different jobs contend
  * over exactly as much as two attempts at the same job would.
+ *
+ * `draining` marks a slot whose CALLER has given up but whose WORK is still
+ * running — see the timeout discussion in `runExclusiveHeavyJob`.
  */
-let inFlight: { label: string; startedAtMs: number } | undefined;
+interface HeavyJobSlot {
+  label: string;
+  startedAtMs: number;
+  draining: boolean;
+}
+
+let inFlight: HeavyJobSlot | undefined;
 
 /** Read-only view for logging and tests. */
-export function currentHeavyJob(): { label: string; startedAtMs: number } | undefined {
+export function currentHeavyJob(): HeavyJobSlot | undefined {
   return inFlight;
 }
 
@@ -110,12 +119,47 @@ export function resetHeavyJobLimiterForTests(): void {
  * which is the pathology this exists to prevent. The caller's retry policy is
  * the queue.
  *
- * The timeout bounds the caller's WAIT, and cannot itself terminate work
- * already running inside `fn` — `fn` owns its own subprocesses and is
- * responsible for killing them (see `runBounded` in workspace-install.ts, which
- * kills the whole process group). The slot is released on timeout so a wedged
- * job cannot hold the machine hostage forever, and the abort signal is passed
- * to `fn` so a cooperating pipeline can stop early.
+ * The timeout bounds the caller's WAIT. It cannot itself terminate work already
+ * running inside `fn` — `fn` owns its own subprocesses and is responsible for
+ * killing them (see `runBoundedInstall` in workspace-install.ts, which kills the
+ * whole process group on its own deadline). The abort signal is passed to `fn`
+ * so a cooperating pipeline can stop early.
+ *
+ * === Incident #28: releasing the slot on timeout MANUFACTURED concurrency ===
+ *
+ * This function previously cleared `inFlight` in a `finally`, on the reasoning
+ * that "holding the slot for a job we have already stopped waiting on would
+ * deadlock every future heavy job". That reasoning was wrong, and it inverted
+ * the guarantee this module exists to provide.
+ *
+ * Observed on repodiet-agent-9636: a cleanup hit its bound, the event was
+ * recorded `retryable_failure` / `heavy_job_timeout` — correctly — and the slot
+ * was freed. But the `npm install` beneath it was still running. The retry then
+ * found the slot empty, took it, and started a SECOND install. Two concurrent
+ * installs on a 2 GB / 1-vCPU box, each cycle adding another orphan:
+ *
+ *   pid=15134 nice=19 age=102s :: npm install
+ *   pid=15214 nice=19 age=28s  :: npm install
+ *
+ * `nice 19` correctly kept the runtime itself schedulable, but nice arbitrates
+ * CPU only — it does nothing about memory or IO. Load average sat near 8 on one
+ * vCPU, `onchainos agent gate-check` could not finish inside its 300s ceiling,
+ * the proof went `unproven`, and the heartbeat was withheld 125 times running.
+ * The admission control designed to prevent concurrent heavy work was itself
+ * the thing creating it.
+ *
+ * The fix separates the two lifetimes that were wrongly fused:
+ *
+ *   - the CALLER's wait ends at the timeout, so the event still fails fast,
+ *     stays unacknowledged, and is retried on the existing backoff;
+ *   - the SLOT is held until `fn` actually settles, so no retry can start a
+ *     second install while the first is still alive.
+ *
+ * This cannot deadlock the machine permanently: everything `fn` runs is itself
+ * bounded and process-group-killed (install 600s, per check 300s, verification
+ * total 1500s), so a drained slot is released once those inner deadlines fire.
+ * A job we have stopped waiting on keeps the slot exactly as long as it keeps
+ * consuming the machine — which is the honest accounting.
  */
 export async function runExclusiveHeavyJob<T>(
   label: string,
@@ -124,22 +168,39 @@ export async function runExclusiveHeavyJob<T>(
 ): Promise<T> {
   const now = options.nowMs ?? Date.now;
   if (inFlight) {
+    const heldMs = now() - inFlight.startedAtMs;
     throw new HeavyJobRejected(
       "heavy_job_already_running",
-      `another heavy repository execution (${inFlight.label}) has held this machine's single heavy slot for ${
-        now() - inFlight.startedAtMs
-      }ms; refusing to run ${label} concurrently`
+      inFlight.draining
+        ? `another heavy repository execution (${inFlight.label}) exceeded its bound ${heldMs}ms ago and its subprocesses are still draining; refusing to run ${label} on top of work that is still consuming this machine`
+        : `another heavy repository execution (${inFlight.label}) has held this machine's single heavy slot for ${heldMs}ms; refusing to run ${label} concurrently`
     );
   }
 
   const timeoutMs = options.timeoutMs ?? heavyJobTimeoutMs();
-  inFlight = { label, startedAtMs: now() };
+  const slot: HeavyJobSlot = { label, startedAtMs: now(), draining: false };
+  inFlight = slot;
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
 
+  const work = fn(controller.signal);
+
+  /**
+   * The slot's release is bound to the WORK, not to the caller's wait. The
+   * empty handlers also mean that a rejection arriving after the race has
+   * already settled is observed here rather than surfacing as an unhandled
+   * rejection — which, under Node's default, would take the runtime down.
+   */
+  void work.then(
+    () => {},
+    () => {}
+  ).finally(() => {
+    if (inFlight === slot) inFlight = undefined;
+  });
+
   try {
     return await Promise.race([
-      fn(controller.signal),
+      work,
       new Promise<never>((_resolve, reject) => {
         // Deliberately NOT unref'd. An unref'd timer is skipped entirely when
         // nothing else holds the event loop open, which would make the bound
@@ -147,11 +208,12 @@ export async function runExclusiveHeavyJob<T>(
         // provide. It is always cleared in the `finally` below, so it can
         // never keep the process alive past the job it is bounding.
         timer = setTimeout(() => {
+          slot.draining = true;
           controller.abort();
           reject(
             new HeavyJobRejected(
               "heavy_job_timeout",
-              `${label} exceeded its ${timeoutMs}ms bound and was abandoned; the event stays pending and is retried on backoff`
+              `${label} exceeded its ${timeoutMs}ms bound and was abandoned; the event stays pending and is retried on backoff, and the heavy slot stays held until its subprocesses finish draining`
             )
           );
         }, timeoutMs);
@@ -159,8 +221,7 @@ export async function runExclusiveHeavyJob<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    // Released even on timeout: holding the slot for a job we have already
-    // stopped waiting on would deadlock every future heavy job.
-    inFlight = undefined;
+    // NOT released here — see the Incident #28 note above. Release is driven by
+    // `work` settling, which is the only event that means the machine is free.
   }
 }

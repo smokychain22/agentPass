@@ -1028,30 +1028,93 @@ async function main(): Promise<void> {
     assert.equal(currentHeavyJob(), undefined, "the slot must be released when the job finishes");
   });
 
-  await test("HEAVY TIMEOUT: a job that outlives its bound is abandoned, the slot is released, and the signal is aborted", async () => {
+  /**
+   * === Incident #28 ===
+   *
+   * This test previously asserted the OPPOSITE — that a timed-out job released
+   * the slot immediately, "so a wedged job cannot hold the machine's only heavy
+   * slot forever". That assertion looked like safety and was in fact the bug:
+   * it licensed a retry to start a second `npm install` while the first was
+   * still running. Production showed the result directly —
+   *
+   *   pid=15134 nice=19 age=102s :: npm install
+   *   pid=15214 nice=19 age=28s  :: npm install
+   *
+   * — two concurrent installs on a 2 GB / 1-vCPU box, gate-check unable to
+   * finish inside 300s, and 125 consecutive withheld heartbeats.
+   *
+   * The corrected contract separates the caller's wait from the slot's life.
+   */
+  await test("HEAVY TIMEOUT: the caller is released at the bound but the SLOT is held until the work actually drains", async () => {
     resetHeavyJobLimiterForTests();
     let observed: AbortSignal | undefined;
+    let finish: (() => void) | undefined;
+
     await assert.rejects(
       () =>
         runExclusiveHeavyJob(
           "cleanup_pr:wedged",
           (signal) => {
             observed = signal;
-            return new Promise(() => {});
+            // Still running after the caller gives up — exactly like an
+            // `npm install` that has not yet hit its own 600s deadline.
+            return new Promise<void>((resolve) => {
+              finish = resolve;
+            });
           },
           { timeoutMs: 20 }
         ),
       (err: unknown) => err instanceof HeavyJobRejected && err.code === "heavy_job_timeout"
     );
+
     assert.equal(observed?.aborted, true, "the pipeline must be told to stop");
+
+    // THE REGRESSION: the machine is still busy, so the slot must still be taken.
     assert.equal(
-      currentHeavyJob(),
-      undefined,
-      "a wedged job must not hold the machine's only heavy slot forever"
+      currentHeavyJob()?.label,
+      "cleanup_pr:wedged",
+      "the slot must stay held while the abandoned job's subprocesses are still consuming the machine"
+    );
+    assert.equal(currentHeavyJob()?.draining, true, "the held slot must report itself as draining");
+
+    // A retry arriving on backoff must be refused rather than starting a
+    // second install on top of the first.
+    await assert.rejects(
+      () => runExclusiveHeavyJob("cleanup_pr:retry", async () => "second install"),
+      (err: unknown) =>
+        err instanceof HeavyJobRejected &&
+        err.code === "heavy_job_already_running" &&
+        /draining/.test(err.message)
     );
 
-    // The slot is genuinely reusable afterwards.
+    // Once the work genuinely ends, the slot frees itself — no deadlock.
+    finish?.();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(currentHeavyJob(), undefined, "a drained slot must be released");
     assert.equal(await runExclusiveHeavyJob("cleanup_pr:next", async () => "ok"), "ok");
+  });
+
+  await test("a heavy job that rejects AFTER its caller gave up must not crash the runtime", async () => {
+    resetHeavyJobLimiterForTests();
+    let boom: ((e: Error) => void) | undefined;
+    await assert.rejects(
+      () =>
+        runExclusiveHeavyJob(
+          "cleanup_pr:late-throw",
+          () =>
+            new Promise<never>((_resolve, reject) => {
+              boom = reject;
+            }),
+          { timeoutMs: 20 }
+        ),
+      (err: unknown) => err instanceof HeavyJobRejected && err.code === "heavy_job_timeout"
+    );
+    // The race already settled; this rejection has no caller left waiting on it.
+    // It must be observed internally rather than becoming an unhandled rejection,
+    // which under Node's default would terminate the seller runtime.
+    boom?.(new Error("install died after abandonment"));
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(currentHeavyJob(), undefined, "the failed drain still releases the slot");
   });
 
   await test("the slot is released when the heavy job throws, not only when it succeeds", async () => {
