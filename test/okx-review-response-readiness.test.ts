@@ -30,6 +30,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { LedgerActionStore } from "../src/lib/okx-runtime/system-event-intake";
 import {
   FileActionLedger,
   actionLedgerPath,
@@ -394,6 +395,49 @@ async function main(): Promise<void> {
       "the quarantine deadline must be in the future, or it defers nothing"
     );
     assert.equal(record.acknowledged, false, "a deferred event must never be acknowledged");
+  });
+
+  /**
+   * The seam the original Incident #18 coverage missed.
+   *
+   * `persistRetryable` computed the deadline and `FileActionLedger` had the
+   * column, but `LedgerActionStore` — the adapter the PRODUCTION runtime
+   * actually injects — enumerates the fields it forwards and did not list
+   * `retryAfterIso`, so it was dropped in between. Live production showed the
+   * deadline on 0 of 33 records: the quarantine was a complete no-op, every
+   * failing event stayed immediately due, and the machine kept re-running the
+   * heavy pipeline on every poll.
+   *
+   * The earlier tests passed because they drove `FileActionLedger` directly.
+   * This one goes through the real store in both directions, so a field that
+   * survives the executor but not the adapter fails here.
+   */
+  await test("the PRODUCTION ledger adapter round-trips the quarantine deadline — not just the raw file ledger", () => {
+    const { ledger } = freshLedger();
+    const store = new LedgerActionStore(ledger);
+    const dueAt = new Date(Date.now() + 30 * 60_000).toISOString();
+
+    store.put("evt-through-store", {
+      state: "retryable_failure",
+      attempts: 7,
+      error: "NO_SAFE_CANDIDATES",
+      retryAfterIso: dueAt,
+    });
+
+    // It must reach the DURABLE record, not merely the in-memory evidence.
+    assert.equal(
+      ledger.get("evt-through-store")?.retryAfterIso,
+      dueAt,
+      "the adapter must forward retryAfterIso to the durable ledger"
+    );
+    // And it must come back out, so `prior` carries it on the next attempt.
+    assert.equal(store.get("evt-through-store")?.retryAfterIso, dueAt);
+    // The whole point: a record written through the real adapter is deferred.
+    assert.deepEqual(ledger.pendingForRecovery().map((r) => r.eventId), []);
+    assert.deepEqual(
+      ledger.deferredForRecovery().map((r) => r.eventId),
+      ["evt-through-store"]
+    );
   });
 
   // ------------------------------------------------------- Incident #19 ----

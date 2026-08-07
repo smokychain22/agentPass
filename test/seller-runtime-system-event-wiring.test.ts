@@ -466,13 +466,29 @@ async function run() {
     });
 
     spoolSystemEvent(inbox, ENVELOPE, "todo_1");
-    // One cycle is enough: live intake processes the event (deliver fails,
-    // clean retryable failure), and the SAME cycle's recovery pass — see
-    // runSystemEventCycle — immediately retries it, restarted from scratch
-    // per the executor's own published contract for a clean action failure.
+    // First cycle: live intake processes the event, deliver fails cleanly, and
+    // the event is recorded as a retryable failure WITH a quarantine deadline
+    // (Incident #18). It is therefore deliberately NOT retried in the same
+    // cycle any more — that immediate replay is precisely what saturated the
+    // production machine.
+    await runSystemEventCycle(deps, inbox);
+    assert.equal(deliverAttempts, 1, "the first deliver attempt must have happened and failed");
+    const deferred = deps.ledgerFile.get("todo_1");
+    assert.equal(deferred?.state, "retryable_failure");
+    assert.ok(
+      deferred?.retryAfterIso && Date.parse(deferred.retryAfterIso) > Date.now(),
+      "a clean action failure must now be quarantined rather than replayed immediately"
+    );
+
+    // Let the quarantine elapse. Rewriting the deadline into the past is
+    // exactly what waiting would do, and keeps this test about the property it
+    // exists for — that a RETRY never opens a second pull request — rather
+    // than about how long the backoff happens to be.
+    deps.ledgerFile.put("todo_1", { state: "retryable_failure", retryAfterIso: new Date(Date.now() - 1_000).toISOString() });
+
     await runSystemEventCycle(deps, inbox);
 
-    assert.equal(deliverAttempts, 2, "deliver must be retried");
+    assert.equal(deliverAttempts, 2, "deliver must be retried once the quarantine elapses");
     assert.equal(createPrCalls, 1, "the cleanup pipeline must never run twice for the same job");
     assert.equal(deps.ledgerFile.get("todo_1")?.state, "acknowledged");
   });

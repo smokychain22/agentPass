@@ -197,6 +197,7 @@ export class LedgerActionStore implements ActionLedger {
       xmtpMessageId: record.xmtpOutboundId,
       error: record.lastError,
       attempts: record.attempts,
+      retryAfterIso: record.retryAfterIso,
     };
   }
 
@@ -214,6 +215,23 @@ export class LedgerActionStore implements ActionLedger {
         lastError: evidence.error,
         terminalReason: evidence.state === "terminal_failure" ? evidence.error : undefined,
         attempts: evidence.attempts,
+        /**
+         * The per-event quarantine deadline (Incident #18).
+         *
+         * This adapter enumerates every field it forwards, so a field added to
+         * `ActionEvidence` and to `LedgerRecord` but not listed HERE is
+         * silently dropped in between — which is exactly what happened.
+         * `persistRetryable` computed a deadline, `FileActionLedger` had the
+         * column, and production still showed `retryAfterIso` on 0 of 33
+         * records: the quarantine was a complete no-op, every failing event
+         * stayed immediately due, and the machine kept re-running the heavy
+         * pipeline on every poll.
+         *
+         * The unit coverage missed it because it drove `FileActionLedger`
+         * directly and never crossed this seam. It is now covered through the
+         * real store — see test/okx-review-response-readiness.test.ts.
+         */
+        retryAfterIso: evidence.retryAfterIso,
         // Derived, never supplied. Only a lifecycle that genuinely reached
         // `acknowledged` stops the event being replayed; `terminal_failure` is
         // already excluded from recovery by the ledger itself.
