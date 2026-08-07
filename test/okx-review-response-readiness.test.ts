@@ -31,6 +31,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { LedgerActionStore } from "../src/lib/okx-runtime/system-event-intake";
+import { deprioritize } from "../src/lib/execution/workspace-install";
 import {
   FileActionLedger,
   actionLedgerPath,
@@ -438,6 +439,45 @@ async function main(): Promise<void> {
       ledger.deferredForRecovery().map((r) => r.eventId),
       ["evt-through-store"]
     );
+  });
+
+  // ------------------------------------------------------- Incident #22 ----
+  console.log(" heavy work must never outrank the agent's liveness calls");
+
+  /**
+   * Measured on the production Machine on 2026-08-07: a SINGLE cleanup attempt
+   * (`npm install` then `next build` plus its jest-workers) drove the 1-vCPU
+   * box to load 11+, the 150s gate-check timed out repeatedly, and the agent
+   * withheld its heartbeat for the whole ~20-minute run with `daemonOk:true`
+   * and `xmtpOk:true`. The quarantine stops that running CONTINUOUSLY; this
+   * stops the one permitted attempt from starving the agent while it runs.
+   */
+  await test("every heavy spawn site lowers its child's scheduling priority, and the runtime's own priority is never touched", () => {
+    const root = path.join(__dirname, "..", "src", "lib");
+    const sites = [
+      ["execution", "workspace-install.ts"],
+      ["execution", "baseline-verification.ts"],
+      ["verify", "run-verification.ts"],
+    ];
+    for (const parts of sites) {
+      const src = fs.readFileSync(path.join(root, ...parts), "utf8");
+      assert.ok(
+        /deprioritize\(\s*child\.pid/.test(src),
+        `${parts.join("/")} must lower the priority of the child it spawns`
+      );
+      // Renicing the runtime itself would slow the very heartbeat this
+      // protects, so `process.pid` must never be the target.
+      assert.ok(
+        !/setPriority\(\s*process\.pid/.test(src),
+        `${parts.join("/")} must never deprioritise the runtime process itself`
+      );
+    }
+  });
+
+  await test("deprioritize is best-effort — an unsupported platform or an already-exited child never breaks the pipeline", () => {
+    // A pid that cannot exist: setPriority throws, and the helper must swallow.
+    assert.doesNotThrow(() => deprioritize(2 ** 30, "test"));
+    assert.doesNotThrow(() => deprioritize(undefined, "test"));
   });
 
   // ------------------------------------------------------- Incident #21 ----
