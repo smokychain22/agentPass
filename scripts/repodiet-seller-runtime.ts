@@ -25,8 +25,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { actionLedgerPath, FileActionLedger } from "../src/lib/okx-runtime/action-ledger";
 import {
+  classifyDoctorChecks,
   classifyGateCheckOutcome,
   DEFAULT_GATE_CHECK_LIMITS,
+  gateFailureMentionsCommunication,
   GateProofState,
 } from "../src/lib/okx-runtime/gate-check-proof";
 import type { runProcess } from "../src/lib/okx-runtime/process-runner";
@@ -541,7 +543,7 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
    * and never runs on the healthy path. `--fix` is deliberately absent: this is
    * evidence gathering, and must not mutate the runtime to make itself pass.
    */
-  if (outcome.kind === "failed" && /(^|:)communication(,|:|$)/.test(outcome.reason)) {
+  if (outcome.kind === "failed" && gateFailureMentionsCommunication(outcome.reason)) {
     let doctorStdout: string | undefined;
     try {
       ({ stdout: doctorStdout } = await runBoundedGroup(
@@ -555,7 +557,22 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
       // which keeps the original fail-closed verdict.
       doctorStdout = (err as { stdout?: string } | undefined)?.stdout;
     }
+    const before = outcome.reason;
     outcome = classify(doctorStdout);
+    /**
+     * Incident #24: without this line there was no way to tell, from the logs
+     * alone, whether the doctor-evidence path had run at all. It had not — a
+     * guard regex never matched the reason string production actually emits —
+     * and the only visible symptom was the ordinary fail-closed reason, which
+     * looks identical to "evidence was collected and said no".
+     */
+    log("gate_check_doctor_evidence", {
+      collected: doctorStdout !== undefined,
+      bytes: doctorStdout?.length ?? 0,
+      verdict: classifyDoctorChecks(doctorStdout).kind,
+      reasonBefore: before,
+      outcomeAfter: outcome.kind,
+    });
   }
 
   gateProof.record(outcome);
