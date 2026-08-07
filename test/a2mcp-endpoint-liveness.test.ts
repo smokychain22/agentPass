@@ -38,7 +38,11 @@ import {
   GET as quickTriageGet,
   HEAD as quickTriageHead,
 } from "../src/app/api/a2mcp/quick-triage/route";
-import { isOfficialBoundaryConfigured } from "../src/lib/payment/okx-official-x402";
+import {
+  isOfficialBoundaryConfigured,
+  A2MCP_PROBE_ROUTE_PATTERN,
+  A2MCP_PROBE_HEAD_ROUTE_PATTERN,
+} from "../src/lib/payment/okx-official-x402";
 
 const PROBE_URL = "https://skillswap-virid-kappa.vercel.app/api/a2mcp/quick-triage";
 const probeRequest = () => new Request(PROBE_URL, { method: "GET" });
@@ -77,10 +81,40 @@ async function run() {
   });
 
   await test("HEAD returns the same status as GET, so a probe cannot get two different answers", async () => {
-    const res = await quickTriageHead(probeRequest());
+    const res = await quickTriageHead(new Request(PROBE_URL, { method: "HEAD" }));
     assert.notEqual(res.status, 405);
     assert.notEqual(res.status, 200);
     assert.equal(res.status, EXPECTED_STATUS);
+  });
+
+  /**
+   * Asserted on the ROUTE TABLE, not on a response, because comparing GET and
+   * HEAD responses only proves anything when credentials are present — without
+   * them both are 503 and the comparison passes trivially.
+   *
+   * That gap was not hypothetical. It let a real defect reach the PR preview:
+   * only `GET` was registered, HEAD matched no route, and the deployment
+   * answered `GET 402` but `HEAD 503`. The SDK matches `route.verb ===
+   * upperMethod`, so every probe verb must be registered explicitly.
+   */
+  await test("both probe verbs are registered with the SDK, and neither is a wildcard that would protect unimplemented methods", () => {
+    assert.equal(A2MCP_PROBE_ROUTE_PATTERN, "GET /api/a2mcp/quick-triage");
+    assert.equal(A2MCP_PROBE_HEAD_ROUTE_PATTERN, "HEAD /api/a2mcp/quick-triage");
+    const boundary = fs.readFileSync(
+      path.join(__dirname, "..", "src", "lib", "payment", "okx-official-x402.ts"),
+      "utf8"
+    );
+    for (const pattern of [
+      "[A2MCP_ROUTE_PATTERN]: route",
+      "[A2MCP_PROBE_ROUTE_PATTERN]: route",
+      "[A2MCP_PROBE_HEAD_ROUTE_PATTERN]: route",
+    ]) {
+      assert.ok(boundary.includes(pattern), `route table must register ${pattern}`);
+    }
+    assert.ok(
+      !/"\*\s+\/api\/a2mcp/.test(boundary),
+      "a wildcard verb would turn unimplemented methods into 402s instead of 405s"
+    );
   });
 
   if (configured) {
