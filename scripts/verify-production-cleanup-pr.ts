@@ -66,6 +66,20 @@ async function main(): Promise<void> {
     "local"
   ).slice(0, 7);
   const branch = arg("branch") ?? `repodiet/e2e-production-verification-${commit}`;
+  /**
+   * Optional disposable BASE branch to analyse instead of the repository's
+   * default branch.
+   *
+   * The controlled repository is also the repository of the real funded OKX
+   * job, and that job's per-job delete approval is bound to a specific base
+   * commit. Seeding a cleanup candidate onto `main` to make this proof
+   * possible would move that base underneath the funded job and invalidate its
+   * approval. Pointing the analysis at a throwaway base branch gives the same
+   * end-to-end proof — real clone, real analysis, real commit, real PR —
+   * while leaving `main`, and therefore the funded job's assumptions,
+   * untouched.
+   */
+  const base = arg("base");
 
   if (CUSTOMER_BRANCH_PATTERN.test(branch)) {
     fail(
@@ -77,7 +91,11 @@ async function main(): Promise<void> {
   if (!parsed) fail(`could not parse repository url: ${repoUrl}`);
 
   console.log(
-    JSON.stringify({ step: "start", repoUrl, branch, buildCommit: commit }, null, 2)
+    JSON.stringify(
+      { step: "start", repoUrl, branch, base: base ?? "(repository default)", buildCommit: commit },
+      null,
+      2
+    )
   );
 
   // --- 1. Real GitHub App token, for the read-back client -----------------
@@ -113,6 +131,7 @@ async function main(): Promise<void> {
       mode: "safe_only",
       cleanupBranch: branch,
       githubToken: token,
+      ...(base ? { branch: base } : {}),
     });
     prUrl = result.data.pullRequest.url;
     prNumber = result.data.pullRequest.number;
@@ -167,6 +186,11 @@ async function main(): Promise<void> {
    */
   if (pr.state !== "open") {
     fail(`pull request is ${pr.state}; RepoDiet must never merge or close its own cleanup PR`);
+  }
+  if (base && pr.baseRef !== base) {
+    // Proves the disposable base was genuinely honoured, so this run cannot
+    // have targeted `main` and disturbed the funded job's approved base.
+    fail(`pull request targets ${pr.baseRef}, expected the disposable base ${base}`);
   }
   if (changedPaths.length === 0) {
     fail("the pull request changes no files — nothing was actually delivered");
