@@ -285,23 +285,34 @@ export function formatInstallFailureReason(stderr: string, stdout: string): stri
  * process never got to write one. Without this the failure reason falls
  * through to generic text and the operator cannot tell an OOM from a network
  * stall from a genuine dependency conflict.
+ *
+ * `subject` names what was running, defaulting to "Dependency install" for
+ * every existing call site. Incident #35: `run-verification.ts`'s `typecheck`/
+ * `build` checks go through the exact same `runBoundedProcessGroup`, so a
+ * killed check needs the identical signal/timeout table — but reusing this
+ * function with the install-only wording would misreport a killed BUILD as a
+ * killed INSTALL, which is exactly the kind of misleading-cause bug this
+ * function exists to prevent in the first place.
  */
-export function describeProcessTermination(result: {
-  exitCode?: number | null;
-  signal?: string | null;
-  timedOut?: boolean;
-}): string | null {
+export function describeProcessTermination(
+  result: {
+    exitCode?: number | null;
+    signal?: string | null;
+    timedOut?: boolean;
+  },
+  subject = "Dependency install"
+): string | null {
   if (result.timedOut) {
-    return "Dependency install exceeded its time limit and was terminated (no npm error was emitted).";
+    return `${subject} exceeded its time limit and was terminated (no error output was emitted).`;
   }
   if (result.signal === "SIGKILL" || result.exitCode === 137) {
-    return "Dependency install was killed (SIGKILL/exit 137) — this is characteristic of the container running out of memory.";
+    return `${subject} was killed (SIGKILL/exit 137) — this is characteristic of the container running out of memory.`;
   }
   if (result.signal === "SIGTERM" || result.exitCode === 143) {
-    return "Dependency install was terminated (SIGTERM/exit 143) before it completed.";
+    return `${subject} was terminated (SIGTERM/exit 143) before it completed.`;
   }
   if (result.signal) {
-    return `Dependency install terminated by signal ${result.signal}.`;
+    return `${subject} terminated by signal ${result.signal}.`;
   }
   return null;
 }

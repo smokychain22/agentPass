@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { runBoundedProcessGroup } from "@/lib/execution/bounded-process-group";
+import { describeProcessTermination } from "@/lib/execution/workspace-install";
 import { prepareRepoWorkspace } from "@/lib/scanner/prepare-workspace";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import { getStoredPatchKit } from "@/lib/patch-kit/patch-kit-store";
@@ -120,6 +121,37 @@ async function runCheck(
     label: `verify:${name}`,
   });
 
+  /**
+   * === Incident #35: a killed check and a genuine compile failure looked
+   * identical ===
+   *
+   * `workspace-install.ts` has carried `describeProcessTermination` since
+   * Incident #22/#26 specifically so a starved/OOM-killed process is never
+   * mistaken for a real npm error — this file never had the equivalent for
+   * `typecheck`/`build`, and it showed on 2026-08-08: production reported
+   * "Baseline repository already fails verification" with a build stderr that
+   * was nothing but the Next.js startup banner, cut off mid-sentence. Read
+   * cold, that looks like a genuine compiler failure. Reproducing the exact
+   * same commit locally — same Node version, unconstrained resources —
+   * finished in well under a minute with a clean pass, which rules out a real
+   * defect in the code under test. The truncated banner is the signature of a
+   * process that never got past startup before something else ended it; the
+   * result just never said so.
+   *
+   * Reusing `describeProcessTermination` rather than duplicating its signal/
+   * exit-code table: a verification command and an install are both spawned
+   * through the same `runBoundedProcessGroup`, so a timeout, SIGKILL, or
+   * SIGTERM means exactly the same thing in both places.
+   */
+  const termination = describeProcessTermination(
+    {
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+    },
+    `Verification command "${name}"`
+  );
+
   return {
     name,
     command: command.join(" "),
@@ -127,7 +159,9 @@ async function runCheck(
     exitCode: result.exitCode ?? null,
     durationMs: Date.now() - t0,
     stdoutSummary: summarizeOutput(result.stdout ?? ""),
-    stderrSummary: summarizeOutput(result.stderr ?? ""),
+    stderrSummary: termination
+      ? `${termination} raw_output=${summarizeOutput(result.stderr || result.stdout || "")}`
+      : summarizeOutput(result.stderr ?? ""),
   };
 }
 
