@@ -42,6 +42,31 @@
  * stopped process. So the deadline's own kill path always issues `SIGCONT`
  * immediately before `SIGTERM`/`SIGKILL` — otherwise a job that times out
  * while paused could sit stopped forever, immune to its own deadline.
+ *
+ * === Incident #30: the yield ticker is REACTIVE, not authoritative ===
+ *
+ * Deployed and observed live on repodiet-agent-9636, 2026-08-08: the gate
+ * check still timed out twice at its full 300s ceiling
+ * (`durationMs:300162`, `durationMs:300401`) even with this module's
+ * per-child ticker running. Both were the PERIODIC gate-check refresh — the
+ * one Incident #13/#14 put on its own slower, independent cadence — not a
+ * reactive near-expiry one. That refresh runs on ITS OWN schedule
+ * (`nextRefreshDelayMs`, normally ~every 15 minutes), which has no
+ * relationship to any heavy child's own 20-second "is freshness running low"
+ * poll. A heavy child only pauses itself when ITS OWN check decides freshness
+ * is within `LIVENESS_YIELD_SAFETY_MARGIN_MS` of expiring — so a routine
+ * refresh that fires with plenty of freshness still banked (the normal case)
+ * finds no reason for any child to have paused, and runs fully exposed to
+ * whatever heavy work happens to be active at that moment.
+ *
+ * `pauseAllActiveHeavyChildrenForLivenessCheck` closes this by inverting
+ * control: rather than heavy work guessing when a check is coming, the check
+ * itself — the one party that actually knows it is about to run — pauses
+ * every active child for its own duration and resumes them after. It reuses
+ * each child's own `pauseForLiveness`/`resumeIfPaused` closures rather than
+ * raw signals, so an externally-triggered pause still runs through the exact
+ * same deadline-extension accounting as a self-triggered one: there is one
+ * pause/resume code path, invoked from two different places.
  */
 import os from "node:os";
 import { execa } from "execa";
@@ -135,6 +160,50 @@ export interface BoundedGroupResult {
   timedOut?: boolean;
   /** Total time this execution spent intentionally paused for a liveness refresh. */
   pausedMs: number;
+}
+
+interface ActiveHeavyChild {
+  pause(): boolean;
+  resume(): void;
+}
+
+/**
+ * Every currently-running heavy child IN THIS PROCESS, keyed by an opaque
+ * token so registration/deregistration can never collide even if two
+ * executions happen to share a pid after a fast exit/respawn.
+ *
+ * Deliberately process-local, matching the in-memory half of the heavy-job
+ * admission boundary (`heavy-job-limiter.ts`'s `inFlight`): the funded job's
+ * own retries and the seller runtime's own gate-check both run inside the
+ * SAME process, which is the case this fixes. A heavy job running in a
+ * DIFFERENT process (e.g. the standalone production-verification script) has
+ * no gate-check of its own to protect — cross-process mutual exclusion for
+ * THAT is the cross-process lock's job, a separate concern.
+ */
+const activeHeavyChildren = new Map<symbol, ActiveHeavyChild>();
+
+/**
+ * Pauses every currently-active heavy child in this process — for a liveness
+ * check that is ABOUT TO RUN, not one that a child itself decided was needed.
+ * Returns a resumer that MUST be called when the check finishes, success or
+ * failure; callers use try/finally, matching every other pause site in this
+ * module. Children that decline to pause (already paused, past their own
+ * yield cap, or already exited) are simply skipped — this can never make a
+ * check fail merely because some heavy work happened to be unpausable.
+ */
+export function pauseAllActiveHeavyChildrenForLivenessCheck(): () => void {
+  const resumers: Array<() => void> = [];
+  for (const child of activeHeavyChildren.values()) {
+    if (child.pause()) resumers.push(child.resume);
+  }
+  return () => {
+    for (const resume of resumers) resume();
+  };
+}
+
+/** Test seam: the count of children currently registered as active. */
+export function activeHeavyChildCountForTests(): number {
+  return activeHeavyChildren.size;
 }
 
 /**
@@ -240,6 +309,16 @@ export async function runBoundedProcessGroup(
     }
   };
 
+  // Registered regardless of `yieldEnabled`/platform: an externally-triggered
+  // pause is a no-op on Windows the same way self-triggered pausing is (no
+  // process groups), and registering costs nothing when nobody calls
+  // `pauseAllActiveHeavyChildrenForLivenessCheck`.
+  const registryToken = Symbol(options.label);
+  activeHeavyChildren.set(registryToken, {
+    pause: pauseForLiveness,
+    resume: resumeIfPaused,
+  });
+
   const checkIntervalMs = options.yieldCheckIntervalMs ?? LIVENESS_YIELD_CHECK_INTERVAL_MS;
   const scheduleTick = () => {
     if (stopped) return;
@@ -283,6 +362,7 @@ export async function runBoundedProcessGroup(
     };
   } finally {
     stopped = true;
+    activeHeavyChildren.delete(registryToken);
     if (deadlineTimer) clearTimeout(deadlineTimer);
     if (yieldTimer) clearTimeout(yieldTimer);
     // A child that exited while genuinely paused (should not happen — a

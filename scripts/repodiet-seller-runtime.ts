@@ -77,6 +77,7 @@ import {
 } from "../src/lib/okx-runtime/system-event-reconciler";
 import { systemEventsSuspended } from "../src/lib/okx-runtime/system-event-suspension";
 import { registerLivenessCoordinator } from "../src/lib/okx-runtime/liveness-coordinator";
+import { pauseAllActiveHeavyChildrenForLivenessCheck } from "../src/lib/execution/bounded-process-group";
 // Deliberately NOT from ./seller-runtime-supervisor: that module's import graph
 // reaches `openclaw/plugin-sdk/gateway-runtime`, which needs Node 22+. Reading
 // two constants from it would drag the whole Gateway client into this process's
@@ -507,6 +508,25 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
     return gateProofIsFresh();
   }
   gateCheckInFlight = true;
+  /**
+   * === Incident #30 ===
+   *
+   * Observed live: the PERIODIC refresh (this function, on its own
+   * Incident #13/#14 cadence) still timed out at its full 300s ceiling twice
+   * even with bounded-process-group.ts's per-child yield ticker deployed,
+   * because that ticker only pauses a heavy child REACTIVELY — when the
+   * child's own poll happens to notice freshness running low. A routine
+   * refresh firing with plenty of freshness still banked (the normal case)
+   * gives no child a reason to have paused itself, so it runs fully exposed
+   * to whatever heavy work is active at that moment.
+   *
+   * This inverts control: the check itself, which is the one party that
+   * actually knows it is about to run, pauses every active heavy child for
+   * its own duration and resumes them after — covering BOTH subprocess calls
+   * below (the main gate-check and, on a communication-classified failure,
+   * the doctor-evidence follow-up), not only the reactive case.
+   */
+  const resumeHeavyWork = pauseAllActiveHeavyChildrenForLivenessCheck();
   const startedAtMs = Date.now();
   let stdout: string | undefined;
   let error: NodeJS.ErrnoException | undefined;
@@ -561,37 +581,47 @@ async function refreshOfficialGateCheck(): Promise<boolean> {
    * extra bounded, read-only doctor run on the failure path of a 900s cadence,
    * and never runs on the healthy path. `--fix` is deliberately absent: this is
    * evidence gathering, and must not mutate the runtime to make itself pass.
+   *
+   * Heavy work stays paused (`resumeHeavyWork` was acquired above) through
+   * this optional second call too — a starved doctor-evidence run would be
+   * exactly as misleading as a starved main check, and the `finally` below
+   * resumes it exactly once regardless of which branch runs.
    */
-  if (outcome.kind === "failed" && gateFailureMentionsCommunication(outcome.reason)) {
-    let doctorStdout: string | undefined;
-    try {
-      ({ stdout: doctorStdout } = await runBoundedGroup(
-        "okx-a2a",
-        ["doctor", "--json"],
-        GATE_CHECK_TIMEOUT_MS
-      ));
-    } catch (err) {
-      // Non-zero exit is the ORDINARY case when anything is not ready; the
-      // diagnostic JSON is still on stdout. A timeout leaves it undefined,
-      // which keeps the original fail-closed verdict.
-      doctorStdout = (err as { stdout?: string } | undefined)?.stdout;
+  try {
+    if (outcome.kind === "failed" && gateFailureMentionsCommunication(outcome.reason)) {
+      let doctorStdout: string | undefined;
+      try {
+        ({ stdout: doctorStdout } = await runBoundedGroup(
+          "okx-a2a",
+          ["doctor", "--json"],
+          GATE_CHECK_TIMEOUT_MS
+        ));
+      } catch (err) {
+        // Non-zero exit is the ORDINARY case when anything is not ready; the
+        // diagnostic JSON is still on stdout. A timeout leaves it undefined,
+        // which keeps the original fail-closed verdict.
+        doctorStdout = (err as { stdout?: string } | undefined)?.stdout;
+      }
+      const before = outcome.reason;
+      outcome = classify(doctorStdout);
+      /**
+       * Incident #24: without this line there was no way to tell, from the
+       * logs alone, whether the doctor-evidence path had run at all. It had
+       * not — a guard regex never matched the reason string production
+       * actually emits — and the only visible symptom was the ordinary
+       * fail-closed reason, which looks identical to "evidence was collected
+       * and said no".
+       */
+      log("gate_check_doctor_evidence", {
+        collected: doctorStdout !== undefined,
+        bytes: doctorStdout?.length ?? 0,
+        verdict: classifyDoctorChecks(doctorStdout).kind,
+        reasonBefore: before,
+        outcomeAfter: outcome.kind,
+      });
     }
-    const before = outcome.reason;
-    outcome = classify(doctorStdout);
-    /**
-     * Incident #24: without this line there was no way to tell, from the logs
-     * alone, whether the doctor-evidence path had run at all. It had not — a
-     * guard regex never matched the reason string production actually emits —
-     * and the only visible symptom was the ordinary fail-closed reason, which
-     * looks identical to "evidence was collected and said no".
-     */
-    log("gate_check_doctor_evidence", {
-      collected: doctorStdout !== undefined,
-      bytes: doctorStdout?.length ?? 0,
-      verdict: classifyDoctorChecks(doctorStdout).kind,
-      reasonBefore: before,
-      outcomeAfter: outcome.kind,
-    });
+  } finally {
+    resumeHeavyWork();
   }
 
   gateProof.record(outcome);
