@@ -253,7 +253,12 @@ async function run() {
       const normalized = file.replace(/\\/g, "/");
       if (normalized.endsWith("src/lib/operator/create-cleanup-pr.ts")) return false;
       if (normalized.endsWith("src/lib/okx-runtime/heavy-job-limiter.ts")) return false;
-      return readFileSync(file, "utf8").includes("runExclusiveHeavyJob");
+      // Matches an actual CALL (`runExclusiveHeavyJob(`), not a docstring
+      // mention of the name — heavy-job-cross-process-lock.ts's own comments
+      // reference it by name while explaining the boundary it composes with,
+      // without calling it, and a bare-identifier match flagged that as a
+      // false double-lock.
+      return /runExclusiveHeavyJob\(/.test(readFileSync(file, "utf8"));
     });
     // A nested acquisition would observe the outer slot and reject itself with
     // `heavy_job_already_running` — a self-deadlock wearing admission
