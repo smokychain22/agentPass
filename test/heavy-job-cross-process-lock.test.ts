@@ -26,6 +26,7 @@ import {
   markCrossProcessLockDraining,
   releaseCrossProcessLock,
   setHeavyJobLockDirForTests,
+  setBootAtMsForTests,
 } from "../src/lib/okx-runtime/heavy-job-cross-process-lock";
 import {
   runExclusiveHeavyJob,
@@ -48,6 +49,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 function freshLockDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "repodiet-heavy-lock-"));
   setHeavyJobLockDirForTests(dir);
+  setBootAtMsForTests(undefined); // each test starts with the real (permissive) boot time unless it overrides
   return dir;
 }
 
@@ -364,6 +366,87 @@ async function run() {
         result.ok,
         false,
         "a legacy record for a genuinely alive pid must still block, exactly as before this fix"
+      );
+      releaseCrossProcessLock();
+    });
+  }
+
+  // -------------------------------------- Incident #32: boot-time gate -----
+  console.log(" the machine's OWN boot time disambiguates a deployment transition (Incident #32)");
+
+  if (process.platform === "win32") {
+    console.log("  … skipped on win32 (this check exists specifically for Incident #31's Linux restart scenario)");
+  } else {
+    await test("a LEGACY record (no pidStartTimeTicks) that predates the current boot is stale, even for a genuinely alive pid — the exact Incident #32 production shape", () => {
+      const dir = freshLockDir();
+      const now = Date.now();
+      // The record has no pidStartTimeTicks at all — exactly what the
+      // PREVIOUS deploy's code (before Incident #31 existed) would have
+      // written. Incident #31's own fix could not tell this apart from a
+      // genuine same-instance legacy record; only knowing the machine
+      // rebooted AFTER this record was last touched can.
+      fs.writeFileSync(
+        path.join(dir, "heavy-job.lock"),
+        JSON.stringify({
+          label: "cleanup_pr:pre-restart-job",
+          pid: process.pid, // reused by the new process, exactly like production
+          startedAtMs: now - 400_000,
+          updatedAtMs: now - 300_000, // touched 5 minutes ago — nowhere near STALE_AFTER_MS
+          draining: false,
+        })
+      );
+      // The machine "booted" 60 seconds ago — AFTER the lock was last touched.
+      setBootAtMsForTests(now - 60_000);
+      const result = tryAcquireCrossProcessLock("test:post-restart-job");
+      assert.equal(
+        result.ok,
+        true,
+        "a lock last touched before the current boot must be reclaimed regardless of pid liveness"
+      );
+      releaseCrossProcessLock();
+    });
+
+    await test("a record with pidStartTimeTicks that ALSO predates the current boot is stale via the boot check too (defense in depth)", () => {
+      const dir = freshLockDir();
+      const now = Date.now();
+      fs.writeFileSync(
+        path.join(dir, "heavy-job.lock"),
+        JSON.stringify({
+          label: "cleanup_pr:pre-restart-job-with-field",
+          pid: process.pid,
+          pidStartTimeTicks: 1, // deliberately wrong, as in the earlier pid-reuse test
+          startedAtMs: now - 400_000,
+          updatedAtMs: now - 300_000,
+          draining: false,
+        })
+      );
+      setBootAtMsForTests(now - 60_000);
+      const result = tryAcquireCrossProcessLock("test:post-restart-job-2");
+      assert.equal(result.ok, true, "stale via the boot-time check even before the pid-identity check is reached");
+      releaseCrossProcessLock();
+    });
+
+    await test("a record touched AFTER the current boot is NOT stale by the boot check — no false positives for genuine same-boot work", () => {
+      const dir = freshLockDir();
+      const now = Date.now();
+      // Acquire for real, so pid/start-time genuinely match this process.
+      assert.equal(tryAcquireCrossProcessLock("test:genuine-same-boot").ok, true);
+      // The machine "booted" long before this lock was written.
+      setBootAtMsForTests(now - 3_600_000);
+      const rival = tryAcquireCrossProcessLock("test:rival-same-boot");
+      assert.equal(rival.ok, false, "a lock written during the CURRENT boot must still be respected");
+      releaseCrossProcessLock();
+    });
+
+    await test("no boot-time override behaves like production: real recent locks are unaffected by the real (long-ago) boot time", () => {
+      const dir = freshLockDir();
+      setBootAtMsForTests(undefined); // exercise the REAL os.uptime() path
+      assert.equal(tryAcquireCrossProcessLock("test:real-boot-path").ok, true);
+      const rival = tryAcquireCrossProcessLock("test:real-boot-path-rival");
+      assert.equal(
+        rival.ok,
+        false,
+        "on a real dev/CI machine (uptime far exceeds this test's runtime) a just-created lock must not be reclaimed as stale"
       );
       releaseCrossProcessLock();
     });
