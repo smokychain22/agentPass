@@ -477,6 +477,25 @@ async function main(): Promise<void> {
       `the install bound must exceed the 180s at which real installs were being killed, got ${installMs}`
     );
     assert.ok(totalMs > installMs, "a verification pass must outlast a single install inside it");
+
+    /**
+     * Incident #34. `totalMs > installMs` was too weak to catch the real bug:
+     * it compares the pass against ONE install, but a pass is a baseline
+     * install + checks AND a patched install + checks. The old numbers passed
+     * this assertion (1500s > 600s) while being 300s smaller than the work
+     * they wrapped, and production duly hit the ceiling twice on 2026-08-08
+     * with the run still inside patched verification.
+     *
+     * Encode the arithmetic the ladder actually has to satisfy, so a future
+     * inner-bound raise cannot silently outgrow its own container again.
+     */
+    const commandMs = verify.PRODUCTION_VERIFY_COMMAND_TIMEOUT_MS;
+    const innerSumMs = 2 * installMs + 2 * commandMs;
+    assert.ok(
+      totalMs > innerSumMs,
+      `a verification pass is two installs and their checks (2*${installMs} + 2*${commandMs} = ${innerSumMs}ms); ` +
+        `the total bound must exceed that sum, got ${totalMs}ms`
+    );
     assert.ok(heavyMs > totalMs, "the heavy-job ceiling must exceed the verification pass it contains");
     assert.ok(
       eventMs > heavyMs,
@@ -1020,7 +1039,7 @@ async function main(): Promise<void> {
     const mod = await import("../src/lib/okx-runtime/system-event-reconciler");
     assert.equal(
       mod.PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS,
-      2_400_000,
+      3_600_000,
       "production must keep its real bound regardless of what tests inject"
     );
   });

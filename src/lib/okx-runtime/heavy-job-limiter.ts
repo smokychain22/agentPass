@@ -62,19 +62,50 @@ import {
  *
  *   install            600s   (nice 19, npm capped to 3 sockets)
  *   per check          300s   (`next build` is the heaviest)
- *   verification total 1500s
- *   heavy job          1800s  ← must exceed the verification total
- *   event execution    2400s  ← must exceed the heavy job
+ *   verification total 2400s
+ *   heavy job          3000s  ← must exceed the verification total
+ *   event execution    3600s  ← must exceed the heavy job
  *
  * Raising the inner bounds to what this machine can actually achieve (Incident
  * #26) without raising these two would simply move the failure outwards: the
  * install would finish and the job would be abandoned anyway.
  *
+ * === Incident #34: the ladder did not contain its own arithmetic ===
+ *
+ * Incident #26 set the inner bounds correctly and then under-sized the outer
+ * ones against them. Read the first two lines and add them up for the shape
+ * this comment itself describes — baseline install, baseline checks, patched
+ * install, patched checks:
+ *
+ *   600 + 300 + 600 + 300 = 1800s of bounded inner work,
+ *
+ * before a single second for clone, analysis, patch application, commit or
+ * push. The old `verification total 1500s` was therefore 300s smaller than the
+ * work it wraps, and the old `heavy job 1800s` exactly EQUALLED it with zero
+ * headroom — so a cleanup that used its inner allowances honestly could not
+ * finish inside its own ceiling. It is not a tuning preference; the ladder was
+ * arithmetically impossible.
+ *
+ * Confirmed twice on production 2026-08-08, both ending identically at the
+ * 1,800,000ms bound with the run still inside patched verification:
+ *
+ *   15:02:53 → 15:32:53  (heavy slot contended)
+ *   16:07:29 → 16:37:42  (heavy slot exclusive, machine settled)
+ *
+ * The second is the load-bearing one: a SINGLE legitimate heavy job on a quiet
+ * box still could not finish, which rules out contention as the cause and
+ * leaves the arithmetic.
+ *
+ * The new values restore the invariant this comment always claimed — each
+ * layer strictly exceeds the sum of what it contains, with real headroom:
+ * 1800s of inner work fits inside 2400s of verification, which fits inside a
+ * 3000s heavy job, which fits inside 3600s of event execution.
+ *
  * These are still hard ceilings. Concurrency is still one heavy job at a time,
  * cadence is still governed by the per-job quarantine, and a timed-out job is
  * still abandoned and left replayable rather than acknowledged.
  */
-export const PRODUCTION_HEAVY_JOB_TIMEOUT_MS = 1_800_000;
+export const PRODUCTION_HEAVY_JOB_TIMEOUT_MS = 3_000_000;
 
 /** Resolved per call (Incident #27) so a test can inject without import-order games. */
 export function heavyJobTimeoutMs(): number {

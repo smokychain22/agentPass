@@ -24,10 +24,17 @@ function commandTimeoutMs(): number {
  * Incident #26. The whole verification pass is a baseline install + checks and
  * a patched install + checks. With the per-step bounds raised to what this
  * machine can actually achieve, a 300s total would cut the pass off before its
- * own steps could finish. Still bounded, and still inside the 900s heavy-job
- * ceiling and 20-minute per-event deadline above it.
+ * own steps could finish. Still bounded, and still inside the heavy-job ceiling
+ * and per-event deadline above it.
+ *
+ * Incident #34: 1,500,000ms was still smaller than the steps it wraps. This
+ * pass is two installs and their checks — 600s + 300s + 600s + 300s = 1800s of
+ * inner allowance — so the old total was 300s short before counting clone,
+ * analysis or patch application, and cut the pass off mid-flight on production
+ * twice on 2026-08-08. 2400s covers the inner sum with headroom and stays
+ * strictly inside the 3000s heavy-job ceiling above it.
  */
-export const PRODUCTION_VERIFY_TOTAL_TIMEOUT_MS = 1_500_000;
+export const PRODUCTION_VERIFY_TOTAL_TIMEOUT_MS = 2_400_000;
 function totalTimeoutMs(): number {
   const o = Number(process.env.REPODIET_VERIFY_TOTAL_TIMEOUT_MS);
   return Number.isFinite(o) && o > 0 ? o : PRODUCTION_VERIFY_TOTAL_TIMEOUT_MS;

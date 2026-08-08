@@ -53,11 +53,17 @@ export interface ReconcilerDeps extends ExecuteDeps {
  * state a crash would leave it in.
  */
 /**
- * The PRODUCTION default. Kept above the heavy-job ceiling (1800s) so this
+ * The PRODUCTION default. Kept above the heavy-job ceiling (3000s) so this
  * stays a backstop for hangs OUTSIDE that limiter rather than a competing
  * deadline that cuts a legitimately-running cleanup short.
+ *
+ * Incident #34 raised the heavy-job ceiling from 1800s to 3000s, because the
+ * ladder below it did not contain its own inner bounds. This has to move with
+ * it: left at 2400s it would have become SMALLER than the heavy job it is
+ * supposed to backstop, and would have started cutting off exactly the
+ * legitimate cleanups the raise was meant to let finish.
  */
-export const PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS = 2_400_000;
+export const PRODUCTION_EVENT_EXECUTION_TIMEOUT_MS = 3_600_000;
 
 /**
  * === Incident #27: a test must never wait a production deadline ===
