@@ -57,6 +57,13 @@ const STALE_AFTER_MS = 45 * 60_000;
 interface LockFileContents {
   label: string;
   pid: number;
+  /**
+   * `/proc/<pid>/stat`'s start-time field (ticks since boot) at acquire time —
+   * see Incident #31. `undefined` on non-Linux, where pid reuse across a
+   * restart cannot be disambiguated and the plain pid-alive check is all
+   * that's available.
+   */
+  pidStartTimeTicks?: number;
   startedAtMs: number;
   updatedAtMs: number;
   draining: boolean;
@@ -98,6 +105,71 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * === Incident #31: a reused pid is not the same process ===
+ *
+ * Discovered live on repodiet-agent-9636, 2026-08-08, right after the
+ * Incident #30 deploy restarted the machine: a lock created at 12:02:24Z by
+ * the FUNDED job, last touched at 12:37:25Z, survived a restart at 12:42:37Z
+ * — because the OLD owning process died with the container, but the NEW
+ * seller runtime happened to be assigned the exact SAME pid (729) on reboot.
+ * `pidAlive(729)` then answered "yes" truthfully — the new process genuinely
+ * is alive — while asking the wrong question: whether THAT PARTICULAR
+ * process, the one that actually wrote the lock, still exists. It does not.
+ * The result was a lock that would have silently blocked all heavy work
+ * (both the funded job's own future retries and any other caller) for up to
+ * `STALE_AFTER_MS` after every single restart whose reused low pid happened
+ * to collide with the file's recorded owner — LOAD was 0.71 with zero real
+ * npm/build processes running, yet the lock still read as legitimately held.
+ *
+ * `/proc/<pid>/stat`'s start-time field (ticks since boot) disambiguates a
+ * pid NUMBER from a pid IDENTITY: two different processes can share a
+ * number, but never a (pid, start-time) pair on the same boot. Recorded at
+ * acquire time and re-read at every staleness check; a mismatch — or the
+ * current process at that pid having no start time the kernel will report,
+ * i.e. it does not exist — means stale, full stop, regardless of what
+ * `pidAlive` alone would have said.
+ *
+ * Non-Linux (this field lives under `/proc`, so Windows and any sandboxed
+ * environment without a real procfs) falls back to the pid-alive-only check
+ * this replaces — no regression there, since that platform never had the
+ * disambiguation to begin with.
+ */
+function processStartTimeTicks(pid: number): number | undefined {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    // `comm` (the second field) is parenthesized and may itself contain
+    // spaces or parentheses, so the safe split point is the LAST ')' — every
+    // field after it is fixed-format and space-separated. start-time is the
+    // 20th of those trailing fields (index 19), matching the `stat(5)` layout
+    // already relied on elsewhere in this codebase (bounded-process-group.ts,
+    // repodiet-seller-runtime.ts).
+    const afterComm = stat.slice(stat.lastIndexOf(")") + 2);
+    const ticks = Number(afterComm.split(" ")[19]);
+    return Number.isFinite(ticks) ? ticks : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True only if `pid` is alive AND is provably the SAME process instance that
+ * `recordedStartTimeTicks` was captured from — see Incident #31.
+ *
+ * `recordedStartTimeTicks === undefined` means the lock predates this field
+ * (an older record, or written from a non-Linux process) — falls back to the
+ * plain pid-alive check rather than treating every legacy record as stale.
+ */
+function pidIsSameProcess(pid: number, recordedStartTimeTicks: number | undefined): boolean {
+  if (!pidAlive(pid)) return false;
+  if (recordedStartTimeTicks === undefined) return true;
+  const currentStartTimeTicks = processStartTimeTicks(pid);
+  // Unreadable /proc (non-Linux, or the process just exited) — cannot prove
+  // identity, so this must NOT be trusted as the same process.
+  if (currentStartTimeTicks === undefined) return false;
+  return currentStartTimeTicks === recordedStartTimeTicks;
+}
+
 function readLock(file: string): LockFileContents | undefined {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -118,7 +190,7 @@ function readLock(file: string): LockFileContents | undefined {
 function isStale(existing: LockFileContents | undefined, nowMs: number): boolean {
   if (!existing) return true;
   if (nowMs - existing.updatedAtMs > STALE_AFTER_MS) return true;
-  return !pidAlive(existing.pid);
+  return !pidIsSameProcess(existing.pid, existing.pidStartTimeTicks);
 }
 
 function writeLock(file: string, contents: LockFileContents): void {
@@ -149,6 +221,7 @@ export function tryAcquireCrossProcessLock(label: string, nowMs: number = Date.n
           JSON.stringify({
             label,
             pid: process.pid,
+            pidStartTimeTicks: processStartTimeTicks(process.pid),
             startedAtMs: nowMs,
             updatedAtMs: nowMs,
             draining: false,

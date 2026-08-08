@@ -17,9 +17,20 @@
  *      SKIPPED and TIMED_OUT are none of them success, and a cancelled job is
  *      the most dangerous of the set because it looks finished.
  *
- * The rule here is deliberately blunt: EVERY check reported for the PR head must
- * be in the `pass` bucket. Anything else — including a check that simply has not
- * reported yet — blocks the merge.
+ * The rule is deliberately blunt for every check that GitHub's branch
+ * protection actually treats as REQUIRED: it must be in the `pass` bucket.
+ * Anything else — including a check that simply has not reported yet —
+ * blocks the merge. Required contexts are read from the branch protection API
+ * itself (never hardcoded here), so this can never drift from what GitHub
+ * will actually enforce server-side.
+ *
+ * A NON-required check (e.g. a second Vercel project attached to the repo
+ * that isn't the production deployment) is still printed for visibility but
+ * cannot block the merge — see Incident: `Vercel – workspace` was proven
+ * (2026-08-08) to be a non-production project with repeated OOM/queue
+ * instability and removed from `main`'s required contexts; a gate that kept
+ * requiring 100% of every REPORTED check regardless would then block every
+ * future merge on a project nobody decided mattered.
  *
  * Note on GitHub's synthetic merge ref: `pull_request` workflows run against a
  * merge commit, not the raw branch head, so requiring every check to carry the
@@ -30,7 +41,8 @@
  *
  *   node scripts/ci-merge-gate.mjs <pr-number> [--merge]
  *
- * Exit 0 = every check passed and the head never moved. Non-zero = do not merge.
+ * Exit 0 = every REQUIRED check passed and the head never moved. Non-zero =
+ * do not merge.
  */
 import { execFileSync } from "node:child_process";
 
@@ -56,6 +68,12 @@ function checks(pr) {
   return JSON.parse(raw);
 }
 
+/** Reads REQUIRED status-check contexts straight from branch protection — the single source of truth for what GitHub will actually enforce. */
+function requiredContexts(owner, repo, branch) {
+  const raw = gh(["api", `repos/${owner}/${repo}/branches/${branch}/protection/required_status_checks`]);
+  return new Set(JSON.parse(raw).contexts ?? []);
+}
+
 function main() {
   const pr = process.argv[2];
   const doMerge = process.argv.includes("--merge");
@@ -64,7 +82,22 @@ function main() {
     process.exit(2);
   }
 
-  const before = headSha(pr);
+  const prInfo = JSON.parse(gh(["pr", "view", String(pr), "--json", "headRefOid,baseRefName"]));
+  const before = prInfo.headRefOid;
+  const [owner, repo] = gh(["repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name"]).trim().split("/");
+
+  let required;
+  try {
+    required = requiredContexts(owner, repo, prInfo.baseRefName);
+  } catch (err) {
+    console.error(`GATE BLOCKED: could not read required status checks from branch protection: ${err.message}`);
+    process.exit(1);
+  }
+  if (required.size === 0) {
+    console.error("GATE BLOCKED: branch protection reports zero required contexts — refusing to merge on absence of a defined gate");
+    process.exit(1);
+  }
+
   let all;
   try {
     all = checks(pr);
@@ -78,16 +111,25 @@ function main() {
     process.exit(1);
   }
 
-  const failing = all.filter((c) => c.bucket !== PASSING_BUCKET);
   for (const c of all) {
-    const mark = c.bucket === PASSING_BUCKET ? "PASS" : "BLOCK";
-    console.log(`  ${mark.padEnd(5)} ${String(c.name).padEnd(32)} ${c.state}/${c.bucket}`);
+    const isRequired = required.has(c.name);
+    const mark = c.bucket === PASSING_BUCKET ? "PASS" : isRequired ? "BLOCK" : "warn";
+    console.log(`  ${mark.padEnd(5)} ${isRequired ? "[required]" : "[optional]"} ${String(c.name).padEnd(32)} ${c.state}/${c.bucket}`);
   }
 
-  if (failing.length > 0) {
-    console.error(`\nGATE BLOCKED: ${failing.length} check(s) not in the pass bucket`);
-    for (const c of failing) {
+  const reportedNames = new Set(all.map((c) => c.name));
+  const missing = [...required].filter((name) => !reportedNames.has(name));
+  const failingRequired = all.filter((c) => required.has(c.name) && c.bucket !== PASSING_BUCKET);
+
+  if (missing.length > 0 || failingRequired.length > 0) {
+    console.error(
+      `\nGATE BLOCKED: ${failingRequired.length} required check(s) not in the pass bucket, ${missing.length} required check(s) missing entirely`
+    );
+    for (const c of failingRequired) {
       console.error(`  - ${c.name}: ${BLOCKING[c.bucket] ?? c.bucket}`);
+    }
+    for (const name of missing) {
+      console.error(`  - ${name}: required by branch protection but not reported for this PR`);
     }
     process.exit(1);
   }
@@ -100,7 +142,7 @@ function main() {
     process.exit(1);
   }
 
-  console.log(`\nGATE PASSED: ${all.length} check(s) green at ${after}`);
+  console.log(`\nGATE PASSED: ${required.size} required check(s) green at ${after}`);
   if (doMerge) {
     gh(["pr", "merge", String(pr), "--squash", "--delete-branch"]);
     console.log(`merged PR #${pr} at ${after}`);
