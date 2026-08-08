@@ -296,6 +296,79 @@ async function run() {
     releaseCrossProcessLock();
   });
 
+  // ------------------------------------------- Incident #31: pid reuse -----
+  console.log(" pid reuse across a restart (Incident #31)");
+
+  if (process.platform === "win32") {
+    console.log(
+      "  … skipped on win32 (start-time disambiguation reads /proc, which does not exist here — production is Linux)"
+    );
+  } else {
+    await test("a lock recorded for THIS pid but with a MISMATCHED start-time is stale, even though the pid is genuinely alive and the record is recently touched", () => {
+      const dir = freshLockDir();
+      // A wrong stand-in for the real start-time: the actual value is a real
+      // process's boot-relative tick count, essentially never 1 on a machine
+      // that has been up more than a moment.
+      fs.writeFileSync(
+        path.join(dir, "heavy-job.lock"),
+        JSON.stringify({
+          label: "stale-from-before-a-restart",
+          pid: process.pid,
+          pidStartTimeTicks: 1,
+          startedAtMs: Date.now() - 5_000,
+          updatedAtMs: Date.now(), // "just touched" — the old time-based check alone would call this fresh
+          draining: false,
+        })
+      );
+      const result = tryAcquireCrossProcessLock("test:reclaim-after-pid-reuse");
+      assert.equal(
+        result.ok,
+        true,
+        "a mismatched start-time must be treated as stale regardless of recency or pid-alive"
+      );
+      releaseCrossProcessLock();
+    });
+
+    await test("a lock recorded for THIS pid with the CORRECT start-time is NOT stale — no false positives from the new check", () => {
+      const dir = freshLockDir();
+      // Acquire for real once, so the file holds a genuine (pid, start-time)
+      // pair for this actual process — then read it back as a rival would.
+      assert.equal(tryAcquireCrossProcessLock("test:genuine-owner").ok, true);
+      const genuine = JSON.parse(fs.readFileSync(path.join(dir, "heavy-job.lock"), "utf8"));
+      releaseCrossProcessLock();
+
+      fs.writeFileSync(path.join(dir, "heavy-job.lock"), JSON.stringify(genuine));
+      const result = tryAcquireCrossProcessLock("test:should-be-blocked");
+      assert.equal(
+        result.ok,
+        false,
+        "a lock with a genuinely matching (pid, start-time) pair must still be respected"
+      );
+      releaseCrossProcessLock();
+    });
+
+    await test("a legacy record with NO pidStartTimeTicks field falls back to the plain pid-alive check (backward compatible)", () => {
+      const dir = freshLockDir();
+      fs.writeFileSync(
+        path.join(dir, "heavy-job.lock"),
+        JSON.stringify({
+          label: "pre-incident-31-record",
+          pid: process.pid, // no pidStartTimeTicks field at all
+          startedAtMs: Date.now() - 5_000,
+          updatedAtMs: Date.now(),
+          draining: false,
+        })
+      );
+      const result = tryAcquireCrossProcessLock("test:legacy-record");
+      assert.equal(
+        result.ok,
+        false,
+        "a legacy record for a genuinely alive pid must still block, exactly as before this fix"
+      );
+      releaseCrossProcessLock();
+    });
+  }
+
   console.log(
     failures === 0
       ? "heavy-job-cross-process-lock: all passed"
