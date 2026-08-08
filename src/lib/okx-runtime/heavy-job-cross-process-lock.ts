@@ -43,6 +43,7 @@
  * its own without needing that process to run any cleanup code.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveRuntimeRoot } from "./runtime-root";
 
@@ -70,6 +71,15 @@ interface LockFileContents {
 }
 
 let lockDirOverride: string | undefined;
+let bootAtMsOverride: number | undefined;
+
+/**
+ * Test seam: real system uptime cannot be faked cross-platform, so tests
+ * inject a boot time directly rather than exercising `os.uptime()`.
+ */
+export function setBootAtMsForTests(bootAtMs: number | undefined): void {
+  bootAtMsOverride = bootAtMs;
+}
 
 function lockFilePath(): string {
   /**
@@ -187,9 +197,35 @@ function readLock(file: string): LockFileContents | undefined {
   }
 }
 
+/**
+ * === Incident #32: the Incident #31 fix could not disambiguate its OWN
+ * deployment transition ===
+ *
+ * Discovered live on repodiet-agent-9636, 2026-08-08, on the FIRST restart
+ * after Incident #31 shipped — the exact scenario #31 exists for. A lock
+ * written by the PREVIOUS deploy (which did not yet have `pidStartTimeTicks`
+ * at all — that field did not exist in that code) survived the restart. The
+ * new seller runtime was again assigned the reused pid. `pidIsSameProcess`
+ * correctly has a backward-compatible fallback for "this record predates the
+ * field" — but that fallback IS the plain pid-alive check, which is exactly
+ * the check Incident #31 proved insufficient. A legacy record can therefore
+ * never be told apart from a genuine same-instance record using only what the
+ * record itself contains, because a legacy record and a reused-pid record
+ * look byte-for-byte identical: neither has the field.
+ *
+ * The fix does not depend on the record's own fields at all. `os.uptime()` is
+ * the KERNEL's own answer to "how long has this machine been up", so
+ * `Date.now() - os.uptime() * 1000` is this boot's start time — and no
+ * process, however it was written, could have touched a lock file before its
+ * own machine finished booting. If the lock's last touch predates the
+ * current boot, it is unconditionally stale, independent of pid, start-time
+ * ticks, or whether the writer even knew this field existed.
+ */
 function isStale(existing: LockFileContents | undefined, nowMs: number): boolean {
   if (!existing) return true;
   if (nowMs - existing.updatedAtMs > STALE_AFTER_MS) return true;
+  const bootAtMs = bootAtMsOverride ?? nowMs - os.uptime() * 1000;
+  if (existing.updatedAtMs < bootAtMs) return true;
   return !pidIsSameProcess(existing.pid, existing.pidStartTimeTicks);
 }
 
