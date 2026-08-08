@@ -104,4 +104,45 @@ test("SIGPIPE is reported by signal name rather than silently dropped", () => {
   assert.match(describeProcessTermination({ signal: "SIGPIPE" }) ?? "", /SIGPIPE/);
 });
 
+/**
+ * Incident #35: `run-verification.ts` reuses this function for a killed
+ * `typecheck`/`build` check, not just an install. On 2026-08-08 production
+ * reported a build failure as raw truncated stdout with no indication it had
+ * been killed rather than genuinely failing to compile — reproducing the
+ * exact same commit locally (unconstrained resources) compiled cleanly in
+ * under a minute, proving the code was fine and the report was misleading.
+ */
+test("default subject stays 'Dependency install' for every existing call site", () => {
+  assert.match(
+    describeProcessTermination({ timedOut: true }) ?? "",
+    /^Dependency install exceeded/
+  );
+  assert.match(
+    describeProcessTermination({ exitCode: 137 }) ?? "",
+    /^Dependency install was killed/
+  );
+});
+
+test("a custom subject replaces the wording without changing the signal/exit-code table", () => {
+  const subject = 'Verification command "build"';
+  assert.match(
+    describeProcessTermination({ timedOut: true }, subject) ?? "",
+    /^Verification command "build" exceeded its time limit/
+  );
+  assert.match(
+    describeProcessTermination({ exitCode: 137 }, subject) ?? "",
+    /^Verification command "build" was killed \(SIGKILL\/exit 137\)/
+  );
+  assert.match(
+    describeProcessTermination({ signal: "SIGTERM" }, subject) ?? "",
+    /^Verification command "build" was terminated/
+  );
+  // A killed BUILD must never be misreported as a killed INSTALL — the exact
+  // defect class this function exists to prevent, applied to itself.
+  assert.doesNotMatch(
+    describeProcessTermination({ timedOut: true }, subject) ?? "",
+    /install/i
+  );
+});
+
 console.log("workspace-install-npm-warn: all tests passed");
