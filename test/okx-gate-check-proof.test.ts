@@ -271,6 +271,47 @@ async function run() {
     assert.equal(typeof state.nextRefreshDelayMs(), "number");
   });
 
+  /**
+   * === Incident #33 ===
+   *
+   * The gate-check bound was 300s while the command it bounds wanted a shade
+   * over 300s. Every refresh was killed AT the bound — production logged four
+   * consecutive `durationMs` of 300244/300164/300165/300406 on 2026-08-08 —
+   * so no check ever reached a verdict, no proof could ever be renewed, and
+   * the runtime went dark each time the cached proof aged out (heartbeat
+   * withheld 15:28-15:57, then again from 16:41).
+   *
+   * The one invocation allowed to finish took 314,314ms. A bound must exceed
+   * the cost of what it bounds, with margin.
+   */
+  await test("Incident #33: the gate-check bound exceeds the observed cost of the command it bounds", () => {
+    const OBSERVED_COMPLETION_MS = 314_314;
+    assert.ok(
+      DEFAULT_GATE_CHECK_LIMITS.timeoutMs > OBSERVED_COMPLETION_MS,
+      `the bound must exceed the ${OBSERVED_COMPLETION_MS}ms the command was measured taking, ` +
+        `got ${DEFAULT_GATE_CHECK_LIMITS.timeoutMs}ms`
+    );
+  });
+
+  await test("Incident #33: a refresh still cannot outlive its own cadence or freshness window", () => {
+    // The raise is only safe while these orderings hold: a check must finish
+    // before the next refresh is due (or refreshes overlap), and many checks
+    // must fit inside one freshness window (or a proof can expire with no
+    // chance to renew it — the exact outage this incident is about).
+    assert.ok(
+      DEFAULT_GATE_CHECK_LIMITS.timeoutMs < DEFAULT_GATE_CHECK_LIMITS.refreshMs,
+      "a gate check must finish before the next refresh is scheduled"
+    );
+    assert.ok(
+      DEFAULT_GATE_CHECK_LIMITS.refreshMs < DEFAULT_GATE_CHECK_LIMITS.freshnessMs,
+      "a proof must be refreshable more than once before it expires"
+    );
+    assert.ok(
+      DEFAULT_GATE_CHECK_LIMITS.timeoutMs * 2 < DEFAULT_GATE_CHECK_LIMITS.freshnessMs,
+      "at least two full-length checks must fit inside one freshness window"
+    );
+  });
+
   console.log("okx-gate-check-proof: all passed");
 }
 

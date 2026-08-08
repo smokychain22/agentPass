@@ -255,8 +255,44 @@ export const DEFAULT_GATE_CHECK_LIMITS: GateCheckLimits = {
    * healthy run is allowed to finish instead of being abandoned a few seconds
    * short. It stays far inside the 2,700s freshness window and the 900s refresh
    * cadence.
+   *
+   * === Incident #33: 300s was still a hair under what the command needs ===
+   *
+   * Incident #23 raised this to 300s on the reasoning above. Production on
+   * 2026-08-08 showed that was still marginally short, and the margin is the
+   * whole story:
+   *
+   *   16:15:53  inconclusive timeout durationMs:300244
+   *   16:21:53  inconclusive timeout durationMs:300164
+   *   16:28:54  inconclusive timeout durationMs:300165
+   *   16:37:54  inconclusive timeout durationMs:300406
+   *
+   * Every one of those was KILLED AT THE BOUND — the durations are the bound,
+   * not the command's cost. The one invocation that was allowed to run to a
+   * verdict finished at 314,314ms: ~14s past the ceiling it was being held to.
+   * So the command wants a shade over 300s and was being guillotined a few
+   * seconds short, every single time, forever.
+   *
+   * The consequence is not a slow check, it is a DARK AGENT. A proof can only
+   * be renewed by a check that reaches a verdict; four consecutive kills renew
+   * nothing, and when the cached proof aged past `freshnessMs` the runtime
+   * correctly stopped claiming to be online — heartbeat withheld from 15:28 to
+   * 15:57 on 2026-08-08, and again from 16:41, with `daemonOk:true` and
+   * `xmtpOk:true` throughout. Nothing was broken except this number.
+   *
+   * Measured on an IDLE machine (load 1.4-3.0, no heavy job) the same command
+   * still ran past 200s, so this is NOT the I/O contention Incident #23
+   * described — the openclaw provider-binding probe simply costs minutes. That
+   * rules out "wait for a quiet box" as a fix.
+   *
+   * 600s keeps every property Incident #15 relied on: still strictly inside the
+   * 900s refresh cadence (so refreshes never overlap) and far inside the 2,700s
+   * freshness window (so a proof is renewable several times over before it can
+   * expire), and a genuinely broken gate still returns its parsed verdict in
+   * seconds and dies immediately. The only behaviour that changes is that a
+   * slow-but-healthy run is now allowed to finish.
    */
-  timeoutMs: 300_000,
+  timeoutMs: 600_000,
   refreshMs: 900_000,
   freshnessMs: 2_700_000,
   // 60s → 120s → 240s → 480s → capped. Inside one 2,700s freshness window
