@@ -280,10 +280,23 @@ export const DEFAULT_GATE_CHECK_LIMITS: GateCheckLimits = {
    * 15:57 on 2026-08-08, and again from 16:41, with `daemonOk:true` and
    * `xmtpOk:true` throughout. Nothing was broken except this number.
    *
-   * Measured on an IDLE machine (load 1.4-3.0, no heavy job) the same command
-   * still ran past 200s, so this is NOT the I/O contention Incident #23
-   * described — the openclaw provider-binding probe simply costs minutes. That
-   * rules out "wait for a quiet box" as a fix.
+   * The cost is bimodal, and that is what makes 300s the worst possible
+   * choice. On a genuinely idle machine the same command passed in 27,082ms
+   * (2026-08-08 17:11:59). Under a heavy job it lands in a 277-315s band. The
+   * old bound sat INSIDE that band, so it was not "slightly too small" in
+   * general — it was a coin flip that only ever came up heads when a refresh
+   * happened to land on a quiet moment.
+   *
+   * This is therefore the same I/O contention Incident #23 identified, not a
+   * different cause: `gate-check` shells out to `okx-a2a doctor`, and a
+   * concurrent install saturates the same network and disk. What Incident #23
+   * got wrong was only the size of the margin it left.
+   *
+   * (An earlier reading of this incident claimed the command was slow even
+   * when idle. That measurement was taken while a second diagnostic
+   * gate-check/doctor tree of my own was running against the same box, so it
+   * measured contention it had itself created. The 27s figure above is the
+   * uncontended cost.)
    *
    * 600s keeps every property Incident #15 relied on: still strictly inside the
    * 900s refresh cadence (so refreshes never overlap) and far inside the 2,700s
