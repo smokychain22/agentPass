@@ -68,12 +68,12 @@ async function run() {
 
   await test("A ROUTINE CHECK (no reactive trigger) still pauses an active heavy child", async () => {
     const script =
-      "let n = 0; const target = 60_000_000; while (n < target) { n++; } process.stdout.write('done');";
+      "let sum = 0; const target = 150_000_000; for (let i = 0; i < target; i++) { sum += Math.random(); } process.stdout.write('done:' + (sum > 0));";
 
     const runPromise = runBoundedProcessGroup(["node", "-e", script], {
       cwd: process.cwd(),
       env: process.env,
-      timeoutMs: 15_000,
+      timeoutMs: 25_000,
       label: "test:routine-pause-target",
       yieldCheckIntervalMs: 500, // fast ticker, but liveness stays permissive so it never fires
     });
@@ -112,20 +112,20 @@ async function run() {
 
   await test("MULTIPLE active children are all paused and all resumed together", async () => {
     const script =
-      "let n = 0; const target = 40_000_000; while (n < target) { n++; } process.stdout.write('done');";
+      "let sum = 0; const target = 150_000_000; for (let i = 0; i < target; i++) { sum += Math.random(); } process.stdout.write('done:' + (sum > 0));";
 
     const [p1, p2] = [
       runBoundedProcessGroup(["node", "-e", script], {
         cwd: process.cwd(),
         env: process.env,
-        timeoutMs: 15_000,
+        timeoutMs: 25_000,
         label: "test:multi-a",
         yieldCheckIntervalMs: 500,
       }),
       runBoundedProcessGroup(["node", "-e", script], {
         cwd: process.cwd(),
         env: process.env,
-        timeoutMs: 15_000,
+        timeoutMs: 25_000,
         label: "test:multi-b",
         yieldCheckIntervalMs: 500,
       }),
@@ -152,11 +152,11 @@ async function run() {
     // SECOND caller's resumers), and each caller's own resume() only ever
     // resumes what IT actually paused.
     const script =
-      "let n = 0; const target = 40_000_000; while (n < target) { n++; } process.stdout.write('done');";
+      "let sum = 0; const target = 150_000_000; for (let i = 0; i < target; i++) { sum += Math.random(); } process.stdout.write('done:' + (sum > 0));";
     const runPromise = runBoundedProcessGroup(["node", "-e", script], {
       cwd: process.cwd(),
       env: process.env,
-      timeoutMs: 15_000,
+      timeoutMs: 25_000,
       label: "test:overlapping-external-pauses",
     });
     await sleep(200);
