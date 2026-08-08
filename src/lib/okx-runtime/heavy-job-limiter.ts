@@ -44,6 +44,12 @@
  * must never be able to decide a funded job's outcome.
  */
 import { isLivenessProvenFresh } from "@/lib/okx-runtime/liveness-coordinator";
+import {
+  tryAcquireCrossProcessLock,
+  touchCrossProcessLock,
+  markCrossProcessLockDraining,
+  releaseCrossProcessLock,
+} from "@/lib/okx-runtime/heavy-job-cross-process-lock";
 
 /**
  * Wall-clock ceiling for one heavy repository execution.
@@ -113,6 +119,7 @@ export function currentHeavyJob(): HeavyJobSlot | undefined {
 /** Test seam — production never calls this. */
 export function resetHeavyJobLimiterForTests(): void {
   inFlight = undefined;
+  releaseCrossProcessLock();
 }
 
 /**
@@ -205,11 +212,44 @@ export async function runExclusiveHeavyJob<T>(
     );
   }
 
+  /**
+   * === Incident #29: the in-memory slot above is only PROCESS-wide ===
+   *
+   * Discovered running the ROW 8 production proof: `verify-production-
+   * cleanup-pr.ts` runs as its own standalone process, separate from the
+   * seller runtime. `inFlight` is module-level memory, invisible across a
+   * process boundary — both processes independently acquired "the machine's
+   * single slot" and ran concurrently (two `npm install`s plus a `next
+   * build`, load 10.89, 231 MB available on a 2 GB / zero-swap machine).
+   *
+   * This lock file is the cross-process backstop — see
+   * heavy-job-cross-process-lock.ts. It composes with, rather than replaces,
+   * the in-memory guard above: memory stays the free, instant path for the
+   * common same-process case, and the file is what a DIFFERENT process can
+   * actually observe.
+   */
+  const crossProcess = tryAcquireCrossProcessLock(label, now());
+  if (!crossProcess.ok) {
+    throw new HeavyJobRejected(
+      "heavy_job_already_running",
+      crossProcess.draining
+        ? `${crossProcess.reason}, and its subprocesses are still draining; refusing to run ${label} on top of work that is still consuming this machine`
+        : `${crossProcess.reason}; refusing to run ${label} concurrently`
+    );
+  }
+
   const timeoutMs = options.timeoutMs ?? heavyJobTimeoutMs();
   const slot: HeavyJobSlot = { label, startedAtMs: now(), draining: false };
   inFlight = slot;
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
+
+  // Keeps the cross-process lock from going stale under a long but healthy
+  // job. Well inside STALE_AFTER_MS (45 min) so a single missed tick under
+  // load is harmless; unref'd so it can never keep this process alive on its
+  // own, and always cleared below regardless of how `work` settles.
+  const touchTimer = setInterval(() => touchCrossProcessLock(), 5 * 60_000);
+  touchTimer.unref?.();
 
   const work = fn(controller.signal);
 
@@ -224,6 +264,8 @@ export async function runExclusiveHeavyJob<T>(
     () => {}
   ).finally(() => {
     if (inFlight === slot) inFlight = undefined;
+    clearInterval(touchTimer);
+    releaseCrossProcessLock();
   });
 
   try {
@@ -237,6 +279,7 @@ export async function runExclusiveHeavyJob<T>(
         // never keep the process alive past the job it is bounding.
         timer = setTimeout(() => {
           slot.draining = true;
+          markCrossProcessLockDraining();
           controller.abort();
           reject(
             new HeavyJobRejected(
