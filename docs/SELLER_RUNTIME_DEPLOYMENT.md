@@ -375,12 +375,24 @@ confirmed by direct reproduction both locally and by reading the real
   and `Bearer <token>` headers, on top of the existing generic secret
   patterns in `src/lib/okx-runtime/process-runner.ts`.
 - **Bounded restart policy during validation.** `fly.toml`'s `[[restart]]`
-  policy is temporarily `on-failure` with `retries = 3` (was `always`) so a
-  regression cannot silently burn trial runtime in an unbounded loop again
-  while the new bootstrap proves itself. This is a config-only change in
-  this PR — it is not deployed by this PR. Revert to `policy = "always"`
-  once the new bootstrap has run stably in production for a reasonable
-  period.
+  policy was temporarily `on-failure` with `retries = 3` (was `always`) so a
+  regression could not silently burn trial runtime in an unbounded loop again
+  while the new bootstrap proved itself.
+
+  **Reverted to `policy = "always"` on 2026-08-09.** The stated condition —
+  "run stably in production for a reasonable period" — was met: machine
+  `7845320c476008` (never replaced) reached deploy version 85, every one a
+  cold boot that came up healthy, and Row 10 windows measured 0 restarts,
+  0 OOM and 0 fatal exits across 30+ minute spans. Keeping the bound had
+  become the riskier option: Incident #10 below shows a stale PID lock
+  false-positiving on three consecutive boots, exhausting the budget, and
+  leaving the Machine in `State: stopped` — permanently off until an operator
+  intervened, which is a total-availability failure for a listed 24/7 agent.
+  That specific trigger is fixed (#181, pid start-time disambiguation), but
+  any other crash-on-boot would hit the same ceiling. The containment that
+  made the bound necessary now lives at the right layer instead: one heavy job
+  at a time, bounded process groups, and per-job quarantine with honoured
+  retry delays.
 
 ### Bootstrap ownership
 

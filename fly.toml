@@ -103,18 +103,33 @@ primary_region = "sin"  # Singapore — current operator-selected candidate only
 # the real flyctl schema (both locally and via a live GitHub Actions
 # deploy run) after an initial guess got this wrong.
 #
-# TEMPORARILY changed from policy = "always" to a bounded
-# "on-failure"/retries = 3 while the new idempotent bootstrap
-# (scripts/seller-runtime-supervisor.ts, src/lib/okx-runtime/openclaw-
-# bootstrap.ts) is validated: an unbounded "always" restart loop is exactly
-# what let the previous boot-time network dependency burn trial runtime
-# silently (see docs/SELLER_RUNTIME_DEPLOYMENT.md incident writeup). This
-# change is NOT deployed by this PR — see the runbook for reverting to
-# policy = "always" once the new bootstrap has proven itself stable in
-# production.
+# Restored to policy = "always" on 2026-08-09, the intended steady state for
+# a 24/7 listed Agent.
+#
+# It was TEMPORARILY bounded to "on-failure"/retries = 3 while the idempotent
+# bootstrap (scripts/seller-runtime-supervisor.ts, src/lib/okx-runtime/
+# openclaw-bootstrap.ts) proved itself, because an unbounded "always" loop is
+# what let the earlier boot-time network dependency burn trial runtime
+# silently. The runbook's own revert condition — "once the new bootstrap has
+# run stably in production for a reasonable period" — is now met: this machine
+# (7845320c476008, never replaced) has reached deploy version 85, every one a
+# cold boot that came up healthy, with Row 10 windows measuring 0 restarts,
+# 0 OOM and 0 fatal exits across 30+ minute spans.
+#
+# Keeping the bound is now the RISKIER option, not the safer one. Incident #10
+# showed exactly how it fails: a stale PID lock false-positived on three
+# consecutive boots, exhausted the 3-attempt budget, and left the Machine in
+# `State: stopped` — permanently off until an operator manually intervened.
+# That is a total-availability failure for a 24/7 agent, and it is precisely
+# what this project cannot tolerate. The specific trigger was fixed in #181
+# (pid start-time disambiguation, so a reused pid is no longer mistaken for a
+# live holder), but any other crash-on-boot would hit the same ceiling.
+#
+# "always" restarts indefinitely; the containment that made the bound
+# necessary now lives at the right layer instead — one heavy job at a time,
+# bounded process groups, per-job quarantine with honoured retry delays.
 [[restart]]
-  policy = "on-failure"
-  retries = 3
+  policy = "always"
 
 # Persistent volume. Must exist before the first deploy — this repo does
 # not create it. Expected name: repodiet_persistent (matches
