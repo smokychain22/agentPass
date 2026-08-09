@@ -50,14 +50,38 @@ const child = spawn("node", ["server.js"], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 
-for (let i = 0; i < 40; i++) {
+/**
+ * Wait for the spawned server to accept connections.
+ *
+ * The previous bound was 40 x 100ms = 4s and, crucially, fell through WITHOUT
+ * checking whether the server had actually come up — the very next `fetch`
+ * then threw an unhandled `ECONNREFUSED 127.0.0.1:8790` and crashed the whole
+ * `npm test` chain at its first step. Observed three times on a loaded
+ * machine, including in a fully sequential run, so it is a real bound problem
+ * rather than contention from parallel suites: `node server.js` simply needs
+ * more than 4s to listen when the box is busy.
+ *
+ * 30s of runway, and a clear failure if the server genuinely never listens,
+ * so a real startup fault is still reported as itself instead of as a
+ * confusing connection error from an unrelated later line.
+ */
+let serverReady = false;
+for (let i = 0; i < 150; i++) {
   try {
     const r = await fetch(`${BASE}/api/health`);
-    if (r.ok) break;
+    if (r.ok) {
+      serverReady = true;
+      break;
+    }
   } catch {
-    /* wait */
+    /* not listening yet */
   }
-  await sleep(100);
+  await sleep(200);
+}
+if (!serverReady) {
+  child.kill();
+  console.error(`  ✗ server did not become ready on ${BASE} within 30s`);
+  process.exit(1);
 }
 
 {

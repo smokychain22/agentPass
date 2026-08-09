@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   runBaselineOnlyVerification,
   PRODUCTION_COMMAND_TIMEOUT_MS,
 } from "../src/lib/patch-kit/repository-verification";
 import { PRODUCTION_INSTALL_TIMEOUT_MS } from "../src/lib/execution/workspace-install";
 import { PRODUCTION_HEAVY_JOB_TIMEOUT_MS } from "../src/lib/okx-runtime/heavy-job-limiter";
+
+const REPO_VERIFICATION_SRC = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", "patch-kit", "repository-verification.ts"),
+  "utf8"
+);
 
 function test(name: string, fn: () => void | Promise<void>) {
   return (async () => {
@@ -79,6 +86,42 @@ async function main() {
     assert.ok(
       PRODUCTION_INSTALL_TIMEOUT_MS < PRODUCTION_HEAVY_JOB_TIMEOUT_MS,
       `install timeout (${PRODUCTION_INSTALL_TIMEOUT_MS}) must stay below the heavy-job ceiling (${PRODUCTION_HEAVY_JOB_TIMEOUT_MS})`
+    );
+  });
+
+  /**
+   * Incident #36: this file ran typecheck/lint/test/build through raw `execa`
+   * with a `timeout`, while its sibling run-verification.ts had used
+   * `runBoundedProcessGroup` since Incident #22. execa's timeout signals only
+   * the direct child, so a timed-out `npm run build` orphaned `next build`
+   * and its workers; they kept burning a 1-vCPU box, starved the runtime's
+   * liveness proof, and made every later phase slower (jscpd measured at
+   * 9.277ms then 46.16s on the same repo in one run).
+   */
+  await test("verification checks run through the bounded process group, not raw execa — no orphaned build workers", () => {
+    assert.match(
+      REPO_VERIFICATION_SRC,
+      /import\s*\{[^}]*runBoundedProcessGroup[^}]*\}\s*from\s*"@\/lib\/execution\/bounded-process-group"/,
+      "repository-verification.ts must import runBoundedProcessGroup"
+    );
+
+    // The verification-script runner must not spawn checks with a bare execa
+    // timeout: that kills only the direct child and leaks the process group.
+    const runner = REPO_VERIFICATION_SRC.slice(
+      REPO_VERIFICATION_SRC.indexOf("async function runVerificationScript"),
+      REPO_VERIFICATION_SRC.indexOf("/** Normalizes and de-duplicates repository-relative paths")
+    );
+    assert.ok(runner.length > 0, "expected to locate runVerificationScript's body");
+    assert.doesNotMatch(
+      runner,
+      /\bexeca\s*\(/,
+      "runVerificationScript must not spawn checks with raw execa — use runBoundedProcessGroup"
+    );
+    const boundedCalls = runner.match(/runBoundedProcessGroup\s*\(/g) ?? [];
+    assert.equal(
+      boundedCalls.length,
+      3,
+      "all three spawn sites (primary, tsc fallback, next fallback) must be bounded"
     );
   });
 
