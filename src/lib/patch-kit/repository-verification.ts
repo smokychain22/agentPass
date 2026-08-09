@@ -47,14 +47,27 @@ export interface RepositoryVerificationResult {
   patched?: RepositoryVerificationPhaseResult;
 }
 
-/** The PRODUCTION default. Unchanged by this fix — see describeProcessTermination wiring below. */
-export const PRODUCTION_COMMAND_TIMEOUT_MS = 180_000;
+/**
+ * Raised from 180_000 to 300_000, matching run-verification.ts's own
+ * incident-justified PRODUCTION_VERIFY_COMMAND_TIMEOUT_MS for the identical
+ * class of check (typecheck/lint/test/build). Not an arbitrary increase:
+ * production evidence on SHA 74e73ad showed this file's own build check
+ * killed at the 180s bound with an honest report (Incident #35, part 2's
+ * describeProcessTermination wiring) after baseline install succeeded --
+ * confirming the check itself, not install, needed the larger allowance
+ * already proven correct next door.
+ *
+ * Timeout hierarchy preserved: 300s command < 600s install
+ * (PRODUCTION_INSTALL_TIMEOUT_MS) < 3000s heavy-job ceiling
+ * (PRODUCTION_HEAVY_JOB_TIMEOUT_MS).
+ */
+export const PRODUCTION_COMMAND_TIMEOUT_MS = 300_000;
 /**
  * Resolved per call, matching the identical pattern in run-verification.ts
  * and baseline-verification.ts, both of which already read this same env
  * var. This file never wired it in, so it was silently ignored here —
  * production is unaffected (the var is unset there), but tests can now
- * exercise a real, fast timeout instead of waiting on the 180s default.
+ * exercise a real, fast timeout instead of waiting on the 300s default.
  */
 function commandTimeoutMs(): number {
   const o = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS);
