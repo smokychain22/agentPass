@@ -852,11 +852,19 @@ function run() {
 
   // --- fly.toml: bounded restart policy during development ---------------
 
-  test("fly.toml restart policy is temporarily bounded (on-failure, retries=3) while the new bootstrap is validated", () => {
+  test("fly.toml restart policy is unbounded 'always' so the agent always comes back on its own", () => {
     const flyToml = fs.readFileSync(path.join(REPO_ROOT, "fly.toml"), "utf8");
     assert.ok(flyToml.includes("[[restart]]"), "must keep the array-of-tables syntax flyctl requires");
-    assert.ok(/policy\s*=\s*"on-failure"/.test(flyToml));
-    assert.ok(/retries\s*=\s*3/.test(flyToml));
+    // Scoped to the block itself: the surrounding comment legitimately
+    // describes the retired `retries = 3` setting, and a whole-file match
+    // would read that prose as live config.
+    const restart = flyToml.match(/^\[\[restart\]\]$[\s\S]*?(?=^\[|\s*$(?![\s\S]))/m);
+    assert.ok(restart, "must declare a [[restart]] array-of-tables block");
+    assert.ok(/policy\s*=\s*"always"/.test(restart![0]));
+    assert.ok(
+      !/retries\s*=/.test(restart![0]),
+      "no retry ceiling — exhausting it leaves the Machine stopped, which a 24/7 agent cannot tolerate (Incident #10)"
+    );
   });
 
   console.log("seller-runtime-portability: all passed");

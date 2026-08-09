@@ -59,17 +59,21 @@ function run() {
     assert.ok(/policy\s*=\s*"[a-z-]+"/.test(restart![0]), "a restart policy must be set explicitly");
   });
 
-  test("fly.toml's restart policy is temporarily bounded (on-failure, retries=3) while the new idempotent bootstrap is validated", () => {
-    // An unbounded `policy = "always"` loop is exactly what let the earlier
-    // boot-time network dependency (Incident #2 — see
-    // docs/SELLER_RUNTIME_DEPLOYMENT.md) burn trial runtime silently. Not
-    // deployed by this PR — see the runbook for reverting to "always" once
-    // the new bootstrap has proven itself stable in production.
+  test("fly.toml's restart policy is unbounded 'always' — a 24/7 agent must never stay stopped after its retry budget", () => {
+    // Restored 2026-08-09. The bound was a temporary measure while the
+    // idempotent bootstrap proved itself; keeping it is now the riskier
+    // option. Incident #10 showed a stale PID lock false-positiving on three
+    // consecutive boots, exhausting retries=3, and leaving the Machine in
+    // `State: stopped` — permanently off until an operator intervened, which
+    // is a total-availability failure for a listed 24/7 agent.
     const toml = read("fly.toml");
     const restart = toml.match(/^\[\[restart\]\]$[\s\S]*?(?=^\[|\s*$(?![\s\S]))/m);
     assert.ok(restart, "must declare a [[restart]] array-of-tables block");
-    assert.ok(/policy\s*=\s*"on-failure"/.test(restart![0]));
-    assert.ok(/retries\s*=\s*3/.test(restart![0]));
+    assert.ok(/policy\s*=\s*"always"/.test(restart![0]), "policy must be 'always'");
+    assert.ok(
+      !/retries\s*=/.test(restart![0]),
+      "a retry ceiling must not survive alongside 'always' — that is the stopped-forever failure mode"
+    );
   });
 
   test("fly.toml declares no public HTTP service or published port — this runtime is an outbound client only", () => {
