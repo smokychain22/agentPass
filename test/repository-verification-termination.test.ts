@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { runBaselineOnlyVerification } from "../src/lib/patch-kit/repository-verification";
+import {
+  runBaselineOnlyVerification,
+  PRODUCTION_COMMAND_TIMEOUT_MS,
+} from "../src/lib/patch-kit/repository-verification";
+import { PRODUCTION_INSTALL_TIMEOUT_MS } from "../src/lib/execution/workspace-install";
+import { PRODUCTION_HEAVY_JOB_TIMEOUT_MS } from "../src/lib/okx-runtime/heavy-job-limiter";
 
 function test(name: string, fn: () => void | Promise<void>) {
   return (async () => {
@@ -61,6 +66,21 @@ function buildCheck(checks: { name: string }[]) {
  */
 async function main() {
   console.log("repository-verification-termination");
+
+  await test("production command timeout default is 300000ms, matching run-verification.ts's incident-justified bound", () => {
+    assert.equal(PRODUCTION_COMMAND_TIMEOUT_MS, 300_000);
+  });
+
+  await test("timeout hierarchy holds: verification command < install < heavy-job ceiling", () => {
+    assert.ok(
+      PRODUCTION_COMMAND_TIMEOUT_MS < PRODUCTION_INSTALL_TIMEOUT_MS,
+      `command timeout (${PRODUCTION_COMMAND_TIMEOUT_MS}) must stay below install timeout (${PRODUCTION_INSTALL_TIMEOUT_MS})`
+    );
+    assert.ok(
+      PRODUCTION_INSTALL_TIMEOUT_MS < PRODUCTION_HEAVY_JOB_TIMEOUT_MS,
+      `install timeout (${PRODUCTION_INSTALL_TIMEOUT_MS}) must stay below the heavy-job ceiling (${PRODUCTION_HEAVY_JOB_TIMEOUT_MS})`
+    );
+  });
 
   await test("a genuine fast build failure still surfaces its real error, unaffected by termination detection", async () => {
     const dir = await fixture("real-failure", {
