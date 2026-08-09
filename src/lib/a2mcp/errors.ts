@@ -4,12 +4,20 @@ import { QUICK_TRIAGE_TIMEOUT_MS } from "./constants";
 export class ToolExecutionError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
+  /**
+   * Optional structured context for callers that can use it (e.g. a CLI
+   * proof script logging phase-by-phase timings). Never included in any
+   * user- or API-facing response — only `message` is. Additive and
+   * backward compatible: every existing 3-arg call site is unaffected.
+   */
+  readonly details?: unknown;
 
-  constructor(code: ErrorCode, message: string, status = 422) {
+  constructor(code: ErrorCode, message: string, status = 422, details?: unknown) {
     super(message);
     this.name = "ToolExecutionError";
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 

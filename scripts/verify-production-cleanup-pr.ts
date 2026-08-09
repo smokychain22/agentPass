@@ -42,6 +42,7 @@ import { createCleanupPullRequest } from "@/lib/operator/create-cleanup-pr";
 import { resolveCleanupGitHubToken } from "@/lib/github-app/resolve-cleanup-token";
 import { GitHubClient } from "@/lib/github/github-client";
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
+import { ToolExecutionError } from "@/lib/a2mcp/errors";
 
 const DEFAULT_REPO = "https://github.com/velz-cmd/repodiet-e2e-test";
 
@@ -253,5 +254,10 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error(`[verify-production-cleanup-pr] FAIL: ${err instanceof Error ? err.stack ?? err.message : err}`);
+  if (err instanceof ToolExecutionError && err.details !== undefined) {
+    console.error(
+      `[verify-production-cleanup-pr] phase timings: ${JSON.stringify(err.details, null, 2)}`
+    );
+  }
   process.exit(1);
 });
