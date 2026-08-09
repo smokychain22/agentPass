@@ -7,6 +7,7 @@ import type { VerifyCheckResult } from "@/lib/jobs/types";
 import { copyRepoBaseline } from "./generate-unified-diff";
 import { dedupeConsolidatedEdits, type ConsolidatedEdit } from "./merge-patches";
 import {
+  describeProcessTermination,
   ensureVerificationDependencies,
   formatInstallFailureReason,
   humanizeInstallFailure,
@@ -46,7 +47,19 @@ export interface RepositoryVerificationResult {
   patched?: RepositoryVerificationPhaseResult;
 }
 
-const COMMAND_TIMEOUT_MS = 180_000;
+/** The PRODUCTION default. Unchanged by this fix — see describeProcessTermination wiring below. */
+export const PRODUCTION_COMMAND_TIMEOUT_MS = 180_000;
+/**
+ * Resolved per call, matching the identical pattern in run-verification.ts
+ * and baseline-verification.ts, both of which already read this same env
+ * var. This file never wired it in, so it was silently ignored here —
+ * production is unaffected (the var is unset there), but tests can now
+ * exercise a real, fast timeout instead of waiting on the 180s default.
+ */
+function commandTimeoutMs(): number {
+  const o = Number(process.env.REPODIET_VERIFY_COMMAND_TIMEOUT_MS);
+  return Number.isFinite(o) && o > 0 ? o : PRODUCTION_COMMAND_TIMEOUT_MS;
+}
 const ALLOWED_SCRIPT_NAMES = ["typecheck", "lint", "test", "build"] as const;
 
 function summarize(text: string, max = 400): string {
@@ -120,7 +133,7 @@ async function runVerificationScript(
   const primary = runScriptCommand(pm, name);
   const result = await execa(primary[0], primary.slice(1), {
     cwd: rootDir,
-    timeout: COMMAND_TIMEOUT_MS,
+    timeout: commandTimeoutMs(),
     reject: false,
     env,
   });
@@ -137,7 +150,7 @@ async function runVerificationScript(
       await fs.access(tscBin);
       return execa("node", [tscBin, "--noEmit"], {
         cwd: rootDir,
-        timeout: COMMAND_TIMEOUT_MS,
+        timeout: commandTimeoutMs(),
         reject: false,
         env,
       });
@@ -152,7 +165,7 @@ async function runVerificationScript(
       await fs.access(nextBin);
       return execa("node", [nextBin, "build"], {
         cwd: rootDir,
-        timeout: COMMAND_TIMEOUT_MS,
+        timeout: commandTimeoutMs(),
         reject: false,
         env: verificationEnv(rootDir, "build"),
       });
@@ -332,6 +345,20 @@ async function runVerificationPhase(input: {
     const t0 = Date.now();
     const command = runScriptCommand(pm, name);
     const result = await runVerificationScript(input.rootDir, pm, name, scriptCmd);
+    /**
+     * Incident #35 follow-up: this loop has its own commandTimeoutMs() bound
+     * (execa `timeout` + `reject: false`), separate from workspace-install's
+     * install bound, and previously reported a killed typecheck/build the
+     * same way PR #184 fixed for installs — raw truncated stdout/stderr, read
+     * cold as a real compile failure ("Baseline repository already fails
+     * verification") when it was actually terminated before finishing.
+     * `describeProcessTermination` already carries the timeout/OOM/SIGTERM
+     * table; it just wasn't wired in here.
+     */
+    const termination = describeProcessTermination(
+      { exitCode: result.exitCode ?? null, signal: result.signal ?? null, timedOut: result.timedOut ?? false },
+      `Verification command "${name}"`
+    );
     checks.push({
       name,
       command: command.join(" "),
@@ -339,7 +366,7 @@ async function runVerificationPhase(input: {
       exitCode: result.exitCode ?? null,
       durationMs: Date.now() - t0,
       stdoutSummary: summarize(result.stdout ?? ""),
-      stderrSummary: summarize(result.stderr ?? ""),
+      stderrSummary: termination ?? summarize(result.stderr ?? ""),
     });
   }
 
