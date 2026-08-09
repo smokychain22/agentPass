@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execa, type ExecaReturnValue } from "execa";
+import { execa } from "execa";
+import {
+  runBoundedProcessGroup,
+  type BoundedGroupResult,
+} from "@/lib/execution/bounded-process-group";
 import { createScanWorkspace, removeWorkspace } from "@/lib/server/workspace";
 import { detectPackageManager } from "@/lib/scanner/detect-package-manager";
 import type { VerifyCheckResult } from "@/lib/jobs/types";
@@ -136,19 +140,56 @@ async function commandExists(rootDir: string, binName: string): Promise<boolean>
   }
 }
 
+/**
+ * === Incident #36: this path never adopted the bounded process group ===
+ *
+ * `run-verification.ts` runs the identical class of check (typecheck / lint /
+ * test / build) through `runBoundedProcessGroup`, and its own docblock states
+ * why: "`nice 19` alone proved insufficient in production, so this is also
+ * bounded by process GROUP (a timed-out `execa` `timeout` signals only the
+ * direct child) and paused whenever a liveness refresh needs to run."
+ *
+ * This file — the path `create-cleanup-pr.ts` -> `runPatchKitEngine` ->
+ * `runRepositoryVerification` actually uses, i.e. the one every Row 8 proof
+ * exercises — still used raw `execa` with a `timeout`. Three consequences,
+ * all observed live on repodiet-agent-9636:
+ *
+ *  1. NO PROCESS-GROUP KILL. `npm run build` spawns `next build`, which spawns
+ *     its own workers. execa's timeout signals only `npm`, so a timed-out
+ *     build leaves `next build` and its children ORPHANED and still burning
+ *     the box. The next phase then competes with the previous phase's
+ *     orphans: measured on SHA 7003d0f, jscpd took 9.277ms on the first
+ *     analyzer pass and 46.16s on the second — the same tool, same repo,
+ *     ~5000x slower, after two timed-out builds had leaked their children.
+ *  2. NO `nice`. These checks ran at normal priority against the seller
+ *     runtime's heartbeat / gate-check / XMTP work on a single shared vCPU.
+ *  3. NO LIVENESS YIELD. They never paused for a gate-check refresh, so the
+ *     agent could not prove itself online while they ran — matching the
+ *     `gate_check_result inconclusive reason:timeout durationMs:600085` and
+ *     the `heartbeat_withheld` events measured during real Row 8 heavy work.
+ *
+ * Live snapshot taken during a running proof, which is what these add up to:
+ * loadavg 6.35 on a 1-vCPU machine, 158MB free of 2GB, and zero swap.
+ *
+ * Routing through `runBoundedProcessGroup` fixes all three at once, and is
+ * the same mechanism this file's sibling has used since Incident #22. The
+ * deadline is still bounded, and time spent intentionally paused for liveness
+ * is credited back to it (up to `MAX_TOTAL_YIELD_MS`) rather than counting as
+ * phase work.
+ */
 async function runVerificationScript(
   rootDir: string,
   pm: string,
   name: string,
   scriptCmd: string
-): Promise<ExecaReturnValue> {
+): Promise<BoundedGroupResult> {
   const env = verificationEnv(rootDir, name);
   const primary = runScriptCommand(pm, name);
-  const result = await execa(primary[0], primary.slice(1), {
+  const result = await runBoundedProcessGroup(primary, {
     cwd: rootDir,
-    timeout: commandTimeoutMs(),
-    reject: false,
+    timeoutMs: commandTimeoutMs(),
     env,
+    label: `repo-verify:${name}`,
   });
 
   const stderr = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
@@ -161,11 +202,11 @@ async function runVerificationScript(
     const tscBin = path.join(rootDir, "node_modules", "typescript", "bin", "tsc");
     try {
       await fs.access(tscBin);
-      return execa("node", [tscBin, "--noEmit"], {
+      return runBoundedProcessGroup(["node", tscBin, "--noEmit"], {
         cwd: rootDir,
-        timeout: commandTimeoutMs(),
-        reject: false,
+        timeoutMs: commandTimeoutMs(),
         env,
+        label: `repo-verify:${name}:fallback`,
       });
     } catch {
       return result;
@@ -176,11 +217,11 @@ async function runVerificationScript(
     const nextBin = path.join(rootDir, "node_modules", "next", "dist", "bin", "next");
     try {
       await fs.access(nextBin);
-      return execa("node", [nextBin, "build"], {
+      return runBoundedProcessGroup(["node", nextBin, "build"], {
         cwd: rootDir,
-        timeout: commandTimeoutMs(),
-        reject: false,
+        timeoutMs: commandTimeoutMs(),
         env: verificationEnv(rootDir, "build"),
+        label: `repo-verify:${name}:fallback`,
       });
     } catch {
       return result;
