@@ -43,7 +43,17 @@ export async function prepareCleanInstallWorkspace(rootDir: string): Promise<voi
   await fs.rm(path.join(rootDir, ".repodiet-npm-cache"), { recursive: true, force: true }).catch(() => {});
 }
 
-export async function prepareNpmCacheDir(cacheDir: string): Promise<void> {
+/**
+ * Ensures `cacheDir` exists. By default this wipes it first for a guaranteed
+ * clean cache. Pass `wipe: false` to preserve an existing cache's contents —
+ * used when a later verification phase intentionally reuses an earlier
+ * phase's populated npm cache instead of starting cold.
+ */
+export async function prepareNpmCacheDir(cacheDir: string, options?: { wipe?: boolean }): Promise<void> {
+  if (options?.wipe === false) {
+    await fs.mkdir(cacheDir, { recursive: true });
+    return;
+  }
   await fs.rm(cacheDir, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(cacheDir, { recursive: true });
 }
