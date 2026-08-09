@@ -14,6 +14,7 @@ import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
 import { resolvePrRepairStrategy, type PrRepairResolution } from "./pr-repair";
 import { resolveValidatedDeliveryOps, normalizeApprovedPaths } from "./delivery-operations";
 import { getCleanupPrDelivery, recordCleanupPrDelivery } from "./cleanup-pr-delivery-ledger";
+import { summarizeVerificationForDiagnostics } from "./verification-diagnostics";
 import { runExclusiveHeavyJob } from "@/lib/okx-runtime/heavy-job-limiter";
 import {
   buildMaintenanceOutcome,
@@ -354,11 +355,25 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
   }
 
   if (mode === "safe_only" && (patchKit.summary.verifiedChanges ?? 0) === 0) {
+    /**
+     * Row 8 (2026-08-09/74e73ad, 7003d0f): the terse `.error` string alone
+     * left no way to tell which check/install attempt actually consumed the
+     * time, or whether a killed process's report matched a real elapsed
+     * duration — exactly the kind of ambiguity Incident #35's diagnostics
+     * fixes exist to remove. `repositoryVerification.checks`/`.installAttempts`
+     * already carry real per-step `durationMs`; they were computed and then
+     * discarded before reaching any caller. Attaching a compact projection as
+     * `details` costs nothing (never serialized into any user/API response —
+     * see `ToolExecutionError`) and turns the next failure into evidence
+     * instead of another guess.
+     */
+    const verification = patchKit.repositoryVerification;
     throw new ToolExecutionError(
       "NO_SAFE_CANDIDATES",
-      patchKit.repositoryVerification?.error ??
+      verification?.error ??
         "No verified cleanup changes to apply. Complete repository verification before creating a cleanup PR.",
-      422
+      422,
+      summarizeVerificationForDiagnostics(verification)
     );
   }
 
