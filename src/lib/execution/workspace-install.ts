@@ -624,12 +624,47 @@ export async function areRequiredPackagesInstalled(
   return true;
 }
 
-function resolveVerificationCacheDir(cleanupRunId: string, rootDir: string, role: "baseline" | "patched" = "patched"): string {
+/**
+ * === Cache reuse between baseline and patched verification ===
+ *
+ * Incident #35 root cause: baseline and patched verification always used
+ * separate npm caches, so an unmodified dependency tree (the common case —
+ * a cleanup delivery that only edits/deletes source files) paid for two full
+ * cold network installs instead of one. The second install then had to
+ * finish inside the same bounded window as the first, with no cache benefit.
+ *
+ * When the lockfile itself is unpatched, the patched tree's dependency graph
+ * is identical to baseline's, so it is safe for the patched install to reuse
+ * whatever baseline's install already downloaded — npm's cache is content-
+ * addressed by package name/version/integrity, not by which tree requested
+ * it, so a shared cache cannot leak wrong packages into either phase. Reuse
+ * is purely a speed optimization: the patched phase still runs its own
+ * install into its own node_modules (see `ensureVerificationDependencies`,
+ * which always wipes rootDir's node_modules first), so verification
+ * independence between baseline and patched is unaffected.
+ *
+ * When the lockfile IS patched, the dependency graph may genuinely differ,
+ * so patched gets its own isolated cache — sharing here could be safe in
+ * principle (still content-addressed) but is deliberately not risked.
+ */
+export function resolveVerificationCacheDir(
+  cleanupRunId: string,
+  rootDir: string,
+  role: "baseline" | "patched" = "patched",
+  lockfilePatched = false
+): string {
+  const shared = role === "baseline" || !lockfilePatched;
   if (isServerlessRuntime()) {
-    return path.join(rootDir, role === "baseline" ? ".repodiet-npm-cache-baseline" : ".repodiet-npm-cache");
+    // baseline/patched roots are sibling directories under one workspace
+    // root (see runRepositoryVerification's baselineRoot/patchedRoot).
+    // Anchor the shared cache at that common parent so both phases resolve
+    // to the identical absolute path; the isolated case keeps the cache
+    // inside the phase's own root, as before.
+    const anchor = shared ? path.dirname(rootDir) : rootDir;
+    return path.join(anchor, shared ? ".repodiet-npm-cache-shared" : ".repodiet-npm-cache-patched-isolated");
   }
   const safe = cleanupRunId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return path.join(os.tmpdir(), "repodiet", safe, role === "baseline" ? "npm-cache-baseline" : "npm-cache-transformed");
+  return path.join(os.tmpdir(), "repodiet", safe, shared ? "npm-cache-shared" : "npm-cache-patched-isolated");
 }
 
 async function clearInstallArtifacts(rootDir: string): Promise<void> {
@@ -860,8 +895,14 @@ export async function ensureVerificationDependencies(
   await prepareCleanInstallWorkspace(rootDir);
 
   const pm = (await detectPackageManager(rootDir)).packageManager;
-  const cacheDir = resolveVerificationCacheDir(cleanupRunId, rootDir, options?.cacheRole ?? "patched");
-  await prepareNpmCacheDir(cacheDir);
+  const cacheRole = options?.cacheRole ?? "patched";
+  const cacheDir = resolveVerificationCacheDir(cleanupRunId, rootDir, cacheRole, lockfilePatched);
+  // The patched phase reuses baseline's already-populated cache when the
+  // lockfile is unchanged (see resolveVerificationCacheDir) — wiping it here
+  // would destroy exactly what makes the reuse fast. Baseline, and patched
+  // when the lockfile did change, always get their normal fresh cache.
+  const reusingSharedCache = cacheRole === "patched" && !lockfilePatched;
+  await prepareNpmCacheDir(cacheDir, { wipe: !reusingSharedCache });
 
   const installPlans = await buildVerificationInstallCommands(rootDir, pm, cacheDir, {
     lockfilePatched,
