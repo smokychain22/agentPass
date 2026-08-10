@@ -1,6 +1,61 @@
 # RepoDiet production-readiness — continuation state
 
-Last updated: 2026-08-09 ~20:40 UTC (autonomous session)
+Last updated: 2026-08-10 ~10:20 UTC (autonomous session, low context remaining)
+
+## LATEST: #191 shipped, decisive Row 8 proof IN FLIGHT
+
+- main = `dd388df02ef2a63a735a10440e13826aa497646d` (PR #191 merged, CI green,
+  Fly deployed and confirmed live: `BUILD_COMMIT` on the box = this SHA)
+- PR #190 (restart policy `always`) already live before this — confirmed via
+  `flyctl status`.
+- **A proof is running right now** at
+  `/persistent/repodiet-final-row8-dd388df/` on `repodiet-agent-9636`,
+  launched 2026-08-10T09:22:46Z, with bounds sized to the measured cost:
+  `REPODIET_VERIFY_COMMAND_TIMEOUT_MS=1500000`,
+  `REPODIET_VERIFY_TOTAL_TIMEOUT_MS=4200000`,
+  `REPODIET_HEAVY_JOB_TIMEOUT_MS=5400000`. As of 10:19Z (~57 min in) it is
+  still `"state":"running"`. The overnight measurement run took 64.7 min and
+  PASSED verification, dying only on the now-fixed expired token — so this run
+  is expected to either produce the real PR or fail with a genuinely new,
+  fully diagnosable reason (phase timings + `err.details` from #188/#189/#191
+  are all live).
+
+**NEXT ACTION for whoever continues this:** check
+`/persistent/repodiet-final-row8-dd388df/status.json` and
+`stdout.log`/`stderr.log`. If `state:"finished"` with `exitCode:0`, read
+`stdout.log` for the `step:"engine_reported_pull_request"` line containing the
+real PR URL on `velz-cmd/repodiet-e2e-test`, then independently verify it via
+`gh pr view` (open, not merged, correct base/branch, only
+`src/repodiet-verification-unused.js` changed, `src/config/runtime-hook.ts`
+untouched) — that closes Row 8. If it failed, read the full `stderr.log`
+(small file, safe to cat in full) for the exact phase timings and error.
+
+**Do NOT launch another Row 8 proof until this one's outcome is read.** Do not
+re-run the 64.7-minute measurement — that fact is already established.
+
+## STILL NOT DONE if this run succeeds
+
+1. Patched-first verification ordering (the remaining ~27min/job optimization)
+   — not yet implemented. See "BREAKTHROUGH" section below for the exact
+   design and safety constraints. This is a product-quality improvement, not
+   a Row 8 blocker if the proof above already produced a real PR — do it after
+   Row 8 is confirmed CLEAR, not as a precondition.
+2. Row 10 final qualification window on `dd388df` (or whatever SHA is final
+   after patched-first ships) — not yet run.
+3. Row 9 final read-back on the final SHA — partially done (deploy confirmed
+   live above), needs the formal Vercel/GitHub-checks read-back.
+4. One controlled Fly restart-recovery proof for the `always` policy — not yet
+   done. Do this only when no heavy job is active.
+5. `agentpass-unknown-merger` — PR #190 merged itself again (2026-08-09
+   23:51:35Z, `mergedBy: smokychain22`, checks were green, `flyctl-deploy`
+   succeeded). Worth a concise `gh api` check of
+   `repos/smokychain22/agentPass/branches/main/protection` and any webhook/App
+   installations before spending real time — not yet investigated this
+   session.
+6. A2A/A2MCP/payment-config final read-backs — not yet done this session
+   (should be quick, read-only).
+
+## Original state below (2026-08-09 ~20:40 UTC)
 
 ## Current SHAs
 
