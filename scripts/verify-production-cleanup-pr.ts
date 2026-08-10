@@ -66,7 +66,20 @@ async function main(): Promise<void> {
     arg("commit") ||
     "local"
   ).slice(0, 7);
-  const branch = arg("branch") ?? `repodiet/e2e-production-verification-${commit}`;
+  /**
+   * Must match create-cleanup-pr.ts's own branch-name validation
+   * (`^repodiet\/(?:cleanup|green-pr)-[A-Za-z0-9._-]+$`) — every real
+   * customer branch is `repodiet/cleanup-*` or `repodiet/green-pr-*`, and
+   * that check is a real safety boundary, not something this proof gets to
+   * bypass. `e2e-production-verification-<sha>` never matched it, so every
+   * prior run that finally got PAST verification and delivery-context setup
+   * still failed here with "Invalid RepoDiet cleanup branch name" — this bug
+   * was simply never reached before other fixes shipped. `cleanup-e2e-` is
+   * disposable/unique per build SHA like before, and deliberately does not
+   * start with `cleanup-okx-` (CUSTOMER_BRANCH_PATTERN below), so it can
+   * never collide with or resemble the funded job's branch shape.
+   */
+  const branch = arg("branch") ?? `repodiet/cleanup-e2e-verification-${commit}`;
   /**
    * Optional disposable BASE branch to analyse instead of the repository's
    * default branch.
