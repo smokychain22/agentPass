@@ -33,6 +33,40 @@ untouched) — that closes Row 8. If it failed, read the full `stderr.log`
 **Do NOT launch another Row 8 proof until this one's outcome is read.** Do not
 re-run the 64.7-minute measurement — that fact is already established.
 
+## UPDATE: the dd388df proof FAILED — #191 had a bug in itself, now fixed as PR #192
+
+Result: `exitCode:1`, ran 09:22:46Z→10:39:35Z (76.8 min), same `Bad credentials`
+401, but the stack trace now points at **line 458 of my own #191 fix**
+(`create-cleanup-pr.ts`), not the original pre-#191 call site.
+
+Root cause: `resolveCleanupGitHubToken` returns an explicitly-supplied
+`githubToken` **verbatim** rather than minting fresh
+(`resolve-cleanup-token.ts:199-200`). The CLI proof script
+(`verify-production-cleanup-pr.ts`) mints one token at the top and passes it
+as `githubToken` into `createCleanupPullRequest`'s input. #191's refresh call
+forwarded `input.githubToken` — the SAME stale value — so the refresh was a
+no-op for exactly this caller.
+
+**Fix pushed as PR #192**
+(`fix/incident-37-followup-do-not-forward-stale-token`,
+https://github.com/smokychain22/agentPass/pull/192): the refresh call no
+longer forwards `githubToken`, forcing the GitHub App installation-token path
+every time. Typecheck clean, lint clean, two directly-relevant tests pass
+(`cleanup-pr-client`, `verification-diagnostics-details`).
+
+**NOT YET DONE for #192** (stopped here — session context exhausted):
+- Full `npm test` / `test:okx-runtime` / build were NOT re-run this cycle —
+  only typecheck + lint + 2 targeted test files. CI's `typecheck-test-build`
+  will catch regressions before merge, but the full local matrix should still
+  be run before treating this as fully validated.
+- PR #192 has not been merged. Wait for required checks green, merge,
+  confirm Fly `BUILD_COMMIT` matches, THEN launch one more Row 8 proof.
+- Do NOT skip re-reading `resolve-cleanup-token.ts` in a fresh session before
+  assuming this is the only place `githubToken` is forwarded stale — grep for
+  `githubToken: input.githubToken` and `githubToken:.*token` across
+  `create-cleanup-pr.ts` once more before the next proof, in case there's a
+  third call site.
+
 ## STILL NOT DONE if this run succeeds
 
 1. Patched-first verification ordering (the remaining ~27min/job optimization)
