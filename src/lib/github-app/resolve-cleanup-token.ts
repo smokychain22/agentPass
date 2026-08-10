@@ -1,13 +1,13 @@
 import { ToolExecutionError } from "@/lib/a2mcp/errors";
 import { resolveAspGitHubToken } from "@/lib/asp/github-access";
 import { isDemoRepoUrl } from "@/lib/demo/constants";
-import { GitHubClient } from "@/lib/github/github-client";
 import { isRecentRepoInstallBinding } from "@/lib/github-app/binding-trust";
 import {
   createInstallationAccessToken,
   getInstallationDetails,
   installationHasRepoAccess,
   installationIncludesRepositoryWithRetry,
+  probeRepositoryWithInstallationToken,
 } from "@/lib/github-app/installations";
 import { isGitHubAppConfigured } from "@/lib/github-app/config";
 import {
@@ -41,21 +41,6 @@ function permissionsAreSufficient(permissions?: {
     permissions.pullRequests === "write" &&
     (permissions.metadata === "read" || permissions.metadata === "write")
   );
-}
-
-async function probeRepositoryWithInstallationToken(
-  installationId: number,
-  owner: string,
-  repo: string
-): Promise<boolean> {
-  try {
-    const installationToken = await createInstallationAccessToken(installationId);
-    const client = new GitHubClient(installationToken.token);
-    await client.getRepo(owner, repo);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function persistBindingIfPossible(input: {

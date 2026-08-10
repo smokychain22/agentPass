@@ -110,16 +110,65 @@ export async function installationHasRepoAccess(
   }
 }
 
+/**
+ * Incident #39, Row 8 139a6ad: `GET /repos/{owner}/{repo}` succeeds for ANY
+ * valid GitHub token on a PUBLIC repository, regardless of whether this
+ * specific installation's grant actually includes it — GitHub does not gate
+ * public-repo reads on the installation's repository list. A prior version
+ * of this probe treated that read succeeding as proof of real access, so it
+ * "verified" installation 146959843 (scoped to smokychain22's own repos)
+ * against the public velz-cmd/repodiet-e2e-test, which then failed for real
+ * 70 minutes later at branch creation with "Resource not accessible by
+ * integration" — after a full baseline+patched verification pass had
+ * already run on the strength of the false positive.
+ *
+ * `GET /installation/repositories`, authenticated as the installation
+ * token itself, returns exactly the repositories that token can act on and
+ * cannot be spoofed by a target repo's visibility — it is the only
+ * reliable proof.
+ */
 export async function probeRepositoryWithInstallationToken(
   installationId: number,
   owner: string,
   repo: string
 ): Promise<boolean> {
+  let token: string;
   try {
     const installationToken = await createInstallationAccessToken(installationId);
-    const client = new GitHubClient(installationToken.token);
+    token = installationToken.token;
+    const client = new GitHubClient(token);
     await client.getRepo(owner, repo);
-    return true;
+  } catch {
+    return false;
+  }
+  return installationTokenListsRepository(token, owner, repo);
+}
+
+async function installationTokenListsRepository(
+  installationToken: string,
+  owner: string,
+  repo: string
+): Promise<boolean> {
+  const target = `${owner}/${repo}`.toLowerCase();
+  try {
+    for (let page = 1; page <= 10; page += 1) {
+      const res = await fetch(
+        `https://api.github.com/installation/repositories?per_page=100&page=${page}`,
+        {
+          headers: {
+            Authorization: `Bearer ${installationToken}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+        }
+      );
+      if (!res.ok) return false;
+      const data = (await res.json()) as { repositories?: Array<{ full_name?: string }> };
+      const batch = data.repositories ?? [];
+      if (batch.some((entry) => entry.full_name?.toLowerCase() === target)) return true;
+      if (batch.length < 100) break;
+    }
+    return false;
   } catch {
     return false;
   }
