@@ -127,7 +127,8 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
     options.createGitHubClient ?? ((token: string) => new GitHubClient(token));
 
   return async ({ instruction, jobId, envelope }) => {
-    let plan = parseNextActionPlaybook(instruction);
+    const eventName = (envelope?.message as { event?: unknown } | undefined)?.event;
+    let plan = parseNextActionPlaybook(instruction, typeof eventName === "string" ? eventName : undefined);
 
     /**
      * A `wakeup_notify` playbook is a REDIRECT, not an instruction: it says
@@ -169,7 +170,7 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
       if (!followed.ok) {
         return { ok: false, actions: [], status: followed.status, error: "wakeup_redirect_fetch_failed" };
       }
-      plan = parseNextActionPlaybook(followed.stdout);
+      plan = parseNextActionPlaybook(followed.stdout, redirect.jobStatus);
       if (isWakeupRedirectPlaybook(followed.stdout)) {
         // A redirect that redirects again would loop. Follow exactly one hop.
         return {

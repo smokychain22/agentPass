@@ -119,6 +119,39 @@ async function run() {
     assert.deepEqual(parseNextActionPlaybook(twoCommands), { kind: "unrecognized" });
   });
 
+  // Incident #40: job 0xba4de4f5..., a designated A2A provider with
+  // isDirectCommunication:true, returned job_asp_selected/provider_applied
+  // playbooks carrying an extra fenced block alongside the notify one — the
+  // exact two-command shape above, but for an event whose ENTIRE contract
+  // (per JOB_ASP_SELECTED_SKIP) is "notify and end the turn", so the extra
+  // block is never actually executed by the caller either way. Scoped to
+  // just these two event names, never a general relaxation.
+  await test("a job_asp_selected playbook with an extra fenced block alongside the notify one is still recognized as notify-only", () => {
+    const withExtraBlock = `\`\`\`bash\nonchainos agent user-notify --content "x"\n\`\`\`\ncontent:\nhi\n\`\`\`bash\nonchainos some-unrelated-probe-command\n\`\`\`\n`;
+    const plan = parseNextActionPlaybook(withExtraBlock, "job_asp_selected");
+    assert.equal(plan.kind, "notify_only");
+    if (plan.kind !== "notify_only") return;
+    assert.equal(plan.content, "hi");
+  });
+
+  await test("a provider_applied playbook with an extra fenced block alongside the notify one is also recognized as notify-only", () => {
+    const withExtraBlock = `\`\`\`bash\nonchainos agent user-notify --content "x"\n\`\`\`\ncontent:\nhi\n\`\`\`bash\nonchainos some-unrelated-probe-command\n\`\`\`\n`;
+    const plan = parseNextActionPlaybook(withExtraBlock, "provider_applied");
+    assert.equal(plan.kind, "notify_only");
+    if (plan.kind !== "notify_only") return;
+    assert.equal(plan.content, "hi");
+  });
+
+  await test("the extra-block allowance does not extend to events outside the known notify-only set", () => {
+    const withExtraBlock = `\`\`\`bash\nonchainos agent user-notify --content "x"\n\`\`\`\ncontent:\nhi\n\`\`\`bash\nonchainos agent deliver x\n\`\`\`\n`;
+    assert.deepEqual(parseNextActionPlaybook(withExtraBlock, "job_completed"), { kind: "unrecognized" });
+  });
+
+  await test("a job_asp_selected playbook with extra blocks but NO notify block among them is still unrecognized, never guessed", () => {
+    const noNotifyBlock = `\`\`\`bash\nonchainos agent deliver x\n\`\`\`\n\`\`\`bash\nonchainos some-unrelated-probe-command\n\`\`\`\n`;
+    assert.deepEqual(parseNextActionPlaybook(noNotifyBlock, "job_asp_selected"), { kind: "unrecognized" });
+  });
+
   await test("fillNotifyTemplate substitutes every placeholder from authoritative fields", () => {
     const filled = fillNotifyTemplate("Price: <tokenAmount> <tokenSymbol>, title <title>", {
       tokenAmount: "1",
