@@ -127,7 +127,34 @@ function extractContentBlock(section: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function parseNextActionPlaybook(stdout: string): PlaybookPlan {
+/**
+ * Events whose entire documented playbook is "notify the user, end the
+ * turn" — per the `JOB_ASP_SELECTED_SKIP` fixture in
+ * `test/okx-next-action-playbook.test.ts`, and per `deterministic-turn.ts`'s
+ * own contract for these two names: its `notify_only` branch calls
+ * `buildNotifyAction` and nothing else, for every event, always. So for
+ * these two specifically, an extra fenced block beyond the notify one can
+ * never represent a dropped action at the caller — the caller was never
+ * going to run it regardless of shape.
+ *
+ * Incident #40, Row 8-follow-up A2A buyer test (job 0xba4de4f5..., a
+ * designated provider with `isDirectCommunication:true`): the returned
+ * playbook carried additional fenced blocks alongside the notify one,
+ * consistent with OKX's own concurrent, unrelated x402-endpoint-validation
+ * probe that runs for any designated ASP that also has an A2MCP service,
+ * regardless of which service was actually pinned via `set-asp`. The raw
+ * stdout itself is unrecoverable after the fact — the ledger persists only
+ * `instructionDigest` (a sha256 hash), never the text, and `next-action`'s
+ * own freshness gate refuses to re-emit a playbook once the job's real
+ * status has moved past the event being asked about — so this is the
+ * narrowest change the available evidence supports: scoped to the two
+ * event names already proven to only ever notify, never a general
+ * relaxation that could also swallow a real second action on some other,
+ * still-unseen event shape.
+ */
+const NOTIFY_ONLY_REGARDLESS_OF_EXTRA_BLOCKS = new Set(["job_asp_selected", "provider_applied"]);
+
+export function parseNextActionPlaybook(stdout: string, event?: string): PlaybookPlan {
   if (stdout.includes("[Current state] job_accepted")) {
     const stepOneIndex = stdout.indexOf("Step 1");
     const stepTwoIndex = stdout.indexOf("Step 2");
@@ -142,11 +169,15 @@ export function parseNextActionPlaybook(stdout: string): PlaybookPlan {
 
   // Generic single-notify shape (job_asp_selected's "skip" case, and any
   // other event whose entire playbook is "tell the user X, end the turn"):
-  // exactly one fenced command, and it must be `agent user-notify`.
+  // exactly one fenced command, and it must be `agent user-notify`. A second,
+  // unrelated fenced block still makes the whole playbook unrecognized here —
+  // never guessed — UNLESS `event` is one of the two names above.
   const matches = [...stdout.matchAll(BASH_BLOCK)];
-  if (matches.length === 1 && matches[0][1].includes("agent user-notify")) {
-    const bashBlock = matches[0];
-    const afterBlock = stdout.slice((bashBlock.index ?? 0) + bashBlock[0].length);
+  const notifyBlock = matches.find((match) => match[1].includes("agent user-notify"));
+  const shapeIsAcceptable =
+    matches.length === 1 || (event !== undefined && NOTIFY_ONLY_REGARDLESS_OF_EXTRA_BLOCKS.has(event));
+  if (notifyBlock && shapeIsAcceptable) {
+    const afterBlock = stdout.slice((notifyBlock.index ?? 0) + notifyBlock[0].length);
     const content = extractContentBlock(afterBlock);
     if (content) return { kind: "notify_only", content };
   }
