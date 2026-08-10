@@ -303,7 +303,10 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
     return { client, meta };
   })();
 
-  const client = repoMeta.client;
+  // Reassigned before delivery — see Incident #37 below. Every delivery call
+  // (branch create, file upsert/delete, PR create, repair lookup) must run on
+  // the refreshed token, not the one minted before verification.
+  let client = repoMeta.client;
   const baseBranch = input.branch?.trim() || parsed.branch || repoMeta.meta.defaultBranch;
 
   const findings = await resolveFindings(input);
@@ -418,6 +421,44 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
 
   const warnings: string[] = [];
   warnings.push(...deliveryOps.skippedDeletePaths.map((p) => `Delete skipped by operator safety policy: ${p}`));
+
+  /**
+   * === Incident #37: the GitHub App token expired mid-job ===
+   *
+   * The token above is minted ONCE, before analysis and verification, and the
+   * same client was then reused here for every delivery call. A GitHub App
+   * installation token lives ~1 hour, and everything between those two points
+   * — clone, analyze, baseline install/typecheck/test/build, patch
+   * application, patched install/typecheck/test/build — is unbounded-ish
+   * heavy work that legitimately takes tens of minutes on a shared vCPU.
+   *
+   * Measured on repodiet-agent-9636: a run that finally got verification to
+   * PASS took 64.7 minutes end to end and then died on the very first
+   * delivery call with
+   *
+   *   Bad credentials (GET /repos/velz-cmd/repodiet-e2e-test/git/ref/heads/...
+   *   -> 401)
+   *
+   * having done every expensive thing correctly first. The bigger the
+   * customer's repository, the more certain this failure becomes — it is the
+   * large jobs, the ones worth the most, that are guaranteed to hit it.
+   *
+   * Re-resolving immediately before delivery costs one cheap call and makes
+   * the delivery phase depend on a token minted seconds earlier rather than
+   * an hour earlier. `resolveCleanupGitHubToken` is the same authority used
+   * above, so an explicitly-supplied `githubToken` still wins and nothing
+   * about scope or identity changes.
+   */
+  client = new GitHubClient(
+    await resolveCleanupGitHubToken({
+      demo: input.demo,
+      repoUrl: input.repoUrl,
+      owner: parsed.owner,
+      repo: parsed.repo,
+      githubToken: input.githubToken,
+      sessionKey: input.sessionKey,
+    })
+  );
 
   const deliveryContext = await assertCleanupDeliveryContext({
     client,
