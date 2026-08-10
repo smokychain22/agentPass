@@ -445,9 +445,19 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
    *
    * Re-resolving immediately before delivery costs one cheap call and makes
    * the delivery phase depend on a token minted seconds earlier rather than
-   * an hour earlier. `resolveCleanupGitHubToken` is the same authority used
-   * above, so an explicitly-supplied `githubToken` still wins and nothing
-   * about scope or identity changes.
+   * an hour earlier.
+   *
+   * `input.githubToken` is deliberately NOT forwarded here, unlike the
+   * initial resolution above. `resolveCleanupGitHubToken` returns an
+   * explicitly-supplied `githubToken` verbatim rather than minting fresh
+   * (see resolve-cleanup-token.ts) — forwarding it here would make this
+   * whole block a no-op for exactly the callers who supply one (the CLI
+   * proof included), silently reusing the same token this block exists to
+   * replace. Proved live: the first shipped version of this fix forwarded
+   * `input.githubToken` and failed with the identical `Bad credentials` 401
+   * at this exact call site 76.8 minutes into the next production run.
+   * Omitting it forces the GitHub App installation-token path every time,
+   * which is what "refresh" has to mean for this to do anything.
    */
   client = new GitHubClient(
     await resolveCleanupGitHubToken({
@@ -455,7 +465,6 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
       repoUrl: input.repoUrl,
       owner: parsed.owner,
       repo: parsed.repo,
-      githubToken: input.githubToken,
       sessionKey: input.sessionKey,
     })
   );
