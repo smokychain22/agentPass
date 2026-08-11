@@ -458,7 +458,7 @@ async function run() {
       recordDeleteApprovalReply: (jobId: string, outcome: { approved: boolean }) => {
         const existing = store.get(jobId);
         if (!existing || existing.status !== "pending") return undefined;
-        const updated = {
+        const updated: FakeApprovalRecord = {
           ...existing,
           status: outcome.approved ? "approved" : "declined",
           approvedPaths: outcome.approved ? [...existing.requestedPaths] : [],
@@ -508,7 +508,7 @@ async function run() {
     assert.equal(result!.reason, "repodiet_delete_approval_approved");
     assert.ok(result!.reply?.text.includes("src/unused/empty-module.ts"));
     assert.ok(result!.reply?.text.includes("src/lib/orphan-a.ts"));
-    assert.equal(deps.store.get("0xjob1").status, "approved");
+    assert.equal(deps.store.get("0xjob1")!.status, "approved");
   });
 
   await test("tryHandleDeleteApprovalReply records a decline and never grants any path", () => {
@@ -526,8 +526,8 @@ async function run() {
     const result = tryHandleDeleteApprovalReply("no thanks, don't delete that", "0xjob1", deps);
     assert.ok(result);
     assert.equal(result!.reason, "repodiet_delete_approval_declined");
-    assert.equal(deps.store.get("0xjob1").status, "declined");
-    assert.deepEqual(deps.store.get("0xjob1").approvedPaths, []);
+    assert.equal(deps.store.get("0xjob1")!.status, "declined");
+    assert.deepEqual(deps.store.get("0xjob1")!.approvedPaths, []);
   });
 
   await test("tryHandleDeleteApprovalReply falls through (undefined) when there is no pending request for this job", () => {
@@ -551,7 +551,7 @@ async function run() {
       tryHandleDeleteApprovalReply("what files are we talking about?", "0xjob1", deps),
       undefined
     );
-    assert.equal(deps.store.get("0xjob1").status, "pending", "an unrecognized message must not consume the pending request");
+    assert.equal(deps.store.get("0xjob1")!.status, "pending", "an unrecognized message must not consume the pending request");
   });
 
   await test("tryHandleDeleteApprovalReply falls through when the request was already answered — never double-records", () => {
@@ -600,7 +600,7 @@ async function run() {
     assert.ok(result);
     assert.equal(result!.handled, true);
     assert.ok(result!.reply?.text.includes("src/unused/empty-module.ts"));
-    assert.equal(approvals.store.get("0xjob-live").status, "approved");
+    assert.equal(approvals.store.get("0xjob-live")!.status, "approved");
     assert.equal(idem.sent.length, 1, "the confirmation is still published over XMTP exactly once");
   });
 
