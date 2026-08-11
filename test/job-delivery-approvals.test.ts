@@ -113,6 +113,27 @@ async function run() {
     assert.deepEqual(approvedDeletePathsForJob({ jobId: JOB, repositoryUrl: REPO, baseCommit: "" }), []);
   });
 
+  const JOB_2 = "0xba4de4f576f0dbb05b0a88d2d889102dfb134f5e1c901bf0534312daf5d33402";
+  const BASE_COMMIT_2 = "60f55f890b07d4f6ca2fce569c4b8f2cc47c64e4";
+
+  await test("a second job on the same repository, different base commit, has its own independent approval", () => {
+    const paths = approvedDeletePathsForJob({ jobId: JOB_2, repositoryUrl: REPO, baseCommit: BASE_COMMIT_2 });
+    assert.deepEqual(paths, [APPROVED_PATH]);
+  });
+
+  await test("the second job's approval does not leak onto the first job's stale base commit, and vice versa", () => {
+    assert.deepEqual(
+      approvedDeletePathsForJob({ jobId: JOB_2, repositoryUrl: REPO, baseCommit: BASE_COMMIT }),
+      [],
+      "job 2 has no approval bound to job 1's base commit"
+    );
+    assert.deepEqual(
+      approvedDeletePathsForJob({ jobId: JOB, repositoryUrl: REPO, baseCommit: BASE_COMMIT_2 }),
+      [],
+      "job 1 has no approval bound to job 2's base commit"
+    );
+  });
+
   console.log("job-scoped delete approvals: all assertions passed");
 }
 
