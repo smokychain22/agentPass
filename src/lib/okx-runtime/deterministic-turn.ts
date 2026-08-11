@@ -28,6 +28,10 @@ import { resolveCleanupGitHubToken } from "@/lib/github-app/resolve-cleanup-toke
 import type { InstructionFetcher, ModelTurn, TaskReader } from "./provider-event-executor";
 import type { ProposedAction } from "./system-event-route";
 import { approvedDeletePathsForJob } from "./job-delivery-approvals";
+import {
+  createPendingDeleteApprovalRequest,
+  getDeleteApprovalRequest,
+} from "./buyer-delete-approval-requests";
 import { parseTaskContext } from "./task-context-fetcher";
 import {
   fillNotifyTemplate,
@@ -230,6 +234,12 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
     const branch = cleanupBranchForJob(jobId);
 
     let prUrl: string;
+    // Declared outside the try so the catch block below can use them to
+    // recognize a NO_SAFE_CANDIDATES failure and ask the buyer for approval
+    // — both are only ever set once we're past the duplicate-PR check and
+    // have resolved a real base commit to bind an approval request to.
+    let baseCommit: string | undefined;
+    let approvedPaths: string[] = [];
     try {
       const token = await resolveToken({
         repoUrl: context.repositoryUrl,
@@ -270,12 +280,12 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
          * can delete a protected, generated, credential or workflow path.
          */
         const repoMeta = await client.getRepo(parsedRepo.owner, parsedRepo.repo);
-        const baseCommit = await client.getBranchSha(
+        baseCommit = await client.getBranchSha(
           parsedRepo.owner,
           parsedRepo.repo,
           repoMeta.defaultBranch
         );
-        const approvedPaths = approvedDeletePathsForJob({
+        approvedPaths = approvedDeletePathsForJob({
           jobId,
           repositoryUrl: context.repositoryUrl,
           baseCommit,
@@ -322,6 +332,65 @@ export function createDeterministicTurn(options: DeterministicTurnOptions): Mode
        * its envelope and is retried on the bounded backoff, exactly like any
        * other transient failure.
        */
+
+      /**
+       * A NO_SAFE_CANDIDATES failure whose only blocker is the delivery gate
+       * (real safe candidates exist, none are in the unattended-safe set)
+       * used to require a developer to hand-review and hardcode an entry in
+       * job-delivery-approvals.ts before this job could ever be delivered —
+       * exactly what stranded job
+       * 0xba4de4f576f0dbb05b0a88d2d889102dfb134f5e1c901bf0534312daf5d33402's
+       * 1 USDT escrow. Instead of just failing, RepoDiet now asks the BUYER
+       * directly over the same A2A/XMTP channel it already uses, and records
+       * the reply in buyer-delete-approval-requests.ts — no developer, no
+       * Claude Code, no manual code change required for a future job that
+       * hits this same gate.
+       *
+       * Sent at most ONCE per (jobId, repository, baseCommit): if a pending
+       * request for the exact same candidates already exists, this retry
+       * does not resend it — that would spam the buyer every ~60s until
+       * they reply. A `declined` reply is also respected, not re-asked.
+       * Only a genuinely new base commit or a different candidate set is
+       * treated as a new question.
+       */
+      if (
+        err instanceof ToolExecutionError &&
+        err.code === "NO_SAFE_CANDIDATES" &&
+        approvedPaths.length === 0 &&
+        baseCommit
+      ) {
+        const skippedDeletePaths = (
+          err.details as { skippedDeletePaths?: unknown } | undefined
+        )?.skippedDeletePaths;
+        if (Array.isArray(skippedDeletePaths) && skippedDeletePaths.length > 0) {
+          const existingRequest = getDeleteApprovalRequest(jobId);
+          const sameQuestion =
+            existingRequest &&
+            existingRequest.baseCommit.trim().toLowerCase() === baseCommit.trim().toLowerCase() &&
+            existingRequest.requestedPaths.length === skippedDeletePaths.length &&
+            existingRequest.requestedPaths.every((p) => skippedDeletePaths.includes(p));
+
+          if (!sameQuestion) {
+            createPendingDeleteApprovalRequest({
+              jobId,
+              repositoryUrl: context.repositoryUrl!,
+              baseCommit,
+              requestedPaths: skippedDeletePaths as string[],
+            });
+            const askContent =
+              `[Delivery Approval Needed] Job ${jobId} — RepoDiet found ` +
+              `${skippedDeletePaths.length} verified-safe file(s) that need your explicit ` +
+              `approval before deletion (outside RepoDiet's default autonomous-delete scope): ` +
+              `${(skippedDeletePaths as string[]).join(", ")}. Reply "approve" to authorize ` +
+              `deleting exactly these files, or "decline" to skip them — RepoDiet will not ` +
+              `delete anything without your approval.`;
+            return { ok: true, actions: [buildNotifyAction(askContent)] };
+          }
+          // Same pending (or already-declined) question already on record —
+          // fall through to the normal retryable failure without re-asking.
+        }
+      }
+
       const message =
         err instanceof HeavyJobRejected
           ? `${err.code}:${err.message}`

@@ -353,7 +353,15 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
       deliveryOps.skippedDeletePaths.length > 0
         ? `No approved cleanup operation passed the final delivery safety gate. Blocked paths: ${deliveryOps.skippedDeletePaths.join(", ")}`
         : "No approved cleanup operation passed the final delivery safety gate.",
-      422
+      422,
+      // Structured so a caller (the deterministic job_accepted turn) can act
+      // on the exact blocked paths without parsing the message string — see
+      // buyer-delete-approval-requests.ts, which uses this to ask the buyer
+      // for explicit per-job approval instead of requiring a developer to
+      // hand-review and hardcode an entry in job-delivery-approvals.ts.
+      deliveryOps.skippedDeletePaths.length > 0
+        ? { skippedDeletePaths: [...deliveryOps.skippedDeletePaths] }
+        : undefined
     );
   }
 

@@ -19,6 +19,8 @@ import {
   buildProtocolError,
   formatAnalysisDispatchResult,
   formatTaskDispatchResult,
+  classifyDeleteApprovalReply,
+  tryHandleDeleteApprovalReply,
 } from "../openclaw-plugins/repodiet-a2a-bridge/logic.js";
 
 function test(name: string, fn: () => void | Promise<void>) {
@@ -427,6 +429,201 @@ async function run() {
   // path OKX's own reviewer already probes, per docs/OKX_RESUBMISSION_
   // AUDIT.md. Starts no scan, payment, branch, or PR. Skips (not fails) if
   // this sandbox cannot reach the network, since that is an environment
+  // --- Delete-approval reply handling (buyer-in-the-loop for NO_SAFE_CANDIDATES) ---
+  //
+  // Job 0xba4de4f576f0dbb05b0a88d2d889102dfb134f5e1c901bf0534312daf5d33402's
+  // 1 USDT escrow was stranded because RepoDiet's autonomous delivery had no
+  // way to ask the buyer for approval when the only safe findings fell
+  // outside the unattended-safe delete set — only a developer hand-editing
+  // job-delivery-approvals.ts could unblock it. This suite proves the reply
+  // side of the fix: a pending request's buyer reply is recognized,
+  // recorded, and answered with a real (non-templated) confirmation,
+  // without ever reaching the normal analyze/cleanup dispatch path.
+
+  interface FakeApprovalRecord {
+    jobId: string;
+    repositoryUrl: string;
+    baseCommit: string;
+    requestedPaths: string[];
+    status: "pending" | "approved" | "declined";
+    approvedPaths: string[];
+    createdAt: string;
+    respondedAt?: string;
+  }
+
+  function fakeDeleteApprovals(initial?: Record<string, FakeApprovalRecord>) {
+    const store = new Map<string, FakeApprovalRecord>(Object.entries(initial ?? {}));
+    return {
+      getDeleteApprovalRequest: (jobId: string) => store.get(jobId),
+      recordDeleteApprovalReply: (jobId: string, outcome: { approved: boolean }) => {
+        const existing = store.get(jobId);
+        if (!existing || existing.status !== "pending") return undefined;
+        const updated = {
+          ...existing,
+          status: outcome.approved ? "approved" : "declined",
+          approvedPaths: outcome.approved ? [...existing.requestedPaths] : [],
+          respondedAt: "2026-08-11T00:00:00.000Z",
+        };
+        store.set(jobId, updated);
+        return updated;
+      },
+      store,
+    };
+  }
+
+  await test("classifyDeleteApprovalReply recognizes a clear approve", () => {
+    assert.equal(classifyDeleteApprovalReply("approve"), "approve");
+    assert.equal(classifyDeleteApprovalReply("Yes, go ahead"), "approve");
+    assert.equal(classifyDeleteApprovalReply("confirmed"), "approve");
+  });
+
+  await test("classifyDeleteApprovalReply recognizes a clear decline", () => {
+    assert.equal(classifyDeleteApprovalReply("decline"), "decline");
+    assert.equal(classifyDeleteApprovalReply("no, don't delete those"), "decline");
+    assert.equal(classifyDeleteApprovalReply("please skip that one"), "decline");
+  });
+
+  await test("classifyDeleteApprovalReply never guesses on an ambiguous or unrelated message", () => {
+    assert.equal(classifyDeleteApprovalReply("what is RepoDiet?"), undefined);
+    assert.equal(classifyDeleteApprovalReply(""), undefined);
+    // Contains both an approve-ish and decline-ish word — must not guess.
+    assert.equal(classifyDeleteApprovalReply("yes but no, wait"), undefined);
+  });
+
+  await test("tryHandleDeleteApprovalReply records an approval and replies with the real approved paths", () => {
+    const deps = fakeDeleteApprovals({
+      "0xjob1": {
+        jobId: "0xjob1",
+        repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+        baseCommit: "abc123",
+        requestedPaths: ["src/unused/empty-module.ts", "src/lib/orphan-a.ts"],
+        status: "pending",
+        approvedPaths: [],
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
+    });
+    const result = tryHandleDeleteApprovalReply("approve", "0xjob1", deps);
+    assert.ok(result);
+    assert.equal(result!.handled, true);
+    assert.equal(result!.reason, "repodiet_delete_approval_approved");
+    assert.ok(result!.reply?.text.includes("src/unused/empty-module.ts"));
+    assert.ok(result!.reply?.text.includes("src/lib/orphan-a.ts"));
+    assert.equal(deps.store.get("0xjob1").status, "approved");
+  });
+
+  await test("tryHandleDeleteApprovalReply records a decline and never grants any path", () => {
+    const deps = fakeDeleteApprovals({
+      "0xjob1": {
+        jobId: "0xjob1",
+        repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+        baseCommit: "abc123",
+        requestedPaths: ["src/unused/empty-module.ts"],
+        status: "pending",
+        approvedPaths: [],
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
+    });
+    const result = tryHandleDeleteApprovalReply("no thanks, don't delete that", "0xjob1", deps);
+    assert.ok(result);
+    assert.equal(result!.reason, "repodiet_delete_approval_declined");
+    assert.equal(deps.store.get("0xjob1").status, "declined");
+    assert.deepEqual(deps.store.get("0xjob1").approvedPaths, []);
+  });
+
+  await test("tryHandleDeleteApprovalReply falls through (undefined) when there is no pending request for this job", () => {
+    const deps = fakeDeleteApprovals();
+    assert.equal(tryHandleDeleteApprovalReply("approve", "0xno-such-job", deps), undefined);
+  });
+
+  await test("tryHandleDeleteApprovalReply falls through when the message doesn't clearly read as approve/decline", () => {
+    const deps = fakeDeleteApprovals({
+      "0xjob1": {
+        jobId: "0xjob1",
+        repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+        baseCommit: "abc123",
+        requestedPaths: ["src/unused/empty-module.ts"],
+        status: "pending",
+        approvedPaths: [],
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
+    });
+    assert.equal(
+      tryHandleDeleteApprovalReply("what files are we talking about?", "0xjob1", deps),
+      undefined
+    );
+    assert.equal(deps.store.get("0xjob1").status, "pending", "an unrecognized message must not consume the pending request");
+  });
+
+  await test("tryHandleDeleteApprovalReply falls through when the request was already answered — never double-records", () => {
+    const deps = fakeDeleteApprovals({
+      "0xjob1": {
+        jobId: "0xjob1",
+        repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+        baseCommit: "abc123",
+        requestedPaths: ["src/unused/empty-module.ts"],
+        status: "approved",
+        approvedPaths: ["src/unused/empty-module.ts"],
+        createdAt: "2026-08-11T00:00:00.000Z",
+        respondedAt: "2026-08-11T00:00:00.000Z",
+      },
+    });
+    assert.equal(tryHandleDeleteApprovalReply("approve", "0xjob1", deps), undefined);
+  });
+
+  await test("decideReply: an approve reply on a seller session with a pending request is answered WITHOUT reaching the normal dispatch path", async () => {
+    const idem = fakeIdempotency();
+    const approvals = fakeDeleteApprovals({
+      "0xjob-live": {
+        jobId: "0xjob-live",
+        repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+        baseCommit: "abc123",
+        requestedPaths: ["src/unused/empty-module.ts"],
+        status: "pending",
+        approvedPaths: [],
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
+    });
+    const result = await decideReply(
+      { cleanedBody: "approve" },
+      { sessionKey: "job:0xjob-live:my:9636:to:5295", jobId: "0xjob-live" },
+      {
+        ...idem,
+        ...approvals,
+        dispatchAnalyzeRepository: async () => {
+          throw new Error("must not call the A2MCP endpoint for a delete-approval reply");
+        },
+        dispatchCreateTask: async () => {
+          throw new Error("must not call the A2A task endpoint for a delete-approval reply");
+        },
+      }
+    );
+    assert.ok(result);
+    assert.equal(result!.handled, true);
+    assert.ok(result!.reply?.text.includes("src/unused/empty-module.ts"));
+    assert.equal(approvals.store.get("0xjob-live").status, "approved");
+    assert.equal(idem.sent.length, 1, "the confirmation is still published over XMTP exactly once");
+  });
+
+  await test("decideReply: a normal cleanup-intent message on a job with NO pending request is unaffected (regression)", async () => {
+    let calledWith: unknown;
+    const idem = fakeIdempotency();
+    const approvals = fakeDeleteApprovals();
+    const result = await decideReply(
+      { cleanedBody: "please create a cleanup PR for https://github.com/velz-cmd/repodiet-e2e-test" },
+      { sessionKey: "my:9636:to:5295" },
+      {
+        ...idem,
+        ...approvals,
+        dispatchCreateTask: async (args: unknown) => {
+          calledWith = args;
+          return { status: 200, body: { task: { id: "task_abc", status: "submitted" }, message: "RepoDiet queued your cleanup task." } };
+        },
+      }
+    );
+    assert.ok(calledWith, "must still reach the real dispatch path when there is no pending approval request");
+    assert.ok(result!.reply?.text.includes("RepoDiet queued your cleanup task."));
+  });
+
   // fact, not a regression in this plugin's logic.
   await test("REAL production dispatch: a discovery-only message gets a real, live, dynamically-generated response", async () => {
     const idem = fakeIdempotency();

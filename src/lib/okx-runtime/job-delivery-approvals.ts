@@ -49,6 +49,7 @@
  * the approval expires by construction and the reviewed diff must be re-derived.
  */
 import { parseGitHubUrl } from "@/lib/github/parse-github-url";
+import { getDeleteApprovalRequest } from "./buyer-delete-approval-requests";
 
 export interface JobDeliveryApproval {
   /** OKX on-chain job id this approval is scoped to. */
@@ -122,6 +123,19 @@ function sameRepository(a: string, b: string): boolean {
  * `normalizeApprovedPaths` treats as "caller is not using explicit approval",
  * so the unattended operator-safe default applies unchanged and this function
  * can never widen anything by returning nothing.
+ *
+ * Checks two sources, in order:
+ *   1. `JOB_DELIVERY_APPROVALS` — the static, developer-reviewed array above.
+ *   2. The dynamic buyer-approval store (buyer-delete-approval-requests.ts)
+ *      — a request RepoDiet itself sent to the buyer over A2A chat when a
+ *      delivery hit this exact gate, that the buyer then explicitly
+ *      approved. Same binding rules apply: job + repository + exact base
+ *      commit, or no match. A `pending` or `declined` request is never
+ *      treated as an approval.
+ * Both sources are evidence bound to one reviewed repository state, just
+ * reviewed by a different party (a developer ahead of time, vs. the buyer
+ * in response to this specific job) — neither can widen unattended policy
+ * for any OTHER job.
  */
 export function approvedDeletePathsForJob(input: {
   jobId: string;
@@ -132,12 +146,23 @@ export function approvedDeletePathsForJob(input: {
   const baseCommit = input.baseCommit?.trim().toLowerCase();
   if (!jobId || !baseCommit || !input.repositoryUrl?.trim()) return [];
 
-  const approval = JOB_DELIVERY_APPROVALS.find(
+  const staticApproval = JOB_DELIVERY_APPROVALS.find(
     (entry) =>
       entry.jobId.toLowerCase() === jobId &&
       entry.baseCommit.toLowerCase() === baseCommit &&
       sameRepository(entry.repositoryUrl, input.repositoryUrl)
   );
+  if (staticApproval) return [...staticApproval.approvedDeletePaths];
 
-  return approval ? [...approval.approvedDeletePaths] : [];
+  const dynamicRequest = getDeleteApprovalRequest(input.jobId);
+  if (
+    dynamicRequest &&
+    dynamicRequest.status === "approved" &&
+    dynamicRequest.baseCommit.trim().toLowerCase() === baseCommit &&
+    sameRepository(dynamicRequest.repositoryUrl, input.repositoryUrl)
+  ) {
+    return [...dynamicRequest.approvedPaths];
+  }
+
+  return [];
 }

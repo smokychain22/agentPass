@@ -8,10 +8,30 @@
  * remain blocked exactly as designed.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   approvedDeletePathsForJob,
   JOB_DELIVERY_APPROVALS,
 } from "../src/lib/okx-runtime/job-delivery-approvals";
+import {
+  createPendingDeleteApprovalRequest,
+  recordDeleteApprovalReply,
+} from "../src/lib/okx-runtime/buyer-delete-approval-requests";
+
+function withIsolatedApprovalStore<T>(fn: () => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "repodiet-job-approvals-"));
+  const prev = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = dir;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 async function test(name: string, fn: () => Promise<void> | void) {
   try {
@@ -132,6 +152,116 @@ async function run() {
       [],
       "job 1 has no approval bound to job 2's base commit"
     );
+  });
+
+  // --- Dynamic (buyer-approved) fallback ------------------------------------
+  //
+  // The static JOB_DELIVERY_APPROVALS array above requires a developer to
+  // hand-review and hardcode an entry — exactly what stranded job
+  // 0xba4de4f5...'s escrow until it was done manually. A job that was never
+  // hand-approved can still get delivered once the BUYER approves it over
+  // A2A chat; approvedDeletePathsForJob must fall back to that dynamic
+  // store the same way it already reads the static array.
+
+  const DYNAMIC_JOB = "0xdynamic-job";
+  const DYNAMIC_REPO = "https://github.com/some-owner/some-repo";
+  const DYNAMIC_COMMIT = "deadbeef";
+
+  await test("a buyer-approved dynamic request is honored exactly like a static approval", () => {
+    withIsolatedApprovalStore(() => {
+      createPendingDeleteApprovalRequest({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: DYNAMIC_COMMIT,
+        requestedPaths: ["src/unused/leftover.ts"],
+      });
+      recordDeleteApprovalReply(DYNAMIC_JOB, { approved: true });
+      const paths = approvedDeletePathsForJob({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: DYNAMIC_COMMIT,
+      });
+      assert.deepEqual(paths, ["src/unused/leftover.ts"]);
+    });
+  });
+
+  await test("a still-PENDING dynamic request grants nothing — silence is not approval", () => {
+    withIsolatedApprovalStore(() => {
+      createPendingDeleteApprovalRequest({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: DYNAMIC_COMMIT,
+        requestedPaths: ["src/unused/leftover.ts"],
+      });
+      const paths = approvedDeletePathsForJob({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: DYNAMIC_COMMIT,
+      });
+      assert.deepEqual(paths, []);
+    });
+  });
+
+  await test("a DECLINED dynamic request grants nothing", () => {
+    withIsolatedApprovalStore(() => {
+      createPendingDeleteApprovalRequest({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: DYNAMIC_COMMIT,
+        requestedPaths: ["src/unused/leftover.ts"],
+      });
+      recordDeleteApprovalReply(DYNAMIC_JOB, { approved: false });
+      const paths = approvedDeletePathsForJob({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: DYNAMIC_COMMIT,
+      });
+      assert.deepEqual(paths, []);
+    });
+  });
+
+  await test("an approved dynamic request bound to a DIFFERENT base commit does not leak onto the current one", () => {
+    withIsolatedApprovalStore(() => {
+      createPendingDeleteApprovalRequest({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: "old-commit",
+        requestedPaths: ["src/unused/leftover.ts"],
+      });
+      recordDeleteApprovalReply(DYNAMIC_JOB, { approved: true });
+      const paths = approvedDeletePathsForJob({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: DYNAMIC_REPO,
+        baseCommit: "new-commit-after-repo-moved",
+      });
+      assert.deepEqual(paths, [], "approval bound to a stale base commit must expire, not silently apply");
+    });
+  });
+
+  await test("an approved dynamic request for a DIFFERENT repository does not leak onto this one", () => {
+    withIsolatedApprovalStore(() => {
+      createPendingDeleteApprovalRequest({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: "https://github.com/owner-a/repo-a",
+        baseCommit: DYNAMIC_COMMIT,
+        requestedPaths: ["src/unused/leftover.ts"],
+      });
+      recordDeleteApprovalReply(DYNAMIC_JOB, { approved: true });
+      const paths = approvedDeletePathsForJob({
+        jobId: DYNAMIC_JOB,
+        repositoryUrl: "https://github.com/owner-b/repo-b",
+        baseCommit: DYNAMIC_COMMIT,
+      });
+      assert.deepEqual(paths, []);
+    });
+  });
+
+  await test("the static array is still checked first — an unrelated dynamic store has no effect on a statically-approved job", () => {
+    withIsolatedApprovalStore(() => {
+      // No dynamic request created at all for JOB — only the static entry exists.
+      const paths = approvedDeletePathsForJob({ jobId: JOB, repositoryUrl: REPO, baseCommit: BASE_COMMIT });
+      assert.deepEqual(paths, [APPROVED_PATH]);
+    });
   });
 
   console.log("job-scoped delete approvals: all assertions passed");

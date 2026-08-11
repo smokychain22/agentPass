@@ -32,6 +32,10 @@ import {
   parseSessionKey,
   toTransportSessionKey,
 } from "./session-key.js";
+import {
+  getDeleteApprovalRequest,
+  recordDeleteApprovalReply,
+} from "./pending-delete-approvals.js";
 
 /**
  * Structured, single-line observability for the seller response path. Emits
@@ -107,6 +111,61 @@ const CLEANUP_PATTERNS = [
   /create_cleanup_pr/i,
   /repository\.(safe_cleanup|verified_cleanup|cleanup_pr)/i,
 ];
+
+/**
+ * Recognizes a reply to a pending delete-approval request (see
+ * pending-delete-approvals.js / src/lib/okx-runtime/deterministic-turn.ts).
+ * Deliberately narrow: only fires when exactly one of approve/decline
+ * matches, never guesses on an ambiguous or unrelated message — an
+ * unmatched message on a job with a pending request still falls through to
+ * the normal intent classification below, so a genuine question doesn't
+ * get silently swallowed.
+ */
+const DELETE_APPROVAL_APPROVE_PATTERN = /\b(approve[ds]?|confirm(?:ed)?|yes|go\s*ahead|proceed)\b/i;
+const DELETE_APPROVAL_DECLINE_PATTERN = /\b(declin(?:e|ed)|reject(?:ed)?|no|don'?t|do\s*not|skip)\b/i;
+
+export function classifyDeleteApprovalReply(text) {
+  const approves = DELETE_APPROVAL_APPROVE_PATTERN.test(text ?? "");
+  const declines = DELETE_APPROVAL_DECLINE_PATTERN.test(text ?? "");
+  if (approves && !declines) return "approve";
+  if (declines && !approves) return "decline";
+  return undefined;
+}
+
+/**
+ * Returns a real, field-derived reply (never a fixed template — matches
+ * this file's own module contract) when `text` is a clear reply to a
+ * PENDING delete-approval request for `jobId`, and records the outcome.
+ * Returns `undefined` — meaning "not consumed, let the caller fall through
+ * to normal classification" — whenever there is no pending request, the
+ * text doesn't clearly read as approve/decline, or the request was already
+ * answered (e.g. a duplicate/retried inbound message).
+ */
+export function tryHandleDeleteApprovalReply(text, jobId, deps = {}) {
+  const getRequest = deps.getDeleteApprovalRequest ?? getDeleteApprovalRequest;
+  const recordReply = deps.recordDeleteApprovalReply ?? recordDeleteApprovalReply;
+
+  if (!jobId) return undefined;
+  const existing = getRequest(jobId);
+  if (!existing || existing.status !== "pending") return undefined;
+
+  const decision = classifyDeleteApprovalReply(text);
+  if (!decision) return undefined;
+
+  const updated = recordReply(jobId, { approved: decision === "approve" });
+  if (!updated) return undefined;
+
+  const replyText =
+    decision === "approve"
+      ? `[Delivery Approval Recorded] Approved — RepoDiet will delete exactly: ${updated.approvedPaths.join(", ")}. The pull request will be created shortly.`
+      : `[Delivery Approval Recorded] Declined — RepoDiet will not delete: ${updated.requestedPaths.join(", ")}. No changes will be made to those files.`;
+
+  return {
+    handled: true,
+    reply: { text: replyText },
+    reason: `repodiet_delete_approval_${decision}d`,
+  };
+}
 
 export function isSellerSession(sessionKey) {
   if (typeof sessionKey !== "string") return false;
@@ -239,6 +298,18 @@ async function generateReply(event, ctx, deps = {}) {
       reason: "repodiet_protocol_error",
     };
   }
+
+  /**
+   * Checked BEFORE the normal dispatch/idempotency path: a reply to a
+   * pending delete-approval request is not an analyze/cleanup dispatch at
+   * all, and the dispatch idempotency cache below has no concept of it.
+   * Falls through untouched (returns undefined) when there is no pending
+   * request or the message doesn't clearly read as approve/decline, so
+   * every existing dispatch path is unaffected for jobs that never hit the
+   * delivery gate.
+   */
+  const approvalReply = tryHandleDeleteApprovalReply(text, ctx?.jobId, deps);
+  if (approvalReply) return approvalReply;
 
   if (identityKey) {
     const existing = getRecorded(identityKey, text);
