@@ -7,9 +7,28 @@
  * `scripts/repodiet-seller-runtime.ts`.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { cleanupBranchForJob, createDeterministicTurn } from "../src/lib/okx-runtime/deterministic-turn";
 import type { AuthoritativeTask } from "../src/lib/okx-runtime/system-event-route";
 import type { ProcessRunResult } from "../src/lib/okx-runtime/process-runner";
+import { ToolExecutionError } from "../src/lib/a2mcp/errors";
+import {
+  getDeleteApprovalRequest,
+  recordDeleteApprovalReply,
+} from "../src/lib/okx-runtime/buyer-delete-approval-requests";
+
+function withIsolatedApprovalStore<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "repodiet-deterministic-turn-approvals-"));
+  const prev = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = dir;
+  return Promise.resolve(fn()).finally(() => {
+    if (prev === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+}
 
 async function test(name: string, fn: () => Promise<void> | void) {
   try {
@@ -332,6 +351,139 @@ async function run() {
     assert.ok(deliverAction);
     const deliverText = deliverAction!.args[deliverAction!.args.indexOf("--deliverable-text") + 1];
     assert.match(deliverText, /pull\/3/, "must reference the pre-existing PR, not a fabricated new one");
+  });
+
+  // --- Buyer-in-the-loop delivery approval (NO_SAFE_CANDIDATES) -------------
+  //
+  // Job 0xba4de4f576f0dbb05b0a88d2d889102dfb134f5e1c901bf0534312daf5d33402's
+  // 1 USDT escrow was stranded because a NO_SAFE_CANDIDATES failure used to
+  // just fail and wait for a developer to hand-review and hardcode an entry
+  // in job-delivery-approvals.ts — no self-sufficient path existed. These
+  // tests are the direct evidence for the fix: RepoDiet now asks the buyer
+  // itself, over the same A2A channel it already uses, and completes
+  // delivery automatically once they reply — no code change, no Claude
+  // Code, no manual step for a future job that hits this same gate.
+
+  const NO_APPROVAL_JOB = "0xbuyer-approval-test-job";
+  const NO_APPROVAL_COMMIT = "no-static-approval-for-this-commit";
+
+  function noSafeCandidatesError(paths: string[]) {
+    return new ToolExecutionError(
+      "NO_SAFE_CANDIDATES",
+      `No approved cleanup operation passed the final delivery safety gate. Blocked paths: ${paths.join(", ")}`,
+      422,
+      { skippedDeletePaths: paths }
+    );
+  }
+
+  await test("NO_SAFE_CANDIDATES with real blocked paths and no existing approval asks the buyer instead of just failing", async () => {
+    await withIsolatedApprovalStore(async () => {
+      const github = fakeGitHub([], NO_APPROVAL_COMMIT);
+      const turn = createDeterministicTurn({
+        agentId: "9636",
+        runner: (async () =>
+          ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+        readTask: async () => ({ ...TASK, jobId: NO_APPROVAL_JOB }),
+        createCleanupPr: (async () => {
+          throw noSafeCandidatesError(["src/unused/leftover.ts", "src/lib/orphan-b.ts"]);
+        }) as never,
+        resolveGitHubToken: github.resolveGitHubToken,
+        createGitHubClient: github.createGitHubClient,
+      });
+
+      const result = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: NO_APPROVAL_JOB });
+      assert.equal(result.ok, true, "asking the buyer is real, useful work — not a failure");
+      assert.equal(result.actions.length, 1);
+      assert.equal(result.actions[0].command, "agent user-notify");
+      assert.match(result.actions[0].args[1], /src\/unused\/leftover\.ts/);
+      assert.match(result.actions[0].args[1], /src\/lib\/orphan-b\.ts/);
+      assert.match(result.actions[0].args[1], /approve/i);
+
+      const request = getDeleteApprovalRequest(NO_APPROVAL_JOB);
+      assert.ok(request, "a pending request must be persisted so the buyer's later reply can be matched back");
+      assert.equal(request!.status, "pending");
+      assert.deepEqual(request!.requestedPaths, ["src/unused/leftover.ts", "src/lib/orphan-b.ts"]);
+      assert.equal(request!.baseCommit, NO_APPROVAL_COMMIT);
+    });
+  });
+
+  await test("a retry with the SAME blocked paths does not re-ask — no spamming the buyer every poll cycle", async () => {
+    await withIsolatedApprovalStore(async () => {
+      const github = fakeGitHub([], NO_APPROVAL_COMMIT);
+      const turn = createDeterministicTurn({
+        agentId: "9636",
+        runner: (async () =>
+          ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+        readTask: async () => ({ ...TASK, jobId: NO_APPROVAL_JOB }),
+        createCleanupPr: (async () => {
+          throw noSafeCandidatesError(["src/unused/leftover.ts"]);
+        }) as never,
+        resolveGitHubToken: github.resolveGitHubToken,
+        createGitHubClient: github.createGitHubClient,
+      });
+
+      const first = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: NO_APPROVAL_JOB });
+      assert.equal(first.ok, true);
+      assert.equal(first.actions[0].command, "agent user-notify");
+
+      const second = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: NO_APPROVAL_JOB });
+      assert.equal(second.ok, false, "the second attempt still has not been delivered — must not fabricate success");
+      assert.match(second.error ?? "", /NO_SAFE_CANDIDATES/);
+      assert.equal(
+        (second as { actions: unknown[] }).actions.length,
+        0,
+        "must NOT send a second identical approval request"
+      );
+    });
+  });
+
+  await test("once the buyer approves via the dynamic store, the next retry completes delivery automatically", async () => {
+    await withIsolatedApprovalStore(async () => {
+      const github = fakeGitHub([], NO_APPROVAL_COMMIT);
+      let createPrCalls = 0;
+      const turn = createDeterministicTurn({
+        agentId: "9636",
+        runner: (async () =>
+          ok("serviceParams: repository=https://github.com/velz-cmd/repodiet-e2e-test\n")) as never,
+        readTask: async () => ({ ...TASK, jobId: NO_APPROVAL_JOB }),
+        createCleanupPr: (async (input: { approvedPaths?: string[] }) => {
+          createPrCalls++;
+          if (!input.approvedPaths || input.approvedPaths.length === 0) {
+            throw noSafeCandidatesError(["src/unused/leftover.ts"]);
+          }
+          return {
+            data: {
+              pullRequest: {
+                number: 42,
+                url: "https://github.com/velz-cmd/repodiet-e2e-test/pull/42",
+              },
+              actionSummary: { safeCandidatesApplied: 1, filesDeleted: 1 },
+              repo: { cleanupBranch: cleanupBranchForJob(NO_APPROVAL_JOB) },
+            },
+          };
+        }) as never,
+        resolveGitHubToken: github.resolveGitHubToken,
+        createGitHubClient: github.createGitHubClient,
+      });
+
+      const first = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: NO_APPROVAL_JOB });
+      assert.equal(first.ok, true);
+      assert.equal(first.actions[0].command, "agent user-notify");
+      assert.equal(createPrCalls, 1);
+
+      // Simulate exactly what openclaw-plugins/repodiet-a2a-bridge does when
+      // the buyer replies "approve" — a separate process, same shared file.
+      const recorded = recordDeleteApprovalReply(NO_APPROVAL_JOB, { approved: true });
+      assert.equal(recorded?.status, "approved");
+
+      const second = await turn({ instruction: JOB_ACCEPTED_PLAYBOOK, jobId: NO_APPROVAL_JOB });
+      assert.equal(second.ok, true, "delivery must now proceed with no further code change or manual step");
+      assert.equal(createPrCalls, 2);
+      const deliverAction = second.actions.find((a) => a.command === "agent deliver");
+      assert.ok(deliverAction);
+      const deliverText = deliverAction!.args[deliverAction!.args.indexOf("--deliverable-text") + 1];
+      assert.match(deliverText, /pull\/42/);
+    });
   });
 
   await test("cleanupBranchForJob is deterministic and stable for the same job across calls", () => {
