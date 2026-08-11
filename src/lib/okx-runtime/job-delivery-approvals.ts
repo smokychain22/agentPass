@@ -62,7 +62,7 @@ export interface JobDeliveryApproval {
 }
 
 /**
- * The reviewed approvals. One entry, for the existing funded job.
+ * The reviewed approvals.
  *
  * `src/unused/empty-module.ts` was selected as the smallest safe finding from
  * a real analysis of this repository at commit b890ac4b: finding
@@ -81,6 +81,25 @@ export const JOB_DELIVERY_APPROVALS: readonly JobDeliveryApproval[] = [
     jobId: "0x22a216415e2b1176d2111b136584e42fd949f7c0cfca48c657a7d1ca8e6927c6",
     repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
     baseCommit: "b890ac4b055e608a7729d442c92bfe1dce573e64",
+    approvedDeletePaths: ["src/unused/empty-module.ts"],
+  },
+  /**
+   * Job 0xba4de4f576f0dbb05b0a88d2d889102dfb134f5e1c901bf0534312daf5d33402,
+   * same repository, base moved to 60f55f890b07d4f6ca2fce569c4b8f2cc47c64e4.
+   * Re-verified directly against GitHub at this exact commit before adding
+   * this entry: `src/unused/empty-module.ts` is still the identical 42-byte
+   * `// Intentionally empty cleanup candidate.` file, and a fresh run of this
+   * job's own analysis pipeline at this commit reclassified the same four
+   * candidates as the historical scan (`src/config/runtime-hook.ts`,
+   * `src/lib/orphan-a.ts`, `src/lib/unused-helper.ts`,
+   * `src/unused/empty-module.ts`) — this fixture repository has not
+   * meaningfully changed. Only the one smallest, zero-import candidate is
+   * approved, matching the historical judgment exactly.
+   */
+  {
+    jobId: "0xba4de4f576f0dbb05b0a88d2d889102dfb134f5e1c901bf0534312daf5d33402",
+    repositoryUrl: "https://github.com/velz-cmd/repodiet-e2e-test",
+    baseCommit: "60f55f890b07d4f6ca2fce569c4b8f2cc47c64e4",
     approvedDeletePaths: ["src/unused/empty-module.ts"],
   },
 ];
