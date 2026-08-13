@@ -101,6 +101,39 @@ async function grepRepoForStrings(
   return hits;
 }
 
+const SCRIPT_HOST_FILE = /\.(sh|ps1|bat|cmd)$|^(dockerfile|makefile|procfile)$/i;
+
+/**
+ * A shell/PowerShell/batch script or build manifest invokes a file by path
+ * (`node scripts/foo.mjs`), never by import. `checkDynamicReferences` cannot see
+ * these: it filters candidate files through DYNAMIC_PATTERNS (import()/require()/
+ * React.lazy), none of which appear in a shell invocation. Without this check,
+ * a script wired into a deploy script or Dockerfile reads as fully unreferenced.
+ */
+async function checkScriptInvocationReferences(
+  rootDir: string,
+  relPath: string
+): Promise<EvidenceItem[]> {
+  const needles = basenameVariants(relPath);
+  const hits = await grepRepoForStrings(rootDir, needles, 12);
+
+  const invokers = hits.filter((file) => {
+    if (file === relPath) return false;
+    return SCRIPT_HOST_FILE.test(path.posix.basename(file));
+  });
+
+  if (invokers.length === 0) return [];
+
+  return [
+    {
+      channel: "script",
+      source: "script_invocation",
+      summary: `Referenced by executable script or build manifest: ${invokers.slice(0, 3).join(", ")}`,
+      strength: "contradicting",
+    },
+  ];
+}
+
 /**
  * A manually invoked operational script has no inbound imports by design, so a
  * static import graph will always call it "unused". Deleting one silently removes
@@ -408,9 +441,10 @@ export async function searchCounterEvidence(input: {
   // Only meaningful for whole-file deletion: an unused export inside a script is
   // still a normal unused export.
   if (finding.type === "unused_file") {
+    const invocationItems = await checkScriptInvocationReferences(rootDir, rel);
     const manualItems = await manualOperationalToolEvidence(rootDir, rel);
-    if (manualItems.length > 0) {
-      items.push(...manualItems);
+    if (invocationItems.length > 0 || manualItems.length > 0) {
+      items.push(...invocationItems, ...manualItems);
       channels.scripts = true;
     }
   }
