@@ -78,7 +78,11 @@ async function grepRepoForStrings(
         queue.push(full);
         continue;
       }
-      if (!/\.(tsx?|jsx?|mjs|cjs|json|ya?ml|mdx?)$/i.test(ent.name)) continue;
+      // Shell/PowerShell/batch files and container/build manifests routinely invoke
+      // scripts by path, so they are genuine reference channels for a deletion decision.
+      const isBuildManifest = /^(dockerfile|makefile|procfile)$/i.test(ent.name);
+      if (!isBuildManifest && !/\.(tsx?|jsx?|mjs|cjs|json|ya?ml|mdx?|sh|ps1|bat|cmd)$/i.test(ent.name))
+        continue;
       let content: string;
       try {
         content = await fs.readFile(full, "utf8");
@@ -95,6 +99,70 @@ async function grepRepoForStrings(
     }
   }
   return hits;
+}
+
+/**
+ * A manually invoked operational script has no inbound imports by design, so a
+ * static import graph will always call it "unused". Deleting one silently removes
+ * an operator's tool. Real case: Meridian's `scripts/sync-vercel-env.mjs` had zero
+ * static references but documents its own usage (`Usage: node scripts/...`) and has
+ * a platform sibling (`sync-vercel-env.ps1`) covered by a deployment runbook.
+ *
+ * These signals mark the file as manually operated, not dead. They contradict a
+ * delete recommendation without suppressing `scripts/` wholesale.
+ */
+async function manualOperationalToolEvidence(
+  rootDir: string,
+  rel: string
+): Promise<EvidenceItem[]> {
+  const norm = rel.replace(/\\/g, "/");
+  const items: EvidenceItem[] = [];
+
+  let head = "";
+  try {
+    head = (await fs.readFile(path.join(rootDir, norm), "utf8")).slice(0, 2000);
+  } catch {
+    return items;
+  }
+
+  if (/^#!/.test(head)) {
+    items.push({
+      channel: "script",
+      source: "shebang",
+      summary: "File declares a shebang — it is meant to be executed directly.",
+      strength: "contradicting",
+    });
+  }
+
+  // "Usage: node scripts/foo.mjs", "usage: ./foo.sh", "* Usage: pnpm ..."
+  if (/^\s*(?:[/*#\s]*)usage\s*:/im.test(head)) {
+    items.push({
+      channel: "script",
+      source: "usage_header",
+      summary: "File documents its own command-line usage — manually invoked tool.",
+      strength: "contradicting",
+    });
+  }
+
+  // A same-named sibling in another scripting language implies a cross-platform
+  // operator workflow; the documented half being the sibling does not make this half dead.
+  const dir = path.posix.dirname(norm);
+  const stem = path.posix.basename(norm).replace(/\.[^.]+$/, "");
+  for (const ext of ["mjs", "cjs", "js", "ts", "ps1", "sh", "bat", "cmd"]) {
+    const sibling = `${dir}/${stem}.${ext}`;
+    if (sibling === norm) continue;
+    if (await fileExists(rootDir, sibling)) {
+      items.push({
+        channel: "script",
+        source: "platform_sibling",
+        summary: `Platform sibling script ${sibling} exists — likely a cross-platform operator workflow.`,
+        strength: "contradicting",
+      });
+      break;
+    }
+  }
+
+  return items;
 }
 
 async function checkPackageExports(
@@ -335,6 +403,16 @@ export async function searchCounterEvidence(input: {
     channels.configuration = true;
   } else {
     channels.configuration = true;
+  }
+
+  // Only meaningful for whole-file deletion: an unused export inside a script is
+  // still a normal unused export.
+  if (finding.type === "unused_file") {
+    const manualItems = await manualOperationalToolEvidence(rootDir, rel);
+    if (manualItems.length > 0) {
+      items.push(...manualItems);
+      channels.scripts = true;
+    }
   }
 
   const dynamic = await checkDynamicReferences(rootDir, rel);
