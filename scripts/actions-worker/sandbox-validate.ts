@@ -114,8 +114,16 @@ async function main(): Promise<void> {
     await countFiles(baselineRoot);
     await initBaselineGitRepo(baselineRoot);
 
+    // generateGitPatch mutates its rootDir in place (applies edits, stages them).
+    // Run it against a throwaway copy so baselineRoot stays pristine — validateGitPatch
+    // clones baselineRoot itself for the actual apply --check, and needs the files it's
+    // about to delete/edit to still exist there. Mirrors executeRepositoryCleanupLocal's
+    // baseline/transformed split in repository-executor.ts exactly.
+    const transformedRoot = path.join(unpackRoot, "transformed");
+    await fs.cp(baselineRoot, transformedRoot, { recursive: true, force: true });
+
     const gitVersion = await getGitVersion();
-    const { patch } = await generateGitPatch(baselineRoot, manifest.edits);
+    const { patch } = await generateGitPatch(transformedRoot, manifest.edits);
     const patchHash = hashPatchContent(patch);
     const validated = await validateGitPatch(baselineRoot, patch, expectedPaths);
 
