@@ -18,6 +18,7 @@ import {
   type SandboxWorkerReport,
 } from "@/lib/execution/sandbox-run-verification";
 import type { SandboxRun } from "@/lib/execution/sandbox-run-types";
+import type { RepositoryVerificationResult } from "@/lib/patch-kit/repository-verification";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -62,6 +63,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     patchHash?: string;
     gitVersion?: string;
     error?: string;
+    repositoryVerification?: RepositoryVerificationResult;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -184,6 +186,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     error: body.error,
     workflowRunId,
     workflowRunUrl: run.workflowRunUrl,
+    repositoryVerification: body.repositoryVerification,
   };
 
   // workerId is the wire-reported identity, deliberately NOT resolved from

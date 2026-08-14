@@ -79,6 +79,7 @@ function passingReport(overrides: Partial<SandboxWorkerReport> = {}): SandboxWor
     validatedPaths: ["unused-file.ts"],
     gitApplyExitCode: 0,
     patchHash: "deadbeef",
+    repositoryVerification: { status: "verified", installAttempts: [], checks: [] },
     ...overrides,
   };
 }
@@ -102,6 +103,29 @@ async function main() {
     assert.equal(outcome.verifiedChanges, 1);
     assert.deepEqual(outcome.verifiedPaths, ["unused-file.ts"]);
     assert.equal(outcome.patchValidation.status, "passed");
+    assert.equal(outcome.repositoryVerification.status, "verified");
+  });
+
+  await test("pure verify: a missing repositoryVerification on the report defaults to not_run, not a silent pass", async () => {
+    const { run } = await claimedRun();
+    const outcome = verifySandboxWorkerResult(run, passingReport({ repositoryVerification: undefined }));
+    assert.ok(outcome.ok, "patch validity itself is still fine");
+    if (!outcome.ok) return;
+    assert.equal(outcome.repositoryVerification.status, "not_run");
+  });
+
+  await test("completeSandboxRunFromWorker: a valid patch whose repository verification did NOT pass is blocked, not ready_for_delivery", async () => {
+    const { run, claimToken } = await claimedRun();
+    const result = await completeSandboxRunFromWorker(
+      run.id,
+      "github-actions/ubuntu-latest",
+      claimToken,
+      passingReport({ repositoryVerification: { status: "failed", installAttempts: [], checks: [] } })
+    );
+    assert.ok(result.ok);
+    if (!result.ok) return;
+    assert.equal(result.run.status, "blocked", "a valid patch with a failing build/test must not become deliverable");
+    assert.equal(result.run.verifiedChanges, 1, "patch validity itself is still recorded");
   });
 
   await test("pure verify: a wrong base commit is rejected, never passed", async () => {

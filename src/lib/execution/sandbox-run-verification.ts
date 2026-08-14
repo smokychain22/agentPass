@@ -1,5 +1,6 @@
 import type { CanonicalPatchValidationResult } from "@/lib/patch-kit/canonical-patch";
 import { formatPatchValidationUserMessage } from "@/lib/patch-kit/canonical-patch";
+import type { RepositoryVerificationResult } from "@/lib/patch-kit/repository-verification";
 import {
   assertSandboxRunClaim,
   completeSandboxRun,
@@ -31,6 +32,14 @@ export interface SandboxWorkerReport {
   error?: string;
   workflowRunId?: string;
   workflowRunUrl?: string;
+  /**
+   * Baseline-vs-patched build/typecheck/lint/test comparison, run by the
+   * worker itself once git validation passes (see runRepositoryVerification).
+   * Not independently re-derived server-side — same trust level the existing
+   * Vercel Sandbox path already gives this signal; only patch validity
+   * (base commit + changed-path set) gets authoritative re-verification.
+   */
+  repositoryVerification?: RepositoryVerificationResult;
 }
 
 export type SandboxVerificationOutcome =
@@ -39,6 +48,7 @@ export type SandboxVerificationOutcome =
       verifiedChanges: number;
       verifiedPaths: string[];
       patchValidation: CanonicalPatchValidationResult;
+      repositoryVerification: RepositoryVerificationResult;
     }
   | {
       ok: false;
@@ -122,7 +132,13 @@ export function verifySandboxWorkerResult(
       gitPatchValidation: { status: "passed" },
       contentIntegrityValidation: { status: "passed" },
     },
+    repositoryVerification: report.repositoryVerification ?? { status: "not_run", installAttempts: [], checks: [] },
   };
+}
+
+/** ready_for_delivery only once the repository's own build/typecheck/lint/test also verified; otherwise blocked (patch was valid, but not deliverable yet). */
+function terminalStatusFor(repositoryVerification: RepositoryVerificationResult): "ready_for_delivery" | "blocked" {
+  return repositoryVerification.status === "verified" ? "ready_for_delivery" : "blocked";
 }
 
 function sameStringSet(a: string[], b: string[]): boolean {
@@ -138,7 +154,10 @@ function sameStringSet(a: string[], b: string[]): boolean {
  */
 function isEquivalentToRecordedOutcome(run: SandboxRun, outcome: SandboxVerificationOutcome): boolean {
   if (outcome.ok) {
-    return run.status === "ready_for_delivery" && sameStringSet(run.verifiedPaths ?? [], outcome.verifiedPaths);
+    return (
+      run.status === terminalStatusFor(outcome.repositoryVerification) &&
+      sameStringSet(run.verifiedPaths ?? [], outcome.verifiedPaths)
+    );
   }
   return run.status === "failed" && run.failureCode === outcome.failureCode;
 }
@@ -187,8 +206,12 @@ export async function completeSandboxRunFromWorker(
   if (outcome.ok) {
     const updated = await completeSandboxRun(
       runId,
-      { patchValidation: outcome.patchValidation, patchHash: outcome.patchValidation.patchHash },
-      "ready_for_delivery"
+      {
+        patchValidation: outcome.patchValidation,
+        patchHash: outcome.patchValidation.patchHash,
+        repositoryVerification: outcome.repositoryVerification,
+      },
+      terminalStatusFor(outcome.repositoryVerification)
     );
     const withVerification = updated
       ? await updateSandboxRun(runId, {
@@ -204,7 +227,7 @@ export async function completeSandboxRunFromWorker(
     await persistSandboxResultsToPatchKit({
       cleanupRunId: run.cleanupRunId,
       patchValidation: outcome.patchValidation,
-      repositoryVerification: { status: "not_run", installAttempts: [], checks: [] },
+      repositoryVerification: outcome.repositoryVerification,
       sandboxRunId: runId,
       workflowRunId: report.workflowRunId ?? run.workflowRunId,
     });
