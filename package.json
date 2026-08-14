@@ -22,7 +22,7 @@
     "test:okx-first": "tsx test/okx-first-automated-ux.test.ts",
     "test:production-grade": "tsx test/production-grade-fail-closed.test.ts",
     "test:a2a-dispatch": "tsx test/a2a-dispatch-reliability.test.ts && tsx test/a2mcp-payment-security-regression.test.ts && tsx test/deep-scan-reconcile-stale.test.ts && tsx test/github-actions-worker.test.ts",
-    "test:a2a": "tsx test/a2a-orchestration.test.ts && tsx test/a2a-preflight.test.ts && tsx test/a2a-settlement-lifecycle.test.ts && tsx test/a2a-honest-terminal-state.test.ts && tsx test/okx-a2a-escrow-rails.test.ts && tsx test/a2a-active-task-lookup.test.ts && tsx test/a2a-reconcile-idempotency.test.ts && tsx test/a2a-timeout-race-recovery.test.ts && tsx test/repodiet-a2a-bridge.test.ts",
+    "test:a2a": "tsx test/a2a-orchestration.test.ts && tsx test/a2a-preflight.test.ts && tsx test/a2a-settlement-lifecycle.test.ts && tsx test/a2a-honest-terminal-state.test.ts && tsx test/okx-a2a-escrow-rails.test.ts && tsx test/a2a-active-task-lookup.test.ts && tsx test/a2a-reconcile-idempotency.test.ts && tsx test/a2a-timeout-race-recovery.test.ts && tsx test/a2a-wait-timeout-semantics.test.ts && tsx test/repodiet-a2a-bridge.test.ts && tsx test/a2a-wait-timeout-semantics.test.ts",
     "test:a2mcp-real-production": "cross-env REPODIET_INSTALL_TIMEOUT_MS=180000 REPODIET_VERIFY_COMMAND_TIMEOUT_MS=60000 REPODIET_VERIFY_TOTAL_TIMEOUT_MS=300000 REPODIET_HEAVY_JOB_TIMEOUT_MS=15000 npm run test:a2mcp-real-production:all",
     "test:a2mcp-facilitator": "tsx test/a2mcp-facilitator-diagnostics.test.ts && tsx test/a2mcp-real-production-e2e.test.ts && tsx test/quick-triage-route.test.ts",
     "probe:external": "tsx scripts/external-customer-probe.ts",

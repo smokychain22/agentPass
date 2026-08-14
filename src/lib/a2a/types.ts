@@ -147,6 +147,12 @@ export interface A2ATaskResult {
   childScanStage?: string;
   /** ISO timestamp of last parent←child reconciliation. */
   reconciledFromScanAt?: string;
+  /**
+   * ISO timestamp when the parent's wait timed out while its child scan was
+   * still running. Diagnostic only — the task stays non-terminal and the child
+   * decides the outcome (see orchestrator's analysis catch).
+   */
+  analysisWaitTimedOutAt?: string;
   /** True when analysis_failed is recoverable (FAILED_RETRYABLE child). */
   recoverable?: boolean;
   findings?: Record<string, unknown>;
