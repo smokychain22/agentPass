@@ -55,6 +55,7 @@ type ResultBundle = {
   patchHash?: string;
   gitVersion?: string;
   error?: string;
+  repositoryVerification?: unknown;
 };
 
 type Manifest = { runId: string; baseCommitSha: string };
@@ -160,6 +161,7 @@ async function main(): Promise<void> {
       patchHash: report.patchHash,
       gitVersion: report.gitVersion,
       error: report.error,
+      repositoryVerification: report.repositoryVerification,
     }),
   });
 

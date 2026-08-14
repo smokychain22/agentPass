@@ -5,19 +5,30 @@
 # `git apply --check` (the authoritative patch-validity check) cannot run there.
 # See docs/A2A_SANDBOX_VALIDATION_PLAN.md.
 #
-# Security model (mirrors repodiet-analysis-worker.yml exactly):
+# Security model (mirrors repodiet-analysis-worker.yml's job split):
 #   claim    (trusted)   — Worker API key; claim + download public archive as an
 #                          artifact; claimToken stays SERVER-SIDE.
-#   validate (untrusted) — NO RepoDiet/OKX/Redis/signing/dispatch secrets, and
-#                          makes ZERO outbound network calls; only git apply --check
-#                          against the already-downloaded archive.
+#   validate (untrusted) — NO RepoDiet/OKX/Redis/signing/dispatch secrets. Runs
+#                          git apply --check against the already-downloaded
+#                          archive, then (only once that passes) the target
+#                          repository's OWN npm install/typecheck/lint/test/
+#                          build, baseline vs patched — so it DOES reach the
+#                          npm registry and DOES execute code the repository
+#                          under test defines. Accepted: this job has zero
+#                          RepoDiet secrets to leak regardless, and the runner
+#                          is a single ephemeral VM destroyed after the job —
+#                          the same trust boundary the existing Vercel Sandbox
+#                          path already accepts for this same product feature.
 #   complete (trusted)   — Callback secret + HMAC; server resolves claimToken
-#                          internally and independently re-verifies the result
-#                          before ever recording "passed".
+#                          internally and independently re-verifies patch
+#                          validity (base commit + changed-path set) before
+#                          ever recording "passed" — repository verification
+#                          (build/test outcome) is carried through as reported,
+#                          same trust level the Vercel Sandbox path already gives it.
 #
 # The Vercel-only dispatch PAT must NEVER appear in this workflow (not as a secret, env, or artifact).
 # Raw claimToken must NEVER appear in outputs, artifacts, env files, logs, or caches.
-# Does NOT push branches, does NOT create pull requests, does NOT run npm install/tests/build.
+# Does NOT push branches, does NOT create pull requests, does NOT touch GitHub beyond the dispatched repo's public archive.
 
 name: RepoDiet sandbox validation worker
 run-name: "repodiet-sandbox ${{ github.event.client_payload.runId }} ${{ github.event.client_payload.dispatchNonce }}"
@@ -126,7 +137,10 @@ jobs:
     needs: claim
     if: needs.claim.outputs.already_claimed != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Baseline + patched npm install/typecheck/lint/test/build, run twice —
+    # generous headroom over PRODUCTION_COMMAND_TIMEOUT_MS (300s/check) and
+    # the install timeout the same checks use in repository-verification.ts.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -159,7 +173,7 @@ jobs:
           name: sandbox-manifest-${{ needs.claim.outputs.validated_run_id }}
           path: /tmp/repodiet-actions
 
-      - name: Run git apply --check validation (no repository code execution)
+      - name: Validate patch (git apply --check) and run repository verification
         env:
           REPODIET_UNTRUSTED_SANDBOX: "off"
         run: npx tsx scripts/actions-worker/sandbox-validate.ts

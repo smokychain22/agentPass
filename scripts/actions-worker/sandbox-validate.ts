@@ -1,11 +1,18 @@
 /**
  * Untrusted Actions sandbox-validate job.
- * MUST NOT read Worker/OKX/Redis/signing/App secrets from the environment, and
- * makes ZERO outbound network calls of any kind — the trusted claim job already
- * downloaded the public, commit-pinned archive as a local artifact. This job
- * only extracts it, applies the already-decided edits, and runs the same git
- * validation the local/dev path uses. The trusted complete job reads its
- * output artifact and reports the result.
+ * MUST NOT read Worker/OKX/Redis/signing/App secrets from the environment —
+ * the trusted claim job already downloaded the public, commit-pinned archive
+ * as a local artifact, so this job needs no RepoDiet credentials of any kind.
+ *
+ * It DOES run the target repository's own npm install/typecheck/lint/test/
+ * build (via runRepositoryVerification, the same function the local/dev path
+ * already trusts) once `git apply --check` passes, so it DOES reach the
+ * network (npm registry) and DOES execute code the repository under test
+ * defines. That is an intentional, accepted trust boundary — identical to
+ * what the existing Vercel Sandbox path already does for the same product
+ * feature — not a new one: this job has zero RepoDiet secrets to leak
+ * regardless of what a malicious install/build script tries, and the runner
+ * is a single ephemeral GitHub-Actions VM destroyed after the job.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +21,8 @@ import { execa } from "execa";
 import { checkFileCount } from "../../src/lib/github-actions/limits";
 import { hashPatchContent } from "../../src/lib/patch-kit/canonical-patch";
 import { generateGitPatch, getGitVersion, validateGitPatch } from "../../src/lib/execution/git-clone";
+import { runRepositoryVerification } from "../../src/lib/patch-kit/repository-verification";
+import type { RepositoryVerificationResult } from "../../src/lib/patch-kit/repository-verification";
 
 const WORK = "/tmp/repodiet-actions";
 
@@ -127,6 +136,16 @@ async function main(): Promise<void> {
     const patchHash = hashPatchContent(patch);
     const validated = await validateGitPatch(baselineRoot, patch, expectedPaths);
 
+    let repositoryVerification: RepositoryVerificationResult | undefined;
+    if (validated.status === "passed") {
+      repositoryVerification = await runRepositoryVerification({
+        baselineRoot,
+        edits: manifest.edits,
+        cleanupRunId: manifest.runId,
+        patch,
+      });
+    }
+
     Object.assign(resultBundle, {
       status: validated.status,
       gitApplyExitCode: validated.exitCode,
@@ -134,6 +153,7 @@ async function main(): Promise<void> {
       validatedPaths: validated.validatedPaths,
       patchHash,
       gitVersion,
+      repositoryVerification,
     });
 
     console.log(
@@ -142,6 +162,7 @@ async function main(): Promise<void> {
         runId: manifest.runId,
         status: validated.status,
         validatedPaths: validated.validatedPaths,
+        repositoryVerificationStatus: repositoryVerification?.status,
       })
     );
   } catch (err) {
