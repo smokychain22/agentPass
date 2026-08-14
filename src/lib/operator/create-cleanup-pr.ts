@@ -10,7 +10,7 @@ import { runPatchKitEngine } from "@/lib/patch-kit/patch-kit-engine";
 import { withRefreshedVerificationGates } from "@/lib/patch-kit/refresh-verification-gates";
 import type { PatchKitPayload } from "@/lib/patch-kit/types";
 import { nanoid } from "nanoid";
-import { assertCleanupDeliveryContext } from "./cleanup-delivery-guard";
+import { assertCleanupDeliveryContext, checkPatchValidationFreshness } from "./cleanup-delivery-guard";
 import { resolvePrRepairStrategy, type PrRepairResolution } from "./pr-repair";
 import { resolveValidatedDeliveryOps, normalizeApprovedPaths } from "./delivery-operations";
 import { getCleanupPrDelivery, recordCleanupPrDelivery } from "./cleanup-pr-delivery-ledger";
@@ -395,6 +395,25 @@ export async function createCleanupPullRequestUnlocked(input: CreateCleanupPrInp
         "Cleanup patch did not pass repository validation (build/typecheck). Regenerate repairs before creating a cleanup PR.",
       422
     );
+  }
+
+  // PR C — delivery-time fingerprint re-binding; see checkPatchValidationFreshness's docblock.
+  if (mode === "safe_only" && patchKit.patchValidation?.status === "passed") {
+    const freshness = checkPatchValidationFreshness({
+      validatedPaths: patchKit.patchValidation.validatedPaths,
+      deliveredPaths: [...deliveryOps.contentEdits.map((e) => e.path), ...deliveryOps.deletePaths],
+      validationBaseCommitSha: patchKit.patchValidation.baseCommitSha,
+      scanCommitSha: findings.repo.commitSha,
+    });
+    if (!freshness.ok) {
+      throw new ToolExecutionError(
+        "PATCH_VALIDATION_STALE",
+        freshness.reason === "COMMIT_DRIFT"
+          ? `Sandbox validation ran against a different base commit than this delivery (validated ${freshness.validationCommit.slice(0, 12)}…, current scan ${freshness.scanCommit.slice(0, 12)}…). Re-run sandbox validation before creating a cleanup PR.`
+          : `Sandbox validation does not cover the current delivery scope. Unvalidated path(s): ${freshness.unvalidatedPaths.join(", ")}. Re-run sandbox validation before creating a cleanup PR.`,
+        409
+      );
+    }
   }
 
   if (mode === "safe_only" && findings.scanCoverageWarning) {

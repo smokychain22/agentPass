@@ -88,6 +88,10 @@ export function workflowFailureGuidance(task: WorkflowA2ATask | null | undefined
     return "RepoDiet could not generate an applyable patch for the selected scope. This usually means the selected files could not be modified in a verified way. Select fewer findings with confirmed eligibility dry-run, then start a new cleanup attempt.";
   }
 
+  if (err.includes("PATCH_VALIDATION_STALE") || err.includes("Sandbox validation does not cover") || err.includes("Sandbox validation ran against a different base commit")) {
+    return "The verified patch changed since it was last validated in the sandbox. RepoDiet refused to deliver an unverified change — re-run cleanup verification, then retry without paying again.";
+  }
+
   if (err.includes("baseline lint") || err.includes("already fails lint")) {
     return "The repository already fails lint on the scanned commit. RepoDiet treats lint as advisory when build/typecheck are available — start a new cleanup attempt after the latest deploy.";
   }

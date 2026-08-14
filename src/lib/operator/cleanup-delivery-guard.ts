@@ -19,10 +19,48 @@ export interface CleanupDeliveryContextResult {
   baseAutoRecovered: boolean;
 }
 
-function commitShaMatches(scanSha: string, liveSha: string): boolean {
+export function commitShaMatches(scanSha: string, liveSha: string): boolean {
   const scan = scanSha.trim().toLowerCase();
   const live = liveSha.trim().toLowerCase();
   return live === scan || live.startsWith(scan) || scan.startsWith(live);
+}
+
+export type PatchValidationFreshnessResult =
+  | { ok: true }
+  | { ok: false; reason: "UNVALIDATED_PATHS"; unvalidatedPaths: string[] }
+  | { ok: false; reason: "COMMIT_DRIFT"; validationCommit: string; scanCommit: string };
+
+/**
+ * PR C — delivery-time fingerprint re-binding (docs/A2A_SANDBOX_VALIDATION_PLAN.md).
+ *
+ * A "passed" `patchValidation` on a patch kit only proves *some* prior edit
+ * set was git-apply-validated — not that it covers the exact paths about to
+ * be delivered right now. `validatedEdits`/`deletePaths` can legitimately be
+ * narrowed after validation (approvedDeletePaths scoping, a repair re-run
+ * that mutates the same cleanupRunId's payload), which would let a delivery
+ * ship paths `git apply --check` never actually saw — "validate patch A,
+ * deliver patch B". Pure so it can be unit-tested without mocking the full
+ * GitHub delivery pipeline; the caller decides what to do with the result.
+ */
+export function checkPatchValidationFreshness(input: {
+  validatedPaths: string[] | undefined;
+  deliveredPaths: string[];
+  validationBaseCommitSha: string | undefined;
+  scanCommitSha: string | undefined;
+}): PatchValidationFreshnessResult {
+  const validationCommit = input.validationBaseCommitSha?.trim();
+  const scanCommit = input.scanCommitSha?.trim();
+  if (validationCommit && scanCommit && !commitShaMatches(scanCommit, validationCommit)) {
+    return { ok: false, reason: "COMMIT_DRIFT", validationCommit, scanCommit };
+  }
+
+  const validated = new Set(input.validatedPaths ?? []);
+  const unvalidatedPaths = input.deliveredPaths.filter((p) => !validated.has(p));
+  if (unvalidatedPaths.length > 0) {
+    return { ok: false, reason: "UNVALIDATED_PATHS", unvalidatedPaths };
+  }
+
+  return { ok: true };
 }
 
 export async function assertCleanupDeliveryContext(input: {
