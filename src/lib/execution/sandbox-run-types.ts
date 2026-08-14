@@ -65,6 +65,32 @@ export interface SandboxRun {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+
+  // --- External-worker claim lease (GitHub Actions on-demand path) ---
+  /** Opaque worker identity that currently owns this run (e.g. github-actions/ubuntu-latest). */
+  claimedBy?: string;
+  /** Server-side-only token; never sent to or accepted from an Actions runner. */
+  claimToken?: string;
+  /** Opaque, non-secret correlation id returned to the claim job (safe to log/artifact). */
+  claimHandle?: string;
+  claimedAt?: string;
+  /** Claim expires and becomes reclaimable by another worker after this instant. */
+  leaseExpiresAt?: string;
+  /** Number of times this run has been claimed (first claim = 1). */
+  claimAttempts?: number;
+  workflowRunUrl?: string;
+  workflowRunAttempt?: string;
+  workflowName?: string;
+  workflowRepository?: string;
+
+  // --- Authoritative, server-verified outcome (never taken from the worker at face value) ---
+  /** Count of file paths the server independently confirmed were validated. */
+  verifiedChanges?: number;
+  /** Exact set of file paths the server independently confirmed were validated. */
+  verifiedPaths?: string[];
 }
 
 export const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** Claim lease duration for an external worker (GitHub Actions on-demand validate job). */
+export const SANDBOX_CLAIM_LEASE_MS = 10 * 60 * 1000;
