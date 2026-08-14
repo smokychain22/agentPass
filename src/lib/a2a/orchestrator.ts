@@ -167,6 +167,55 @@ async function completeTask(
   return finalized;
 }
 
+/** Stages where the child analysis worker is dispatched or running, not finished. */
+const LIVE_CHILD_SCAN_STAGES = new Set([
+  "QUEUED",
+  "DISPATCHING",
+  "DISPATCHED",
+  "WAITING_FOR_RUNNER",
+  "CLAIMED",
+  "PREPARING_ARCHIVE",
+  "DOWNLOADING_ARCHIVE",
+  "ARCHIVE_READY",
+  "INVENTORY",
+  "RESOLVING_PROJECTS",
+  "BUILDING_GRAPH",
+  "RUNNING_JSCpd",
+  "RUNNING_KNIP",
+  "RUNNING_MADGE",
+  "RUNNING_INTERNAL_HEURISTICS",
+  "NORMALIZING_FINDINGS",
+  "VALIDATING_EVIDENCE",
+  "PERSISTING_RESULTS",
+]);
+
+/** "the caller stopped waiting", as distinct from "the analysis failed". */
+function isWaitTimeoutError(message: string): boolean {
+  return /abort|timed?\s*out|timeout/i.test(message);
+}
+
+/**
+ * The authoritative child scan for this task, only when it is still working.
+ * Returns undefined when there is no child, or the child already reached a
+ * terminal stage (READY / COMPLETED / FAILED_*) — in those cases the child, not
+ * the wait timeout, decides the parent's outcome.
+ */
+async function getLiveChildScanForTask(
+  taskId: string
+): Promise<{ id: string; stage: string } | undefined> {
+  try {
+    const { getDeepScanJobByA2ATask } = await import("@/lib/deep-scan/job-store");
+    const child = await getDeepScanJobByA2ATask(taskId);
+    if (!child) return undefined;
+    const stage = String(child.stage ?? "");
+    if (!LIVE_CHILD_SCAN_STAGES.has(stage)) return undefined;
+    return { id: child.id, stage };
+  } catch {
+    // Never let the liveness probe itself turn into a failure path.
+    return undefined;
+  }
+}
+
 async function loadFindings(task: A2ATaskRecord): Promise<FindingsPayload> {
   if (task.scanId) {
     const stored = await getStoredFindings(task.scanId);
@@ -297,13 +346,35 @@ async function runAnalysisPhase(
       },
     });
   } catch (err) {
-    return failTask(
-      task,
-      sm,
-      "analysis_failed",
-      err instanceof Error ? err.message : "Repository fetch failed.",
-      "repository_analyzer"
-    );
+    const message = err instanceof Error ? err.message : "Repository fetch failed.";
+
+    // A caller that stopped waiting is NOT an analysis failure. Production
+    // 2026-08-14 (task_82774769615840): this catch marked the parent
+    // `analysis_failed` on "The operation was aborted due to timeout" while its
+    // own GitHub Actions worker was still running — the worker reported READY 55s
+    // later with 35 findings, and because `analysis_failed` is terminal the
+    // successful result was orphaned permanently. PR #201 added the reconciler
+    // backstop; this removes the cause.
+    //
+    // If the authoritative child scan is still alive, stay in the existing
+    // non-terminal `fetching_repository` state and let the child decide the
+    // outcome. Only a genuine child failure — or no child at all — is a failure.
+    if (isWaitTimeoutError(message)) {
+      const child = await getLiveChildScanForTask(task.id);
+      if (child) {
+        return syncTask(task, sm, {
+          result: {
+            ...task.result,
+            deepScanJobId: child.id,
+            queueJobId: child.id,
+            analysisWaitTimedOutAt: new Date().toISOString(),
+            childScanStage: child.stage,
+          },
+        });
+      }
+    }
+
+    return failTask(task, sm, "analysis_failed", message, "repository_analyzer");
   }
 
   sm.emit("analyzing", "repository_analyzer");
