@@ -205,7 +205,24 @@ test("empty file with preflight actionable promotes to strong safe candidate", (
 test("single-file delete preflight uses inline diff path", async () => {
   const { dryRunPhase1Fix } = await import("../src/lib/execution/fix-preflight");
   const { prepareRepoWorkspace } = await import("../src/lib/scanner/prepare-workspace");
-  const w = await prepareRepoWorkspace("https://github.com/velz-cmd/repodiet-e2e-test", "main");
+  /**
+   * Pinned to an immutable commit, not `main`.
+   *
+   * This test asserts on a KNOWN fixture state (`src/unused/empty-module.ts`
+   * exists and is deletable), so it must read the commit that actually has
+   * that state. Tracking `main` made the assertion depend on the fixture
+   * repository never changing — and on 2026-08-14 RepoDiet itself changed it:
+   * the production pipeline delivered PR #11, the owner merged it, and the
+   * very file this test deletes was correctly removed. A successful cleanup
+   * must not be able to fail RepoDiet's own suite.
+   */
+  const FIXTURE_COMMIT = "5df7c518e4ffa5b083ff7f37b91eff45cbcb591b";
+  const w = await prepareRepoWorkspace(
+    "https://github.com/velz-cmd/repodiet-e2e-test",
+    "main",
+    undefined,
+    FIXTURE_COMMIT
+  );
   try {
     const change = await dryRunPhase1Fix(
       w.rootDir,

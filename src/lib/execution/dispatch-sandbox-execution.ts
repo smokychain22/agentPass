@@ -27,6 +27,30 @@ export function shouldDispatchSandboxExecution(run: SandboxRun): boolean {
   if (isTerminalSandboxStatus(run.status)) return false;
   if (isActiveSandboxStatus(run.status) && !isStaleActiveSandboxRun(run)) return false;
 
+  /**
+   * A live claim lease means a worker has already taken this run and is
+   * working on it — never dispatch a second one on top of it.
+   *
+   * Without this, the GitHub Actions path duplicate-dispatched every single
+   * run in production (observed on sandbox worker runs #1/#2/#3, #5/#6 and
+   * #7/#8: same sandboxRunId, different dispatchNonce, one green + one red).
+   * The `isActiveSandboxStatus` guard above cannot catch it, because those
+   * stage names (`cloning`, `baseline_verification`, …) belong to the Vercel
+   * Sandbox executor. An Actions run instead sits in `starting` from the
+   * moment `claimSandboxRun` takes it until `complete` reports back, and a
+   * GitHub-hosted runner can legitimately stay queued for minutes — far
+   * longer than REDISPATCH_MS. So the redispatch below kept firing while a
+   * perfectly healthy worker was already mid-flight.
+   *
+   * The lease is the authoritative "someone owns this" signal and already
+   * expires on its own (SANDBOX_CLAIM_LEASE_MS), so an abandoned worker
+   * still gets reclaimed — this only suppresses dispatch while the claim is
+   * genuinely live.
+   */
+  if (run.claimedBy && run.leaseExpiresAt && Date.parse(run.leaseExpiresAt) > Date.now()) {
+    return false;
+  }
+
   const lastDispatch = run.executionDispatchedAt
     ? new Date(run.executionDispatchedAt).getTime()
     : 0;

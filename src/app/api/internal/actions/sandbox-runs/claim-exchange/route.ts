@@ -98,7 +98,24 @@ export async function POST(request: Request) {
 
   const claim = await claimSandboxRun(runId, workerId);
   if (!claim.ok) {
-    if (claim.code === "CLAIMED_BY_OTHER") {
+    /**
+     * Both of these mean "another worker already owns or already finished
+     * this run", which is the expected outcome of a duplicate dispatch — not
+     * a service failure. The losing workflow has genuinely nothing to do and
+     * must exit cleanly; the server's record is authoritative either way.
+     *
+     * TERMINAL covers the race where the winner finished before the loser's
+     * runner even dequeued (observed in production: the loser's claim job
+     * died on `Sandbox run is terminal (ready_for_delivery)` and painted a
+     * red X next to an already-successful validation, which is exactly the
+     * kind of misleading signal that makes a real failure hard to spot).
+     *
+     * This does NOT mask genuine validation failures: a workflow that
+     * actually ran the validate job still reports its own result through the
+     * complete job, and a run that terminated as failed/blocked keeps that
+     * recorded outcome — nothing here overwrites it.
+     */
+    if (claim.code === "CLAIMED_BY_OTHER" || claim.code === "TERMINAL") {
       return NextResponse.json(
         { ok: true, alreadyClaimed: true, code: "ALREADY_CLAIMED", message: claim.message },
         { status: 200 }
