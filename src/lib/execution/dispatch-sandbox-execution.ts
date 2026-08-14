@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { nanoid } from "nanoid";
 import { getAppBaseUrl } from "@/lib/github-app/app-base-url";
 import { isServerlessRuntime } from "@/lib/server/runtime-env";
 import {
@@ -9,6 +10,12 @@ import {
 import type { SandboxRun, SandboxRunPayload } from "@/lib/execution/sandbox-run-types";
 import { isActiveSandboxStatus, isStaleActiveSandboxRun, runSandboxExecutionOnce } from "@/lib/execution/execute-sandbox-run";
 import { workerApiKeyConfigured } from "@/lib/worker/worker-auth";
+import {
+  dispatchSandboxValidationWorkflow,
+  isSandboxActionsDispatcherConfigured,
+} from "@/lib/github-actions/dispatch-sandbox-validation";
+import { createDispatchNonce, dispatchNonceTtlMs, storeDispatchNonce } from "@/lib/github-actions/dispatch-nonce-store";
+import { publicApiBaseUrl } from "@/lib/deep-scan/dispatch-queued-job";
 
 const REDISPATCH_MS = 30_000;
 
@@ -48,7 +55,18 @@ export async function dispatchSandboxExecution(
     payload: payload ?? run.payload,
   });
 
+  if (isServerlessRuntime() && isSandboxActionsDispatcherConfigured()) {
+    void dispatchSandboxValidationViaActions(runId).catch((err) => {
+      console.error("[repodiet-sandbox-dispatch] failed to dispatch GitHub Actions sandbox worker", err);
+    });
+    return;
+  }
+
   if (isServerlessRuntime() && workerApiKeyConfigured()) {
+    // Serves deployments where Vercel Sandbox (@vercel/sandbox) is provisioned —
+    // executeRepositoryCleanup uses it when available. Without either that or the
+    // Actions dispatcher above, this route has no git binary and the run stays
+    // pending_sandbox / eventually SANDBOX_UNAVAILABLE, same as before this change.
     const url = `${getAppBaseUrl()}/api/internal/sandbox-runs/execute`;
     void fetch(url, {
       method: "POST",
@@ -75,4 +93,42 @@ export async function dispatchSandboxExecution(
   }
 
   runInline();
+}
+
+function dispatchEnvironment(): "production" | "preview" {
+  return process.env.VERCEL_ENV === "preview" ? "preview" : "production";
+}
+
+/**
+ * Fire a repository_dispatch to the sandbox validation workflow. Fire-and-forget
+ * by design — dispatchSandboxExecution is itself re-invoked on the existing
+ * REDISPATCH_MS cadence (via shouldDispatchSandboxExecution) whenever the run is
+ * still queued/starting, so a dropped or failed dispatch call is retried without
+ * a separate backoff state machine.
+ */
+async function dispatchSandboxValidationViaActions(runId: string): Promise<void> {
+  const nonce = createDispatchNonce();
+  const requestId = `req_${nanoid(12)}`;
+  const expiresAt = new Date(Date.now() + dispatchNonceTtlMs()).toISOString();
+  await storeDispatchNonce({
+    nonce,
+    jobId: runId,
+    requestId,
+    createdAt: nowIso(),
+    expiresAt,
+  });
+
+  const result = await dispatchSandboxValidationWorkflow({
+    runId,
+    requestId,
+    dispatchNonce: nonce,
+    environment: dispatchEnvironment(),
+    apiBaseUrl: publicApiBaseUrl(),
+  });
+
+  if (!result.ok) {
+    console.error(
+      `[repodiet-sandbox-dispatch] repository_dispatch failed (${result.code}): ${result.message}`
+    );
+  }
 }

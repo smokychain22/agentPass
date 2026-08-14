@@ -1,0 +1,220 @@
+# Ephemeral free GitHub Actions sandbox patch-validation worker for RepoDiet.
+# Triggered by repository_dispatch (event_type: repodiet_sandbox_validation) from Vercel.
+#
+# This exists because Vercel's serverless runtime has no git binary, so
+# `git apply --check` (the authoritative patch-validity check) cannot run there.
+# See docs/A2A_SANDBOX_VALIDATION_PLAN.md.
+#
+# Security model (mirrors repodiet-analysis-worker.yml exactly):
+#   claim    (trusted)   — Worker API key; claim + download public archive as an
+#                          artifact; claimToken stays SERVER-SIDE.
+#   validate (untrusted) — NO RepoDiet/OKX/Redis/signing/dispatch secrets, and
+#                          makes ZERO outbound network calls; only git apply --check
+#                          against the already-downloaded archive.
+#   complete (trusted)   — Callback secret + HMAC; server resolves claimToken
+#                          internally and independently re-verifies the result
+#                          before ever recording "passed".
+#
+# The Vercel-only dispatch PAT must NEVER appear in this workflow (not as a secret, env, or artifact).
+# Raw claimToken must NEVER appear in outputs, artifacts, env files, logs, or caches.
+# Does NOT push branches, does NOT create pull requests, does NOT run npm install/tests/build.
+
+name: RepoDiet sandbox validation worker
+run-name: "repodiet-sandbox ${{ github.event.client_payload.runId }} ${{ github.event.client_payload.dispatchNonce }}"
+
+on:
+  repository_dispatch:
+    types:
+      - repodiet_sandbox_validation
+
+concurrency:
+  group: repodiet-sandbox-validation-${{ github.event.client_payload.runId }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  claim:
+    name: claim
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      already_claimed: ${{ steps.exchange.outputs.already_claimed }}
+      claim_handle: ${{ steps.exchange.outputs.claim_handle }}
+      validated_run_id: ${{ steps.validate.outputs.run_id }}
+      validated_api_base: ${{ steps.validate.outputs.api_base }}
+    steps:
+      - name: Validate client_payload
+        id: validate
+        env:
+          RAW_RUN_ID: ${{ github.event.client_payload.runId }}
+          RAW_REQUEST_ID: ${{ github.event.client_payload.requestId }}
+          RAW_DISPATCH_NONCE: ${{ github.event.client_payload.dispatchNonce }}
+          RAW_ENVIRONMENT: ${{ github.event.client_payload.environment }}
+          RAW_API_BASE: ${{ github.event.client_payload.apiBaseUrl }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$RAW_RUN_ID"
+          REQUEST_ID="$RAW_REQUEST_ID"
+          NONCE="$RAW_DISPATCH_NONCE"
+          ENV_NAME="$RAW_ENVIRONMENT"
+          API_BASE="${RAW_API_BASE:-https://skillswap-virid-kappa.vercel.app}"
+
+          echo "$RUN_ID" | grep -Eq '^[A-Za-z0-9_-]{1,128}$' || { echo "invalid runId"; exit 1; }
+          echo "$REQUEST_ID" | grep -Eq '^[A-Za-z0-9_-]{1,128}$' || { echo "invalid requestId"; exit 1; }
+          echo "$NONCE" | grep -Eq '^[A-Za-z0-9_-]{20,256}$' || { echo "invalid dispatchNonce"; exit 1; }
+          echo "$ENV_NAME" | grep -Eq '^(production|preview)$' || { echo "invalid environment"; exit 1; }
+          echo "$API_BASE" | grep -Eq '^https://[A-Za-z0-9._/-]+$' || { echo "invalid apiBaseUrl"; exit 1; }
+
+          {
+            echo "run_id=$RUN_ID"
+            echo "request_id=$REQUEST_ID"
+            echo "dispatch_nonce=$NONCE"
+            echo "environment=$ENV_NAME"
+            echo "api_base=$API_BASE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout RepoDiet tooling
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install RepoDiet deps (trusted tooling only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Claim run + download public archive
+        id: exchange
+        env:
+          REPODIET_WORKER_API_KEY: ${{ secrets.REPODIET_WORKER_API_KEY }}
+          INPUT_RUN_ID: ${{ steps.validate.outputs.run_id }}
+          INPUT_DISPATCH_NONCE: ${{ steps.validate.outputs.dispatch_nonce }}
+          INPUT_API_BASE_URL: ${{ steps.validate.outputs.api_base }}
+          INPUT_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          INPUT_WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          INPUT_WORKFLOW_NAME: ${{ github.workflow }}
+          INPUT_WORKFLOW_REPOSITORY: ${{ github.repository }}
+          INPUT_WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: npx tsx scripts/actions-worker/sandbox-claim.ts
+
+      - name: Upload repository archive artifact
+        if: steps.exchange.outputs.already_claimed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-archive-${{ steps.validate.outputs.run_id }}
+          path: /tmp/repodiet-actions/archive.zip
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload sanitized job manifest
+        if: steps.exchange.outputs.already_claimed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-manifest-${{ steps.validate.outputs.run_id }}
+          path: /tmp/repodiet-actions/job-manifest.json
+          retention-days: 1
+
+  validate:
+    name: validate
+    needs: claim
+    if: needs.claim.outputs.already_claimed != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout RepoDiet tooling
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install RepoDiet deps (no customer or dispatch secrets in env)
+        run: npm ci --no-audit --no-fund
+
+      - name: Configure git identity for baseline commit
+        run: |
+          git config --global user.email "sandbox-validate@repodiet.local"
+          git config --global user.name "RepoDiet Sandbox Validate"
+
+      - name: Download repository archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sandbox-archive-${{ needs.claim.outputs.validated_run_id }}
+          path: /tmp/repodiet-actions
+
+      - name: Download job manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: sandbox-manifest-${{ needs.claim.outputs.validated_run_id }}
+          path: /tmp/repodiet-actions
+
+      - name: Run git apply --check validation (no repository code execution)
+        env:
+          REPODIET_UNTRUSTED_SANDBOX: "off"
+        run: npx tsx scripts/actions-worker/sandbox-validate.ts
+
+      - name: Upload result bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-result-${{ needs.claim.outputs.validated_run_id }}
+          path: /tmp/repodiet-actions/sandbox-result-bundle.json
+          retention-days: 1
+          if-no-files-found: error
+
+  complete:
+    name: complete
+    needs: [claim, validate]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout RepoDiet tooling
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install RepoDiet deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Download job manifest (may be missing if claim never succeeded)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: sandbox-manifest-${{ needs.claim.outputs.validated_run_id }}
+          path: /tmp/repodiet-actions
+
+      - name: Download result bundle (may be missing on validate failure)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: sandbox-result-${{ needs.claim.outputs.validated_run_id }}
+          path: /tmp/repodiet-actions
+
+      - name: Report result to RepoDiet
+        env:
+          REPODIET_WORKER_CALLBACK_SECRET: ${{ secrets.REPODIET_WORKER_CALLBACK_SECRET }}
+          INPUT_RUN_ID: ${{ needs.claim.outputs.validated_run_id }}
+          INPUT_API_BASE_URL: ${{ needs.claim.outputs.validated_api_base }}
+          INPUT_ALREADY_CLAIMED: ${{ needs.claim.outputs.already_claimed }}
+          INPUT_VALIDATE_RESULT: ${{ needs.validate.result }}
+          INPUT_CLAIM_HANDLE: ${{ needs.claim.outputs.claim_handle }}
+          INPUT_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          INPUT_WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          INPUT_WORKFLOW_NAME: ${{ github.workflow }}
+          INPUT_WORKFLOW_REPOSITORY: ${{ github.repository }}
+        run: npx tsx scripts/actions-worker/sandbox-complete.ts
