@@ -80,7 +80,34 @@ function nextStateVersion(task: A2ATaskRecord): number {
   return current + 1;
 }
 
+/**
+ * A parent that timed out into `analysis_failed` while its own worker was still
+ * running is repairable, and only by this reconciler.
+ *
+ * Observed in production 2026-08-14 on velz-cmd/repodiet-e2e-test
+ * (task_82774769615840 / deep_scan_ijCtzpAMUh92): the parent aborted at
+ * 09:23:49 with "The operation was aborted due to timeout", and the GitHub
+ * Actions worker went READY at 09:24:44 — 55s later — with 35 validated
+ * findings. Because `analysis_failed` is in A2A_TERMINAL_STATUSES,
+ * `alreadyPastAnalysis` returned true and reconciliation skipped the task
+ * forever, so a completed analysis stayed reported as a failure. On a paid A2A
+ * task that means the buyer is told the work failed while it actually succeeded.
+ *
+ * This is deliberately the ONLY failure status treated as repairable, and only
+ * when the child scan is genuinely READY with findings (checked by the caller).
+ * Settled outcomes — completed, escrow_released, buyer_accepted — stay terminal:
+ * money has moved and their result must never be rewritten by a late child.
+ */
+function isRepairableAnalysisFailure(task: A2ATaskRecord): boolean {
+  if (task.status !== "analysis_failed") return false;
+  // If findings were already attached, the failure was not a lost race.
+  const findings = task.result.findings as Record<string, unknown> | undefined;
+  if (findings && (findings.scanId || findings.summary)) return false;
+  return true;
+}
+
 function alreadyPastAnalysis(task: A2ATaskRecord): boolean {
+  if (isRepairableAnalysisFailure(task)) return false;
   if (A2A_TERMINAL_STATUSES.includes(task.status)) return true;
   if (!ANALYSIS_WAIT_STATUSES.has(task.status)) return true;
   if (task.result.findings && typeof task.result.findings === "object") {
@@ -214,8 +241,13 @@ export async function reconcileParentTaskFromScan(
     }
 
     const sm = new A2ATaskStateMachine(fresh.transitions);
-    // Move out of DISPATCHED/fetching_repository exactly once.
-    if (ANALYSIS_WAIT_STATUSES.has(fresh.status) && fresh.status !== "analyzing") {
+    // Move out of DISPATCHED/fetching_repository exactly once. A parent that
+    // lost the timeout race against its own worker (see
+    // isRepairableAnalysisFailure) re-enters here from `analysis_failed`.
+    if (
+      (ANALYSIS_WAIT_STATUSES.has(fresh.status) || isRepairableAnalysisFailure(fresh)) &&
+      fresh.status !== "analyzing"
+    ) {
       sm.emit("analyzing", "repository_analyzer", `reconcile: child ${scan.id} READY`);
     }
     // Analysis complete → quote / awaiting payment for paid cleanup, or awaiting_approval path.
@@ -231,6 +263,10 @@ export async function reconcileParentTaskFromScan(
     const updated: A2ATaskRecord = {
       ...fresh,
       status: sm.current(),
+      // A repaired timeout-race parent still carries the abort message that is
+      // now false — the analysis succeeded. Leaving it would surface a failure
+      // reason on a successful task.
+      error: undefined,
       scanId: findingsId ?? fresh.scanId,
       repository: {
         ...fresh.repository,
