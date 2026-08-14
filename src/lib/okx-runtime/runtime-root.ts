@@ -9,8 +9,25 @@
  */
 import path from "node:path";
 import os from "node:os";
+import { ephemeralRuntimeRoot, isServerlessRuntime } from "@/lib/server/runtime-env";
 
 export function resolveRuntimeRoot(): string {
+  /**
+   * `REPODIET_OKX_RUNTIME_ROOT` names a directory on the persistent Fly.io
+   * Machine every long-lived process there shares (see the module docblock).
+   * On Vercel there is no such Machine — each invocation is its own isolated,
+   * ephemeral compute environment, so a path meant to be durable and shared
+   * across Fly processes is neither reachable nor meaningful there. Using it
+   * anyway crashed every `createCleanupPullRequest` call made directly on
+   * Vercel (the operator UI's own delivery path) with
+   * `ENOENT: no such file or directory, mkdir '/persistent/...'` — discovered
+   * live 2026-08-14 verifying the GitHub Actions sandbox worker end to end.
+   * Falls back to the same ephemeral, always-writable root `server/workspace.ts`
+   * already uses for serverless scan workspaces.
+   */
+  if (isServerlessRuntime()) {
+    return path.resolve(ephemeralRuntimeRoot());
+  }
   const explicit = process.env.REPODIET_OKX_RUNTIME_ROOT?.trim();
   if (explicit) return path.resolve(explicit);
   const platformData =
